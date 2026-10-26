@@ -4,15 +4,17 @@ import SwiftUI
 
 struct MenuBarContent: View {
     @Environment(\.openWindow) private var openWindow
-    let daemon: DaemonRegistration
+    let daemon: BackgroundServiceRegistration
+    let helper: BackgroundServiceRegistration
 
     var body: some View {
         Text("Nexus \(NexusVersion.current())")
         Text(daemon.summary)
+        Text(helper.summary)
 
-        if daemon.needsApproval {
+        if daemon.needsApproval || helper.needsApproval {
             Button("Open Login Items Settings") {
-                daemon.openLoginItemsSettings()
+                helper.openLoginItemsSettings()
             }
         }
 

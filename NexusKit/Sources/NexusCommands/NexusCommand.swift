@@ -16,7 +16,10 @@ struct NexusCommand: AsyncParsableCommand {
         commandName: "nexus",
         abstract: "Controls the Nexus services from the terminal.",
         version: NexusVersion.current(),
-        subcommands: [Status.self, Start.self, Stop.self, Port.self, Available.self, Runtimes.self, Install.self, Remove.self]
+        subcommands: [
+            Status.self, Start.self, Stop.self, Port.self, Available.self, Runtimes.self, Install.self, Remove.self,
+            Trust.self, Cert.self, Hosts.self, Uninstall.self,
+        ]
     )
 }
 
@@ -31,14 +34,17 @@ struct Status: AsyncParsableCommand {
             return
         }
 
-        if services.isEmpty {
-            print("No service is installed. Install one with: nexus install redis 8.2")
-            return
-        }
-
         for service in services {
             let ports = service.ports.map(String.init).joined(separator: ", ")
             print([service.id.padding(to: 14), state(service.state).padding(to: 22), "port \(ports)".padding(to: 12), service.displayName].joined(separator: " "))
+
+            if case .failed(let reason) = service.state {
+                print("    \(reason)")
+            }
+        }
+
+        if services.allSatisfy({ $0.id == "dns" }) {
+            print("No package is installed. Install one with: nexus install redis 8.2")
         }
     }
 
@@ -136,6 +142,92 @@ struct Remove: AsyncParsableCommand {
 
     func run() async throws {
         try finish(try await send(.remove(name: name, line: line)))
+    }
+}
+
+struct Trust: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Trusts the Nexus root CA, so browsers accept the certificates of Nexus. macOS asks for your password.")
+
+    func run() async throws {
+        try finish(try await send(.trust))
+    }
+}
+
+struct Cert: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Makes a certificate for one or more hosts, for example: nexus cert shop.test www.shop.test")
+
+    @Argument(help: "The hosts. The first host names the files.") var hosts: [String]
+
+    func run() async throws {
+        try finish(try await send(.certificate(hosts: hosts)))
+    }
+}
+
+struct Hosts: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Lists the hosts outside the dev TLD that Nexus adds to /etc/hosts.",
+        subcommands: [List.self, Add.self, Remove.self],
+        defaultSubcommand: List.self
+    )
+
+    struct List: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Lists the hosts.")
+
+        func run() async throws {
+            let response = try await send(.hosts)
+
+            guard case .hosts(let hosts) = response else {
+                try finish(response)
+                return
+            }
+
+            if hosts.isEmpty {
+                print("Nexus adds no lines to /etc/hosts. Names in the dev TLD need none.")
+                return
+            }
+
+            hosts.forEach { print($0) }
+        }
+    }
+
+    struct Add: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Sends a host to 127.0.0.1 and ::1 through /etc/hosts, for example: nexus hosts add shop.local")
+
+        @Argument(help: "The host.") var host: String
+
+        func run() async throws {
+            try finish(try await send(.addHost(host)))
+        }
+    }
+
+    struct Remove: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Removes the /etc/hosts line of a host.")
+
+        @Argument(help: "The host.") var host: String
+
+        func run() async throws {
+            try finish(try await send(.removeHost(host)))
+        }
+    }
+}
+
+struct Uninstall: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Removes the changes that Nexus made to macOS: the resolver file, the /etc/hosts lines, the root CA and the background services.")
+
+    @Flag(help: "Do not ask before the removal.") var yes = false
+
+    func run() async throws {
+        if !yes {
+            print("Nexus stops every service and removes its resolver file, its /etc/hosts lines, its root CA and its background services. macOS asks for your password to remove the trust setting.")
+            print("Type yes to continue: ", terminator: "")
+
+            guard readLine()?.lowercased() == "yes" else {
+                print("Nothing changed.")
+                return
+            }
+        }
+
+        try finish(try await send(.uninstall))
     }
 }
 

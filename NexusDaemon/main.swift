@@ -1,6 +1,8 @@
 import Foundation
 import NexusCore
 import NexusEngine
+import NexusIPC
+import NexusTLS
 
 if CommandLine.arguments.contains("--version") {
     print("nexusd \(NexusVersion.current())")
@@ -10,7 +12,12 @@ if CommandLine.arguments.contains("--version") {
 let paths = NexusPaths.standard
 try? paths.createFolders()
 
-let engine = NexusEngine(paths: paths)
+let engine = NexusEngine(
+    paths: paths,
+    helper: HelperClient(),
+    certificateAuthority: CertificateAuthority(paths: paths),
+    unregister: BackgroundServices.unregisterAll
+)
 let service = DaemonService(engine: engine)
 let listener = NSXPCListener(machServiceName: NexusIdentifiers.daemon)
 listener.delegate = service

@@ -20,8 +20,24 @@ public struct EngineState: Codable, Sendable, Equatable {
     public var ports: [String: Int] = [:]
     public var enabledServices: Set<String> = []
     public var manifestURL: URL = URL(string: "https://github.com/NexusLocal/binaries/releases/download/manifest/manifest.json")!
+    public var tld = "test"
+    public var hosts: Set<String> = []
 
     public init() {}
+
+    // A key that an older nexusd did not write gets its default. Without this, one new key
+    // would make the whole file unreadable, and nexusd would start again with empty state.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = EngineState()
+
+        portProfile = try container.decodeIfPresent(PortProfile.self, forKey: .portProfile) ?? defaults.portProfile
+        ports = try container.decodeIfPresent([String: Int].self, forKey: .ports) ?? defaults.ports
+        enabledServices = try container.decodeIfPresent(Set<String>.self, forKey: .enabledServices) ?? defaults.enabledServices
+        manifestURL = try container.decodeIfPresent(URL.self, forKey: .manifestURL) ?? defaults.manifestURL
+        tld = try container.decodeIfPresent(String.self, forKey: .tld) ?? defaults.tld
+        hosts = try container.decodeIfPresent(Set<String>.self, forKey: .hosts) ?? defaults.hosts
+    }
 }
 
 // Keeps the state of nexusd in config/state.json: the port of each service and the services that
@@ -68,11 +84,19 @@ public actor EngineStateStore {
         try encoder.encode(state).write(to: file, options: .atomic)
     }
 
+    // An unreadable file is kept next to the new one, so the next save does not destroy the
+    // ports and the services that it holds.
     private static func load(from file: URL) -> EngineState? {
         guard let data = try? Data(contentsOf: file) else {
             return nil
         }
 
-        return try? JSONDecoder().decode(EngineState.self, from: data)
+        if let state = try? JSONDecoder().decode(EngineState.self, from: data) {
+            return state
+        }
+
+        let copy = file.deletingPathExtension().appendingPathExtension("unreadable-\(Int(Date.now.timeIntervalSince1970)).json")
+        try? FileManager.default.copyItem(at: file, to: copy)
+        return nil
     }
 }

@@ -1,15 +1,14 @@
 import Foundation
 import NexusEngine
 import NexusIPC
-import Security
 
-final class DaemonService: NSObject, NSXPCListenerDelegate, NexusDaemonProtocol, @unchecked Sendable {
+final class DaemonService: NSObject, NSXPCListenerDelegate, NexusXPCService, @unchecked Sendable {
     private let engine: NexusEngine
     private let requirement: String?
 
     init(engine: NexusEngine) {
         self.engine = engine
-        self.requirement = Self.ownTeamIdentifier().map { "anchor apple generic and certificate leaf[subject.OU] = \"\($0)\"" }
+        self.requirement = CodeSigning.ownTeamIdentifier().map { "anchor apple generic and certificate leaf[subject.OU] = \"\($0)\"" }
     }
 
     // Only programs that are signed by the same team as nexusd may connect, so another app on
@@ -19,7 +18,7 @@ final class DaemonService: NSObject, NSXPCListenerDelegate, NexusDaemonProtocol,
             connection.setCodeSigningRequirement(requirement)
         }
 
-        connection.exportedInterface = NSXPCInterface(with: NexusDaemonProtocol.self)
+        connection.exportedInterface = NSXPCInterface(with: NexusXPCService.self)
         connection.exportedObject = self
         connection.resume()
         return true
@@ -38,25 +37,5 @@ final class DaemonService: NSObject, NSXPCListenerDelegate, NexusDaemonProtocol,
 
             reply((try? NexusMessageCoding.encode(response)) ?? Data())
         }
-    }
-
-    private static func ownTeamIdentifier() -> String? {
-        var code: SecCode?
-        guard SecCodeCopySelf([], &code) == errSecSuccess, let code else {
-            return nil
-        }
-
-        var staticCode: SecStaticCode?
-        guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else {
-            return nil
-        }
-
-        var information: CFDictionary?
-        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
-              let dictionary = information as? [String: Any] else {
-            return nil
-        }
-
-        return dictionary[kSecCodeInfoTeamIdentifier as String] as? String
     }
 }

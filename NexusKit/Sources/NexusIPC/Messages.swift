@@ -11,6 +11,12 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case installed
     case install(name: String, line: String)
     case remove(name: String, line: String)
+    case trust
+    case certificate(hosts: [String])
+    case hosts
+    case addHost(String)
+    case removeHost(String)
+    case uninstall
 }
 
 public enum NexusResponse: Codable, Sendable, Equatable {
@@ -18,6 +24,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case services([ServiceStatus])
     case available([ManifestPackage])
     case installed([InstalledRuntime])
+    case hosts([String])
     case failure(message: String)
 }
 
@@ -33,8 +40,4 @@ public enum NexusMessageCoding {
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode(type, from: data)
     }
-}
-
-@objc public protocol NexusDaemonProtocol {
-    func handle(_ request: Data, reply: @escaping @Sendable (Data) -> Void)
 }
