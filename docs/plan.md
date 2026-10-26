@@ -209,7 +209,16 @@ Done when:
 - `curl https://<host>:8443` gives no certificate error in Safari and Chrome.
 - Removing Nexus removes /etc/resolver/test and its /etc/hosts lines.
 
+Built: the DNS server runs in nexusd on 127.0.0.1:10053 (`nexus port dns <port>` changes it).
+`nexus trust` trusts the root CA, `nexus cert <host>...` signs a certificate, `nexus hosts add`
+adds an /etc/hosts line and `nexus uninstall` removes every change to macOS. The app registers
+the helper, and the user approves it in System Settings > General > Login Items & Extensions.
+
 Risk: Firefox uses its own certificate store. The UI shows a short instruction for Firefox.
+
+Risk: a program with its own list of CAs does not trust the Nexus root CA. Examples are the curl
+of MAMP PRO, Node and PHP with its own CA file. /usr/bin/curl and URLSession trust it. Step 4
+must check that PHP in Nexus trusts it, for an application that calls another local site.
 
 ## Step 4 - Web serving
 
