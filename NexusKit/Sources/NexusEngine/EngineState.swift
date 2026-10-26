@@ -22,6 +22,13 @@ public struct EngineState: Codable, Sendable, Equatable {
     public var manifestURL: URL = URL(string: "https://github.com/NexusLocal/binaries/releases/download/manifest/manifest.json")!
     public var tld = "test"
     public var hosts: Set<String> = []
+    public var sites: [Site] = []
+    public var parked: [ParkedFolder] = []
+    public var lanAccess = false
+    // A PHP version without an entry uses PHPConfig.defaultExtensions.
+    public var phpExtensions: [String: Set<String>] = [:]
+    public var apacheModules: Set<String>?
+    public var nginxModules: Set<String> = []
 
     public init() {}
 
@@ -37,6 +44,12 @@ public struct EngineState: Codable, Sendable, Equatable {
         manifestURL = try container.decodeIfPresent(URL.self, forKey: .manifestURL) ?? defaults.manifestURL
         tld = try container.decodeIfPresent(String.self, forKey: .tld) ?? defaults.tld
         hosts = try container.decodeIfPresent(Set<String>.self, forKey: .hosts) ?? defaults.hosts
+        sites = try container.decodeIfPresent([Site].self, forKey: .sites) ?? defaults.sites
+        parked = try container.decodeIfPresent([ParkedFolder].self, forKey: .parked) ?? defaults.parked
+        lanAccess = try container.decodeIfPresent(Bool.self, forKey: .lanAccess) ?? defaults.lanAccess
+        phpExtensions = try container.decodeIfPresent([String: Set<String>].self, forKey: .phpExtensions) ?? defaults.phpExtensions
+        apacheModules = try container.decodeIfPresent(Set<String>.self, forKey: .apacheModules)
+        nginxModules = try container.decodeIfPresent(Set<String>.self, forKey: .nginxModules) ?? defaults.nginxModules
     }
 }
 

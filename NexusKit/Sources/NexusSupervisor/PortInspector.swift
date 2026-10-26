@@ -38,10 +38,16 @@ public struct PortOwner: Codable, Sendable, Equatable {
 }
 
 public enum PortInspector {
-    // Binds the port on all addresses, the same as the services do. A failed bind means that
-    // another process listens on the port, also when lsof cannot see that process because it
-    // belongs to another user.
+    // Binds the port on all addresses and on 127.0.0.1, the two ways the services bind it. Only
+    // "address in use" counts. So another process that listens on the port is found, also when
+    // lsof cannot see it because it belongs to another user. macOS refuses 127.0.0.1 below port
+    // 1024 to a normal user, and that refusal does not count. SO_REUSEADDR is set as the servers
+    // set it. So closed connections that wait on the port after a restart do not count either.
     public static func isFree(_ port: Int) -> Bool {
+        !isInUse(port, address: INADDR_ANY) && !isInUse(port, address: inet_addr("127.0.0.1"))
+    }
+
+    public static func acceptsConnections(_ port: Int) -> Bool {
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)
         guard descriptor >= 0 else {
             return false
@@ -51,13 +57,35 @@ public enum PortInspector {
         var address = sockaddr_in()
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = in_port_t(UInt16(port).bigEndian)
-        address.sin_addr = in_addr(s_addr: INADDR_ANY)
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+
+        return result == 0
+    }
+
+    private static func isInUse(_ port: Int, address bindAddress: in_addr_t) -> Bool {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            return false
+        }
+        defer { close(descriptor) }
+
+        var reuse: Int32 = 1
+        setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(UInt16(port).bigEndian)
+        address.sin_addr = in_addr(s_addr: bindAddress)
 
         let result = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
         }
 
-        return result == 0
+        return result != 0 && errno == EADDRINUSE
     }
 
     public static func owner(of port: Int) -> PortOwner? {

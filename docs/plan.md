@@ -241,6 +241,15 @@ Done when:
 - Xdebug on for one PHP version does not change the other versions.
 - A request from another device on the LAN gets a 403 until the LAN setting is on.
 
+Built: `nexus site add|edit|remove|list`, `nexus park`, `nexus unpark`, `nexus ext <php>`,
+`nexus module apache|nginx` and `nexus lan`. The ports have the names http, https and apache:
+`nexus port https 8443`. php.ini of each PHP version belongs to the user. Nexus writes it one time
+and keeps the extension toggles in conf.d/00-nexus.ini. Xdebug and PCOV are off by default.
+The checks ran with a new Laravel application in two copies, on 8080 and 8443.
+
+Risk: macOS asks before nexusd and its children read ~/Documents, ~/Desktop or ~/Downloads. A
+site in one of these folders needs that permission. The app must explain this in step 6.
+
 ## Step 5 - Databases and Redis
 
 Work:

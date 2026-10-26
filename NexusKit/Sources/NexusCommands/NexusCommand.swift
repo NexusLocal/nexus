@@ -19,6 +19,7 @@ struct NexusCommand: AsyncParsableCommand {
         subcommands: [
             Status.self, Start.self, Stop.self, Port.self, Available.self, Runtimes.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
+            SiteCommand.self, Park.self, Unpark.self, Ext.self, Module.self, Lan.self,
         ]
     )
 }
@@ -35,8 +36,8 @@ struct Status: AsyncParsableCommand {
         }
 
         for service in services {
-            let ports = service.ports.map(String.init).joined(separator: ", ")
-            print([service.id.padding(to: 14), state(service.state).padding(to: 22), "port \(ports)".padding(to: 12), service.displayName].joined(separator: " "))
+            let ports = service.ports.isEmpty ? "-" : "port \(service.ports.map(String.init).joined(separator: ", "))"
+            print([service.id.padding(to: 14), state(service.state).padding(to: 26), ports.padding(to: 16), service.displayName].joined(separator: " "))
 
             if case .failed(let reason) = service.state {
                 print("    \(reason)")
@@ -229,6 +230,173 @@ struct Uninstall: AsyncParsableCommand {
 
         try finish(try await send(.uninstall))
     }
+}
+
+extension WebServer: ExpressibleByArgument {}
+
+struct SiteCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "site",
+        abstract: "Adds, lists, changes and removes sites.",
+        subcommands: [List.self, Add.self, Edit.self, Remove.self],
+        defaultSubcommand: List.self
+    )
+
+    struct List: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Lists the sites.")
+
+        func run() async throws {
+            let response = try await send(.sites)
+
+            guard case .sites(let sites) = response else {
+                try finish(response)
+                return
+            }
+
+            if sites.isEmpty {
+                print("Nexus has no sites. Add one with: nexus site add <folder>, or park a folder with: nexus park <folder>")
+                return
+            }
+
+            for site in sites {
+                let origin = site.parked ? "parked" : "added"
+                print([site.url.padding(to: 36), "PHP \(site.php)".padding(to: 9), site.server.rawValue.padding(to: 7), origin.padding(to: 7), site.documentRoot].joined(separator: " "))
+
+                if site.hosts.count > 1 {
+                    print("    aliases: \(site.hosts.dropFirst().joined(separator: ", "))")
+                }
+            }
+        }
+    }
+
+    struct Add: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Adds a folder as a site, for example: nexus site add . --php 8.4 --server apache")
+
+        @Argument(help: "The folder of the site.") var folder: String = "."
+        @Option(help: "The host. The default is the folder name with the dev TLD, for example shop.test.") var host: String?
+        @Option(name: .customLong("alias"), help: "Another host for the same site. Repeat it for more hosts.") var aliases: [String] = []
+        @Option(help: "The PHP version line, for example 8.5. The default is the newest installed one.") var php: String?
+        @Option(help: "nginx or apache. The default is nginx.") var server: WebServer?
+
+        func run() async throws {
+            try finish(try await send(.addSite(folder: absolutePath(folder), host: host, aliases: aliases, php: php, server: server)))
+        }
+    }
+
+    struct Edit: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Changes the PHP version, the web server or the aliases of a site.")
+
+        @Argument(help: "The host of the site.") var host: String
+        @Option(help: "The PHP version line, for example 8.4.") var php: String?
+        @Option(help: "nginx or apache.") var server: WebServer?
+        @Option(name: .customLong("alias"), help: "The aliases. They replace the current aliases.") var aliases: [String] = []
+        @Flag(help: "Remove every alias.") var noAliases = false
+
+        func run() async throws {
+            let aliasChange: [String]? = noAliases ? [] : (aliases.isEmpty ? nil : aliases)
+            try finish(try await send(.editSite(host: host, change: SiteChange(php: php, server: server, aliases: aliasChange))))
+        }
+    }
+
+    struct Remove: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Removes an added site. The folder stays.")
+
+        @Argument(help: "The host of the site.") var host: String
+
+        func run() async throws {
+            try finish(try await send(.removeSite(host: host)))
+        }
+    }
+}
+
+struct Park: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Makes each subfolder of a folder a site, for example ~/Sites/shop becomes shop.test.")
+
+    @Argument(help: "The folder.") var folder: String = "."
+    @Option(help: "The PHP version line for these sites. The default is the newest installed one.") var php: String?
+    @Option(help: "nginx or apache. The default is nginx.") var server: WebServer?
+
+    func run() async throws {
+        try finish(try await send(.park(folder: absolutePath(folder), php: php, server: server)))
+    }
+}
+
+struct Unpark: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Stops a parked folder. Its subfolders stay.")
+
+    @Argument(help: "The folder.") var folder: String = "."
+
+    func run() async throws {
+        try finish(try await send(.unpark(folder: absolutePath(folder))))
+    }
+}
+
+struct Ext: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Lists or turns on and off the shared extensions of one PHP version, for example: nexus ext 8.4 xdebug on")
+
+    @Argument(help: "The PHP version line.") var php: String
+    @Argument(help: "The extension.") var name: String?
+    @Argument(help: "on or off.") var state: OnOff?
+
+    func run() async throws {
+        if let name, let state {
+            try finish(try await send(.setExtension(php: php, name: name, enabled: state == .on)))
+            return
+        }
+
+        try printToggles(try await send(.extensions(php: php)))
+    }
+}
+
+struct Module: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Lists or turns on and off the modules of Apache or nginx, for example: nexus module apache rewrite off")
+
+    @Argument(help: "apache or nginx.") var server: WebServer
+    @Argument(help: "The module.") var name: String?
+    @Argument(help: "on or off.") var state: OnOff?
+
+    func run() async throws {
+        if let name, let state {
+            try finish(try await send(.setModule(server: server, name: name, enabled: state == .on)))
+            return
+        }
+
+        try printToggles(try await send(.modules(server: server)))
+    }
+}
+
+struct Lan: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Shows or changes whether other devices on the network can open the sites.")
+
+    @Argument(help: "on or off.") var state: OnOff?
+
+    func run() async throws {
+        try finish(try await send(.lan(enabled: state.map { $0 == .on })))
+    }
+}
+
+enum OnOff: String, ExpressibleByArgument {
+    case on
+    case off
+}
+
+private func printToggles(_ response: NexusResponse) throws {
+    guard case .toggles(let toggles) = response else {
+        try finish(response)
+        return
+    }
+
+    for toggle in toggles {
+        let state = toggle.required ? "on (needed)" : (toggle.enabled ? "on" : "off")
+        print([toggle.name.padding(to: 32), state].joined(separator: " "))
+    }
+}
+
+private func absolutePath(_ path: String) -> String {
+    let expanded = NSString(string: path).expandingTildeInPath
+    return URL(filePath: expanded, relativeTo: URL(filePath: FileManager.default.currentDirectoryPath, directoryHint: .isDirectory))
+        .standardizedFileURL
+        .path(percentEncoded: false)
 }
 
 private func send(_ request: NexusRequest) async throws -> NexusResponse {

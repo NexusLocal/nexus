@@ -49,8 +49,8 @@ public struct CertificateAuthority: Sendable {
         self.now = now
     }
 
-    // The public certificate of the root CA, for a browser with its own certificate store, such
-    // as Firefox.
+    // The public certificate of the root CA. A browser with its own certificate store needs it,
+    // for example Firefox.
     public var rootCertificateFile: URL {
         folder.appending(path: "nexus-root-ca.pem", directoryHint: .notDirectory)
     }
@@ -137,6 +137,11 @@ public struct CertificateAuthority: Sendable {
     // Gives the certificate for these hosts. An existing certificate stays in use while it has
     // the same hosts, comes from the current root and is valid for more than 30 days.
     public func hostCertificate(for hosts: [String]) throws -> HostCertificate {
+        try hostCertificate(for: hosts, root: root())
+    }
+
+    // For many hosts at once: the caller reads the root from the keychain one time.
+    public func hostCertificate(for hosts: [String], root: RootCertificate) throws -> HostCertificate {
         var seen: Set<String> = []
         let hosts = try hosts.map(HostName.validated).filter { seen.insert($0).inserted }
 
@@ -144,7 +149,6 @@ public struct CertificateAuthority: Sendable {
             throw TLSError.noHosts
         }
 
-        let root = try root()
         let certificateFile = folder.appending(path: "\(primary).crt", directoryHint: .notDirectory)
         let keyFile = folder.appending(path: "\(primary).key", directoryHint: .notDirectory)
 

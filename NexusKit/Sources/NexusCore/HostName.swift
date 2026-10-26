@@ -52,6 +52,16 @@ public enum HostName {
         return host
     }
 
+    // Makes a DNS label from a folder name: "My Shop_2" becomes "my-shop-2".
+    public static func label(from name: String) -> String {
+        let lowered = name.lowercased().map { character -> Character in
+            character.isASCII && (character.isLetter || character.isNumber) ? character : "-"
+        }
+        let collapsed = String(lowered).split(separator: "-", omittingEmptySubsequences: true).joined(separator: "-")
+
+        return String(collapsed.prefix(63)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+
     private static func isValidLabel(_ label: Substring) -> Bool {
         guard (1...63).contains(label.utf8.count), label.first != "-", label.last != "-" else {
             return false
