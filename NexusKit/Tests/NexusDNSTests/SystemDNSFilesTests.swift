@@ -135,7 +135,7 @@ struct SystemDNSFilesTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         try writeHosts("127.0.0.1 localhost\n")
 
-        for host in ["localhost", "a b.local", "evil.local\n1.2.3.4 bank.com", "-a.local", "a..local"] {
+        for host in ["localhost", "a b.local", "evil.local\n1.2.3.4 bank.com", "-a.local", "a..local", "github.com", "local"] {
             #expect(throws: HostNameError.self) {
                 try files.setHosts([host])
             }

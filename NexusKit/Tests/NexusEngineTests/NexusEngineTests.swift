@@ -254,6 +254,17 @@ struct NexusEngineTests {
         #expect(helper.requests.isEmpty)
     }
 
+    @Test func aPublicNameGetsNoEtcHostsLineAndNoCertificate() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+
+        let host = await engine.handle(.addHost("github.com"))
+        let certificate = await engine.handle(.certificate(hosts: ["github.com"]))
+
+        #expect(host == .failure(message: HostNameError.publicHost("github.com").description))
+        #expect(certificate == .failure(message: HostNameError.publicHost("github.com").description))
+        #expect(helper.requests.isEmpty)
+    }
+
     @Test func aCertificateNamesItsFilesAndAsksForTrust() async throws {
         let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
 

@@ -2,14 +2,17 @@ import Foundation
 
 public enum HostNameError: Error, Equatable, CustomStringConvertible {
     case invalidHost(String)
+    case publicHost(String)
     case unsupportedTLD(String)
 
     public var description: String {
         switch self {
         case .invalidHost(let host):
             "\(host) is not a valid host name. Use letters, digits, hyphens and dots, for example shop.test."
+        case .publicHost(let host):
+            "\(host) can be a real name in public DNS, so Nexus does not use it. Use a name that ends in \(HostName.privateSuffixes.sorted().map { ".\($0)" }.joined(separator: ", "))."
         case .unsupportedTLD(let tld):
-            ".\(tld) cannot be the dev TLD. Nexus supports \(HostName.devTLDs.map { ".\($0)" }.joined(separator: ", "))."
+            ".\(tld) cannot be the dev TLD. Nexus supports \(HostName.devTLDs.sorted().map { ".\($0)" }.joined(separator: ", "))."
         }
     }
 }
@@ -18,6 +21,11 @@ public enum HostName {
     // Only names that public DNS never uses. A resolver file for a real TLD, such as .com or
     // .dev, would send every lookup of that TLD on this Mac to Nexus.
     public static let devTLDs: Set<String> = ["test", "internal", "localhost"]
+
+    // The names that Nexus signs a certificate for and writes to /etc/hosts. Any program of the
+    // user can ask nexusd for both, so a public name such as github.com would let that program
+    // read the HTTPS traffic of Safari and Chrome for that name.
+    public static let privateSuffixes: Set<String> = devTLDs.union(["local", "example", "invalid", "home.arpa"])
 
     public static func validatedTLD(_ tld: String) throws -> String {
         let tld = tld.lowercased()
@@ -35,6 +43,10 @@ public enum HostName {
 
         guard host.utf8.count <= 253, labels.count >= 2, labels.allSatisfy(isValidLabel) else {
             throw HostNameError.invalidHost(host)
+        }
+
+        guard privateSuffixes.contains(where: { host.hasSuffix(".\($0)") }) else {
+            throw HostNameError.publicHost(host)
         }
 
         return host

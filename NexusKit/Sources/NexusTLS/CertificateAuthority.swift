@@ -29,6 +29,16 @@ public struct CertificateAuthority: Sendable {
     public static let hostValidity: TimeInterval = 397 * 86_400
     public static let renewalMargin: TimeInterval = 30 * 86_400
 
+    // Browsers refuse a certificate of this root for a public name or for an IP address, also
+    // when the key is used outside nexusd.
+    static let nameConstraints = NameConstraints(
+        permittedDNSDomains: HostName.privateSuffixes.sorted(),
+        excludedIPRanges: [
+            ASN1OctetString(contentBytes: ArraySlice(repeating: 0, count: 8)),
+            ASN1OctetString(contentBytes: ArraySlice(repeating: 0, count: 32)),
+        ]
+    )
+
     private let store: any RootKeyStore
     private let folder: URL
     private let now: @Sendable () -> Date
@@ -89,6 +99,7 @@ public struct CertificateAuthority: Sendable {
             extensions: try Certificate.Extensions {
                 Critical(BasicConstraints.isCertificateAuthority(maxPathLength: 0))
                 Critical(KeyUsage(digitalSignature: true, keyCertSign: true, cRLSign: true))
+                Critical(Self.nameConstraints)
                 SubjectKeyIdentifier(hash: signer.publicKey)
             },
             issuerPrivateKey: signer
@@ -133,8 +144,10 @@ public struct CertificateAuthority: Sendable {
     // Removes the trust setting, the key, the certificate and every host certificate. A key
     // of a trusted root must not stay behind when Nexus is removed.
     public func remove() throws {
-        if let root = try existingRoot() {
-            let status = SecTrustSettingsRemoveTrustSettings(root.secCertificate, .user)
+        let certificates = try store.privateKey().map(store.certificates) ?? []
+
+        for certificate in certificates {
+            let status = SecTrustSettingsRemoveTrustSettings(certificate, .user)
             guard status == errSecSuccess || status == errSecItemNotFound else {
                 throw TLSError.trustSettings(status)
             }

@@ -1,3 +1,4 @@
+import Crypto
 import Foundation
 import NexusCore
 import NexusTestSupport
@@ -125,6 +126,53 @@ struct CertificateAuthorityTests {
 
         #expect(second.notValidAfter >= first.notValidAfter)
         #expect(try macOSAccepts(second, for: "shop.test", root: try authority.root()))
+    }
+
+    @Test func aPublicNameGetsNoCertificate() {
+        #expect(throws: HostNameError.publicHost("github.com")) {
+            try authority.hostCertificate(for: ["shop.test", "github.com"])
+        }
+    }
+
+    // Signs with the root key outside hostCertificate(for:), so only the name constraints of the
+    // root can stop a public name.
+    private func macOSAcceptsADirectlySignedCertificate(for host: String, root: RootCertificate) throws -> Bool {
+        let key = P256.Signing.PrivateKey()
+        let leaf = try Certificate(
+            version: .v3,
+            serialNumber: Certificate.SerialNumber(),
+            publicKey: Certificate.PublicKey(key.publicKey),
+            notValidBefore: clock.now.addingTimeInterval(-60),
+            notValidAfter: clock.now.addingTimeInterval(86_400),
+            issuer: root.certificate.subject,
+            subject: try DistinguishedName { CommonName(host) },
+            signatureAlgorithm: .ecdsaWithSHA256,
+            extensions: try Certificate.Extensions {
+                Critical(BasicConstraints.notCertificateAuthority)
+                Critical(KeyUsage(digitalSignature: true))
+                try ExtendedKeyUsage([.serverAuth])
+                SubjectAlternativeNames([.dnsName(host)])
+            },
+            issuerPrivateKey: try Certificate.PrivateKey(root.privateKey)
+        )
+
+        var trust: SecTrust?
+        #expect(SecTrustCreateWithCertificates(try CertificateAuthority.secCertificate(leaf), SecPolicyCreateSSL(true, host as CFString), &trust) == errSecSuccess)
+        let evaluation = try #require(trust)
+        SecTrustSetAnchorCertificates(evaluation, [root.secCertificate] as CFArray)
+        SecTrustSetAnchorCertificatesOnly(evaluation, true)
+
+        return SecTrustEvaluateWithError(evaluation, nil)
+    }
+
+    @Test func macOSRefusesAPublicNameEvenWhenTheRootKeySignsIt() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rootCertificate = try authority.root()
+
+        #expect(try macOSAcceptsADirectlySignedCertificate(for: "shop.test", root: rootCertificate))
+        #expect(try macOSAcceptsADirectlySignedCertificate(for: "shop.local", root: rootCertificate))
+        #expect(try !macOSAcceptsADirectlySignedCertificate(for: "github.com", root: rootCertificate))
+        #expect(try !macOSAcceptsADirectlySignedCertificate(for: "test.github.com", root: rootCertificate))
     }
 
     @Test func anInvalidHostGetsNoCertificate() {
