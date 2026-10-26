@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Test NexusKit
+        run: swift test --package-path NexusKit
+
+      - name: Build the app
+        run: >
+          xcodebuild build
+          -project Nexus.xcodeproj
+          -scheme Nexus
+          -configuration Debug
+          -destination 'platform=macOS'
+          CODE_SIGNING_ALLOWED=NO
