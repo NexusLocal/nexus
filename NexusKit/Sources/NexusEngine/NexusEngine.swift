@@ -129,6 +129,11 @@ public actor NexusEngine {
                 return .done(message: try await serialWeb { try await self.setModule(server, name: name, enabled: enabled) })
             case .lan(let enabled):
                 return .done(message: try await serialWeb { try await self.lan(enabled) })
+            case .databases:
+                return .databases(try await databaseInstances())
+            case .copyDatabase(let copy):
+                // A copy can take minutes, so it does not wait in the queue of the changes.
+                return .done(message: try await copyDatabase(copy))
             }
         } catch {
             return .failure(message: String(describing: error))
@@ -138,7 +143,7 @@ public actor NexusEngine {
     // Runs the requests that change services or sites one at a time. The actor answers other
     // requests while one waits for a process. Without the queue, a second change could run in
     // that time and a rollback of the first change could undo it.
-    private func serialWeb<Result: Sendable>(_ operation: @escaping @Sendable () async throws -> Result) async throws -> Result {
+    func serialWeb<Result: Sendable>(_ operation: @escaping @Sendable () async throws -> Result) async throws -> Result {
         let previous = webQueue
         let turn = Task {
             await previous?.value
@@ -216,7 +221,7 @@ public actor NexusEngine {
         return ports
     }
 
-    private func start(_ id: String) async throws -> String {
+    func start(_ id: String) async throws -> String {
         if id == Self.dnsServiceID {
             return try await startDNS()
         }
@@ -227,6 +232,10 @@ public actor NexusEngine {
 
         if id.hasPrefix("php-") {
             _ = try await writePHPConfig(line: String(id.dropFirst(4)), state: await stateStore.current())
+        }
+
+        if let database = await databaseRuntime(id), await supervisor.state(of: id)?.isActive != true {
+            try await prepareDatabase(database)
         }
 
         let message = try await startService(id)
@@ -248,7 +257,7 @@ public actor NexusEngine {
 
         // The answer goes back only when the service accepts connections, so a request right
         // after the command does not fail.
-        let deadline = ContinuousClock.now + .seconds(3)
+        let deadline = ContinuousClock.now + definition.startTimeout
         var accepting = PortInspector.acceptsConnections(definition.ports[0])
         while !accepting, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
@@ -351,6 +360,11 @@ public actor NexusEngine {
         }
 
         try await installer.remove(name: name, line: line)
+
+        if ServiceCatalog.databaseKind(of: runtime) != nil {
+            return "\(name) \(line) is removed. Its data folder stays: \(catalog.dataFolder(for: runtime).path(percentEncoded: false))"
+        }
+
         return "\(name) \(line) is removed."
     }
 

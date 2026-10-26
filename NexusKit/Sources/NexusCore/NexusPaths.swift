@@ -66,6 +66,16 @@ public struct NexusPaths: Sendable, Equatable {
         run.appending(path: "php-\(line).sock", directoryHint: .notDirectory)
     }
 
+    public func databaseConfig(_ kind: DatabaseKind, line: String) -> URL {
+        config.appending(path: "\(kind.rawValue)/\(line)/my.cnf", directoryHint: .notDirectory)
+    }
+
+    // PostgreSQL gets only a folder and names its socket after the port.
+    public func databaseSocket(_ kind: DatabaseKind, line: String, port: Int) -> URL {
+        let name = kind.usesMySQLProtocol ? "\(kind.rawValue)-\(line).sock" : ".s.PGSQL.\(port)"
+        return run.appending(path: name, directoryHint: .notDirectory)
+    }
+
     public func createFolders(using fileManager: FileManager = .default) throws {
         for folder in allFolders {
             try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)

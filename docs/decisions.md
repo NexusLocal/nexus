@@ -126,14 +126,18 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
 33. A site comes from an added folder or from a parked folder, where each subfolder is a site.
     The document root is public/ when it exists, else the folder.
 34. More than one version of a service can run at the same time. Each instance has its own
-    version, port and data folder.
+    version, port and data folder. Nexus has one instance for each installed version line, for
+    example mysql-8.0 and mysql-8.4. (step 5)
 35. A new database instance gets the user root with the password root, on 127.0.0.1 only. The
     user can change this. Reason: root and root is the MAMP default, so imported sites work.
 36. A button opens a database in the app that the user has (TablePlus, Sequel Ace). Nexus has no
     built-in admin tool.
 37. Import from MAMP PRO: the hosts (name, aliases, document root, PHP version, SSL). Database
     data comes over with the action "copy a database from another server" (a dump and a
-    restore through the port).
+    restore through the port). The tools of the instance that receives the copy make the dump,
+    so no tool of MAMP PRO runs (D7). The clients use the plugin folder of their package.
+    Evidence: without it, the MySQL 9.7 client cannot log in to MAMP PRO, where root has
+    mysql_native_password. (step 5)
 
 ### CLI
 

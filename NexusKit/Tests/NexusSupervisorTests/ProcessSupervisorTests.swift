@@ -71,6 +71,27 @@ struct ProcessSupervisorTests {
         #expect(kill(running, 0) != 0)
     }
 
+    @Test func stopSendsTheStopSignalOfTheService() async throws {
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let marker = logs.appending(path: "interrupted")
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        let script = "trap 'touch \"\(marker.path(percentEncoded: false))\"; exit 0' INT; echo ready; while :; do sleep 0.05; done"
+        let service = ServiceDefinition(
+            id: "database",
+            displayName: "database",
+            executable: URL(filePath: "/bin/sh"),
+            arguments: ["-c", script],
+            logFile: logs.appending(path: "database.log"),
+            stopSignal: SIGINT
+        )
+        try await supervisor.start(service)
+        _ = await waitFor { (try? String(contentsOf: logs.appending(path: "database.log"), encoding: .utf8))?.contains("ready") == true }
+
+        try await supervisor.stop("database")
+
+        #expect(FileManager.default.fileExists(atPath: marker.path(percentEncoded: false)))
+    }
+
     @Test func aServiceThatKeepsCrashingIsMarkedAsFailed() async throws {
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition("broken", executable: "/usr/bin/false"))
