@@ -31,7 +31,6 @@ struct CertificateAuthorityTests {
         return CertificateAuthority(paths: NexusPaths(root: root), store: store, now: { clock.now })
     }
 
-    // Checks the host certificate the way Safari does, with the Nexus root as the only anchor.
     private func macOSAccepts(_ certificate: HostCertificate, for host: String, root: RootCertificate) throws -> Bool {
         let pem = try String(contentsOf: certificate.certificateFile, encoding: .utf8)
         let leaf = try CertificateAuthority.secCertificate(Certificate(pemEncoded: pem))
@@ -134,9 +133,7 @@ struct CertificateAuthorityTests {
         }
     }
 
-    // Signs with the root key outside hostCertificate(for:), so only the name constraints of the
-    // root can stop a public name.
-    private func macOSAcceptsADirectlySignedCertificate(for host: String, root: RootCertificate) throws -> Bool {
+    private func macOSAcceptsACertificateSignedWithoutTheAuthority(for host: String, root: RootCertificate) throws -> Bool {
         let key = P256.Signing.PrivateKey()
         let leaf = try Certificate(
             version: .v3,
@@ -169,10 +166,10 @@ struct CertificateAuthorityTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let rootCertificate = try authority.root()
 
-        #expect(try macOSAcceptsADirectlySignedCertificate(for: "shop.test", root: rootCertificate))
-        #expect(try macOSAcceptsADirectlySignedCertificate(for: "shop.local", root: rootCertificate))
-        #expect(try !macOSAcceptsADirectlySignedCertificate(for: "github.com", root: rootCertificate))
-        #expect(try !macOSAcceptsADirectlySignedCertificate(for: "test.github.com", root: rootCertificate))
+        #expect(try macOSAcceptsACertificateSignedWithoutTheAuthority(for: "shop.test", root: rootCertificate))
+        #expect(try macOSAcceptsACertificateSignedWithoutTheAuthority(for: "shop.local", root: rootCertificate))
+        #expect(try !macOSAcceptsACertificateSignedWithoutTheAuthority(for: "github.com", root: rootCertificate))
+        #expect(try !macOSAcceptsACertificateSignedWithoutTheAuthority(for: "test.github.com", root: rootCertificate))
     }
 
     @Test func anInvalidHostGetsNoCertificate() {
@@ -184,10 +181,26 @@ struct CertificateAuthorityTests {
         }
     }
 
-    @Test func anUntrustedRootIsNotTrusted() throws {
+    @Test func trustMarksTheRootAsTrusted() throws {
         defer { try? FileManager.default.removeItem(at: root) }
         _ = try authority.root()
+        let before = authority.isTrusted()
 
+        try authority.trust()
+
+        #expect(!before)
+        #expect(authority.isTrusted())
+        #expect(store.certificateCount == 1)
+    }
+
+    @Test func removeDeletesTheRootAndTheHostCertificates() throws {
+        let certificate = try authority.hostCertificate(for: ["shop.test"])
+        try authority.trust()
+
+        try authority.remove()
+
+        #expect(try store.privateKey() == nil)
         #expect(!authority.isTrusted())
+        #expect(!FileManager.default.fileExists(atPath: certificate.certificateFile.path(percentEncoded: false)))
     }
 }

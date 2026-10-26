@@ -2,6 +2,10 @@ import Foundation
 import NexusRuntime
 import NexusSupervisor
 
+public enum NexusServiceID {
+    public static let dns = "dns"
+}
+
 public enum NexusRequest: Codable, Sendable, Equatable {
     case status
     case start(service: String)

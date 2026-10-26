@@ -131,6 +131,19 @@ struct SystemDNSFilesTests {
         #expect(try hosts() == original)
     }
 
+    @Test func setHostsRefusesAHostsFileThatIsALink() throws {
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let target = folder.appending(path: "managed-hosts")
+        try Data("127.0.0.1 localhost\n".utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(at: files.hostsFile, withDestinationURL: target)
+
+        #expect(throws: SystemDNSFilesError.linkedHosts(files.hostsFile.path(percentEncoded: false))) {
+            try files.setHosts(["shop.local"])
+        }
+        #expect(try String(contentsOf: target, encoding: .utf8) == "127.0.0.1 localhost\n")
+    }
+
     @Test func setHostsRefusesAnInvalidHost() throws {
         defer { try? FileManager.default.removeItem(at: folder) }
         try writeHosts("127.0.0.1 localhost\n")

@@ -18,6 +18,14 @@ public enum HelperError: Error, Equatable, CustomStringConvertible {
     case notReachable(String)
     case refused(String)
 
+    public var isNotReachable: Bool {
+        if case .notReachable = self {
+            return true
+        }
+
+        return false
+    }
+
     public var description: String {
         switch self {
         case .notReachable(let reason):
