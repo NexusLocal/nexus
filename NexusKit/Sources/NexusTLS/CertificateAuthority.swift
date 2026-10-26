@@ -111,48 +111,22 @@ public struct CertificateAuthority: Sendable {
         return RootCertificate(certificate: certificate, secCertificate: secCertificate, privateKey: key)
     }
 
-    // Evaluates the root the way Safari does. So the answer is also false when the user removed
-    // the trust in Keychain Access.
     public func isTrusted() -> Bool {
         guard let root = try? existingRoot() else {
             return false
         }
 
-        var trust: SecTrust?
-        guard SecTrustCreateWithCertificates(root.secCertificate, SecPolicyCreateSSL(true, nil), &trust) == errSecSuccess, let trust else {
-            return false
-        }
-
-        return SecTrustEvaluateWithError(trust, nil)
+        return store.isTrusted(root.secCertificate)
     }
 
     // macOS asks for the password of the user before it changes a trust setting.
     public func trust() throws {
-        let root = try root()
-        let result = SecTrustSettingsResult.trustRoot.rawValue
-        let settings: [[String: Any]] = [
-            [kSecTrustSettingsPolicy: SecPolicyCreateSSL(true, nil), kSecTrustSettingsResult: result],
-            [kSecTrustSettingsPolicy: SecPolicyCreateBasicX509(), kSecTrustSettingsResult: result],
-        ]
-
-        let status = SecTrustSettingsSetTrustSettings(root.secCertificate, .user, settings as CFArray)
-        guard status == errSecSuccess else {
-            throw TLSError.trustSettings(status)
-        }
+        try store.trust(root().secCertificate)
     }
 
-    // Removes the trust setting, the key, the certificate and every host certificate. A key
-    // of a trusted root must not stay behind when Nexus is removed.
+    // Removes the trust settings, the key, the certificates and every host certificate. A key of
+    // a trusted root must not stay behind when Nexus is removed.
     public func remove() throws {
-        let certificates = try store.privateKey().map(store.certificates) ?? []
-
-        for certificate in certificates {
-            let status = SecTrustSettingsRemoveTrustSettings(certificate, .user)
-            guard status == errSecSuccess || status == errSecItemNotFound else {
-                throw TLSError.trustSettings(status)
-            }
-        }
-
         try store.removeAll()
 
         if FileManager.default.fileExists(atPath: folder.path(percentEncoded: false)) {

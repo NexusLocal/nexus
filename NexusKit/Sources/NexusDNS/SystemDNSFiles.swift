@@ -7,6 +7,7 @@ public enum SystemDNSFilesError: Error, Equatable, CustomStringConvertible {
     case unreadableHosts(String)
     case brokenHostsBlock(String)
     case tooManyHosts(Int)
+    case linkedHosts(String)
 
     public var description: String {
         switch self {
@@ -20,6 +21,8 @@ public enum SystemDNSFilesError: Error, Equatable, CustomStringConvertible {
             "\(path) has a \"\(SystemDNSFiles.hostsBegin)\" line without a \"\(SystemDNSFiles.hostsEnd)\" line. Nexus does not change the file until you fix this."
         case .tooManyHosts(let count):
             "Nexus writes at most \(SystemDNSFiles.maximumHosts) hosts to /etc/hosts, not \(count)."
+        case .linkedHosts(let path):
+            "\(path) is a link that another app manages, so Nexus does not change it."
         }
     }
 }
@@ -105,6 +108,10 @@ public struct SystemDNSFiles: Sendable {
 
         let hosts = Set(try hosts.map(HostName.validated)).sorted()
         let path = hostsFile.path(percentEncoded: false)
+
+        if (try? FileManager.default.attributesOfItem(atPath: path)[.type] as? FileAttributeType) == .typeSymbolicLink {
+            throw SystemDNSFilesError.linkedHosts(path)
+        }
 
         guard let data = FileManager.default.contents(atPath: path), let current = String(data: data, encoding: .utf8) else {
             throw SystemDNSFilesError.unreadableHosts(path)

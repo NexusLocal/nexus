@@ -43,7 +43,7 @@ struct Status: AsyncParsableCommand {
             }
         }
 
-        if services.allSatisfy({ $0.id == "dns" }) {
+        if services.allSatisfy({ $0.id == NexusServiceID.dns }) {
             print("No package is installed. Install one with: nexus install redis 8.2")
         }
     }

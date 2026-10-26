@@ -32,13 +32,16 @@ public enum TLSError: Error, Equatable, CustomStringConvertible {
     }
 }
 
-// Keeps the private key and the certificate of the root CA. The real store is the login
-// keychain. Tests use a store in memory, so they do not change the keychain of the user.
+// Keeps the private key, the certificate and the trust setting of the root CA. The real store is
+// the login keychain. Tests use a store in memory, so they do not change the keychain or the
+// trust settings of the user.
 public protocol RootKeyStore: Sendable {
     func privateKey() throws -> SecKey?
     func createPrivateKey() throws -> SecKey
     func certificates(for key: SecKey) throws -> [SecCertificate]
     func add(_ certificate: SecCertificate) throws
+    func isTrusted(_ certificate: SecCertificate) -> Bool
+    func trust(_ certificate: SecCertificate) throws
     func removeAll() throws
 }
 
@@ -109,11 +112,42 @@ public struct LoginKeychainStore: RootKeyStore {
         }
     }
 
+    // Evaluates the root the way Safari does. So the answer is also false when the user removed
+    // the trust in Keychain Access.
+    public func isTrusted(_ certificate: SecCertificate) -> Bool {
+        var trust: SecTrust?
+        guard SecTrustCreateWithCertificates(certificate, SecPolicyCreateSSL(true, nil), &trust) == errSecSuccess, let trust else {
+            return false
+        }
+
+        return SecTrustEvaluateWithError(trust, nil)
+    }
+
+    public func trust(_ certificate: SecCertificate) throws {
+        let result = SecTrustSettingsResult.trustRoot.rawValue
+        let settings: [[String: Any]] = [
+            [kSecTrustSettingsPolicy: SecPolicyCreateSSL(true, nil), kSecTrustSettingsResult: result],
+            [kSecTrustSettingsPolicy: SecPolicyCreateBasicX509(), kSecTrustSettingsResult: result],
+        ]
+
+        let status = SecTrustSettingsSetTrustSettings(certificate, .user, settings as CFArray)
+        guard status == errSecSuccess else {
+            throw TLSError.trustSettings(status)
+        }
+    }
+
+    // Removes every certificate with the label of Nexus, also one whose key the user deleted in
+    // Keychain Access, so no trusted Nexus root stays behind.
     public func removeAll() throws {
         for certificate in try certificates() {
+            let trustStatus = SecTrustSettingsRemoveTrustSettings(certificate, .user)
+            guard [errSecSuccess, errSecItemNotFound, errSecNoTrustSettings].contains(trustStatus) else {
+                throw TLSError.trustSettings(trustStatus)
+            }
+
             let status = SecItemDelete([kSecClass: kSecClassCertificate, kSecValueRef: certificate] as CFDictionary)
             guard status == errSecSuccess || status == errSecItemNotFound else {
-                throw TLSError.keychain(operation: "remove the certificate of the Nexus root CA", status: status)
+                throw TLSError.keychain(operation: "remove the certificate \"\(Self.label)\". Remove it in Keychain Access", status: status)
             }
         }
 

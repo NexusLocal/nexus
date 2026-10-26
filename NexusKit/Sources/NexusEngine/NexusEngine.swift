@@ -29,7 +29,7 @@ public struct HTTPManifestSource: ManifestSource {
 // tests call it directly. The helper and the root CA have no default, so a test can never
 // change /etc or the login keychain by accident.
 public actor NexusEngine {
-    public static let dnsServiceID = "dns"
+    public static let dnsServiceID = NexusServiceID.dns
 
     private let paths: NexusPaths
     private let supervisor: ProcessSupervisor
@@ -41,10 +41,14 @@ public actor NexusEngine {
     private let certificateAuthority: CertificateAuthority
     private let systemFiles: SystemDNSFiles
     private let unregister: @Sendable () -> Void
+    private let helperRetryDelay: Duration
 
     private var dnsServer: DNSServer?
     private var dnsState: ServiceState = .stopped
     private var systemFilesProblem: String?
+    private var systemFilesQueue: Task<Void, Never>?
+    private var helperRetry: Task<Void, Never>?
+    private var uninstalling = false
 
     public init(
         paths: NexusPaths,
@@ -54,6 +58,7 @@ public actor NexusEngine {
         downloader: any PackageDownloader = URLSessionDownloader(),
         manifestSource: any ManifestSource = HTTPManifestSource(),
         systemFiles: SystemDNSFiles = SystemDNSFiles(),
+        helperRetryDelay: Duration = .seconds(5),
         unregister: @escaping @Sendable () -> Void = {}
     ) {
         self.paths = paths
@@ -65,6 +70,7 @@ public actor NexusEngine {
         self.helper = helper
         self.certificateAuthority = certificateAuthority
         self.systemFiles = systemFiles
+        self.helperRetryDelay = helperRetryDelay
         self.unregister = unregister
     }
 
@@ -115,6 +121,7 @@ public actor NexusEngine {
     }
 
     public func shutdown() async {
+        helperRetry?.cancel()
         await supervisor.stopAll()
         stopDNS()
     }
@@ -234,25 +241,40 @@ extension NexusEngine {
     }
 
     private func startDNS() async throws -> String {
-        let state = await stateStore.current()
         let port = try await dnsPort()
-        let server = dnsServer ?? DNSServer(responder: DNSResponder(tld: state.tld))
-        dnsServer = server
+        try await bindDNS(port: port)
+        await applySystemFiles()
+
+        let tld = await stateStore.current().tld
+        return systemFilesProblem.map { "The DNS server runs on port \(port), but macOS does not send .\(tld) names to it yet. \($0)" }
+            ?? "The DNS server answers every .\(tld) name on port \(port)."
+    }
+
+    // Binds a new server before it stops the old one. So a port that is in use leaves the
+    // running server as it is.
+    private func bindDNS(port: Int) async throws {
+        let server = DNSServer(responder: DNSResponder(tld: await stateStore.current().tld))
 
         do {
+            if dnsServer?.port == port {
+                dnsServer?.stop()
+            }
             try server.start(port: port)
         } catch {
-            dnsState = .failed(reason: String(describing: error))
+            if dnsServer?.port == nil {
+                dnsState = .failed(reason: String(describing: error))
+            }
             throw error
         }
 
+        dnsServer?.stop()
+        dnsServer = server
         dnsState = .running(pid: getpid(), since: .now)
-        await applySystemFiles()
-        return "The DNS server answers every .\(state.tld) name on port \(port)."
     }
 
     private func stopDNS() {
         dnsServer?.stop()
+        dnsServer = nil
         dnsState = .stopped
     }
 
@@ -261,24 +283,21 @@ extension NexusEngine {
             throw RuntimeError.unsupported("The DNS server needs a port from 1024 to 65535, because it runs without root.")
         }
 
-        try await stateStore.update { $0.ports[Self.dnsServiceID] = port }
-
-        guard dnsState.isActive else {
+        guard dnsState != .stopped else {
+            try await stateStore.update { $0.ports[Self.dnsServiceID] = port }
             return "The DNS server uses port \(port) at its next start."
         }
 
-        _ = try await startDNS()
+        try await bindDNS(port: port)
+        try await stateStore.update { $0.ports[Self.dnsServiceID] = port }
+        await applySystemFiles()
+
         return systemFilesProblem.map { "The DNS server runs on port \(port), but /etc/resolver does not name it yet. \($0)" }
             ?? "The DNS server runs on port \(port), and /etc/resolver names it."
     }
 
     // A failed DNS server or a missing resolver file both mean that .test names do not work.
-    // The status tries the helper again first, so it is current after the user approves it.
     private func dnsStatus() async -> ServiceStatus {
-        if systemFilesProblem != nil {
-            await applySystemFiles()
-        }
-
         let state = await stateStore.current()
         let port = state.ports[Self.dnsServiceID] ?? DNSServer.defaultPort
         var current = dnsState
@@ -290,20 +309,68 @@ extension NexusEngine {
         return ServiceStatus(id: Self.dnsServiceID, displayName: "DNS for .\(state.tld)", ports: [port], state: current)
     }
 
-    // The resolver file names the port of the DNS server, so it is only written while the server
-    // runs. The /etc/hosts lines do not need the DNS server.
+    // Each call waits for the call before it, and reads the state only when its turn comes. So
+    // the helper always gets the newest host list last.
     private func applySystemFiles() async {
+        let previous = systemFilesQueue
+        let turn = Task {
+            await previous?.value
+            await self.writeSystemFiles()
+        }
+
+        systemFilesQueue = turn
+        await turn.value
+    }
+
+    // The resolver file names the port of the DNS server, so it is only written while the server
+    // runs. The /etc/hosts lines do not need the DNS server, so a refused resolver file does not
+    // stop them. A helper that does not answer yet, for example before the user approves it, is
+    // asked again every few seconds.
+    private func writeSystemFiles() async {
+        guard !uninstalling else {
+            return
+        }
+
         let state = await stateStore.current()
+        var problems: [any Error] = []
+
+        if let port = dnsServer?.port {
+            do {
+                try await helper.send(.setResolver(tld: state.tld, port: port))
+            } catch {
+                problems.append(error)
+            }
+        }
 
         do {
-            if let port = dnsServer?.port {
-                try await helper.send(.setResolver(tld: state.tld, port: port))
-            }
             try await helper.send(.setHosts(state.hosts.sorted()))
-            systemFilesProblem = nil
         } catch {
-            systemFilesProblem = String(describing: error)
+            problems.append(error)
         }
+
+        let messages = problems.map { String(describing: $0) }
+        systemFilesProblem = messages.isEmpty ? nil : Array(Set(messages)).sorted().joined(separator: " ")
+
+        if problems.contains(where: { ($0 as? HelperError)?.isNotReachable == true }) {
+            scheduleHelperRetry()
+        }
+    }
+
+    private func scheduleHelperRetry() {
+        guard helperRetry == nil else {
+            return
+        }
+
+        let delay = helperRetryDelay
+        helperRetry = Task {
+            try? await Task.sleep(for: delay)
+            await self.retryHelper()
+        }
+    }
+
+    private func retryHelper() async {
+        helperRetry = nil
+        await applySystemFiles()
     }
 
     private func addHost(_ name: String) async throws -> String {
@@ -345,6 +412,9 @@ extension NexusEngine {
             return "The Nexus root CA is trusted already."
         }
 
+        // The root exists before the password dialog opens. The actor answers other requests
+        // while the dialog is open, and a certificate request must not make a second root.
+        _ = try authority.root()
         try await Task.detached { try authority.trust() }.value
 
         guard authority.isTrusted() else {
@@ -376,25 +446,33 @@ extension NexusEngine {
 
 // Removing Nexus.
 extension NexusEngine {
-    // Stops at the first step that fails, so the helper stays registered while its files still
-    // exist. Without the helper, nothing can remove them.
+    // Stops at the first step that fails. The system files go first: when the helper does not
+    // answer, nothing has changed yet, and the helper stays registered while its files exist.
     private func uninstall() async throws -> String {
         let tld = await stateStore.current().tld
-
-        await supervisor.stopAll()
-        stopDNS()
+        uninstalling = true
+        helperRetry?.cancel()
+        await systemFilesQueue?.value
 
         if systemFiles.hasNexusChanges(tld: tld) {
             do {
                 try await helper.send(.removeResolver(tld: tld))
                 try await helper.send(.setHosts([]))
             } catch {
-                throw RuntimeError.unsupported("Nexus did not remove /etc/resolver/\(tld) and its /etc/hosts lines, so it stopped the removal. \(error)")
+                uninstalling = false
+                throw RuntimeError.unsupported("Nexus did not remove /etc/resolver/\(tld) and its /etc/hosts lines, so it stopped the removal. Nothing else changed. \(error)")
             }
         }
 
         let authority = certificateAuthority
-        try await Task.detached { try authority.remove() }.value
+        do {
+            try await Task.detached { try authority.remove() }.value
+        } catch {
+            throw RuntimeError.unsupported("Nexus removed /etc/resolver/\(tld) and its /etc/hosts lines, but not its root CA. Run nexus uninstall again. \(error)")
+        }
+
+        await supervisor.stopAll()
+        stopDNS()
 
         let unregister = unregister
         Task {
