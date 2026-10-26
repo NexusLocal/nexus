@@ -24,7 +24,11 @@ Out of scope: Memcached, Mailhog, Dynamic DNS and Valkey.
 5. UI: a main window for sites and services, and a menu bar item for status, start and stop.
    "Start at login" is a setting that is on by default.
 6. App updates use Sparkle.
-6b. The Apple team Rood Fruit B.V. (4G5C39PFB2) signs Nexus. (user)
+6b. The Apple team Rood Fruit B.V. signs the releases of Nexus. (user) The team has no active
+    paid membership now, so it cannot sign yet. Release signing (Developer ID and
+    notarization) needs the paid Apple Developer Program. Reopen in step 10.
+    The repository contains no team. Each developer sets their own team in
+    Config/Signing.local.xcconfig, which git ignores. The owner uses the free Personal Team.
 6c. Bundle IDs: nl.roodfruit.nexus for the app, with .daemon, .helper and .cli for the other
     programs. Chosen by Claude from roodfruit.nl, the domain of the team. It cannot change after
     the first release.
