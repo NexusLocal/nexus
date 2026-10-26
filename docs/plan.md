@@ -320,7 +320,9 @@ Done when: a diff between the main .env and the workspace .env shows only the ex
 ### 8e. Databases
 
 Work: copy every database of the site that is on a Nexus instance (D46). MySQL and MariaDB
-use mysqldump with --single-transaction and a restore. PostgreSQL uses pg_dump and
+use mysqldump with --single-transaction and a restore. MySQL also needs --set-gtid-purged=OFF:
+MySQL 9 turns GTIDs on, and a dump with GTID_PURGED fails when it goes back into the same
+server. PostgreSQL uses pg_dump and
 pg_restore. CREATE DATABASE with TEMPLATE needs a template that has no other connections,
 so it is not the default. SQLite gets an APFS clone.
 
