@@ -1,9 +1,13 @@
 import Darwin
 import Foundation
 import NexusCore
+import NexusDNS
 import NexusIPC
 import NexusRuntime
 import NexusSupervisor
+import NexusTestSupport
+import NexusTLS
+import Synchronization
 import Testing
 @testable import NexusEngine
 
@@ -27,8 +31,18 @@ struct NexusEngineTests {
     private let workspace = FileManager.default.temporaryDirectory
         .appending(path: "Nexus Engine Tests \(UUID().uuidString)", directoryHint: .isDirectory)
 
+    private let helper = RecordingHelper()
+    private let keyStore = MemoryKeyStore()
+
     private var paths: NexusPaths {
         NexusPaths(root: workspace.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
+    }
+
+    private var systemFiles: SystemDNSFiles {
+        SystemDNSFiles(
+            resolverFolder: workspace.appending(path: "etc/resolver", directoryHint: .isDirectory),
+            hostsFile: workspace.appending(path: "etc/hosts", directoryHint: .notDirectory)
+        )
     }
 
     // A package named redis whose redis-server only sleeps, so the test needs no real Redis.
@@ -63,14 +77,49 @@ struct NexusEngineTests {
         return Int(UInt16(bigEndian: bound.sin_port))
     }
 
-    private func makeEngine(package: ManifestPackage, port: Int) throws -> NexusEngine {
+    private func freeUDPPort() -> Int {
+        let descriptor = socket(AF_INET, SOCK_DGRAM, 0)
+        defer { close(descriptor) }
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        _ = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        var bound = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &bound) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(descriptor, $0, &length) } }
+        return Int(UInt16(bigEndian: bound.sin_port))
+    }
+
+    private func makeEngine(package: ManifestPackage, port: Int, dnsPort: Int? = nil, unregister: @escaping @Sendable () -> Void = {}) throws -> NexusEngine {
         try paths.createFolders()
         var state = EngineState()
         state.ports["redis-1.0"] = port
+        state.ports[NexusEngine.dnsServiceID] = dnsPort ?? freeUDPPort()
         try JSONEncoder().encode(state).write(to: paths.config.appending(path: "state.json"))
 
+        return makeEngine(package: package, unregister: unregister)
+    }
+
+    private func makeEngine(package: ManifestPackage, unregister: @escaping @Sendable () -> Void = {}) -> NexusEngine {
         let manifest = Manifest(schema: 1, generated: .now, repository: "test", packages: [package])
-        return NexusEngine(paths: paths, downloader: CopyDownloader(), manifestSource: FixedManifest(manifest: manifest))
+        return NexusEngine(
+            paths: paths,
+            helper: helper,
+            certificateAuthority: CertificateAuthority(paths: paths, store: keyStore),
+            downloader: CopyDownloader(),
+            manifestSource: FixedManifest(manifest: manifest),
+            systemFiles: systemFiles,
+            unregister: unregister
+        )
+    }
+
+    private func services(_ response: NexusResponse) -> [String: ServiceStatus] {
+        guard case .services(let services) = response else {
+            Issue.record("no service list: \(response)")
+            return [:]
+        }
+
+        return Dictionary(uniqueKeysWithValues: services.map { ($0.id, $0) })
     }
 
     @Test func installStartStatusAndStop() async throws {
@@ -87,8 +136,8 @@ struct NexusEngineTests {
             return
         }
         #expect(message == "Redis 1.0.0 runs on port \(port).")
-        #expect(services.map(\.id) == ["redis-1.0"])
-        if case .running = services.first?.state {} else { Issue.record("the service does not run: \(services)") }
+        #expect(services.map(\.id) == ["dns", "redis-1.0"])
+        if case .running = services.last?.state {} else { Issue.record("the service does not run: \(services)") }
         #expect(stopped == .done(message: "redis-1.0 stopped."))
     }
 
@@ -100,13 +149,12 @@ struct NexusEngineTests {
         _ = await first.handle(.start(service: "redis-1.0"))
         await first.shutdown()
 
-        let second = NexusEngine(paths: paths, downloader: CopyDownloader(),
-                                 manifestSource: FixedManifest(manifest: Manifest(schema: 1, generated: .now, repository: "test", packages: [package])))
+        let second = makeEngine(package: package)
         await second.startEnabledServices()
-        let status = await second.handle(.status)
+        let status = services(await second.handle(.status))
 
-        guard case .services(let services) = status, case .running = services.first?.state else {
-            Issue.record("the service did not start again: \(status)")
+        guard case .running = status["redis-1.0"]?.state, case .running = status["dns"]?.state else {
+            Issue.record("the services did not start again: \(status)")
             return
         }
         await second.shutdown()
@@ -138,5 +186,137 @@ struct NexusEngineTests {
         #expect(PortProfile.development.defaultPort(3306) == 13306)
         #expect(PortProfile.development.defaultPort(443) == 8443)
         #expect(PortProfile.standard.defaultPort(6379) == 6379)
+    }
+
+    @Test func startingTheEngineStartsDNSAndWritesTheResolverFile() async throws {
+        let dnsPort = freeUDPPort()
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort(), dnsPort: dnsPort)
+
+        await engine.startEnabledServices()
+        let status = services(await engine.handle(.status))
+
+        #expect(helper.requests == [.setResolver(tld: "test", port: dnsPort), .setHosts([])])
+        #expect(status["dns"]?.ports == [dnsPort])
+        if case .running = status["dns"]?.state {} else { Issue.record("DNS does not run: \(status)") }
+        await engine.shutdown()
+    }
+
+    @Test func dnsWithoutTheHelperIsFailedUntilTheHelperAnswers() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        helper.setReachable(false)
+        await engine.startEnabledServices()
+
+        let before = services(await engine.handle(.status))
+        helper.setReachable(true)
+        let after = services(await engine.handle(.status))
+
+        guard case .failed(let reason) = before["dns"]?.state else {
+            Issue.record("DNS is not failed: \(before)")
+            return
+        }
+        #expect(reason.contains("Login Items & Extensions"))
+        if case .running = after["dns"]?.state {} else { Issue.record("DNS does not run: \(after)") }
+        await engine.shutdown()
+    }
+
+    @Test func aNewDNSPortMovesTheServerAndTheResolverFile() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        await engine.startEnabledServices()
+        let newPort = freeUDPPort()
+
+        let response = await engine.handle(.setPort(service: "dns", port: newPort))
+
+        #expect(response == .done(message: "The DNS server runs on port \(newPort), and /etc/resolver names it."))
+        #expect(helper.requests.last(where: { if case .setResolver = $0 { true } else { false } }) == .setResolver(tld: "test", port: newPort))
+        #expect(await engine.handle(.setPort(service: "dns", port: 53)) == .failure(message: "The DNS server needs a port from 1024 to 65535, because it runs without root."))
+        await engine.shutdown()
+    }
+
+    @Test func aHostOutsideTheTLDGetsAnEtcHostsLine() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+
+        let added = await engine.handle(.addHost("Shop.Local"))
+        let listed = await engine.handle(.hosts)
+        let removed = await engine.handle(.removeHost("shop.local"))
+
+        #expect(added == .done(message: "/etc/hosts sends shop.local to 127.0.0.1 and ::1."))
+        #expect(listed == .hosts(["shop.local"]))
+        #expect(removed == .done(message: "/etc/hosts has no line for shop.local now."))
+        #expect(helper.requests == [.setHosts(["shop.local"]), .setHosts([])])
+    }
+
+    @Test func aHostInTheTLDNeedsNoEtcHostsLine() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+
+        let response = await engine.handle(.addHost("shop.test"))
+
+        #expect(response == .failure(message: "shop.test needs no line in /etc/hosts. The DNS server of Nexus answers every .test name."))
+        #expect(helper.requests.isEmpty)
+    }
+
+    @Test func aCertificateNamesItsFilesAndAsksForTrust() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+
+        let response = await engine.handle(.certificate(hosts: ["shop.test"]))
+
+        guard case .done(let message) = response else {
+            Issue.record("no certificate: \(response)")
+            return
+        }
+        #expect(message.contains(paths.certs.appending(path: "shop.test.crt").path(percentEncoded: false)))
+        #expect(message.contains("nexus trust"))
+    }
+
+    @Test func uninstallRemovesTheSystemFilesAndTheRootCA() async throws {
+        let unregistered = Mutex(false)
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort()) { unregistered.withLock { $0 = true } }
+        _ = await engine.handle(.certificate(hosts: ["shop.test"]))
+        try FileManager.default.createDirectory(at: systemFiles.resolverFolder, withIntermediateDirectories: true)
+        try Data(SystemDNSFiles.resolverContents(port: 10053).utf8).write(to: systemFiles.resolverFolder.appending(path: "test"))
+
+        let response = await engine.handle(.uninstall)
+        try await Task.sleep(for: .seconds(1.5))
+
+        guard case .done = response else {
+            Issue.record("uninstall failed: \(response)")
+            return
+        }
+        #expect(helper.requests == [.removeResolver(tld: "test"), .setHosts([])])
+        #expect(try keyStore.privateKey() == nil)
+        #expect(!FileManager.default.fileExists(atPath: paths.certs.path(percentEncoded: false)))
+        #expect(unregistered.withLock { $0 })
+    }
+
+    @Test func uninstallStopsWhenTheHelperDoesNotAnswer() async throws {
+        let unregistered = Mutex(false)
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort()) { unregistered.withLock { $0 = true } }
+        _ = await engine.handle(.certificate(hosts: ["shop.test"]))
+        try FileManager.default.createDirectory(at: systemFiles.resolverFolder, withIntermediateDirectories: true)
+        try Data(SystemDNSFiles.resolverContents(port: 10053).utf8).write(to: systemFiles.resolverFolder.appending(path: "test"))
+        helper.setReachable(false)
+
+        let response = await engine.handle(.uninstall)
+        try await Task.sleep(for: .seconds(1.5))
+
+        guard case .failure(let message) = response else {
+            Issue.record("uninstall did not stop: \(response)")
+            return
+        }
+        #expect(message.contains("stopped the removal"))
+        #expect(try keyStore.privateKey() != nil)
+        #expect(!unregistered.withLock { $0 })
+    }
+
+    @Test func aStateFileWithoutTheNewKeysKeepsItsValues() throws {
+        let old = #"{"portProfile":"development","ports":{"redis-8.2":16379},"enabledServices":["redis-8.2"],"manifestURL":"file:///tmp/m.json"}"#
+
+        let state = try JSONDecoder().decode(EngineState.self, from: Data(old.utf8))
+
+        #expect(state.portProfile == .development)
+        #expect(state.ports == ["redis-8.2": 16379])
+        #expect(state.enabledServices == ["redis-8.2"])
+        #expect(state.manifestURL == URL(string: "file:///tmp/m.json"))
+        #expect(state.tld == "test")
+        #expect(state.hosts.isEmpty)
     }
 }
