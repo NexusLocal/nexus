@@ -98,8 +98,15 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
 28. DNS: a wildcard resolver for the dev TLD (.test by default) through /etc/resolver/test and a
     small DNS server in Nexus. /etc/hosts gets lines only for hosts outside the dev TLD, such as
     .local hosts. Reason: workspaces add hosts often, and MAMP PRO writes 78 lines to /etc/hosts.
+    The dev TLD can only be .test, .internal or .localhost. Reason: a resolver file for a real
+    TLD, such as .dev, sends every lookup of that TLD on the Mac to Nexus. (user)
 29. SSL: Nexus makes its own root CA. The user trusts it one time. Nexus signs a certificate for
     each host and each workspace. The CA private key stays in the login keychain.
+    Nexus signs certificates and writes /etc/hosts lines only for names that end in .test,
+    .localhost, .internal, .local, .example, .invalid or .home.arpa. The root CA has name
+    constraints for the same names. Reason: every program of the user can run the nexus CLI. A
+    certificate for a public name such as github.com would let that program read the HTTPS
+    traffic of the browser. (security review of step 3)
 30. One small privileged helper (SMAppService) writes /etc/resolver/<tld> and the /etc/hosts
     lines. It refuses every other path. The trust of the root CA needs no helper: it is a trust
     setting in the login keychain, and macOS asks for the password. The DNS server needs no
