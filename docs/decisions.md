@@ -91,6 +91,9 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
     OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES.
     Evidence: php-cgi children of MAMP PRO crash on macOS 27 because the parent loads the
     Objective-C runtime before it forks.
+    Every PHP process also gets OS_ACTIVITY_MODE=disable. Evidence: a php-fpm worker of PHP 8.5
+    crashed in the SQLite of macOS when it wrote its first log line after the fork. In a test,
+    9 of 80 forks crashed without the setting and 0 of 80 with it.
 27. Extensions follow the MAMP model. Core extensions are built into the binary. Optional
     extensions (xdebug, pcov, opcache, redis, imagick, igbinary, apcu, yaml and more) are shared
     .so files. Nexus turns them on or off in the php.ini of that PHP version, not for one site.

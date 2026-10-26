@@ -31,24 +31,26 @@ public struct HTTPManifestSource: ManifestSource {
 public actor NexusEngine {
     public static let dnsServiceID = NexusServiceID.dns
 
-    private let paths: NexusPaths
-    private let supervisor: ProcessSupervisor
-    private let installer: RuntimeInstaller
-    private let catalog: ServiceCatalog
-    private let stateStore: EngineStateStore
+    let paths: NexusPaths
+    let supervisor: ProcessSupervisor
+    let installer: RuntimeInstaller
+    let catalog: ServiceCatalog
+    let stateStore: EngineStateStore
     private let manifestSource: any ManifestSource
     private let helper: any PrivilegedHelper
-    private let certificateAuthority: CertificateAuthority
+    let certificateAuthority: CertificateAuthority
     private let systemFiles: SystemDNSFiles
     private let unregister: @Sendable () -> Void
     private let helperRetryDelay: Duration
 
     private var dnsServer: DNSServer?
     private var dnsState: ServiceState = .stopped
-    private var systemFilesProblem: String?
+    var systemFilesProblem: String?
+    var writtenHosts: [String]?
     private var systemFilesQueue: Task<Void, Never>?
     private var helperRetry: Task<Void, Never>?
     private var uninstalling = false
+    private var webQueue: Task<Void, Never>?
 
     public init(
         paths: NexusPaths,
@@ -80,11 +82,11 @@ public actor NexusEngine {
             case .status:
                 return .services(try await serviceStatus())
             case .start(let id):
-                return .done(message: try await start(id))
+                return .done(message: try await serialWeb { try await self.start(id) })
             case .stop(let id):
-                return .done(message: try await stop(id))
+                return .done(message: try await serialWeb { try await self.stop(id) })
             case .setPort(let id, let port):
-                return .done(message: try await setPort(id, port))
+                return .done(message: try await serialWeb { try await self.setPort(id, port) })
             case .available:
                 return .available(try await manifest().packages)
             case .installed:
@@ -105,15 +107,53 @@ public actor NexusEngine {
                 return .done(message: try await removeHost(host))
             case .uninstall:
                 return .done(message: try await uninstall())
+            case .sites:
+                return .sites(await siteInfo())
+            case .addSite(let folder, let host, let aliases, let php, let server):
+                return .done(message: try await serialWeb { try await self.addSite(folder: folder, host: host, aliases: aliases, php: php, server: server) })
+            case .removeSite(let host):
+                return .done(message: try await serialWeb { try await self.removeSite(host) })
+            case .editSite(let host, let change):
+                return .done(message: try await serialWeb { try await self.editSite(host, change: change) })
+            case .park(let folder, let php, let server):
+                return .done(message: try await serialWeb { try await self.park(folder: folder, php: php, server: server) })
+            case .unpark(let folder):
+                return .done(message: try await serialWeb { try await self.unpark(folder: folder) })
+            case .extensions(let php):
+                return .toggles(try await extensionToggles(line: php))
+            case .setExtension(let php, let name, let enabled):
+                return .done(message: try await serialWeb { try await self.setExtension(line: php, name: name, enabled: enabled) })
+            case .modules(let server):
+                return .toggles(try await moduleToggles(server))
+            case .setModule(let server, let name, let enabled):
+                return .done(message: try await serialWeb { try await self.setModule(server, name: name, enabled: enabled) })
+            case .lan(let enabled):
+                return .done(message: try await serialWeb { try await self.lan(enabled) })
             }
         } catch {
             return .failure(message: String(describing: error))
         }
     }
 
-    // Starts the DNS server and every service that ran when nexusd stopped the last time.
+    // Runs the requests that change services or sites one at a time. The actor answers other
+    // requests while one waits for a process. Without the queue, a second change could run in
+    // that time and a rollback of the first change could undo it.
+    private func serialWeb<Result: Sendable>(_ operation: @escaping @Sendable () async throws -> Result) async throws -> Result {
+        let previous = webQueue
+        let turn = Task {
+            await previous?.value
+            return try await operation()
+        }
+
+        webQueue = Task { _ = try? await turn.value }
+        return try await turn.value
+    }
+
+    // Starts the DNS server, the web services that the sites need, and every other service that
+    // ran when nexusd stopped the last time.
     public func startEnabledServices() async {
         _ = try? await startDNS()
+        _ = try? await applyWeb()
 
         for id in await stateStore.current().enabledServices.sorted() {
             _ = try? await start(id)
@@ -130,8 +170,8 @@ public actor NexusEngine {
         let supervised = Dictionary(uniqueKeysWithValues: await supervisor.status().map { ($0.id, $0) })
         var all = [await dnsStatus()]
 
-        for runtime in await installer.installedRuntimes() {
-            guard let id = catalog.serviceID(for: runtime), let standard = catalog.standardPort(for: runtime) else {
+        for runtime in await serviceRuntimes() {
+            guard let id = catalog.serviceID(for: runtime) else {
                 continue
             }
 
@@ -140,12 +180,40 @@ public actor NexusEngine {
                 continue
             }
 
-            let port = try await stateStore.port(for: id, standard: standard)
-            let name = catalog.definition(for: runtime, port: port)?.displayName ?? id
-            all.append(ServiceStatus(id: id, displayName: name, ports: [port], state: .stopped))
+            let ports = try await self.ports(for: runtime)
+            let definition = catalog.definition(for: runtime, ports: ports)
+            all.append(ServiceStatus(id: id, displayName: definition?.displayName ?? id, ports: definition?.ports ?? [], state: .stopped))
         }
 
         return all.sorted { $0.id < $1.id }
+    }
+
+    // One runtime for each service. nginx and Apache use the newest installed version line.
+    func serviceRuntimes() async -> [InstalledRuntime] {
+        var byID: [String: InstalledRuntime] = [:]
+
+        for runtime in await installer.installedRuntimes() {
+            guard let id = catalog.serviceID(for: runtime) else {
+                continue
+            }
+
+            if let current = byID[id], VersionLine.isOlder(runtime.line, than: current.line) {
+                continue
+            }
+            byID[id] = runtime
+        }
+
+        return byID.values.sorted { $0.name < $1.name }
+    }
+
+    func ports(for runtime: InstalledRuntime) async throws -> [String: Int] {
+        var ports: [String: Int] = [:]
+
+        for requirement in catalog.portRequirements(for: runtime) {
+            ports[requirement.key] = try await stateStore.port(for: requirement.key, standard: requirement.standard)
+        }
+
+        return ports
     }
 
     private func start(_ id: String) async throws -> String {
@@ -153,19 +221,43 @@ public actor NexusEngine {
             return try await startDNS()
         }
 
-        guard let runtime = await installer.installedRuntimes().first(where: { catalog.serviceID(for: $0) == id }),
-              let standard = catalog.standardPort(for: runtime) else {
-            throw SupervisorError.unknownService(id)
+        if isWebService(id) {
+            _ = try await writeWebConfig()
         }
 
-        let port = try await stateStore.port(for: id, standard: standard)
-        guard let definition = catalog.definition(for: runtime, port: port) else {
+        if id.hasPrefix("php-") {
+            _ = try await writePHPConfig(line: String(id.dropFirst(4)), state: await stateStore.current())
+        }
+
+        let message = try await startService(id)
+        try await stateStore.update { $0.enabledServices.insert(id) }
+        return message
+    }
+
+    func startService(_ id: String) async throws -> String {
+        guard let runtime = await serviceRuntimes().first(where: { catalog.serviceID(for: $0) == id }),
+              let definition = catalog.definition(for: runtime, ports: try await ports(for: runtime)) else {
             throw SupervisorError.unknownService(id)
         }
 
         try await supervisor.start(definition)
-        try await stateStore.update { $0.enabledServices.insert(id) }
-        return "\(definition.displayName) runs on port \(port)."
+
+        if definition.ports.isEmpty {
+            return "\(definition.displayName) runs."
+        }
+
+        // The answer goes back only when the service accepts connections, so a request right
+        // after the command does not fail.
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !PortInspector.acceptsConnections(definition.ports[0]), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+
+        guard case .running = await supervisor.state(of: id), PortInspector.acceptsConnections(definition.ports[0]) else {
+            throw SupervisorError.launchFailed("\(definition.displayName) does not accept connections on port \(definition.ports[0]). See \(definition.logFile.path(percentEncoded: false)).")
+        }
+
+        return "\(definition.displayName) runs on port \(definition.ports.map(String.init).joined(separator: " and "))."
     }
 
     private func stop(_ id: String) async throws -> String {
@@ -189,8 +281,23 @@ public actor NexusEngine {
             throw RuntimeError.unsupported("Port \(port) belongs to \(other) already.")
         }
 
+        let names = await portNames()
+        guard names.contains(id) else {
+            if id == ServiceCatalog.nginxID {
+                throw RuntimeError.unsupported("nginx has two ports. Run: nexus port http <port>, or: nexus port https <port>")
+            }
+            if id.hasPrefix("php-") {
+                throw RuntimeError.unsupported("PHP has no port. nginx and Apache reach it through a socket.")
+            }
+            throw RuntimeError.unsupported("Nexus has no port named \(id). The ports are: \(names.sorted().joined(separator: ", ")).")
+        }
+
         if id == Self.dnsServiceID {
             return try await setDNSPort(port)
+        }
+
+        if Self.webPortKeys.contains(id) {
+            return try await setWebPort(id, port)
         }
 
         try await stateStore.update { $0.ports[id] = port }
@@ -200,6 +307,12 @@ public actor NexusEngine {
         }
 
         return "\(id) uses port \(port)."
+    }
+
+    // The names that nexus port accepts: dns and the port keys of the installed services.
+    private func portNames() async -> Set<String> {
+        let keys = await installer.installedRuntimes().flatMap { catalog.portRequirements(for: $0).map(\.key) }
+        return Set(keys).union([Self.dnsServiceID])
     }
 
     private func install(name: String, line: String) async throws -> String {
@@ -214,6 +327,21 @@ public actor NexusEngine {
     private func remove(name: String, line: String) async throws -> String {
         guard let runtime = await installer.installed(name: name, line: line) else {
             throw RuntimeError.unsupported("\(name) \(line) is not installed.")
+        }
+
+        let sites = resolvedSites(await stateStore.current()).map(\.site)
+
+        if name == "php", let site = sites.first(where: { $0.php == line }) {
+            throw RuntimeError.unsupported("\(site.host) uses PHP \(line). Give it another PHP version first: nexus site edit \(site.host) --php <version>")
+        }
+
+        let otherLines = await installer.installedRuntimes().filter { $0.name == name && $0.line != line }
+        if name == "nginx", otherLines.isEmpty, let site = sites.first {
+            throw RuntimeError.unsupported("Every site needs nginx, for example \(site.host). Remove the sites first.")
+        }
+
+        if name == "httpd", otherLines.isEmpty, let site = sites.first(where: { $0.server == .apache }) {
+            throw RuntimeError.unsupported("\(site.host) uses Apache. Move it to nginx first: nexus site edit \(site.host) --server nginx")
         }
 
         if let id = catalog.serviceID(for: runtime), await supervisor.state(of: id)?.isActive == true {
@@ -311,7 +439,7 @@ extension NexusEngine {
 
     // Each call waits for the call before it, and reads the state only when its turn comes. So
     // the helper always gets the newest host list last.
-    private func applySystemFiles() async {
+    func applySystemFiles() async {
         let previous = systemFilesQueue
         let turn = Task {
             await previous?.value
@@ -324,8 +452,8 @@ extension NexusEngine {
 
     // The resolver file names the port of the DNS server, so it is only written while the server
     // runs. The /etc/hosts lines do not need the DNS server, so a refused resolver file does not
-    // stop them. A helper that does not answer yet, for example before the user approves it, is
-    // asked again every few seconds.
+    // stop them. The helper does not answer before the user approves it. nexusd then asks it
+    // again every few seconds.
     private func writeSystemFiles() async {
         guard !uninstalling else {
             return
@@ -343,7 +471,9 @@ extension NexusEngine {
         }
 
         do {
-            try await helper.send(.setHosts(state.hosts.sorted()))
+            let hosts = etcHosts(state)
+            try await helper.send(.setHosts(hosts))
+            writtenHosts = hosts
         } catch {
             problems.append(error)
         }
@@ -446,8 +576,8 @@ extension NexusEngine {
 
 // Removing Nexus.
 extension NexusEngine {
-    // Stops at the first step that fails. The system files go first: when the helper does not
-    // answer, nothing has changed yet, and the helper stays registered while its files exist.
+    // Stops at the first step that fails. The system files go first. So nothing has changed yet
+    // when the helper does not answer. The helper stays registered while its files exist.
     private func uninstall() async throws -> String {
         let tld = await stateStore.current().tld
         uninstalling = true

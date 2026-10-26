@@ -26,6 +26,7 @@ let package = Package(
     targets: [
         .target(name: "NexusCore"),
         .target(name: "NexusDNS", dependencies: ["NexusCore"]),
+        .target(name: "NexusConfig", dependencies: ["NexusCore"]),
         .target(name: "NexusTLS", dependencies: [
             "NexusCore",
             .product(name: "X509", package: "swift-certificates"),
@@ -35,7 +36,7 @@ let package = Package(
         .target(name: "NexusRuntime", dependencies: ["NexusCore"]),
         .target(name: "NexusSupervisor", dependencies: ["NexusCore"]),
         .target(name: "NexusIPC", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor"]),
-        .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS"]),
+        .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig"]),
         .target(name: "NexusCommands", dependencies: [
             "NexusCore",
             "NexusIPC",
@@ -46,6 +47,7 @@ let package = Package(
         .testTarget(name: "NexusSupervisorTests", dependencies: ["NexusSupervisor"]),
         .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusTestSupport"]),
         .testTarget(name: "NexusDNSTests", dependencies: ["NexusDNS", "NexusTestSupport"]),
+        .testTarget(name: "NexusConfigTests", dependencies: ["NexusConfig"]),
         .testTarget(name: "NexusTLSTests", dependencies: [
             "NexusTLS",
             "NexusTestSupport",

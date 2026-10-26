@@ -125,6 +125,17 @@ public actor ProcessSupervisor {
         services[id]?.state
     }
 
+    // Sends a signal to a running service, for example SIGHUP to make nginx read its
+    // configuration again. Returns false when the service does not run.
+    @discardableResult
+    public func signal(_ id: String, _ signal: Int32) -> Bool {
+        guard let process = services[id]?.process, process.isRunning else {
+            return false
+        }
+
+        return kill(process.processIdentifier, signal) == 0
+    }
+
     private func launch(_ id: String) throws {
         guard var managed = services[id] else {
             throw SupervisorError.unknownService(id)

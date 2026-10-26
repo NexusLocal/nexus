@@ -49,7 +49,7 @@ struct NexusEngineTests {
         let source = workspace.appending(path: "source/redis-1.0.0/bin", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
         let server = source.appending(path: "redis-server")
-        try Data("#!/bin/sh\nexec /bin/sleep 30\n".utf8).write(to: server)
+        try Data("#!/bin/sh\nexec /usr/bin/nc -lk 127.0.0.1 \"$2\"\n".utf8).write(to: server)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: server.path(percentEncoded: false))
 
         let archive = workspace.appending(path: "redis-1.0.0.tar.xz")
@@ -160,12 +160,25 @@ struct NexusEngineTests {
 
     @Test func aPortThatAnotherServiceHasIsRefused() async throws {
         let engine = try makeEngine(package: try makeFakeRedis(), port: 23456)
+        _ = await engine.handle(.install(name: "redis", line: "1.0"))
 
-        let taken = await engine.handle(.setPort(service: "redis-2.0", port: 23456))
-        let free = await engine.handle(.setPort(service: "redis-2.0", port: 23457))
+        let taken = await engine.handle(.setPort(service: "dns", port: 23456))
+        let free = await engine.handle(.setPort(service: "redis-1.0", port: 23457))
 
         #expect(taken == .failure(message: "Port 23456 belongs to redis-1.0 already."))
-        #expect(free == .done(message: "redis-2.0 uses port 23457."))
+        #expect(free == .done(message: "redis-1.0 uses port 23457."))
+    }
+
+    @Test func onlyAKnownPortNameCanChange() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+
+        let nginx = await engine.handle(.setPort(service: "nginx", port: 8080))
+        let php = await engine.handle(.setPort(service: "php-8.5", port: 9000))
+        let unknown = await engine.handle(.setPort(service: "redis-9.9", port: 23458))
+
+        #expect(nginx == .failure(message: "nginx has two ports. Run: nexus port http <port>, or: nexus port https <port>"))
+        #expect(php == .failure(message: "PHP has no port. nginx and Apache reach it through a socket."))
+        #expect(unknown == .failure(message: "Nexus has no port named redis-9.9. The ports are: dns."))
     }
 
     @Test func theDevelopmentProfileMovesPortsAwayFromTheStandardOnes() {
@@ -369,6 +382,73 @@ struct NexusEngineTests {
         }
         #expect(message.hasPrefix("Safari and Chrome trust the certificates of Nexus now."))
         #expect(second == .done(message: "The Nexus root CA is trusted already."))
+    }
+
+    private func makeFakePHP() throws -> ManifestPackage {
+        let source = workspace.appending(path: "php-source/php-8.5.0/bin", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data("#!/bin/sh\n".utf8).write(to: source.appending(path: "php"))
+
+        let archive = workspace.appending(path: "php-8.5.0.tar.xz")
+        let tar = Process()
+        tar.executableURL = URL(filePath: "/usr/bin/tar")
+        tar.arguments = ["-cJf", archive.path(percentEncoded: false), "-C", workspace.appending(path: "php-source").path(percentEncoded: false), "php-8.5.0"]
+        try tar.run()
+        tar.waitUntilExit()
+
+        return ManifestPackage(name: "php", version: "8.5.0", line: "8.5", revision: 1, url: archive,
+                               sha256: try FileChecksum.sha256(of: archive), format: .tarXZ)
+    }
+
+    @Test func aSiteThatCannotRunIsNotKept() async throws {
+        let engine = try makeEngine(package: try makeFakePHP(), port: freePort())
+        _ = await engine.handle(.install(name: "php", line: "8.5"))
+        let folder = workspace.appending(path: "Shop Folder", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        let response = await engine.handle(.addSite(folder: folder.path(percentEncoded: false), host: nil, aliases: [], php: nil, server: nil))
+
+        guard case .failure = response else {
+            Issue.record("the site was added: \(response)")
+            return
+        }
+        #expect(await engine.handle(.sites) == .sites([]))
+    }
+
+    @Test func anAddedSiteWinsOverAParkedSiteWithTheSameHost() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        let parked = workspace.appending(path: "parked", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: parked.appending(path: "shop"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: parked.appending(path: "blog"), withIntermediateDirectories: true)
+        var state = EngineState()
+        state.parked = [ParkedFolder(folder: parked, php: "8.4")]
+        state.sites = [Site(host: "shop.test", folder: parked.appending(path: "shop"), aliases: ["shop.local"], php: "8.5", server: .apache)]
+        state.hosts = ["extra.local"]
+
+        let sites = await engine.resolvedSites(state)
+        let etcHosts = await engine.etcHosts(state)
+
+        #expect(sites.map(\.site.host) == ["blog.test", "shop.test"])
+        #expect(sites.map(\.parked) == [true, false])
+        #expect(sites[1].site.php == "8.5")
+        #expect(etcHosts == ["extra.local", "shop.local"])
+    }
+
+    @Test func aParkedSiteWithTheHostOfAnotherSiteIsLeftOut() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        let parked = workspace.appending(path: "parked", directoryHint: .isDirectory)
+        for name in ["blog", "my shop", "my-shop"] {
+            try FileManager.default.createDirectory(at: parked.appending(path: name), withIntermediateDirectories: true)
+        }
+        var state = EngineState()
+        state.parked = [ParkedFolder(folder: parked, php: "8.4")]
+        state.sites = [Site(host: "shop.test", folder: workspace, aliases: ["blog.test"], php: "8.5")]
+
+        let resolved = await engine.resolveSites(state)
+
+        #expect(resolved.sites.map(\.site.host) == ["my-shop.test", "shop.test"])
+        #expect(resolved.conflicts.count == 2)
+        #expect(resolved.conflicts.contains { $0.contains("blog.test") })
     }
 
     @Test func aStateFileWithoutTheNewKeysKeepsItsValues() throws {

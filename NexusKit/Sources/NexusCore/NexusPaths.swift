@@ -42,6 +42,30 @@ public struct NexusPaths: Sendable, Equatable {
         logs.appending(path: "\(name).log", directoryHint: .notDirectory)
     }
 
+    public var siteLogs: URL {
+        logs.appending(path: "sites", directoryHint: .isDirectory)
+    }
+
+    public func siteLog(_ host: String) -> URL {
+        siteLogs.appending(path: "\(host).log", directoryHint: .notDirectory)
+    }
+
+    public var nginxConfig: URL {
+        config.appending(path: "nginx/nginx.conf", directoryHint: .notDirectory)
+    }
+
+    public var apacheConfig: URL {
+        config.appending(path: "apache/httpd.conf", directoryHint: .notDirectory)
+    }
+
+    public func phpConfigFolder(line: String) -> URL {
+        config.appending(path: "php/\(line)", directoryHint: .isDirectory)
+    }
+
+    public func phpSocket(line: String) -> URL {
+        run.appending(path: "php-\(line).sock", directoryHint: .notDirectory)
+    }
+
     public func createFolders(using fileManager: FileManager = .default) throws {
         for folder in allFolders {
             try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
