@@ -50,6 +50,7 @@ let package = Package(
             "NexusTLS",
             "NexusTestSupport",
             .product(name: "X509", package: "swift-certificates"),
+            .product(name: "Crypto", package: "swift-crypto"),
         ]),
         .target(name: "NexusTestSupport", dependencies: ["NexusTLS", "NexusIPC"], path: "Tests/NexusTestSupport"),
     ]
