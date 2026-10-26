@@ -1,3 +1,3 @@
-import NexusCore
+import NexusCommands
 
-print("nexus \(NexusVersion.current())")
+await NexusCLI.main()

@@ -11,6 +11,9 @@
 		0000000000000000000000E2 /* NexusCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000D2 /* NexusCore */; };
 		0000000000000000000000E3 /* NexusCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000D3 /* NexusCore */; };
 		0000000000000000000000E4 /* NexusCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000D4 /* NexusCore */; };
+		0000000000000000000000E5 /* NexusEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000D5 /* NexusEngine */; };
+		0000000000000000000000E6 /* NexusIPC in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000D6 /* NexusIPC */; };
+		0000000000000000000000E7 /* NexusCommands in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000D7 /* NexusCommands */; };
 		0000000000000000000000F2 /* nexusd in Embed Executables */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B2 /* nexusd */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0000000000000000000000F3 /* nexus in Embed Command Line Tool */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B3 /* nexus */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0000000000000000000000F4 /* NexusHelper in Embed Executables */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B4 /* NexusHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
@@ -137,6 +140,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				0000000000000000000000E2 /* NexusCore in Frameworks */,
+				0000000000000000000000E5 /* NexusEngine in Frameworks */,
+				0000000000000000000000E6 /* NexusIPC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -145,6 +150,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0000000000000000000000E3 /* NexusCore in Frameworks */,
+				0000000000000000000000E7 /* NexusCommands in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -172,14 +178,6 @@
 			);
 			sourceTree = "<group>";
 		};
-		000000000000000000000004 /* Config */ = {
-			isa = PBXGroup;
-			children = (
-				0000000000000000000000C3 /* Signing.xcconfig */,
-			);
-			path = Config;
-			sourceTree = "<group>";
-		};
 		000000000000000000000002 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -198,6 +196,14 @@
 				0000000000000000000000C2 /* nl.roodfruit.nexus.helper.plist */,
 			);
 			path = LaunchServices;
+			sourceTree = "<group>";
+		};
+		000000000000000000000004 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				0000000000000000000000C3 /* Signing.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -250,6 +256,8 @@
 			name = nexusd;
 			packageProductDependencies = (
 				0000000000000000000000D2 /* NexusCore */,
+				0000000000000000000000D5 /* NexusEngine */,
+				0000000000000000000000D6 /* NexusIPC */,
 			);
 			productName = nexusd;
 			productReference = 0000000000000000000000B2 /* nexusd */;
@@ -272,6 +280,7 @@
 			name = NexusCLI;
 			packageProductDependencies = (
 				0000000000000000000000D3 /* NexusCore */,
+				0000000000000000000000D7 /* NexusCommands */,
 			);
 			productName = nexus;
 			productReference = 0000000000000000000000B3 /* nexus */;
@@ -408,7 +417,7 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		000000000000000000000011 /* Debug configuration for PBXProject "Nexus" */ = {
+		000000000000000000000011 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 0000000000000000000000C3 /* Signing.xcconfig */;
 			buildSettings = {
@@ -478,7 +487,7 @@
 			};
 			name = Debug;
 		};
-		000000000000000000000012 /* Release configuration for PBXProject "Nexus" */ = {
+		000000000000000000000012 /* Release */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 0000000000000000000000C3 /* Signing.xcconfig */;
 			buildSettings = {
@@ -540,7 +549,7 @@
 			};
 			name = Release;
 		};
-		000000000000000000000102 /* Debug configuration for PBXNativeTarget "Nexus" */ = {
+		000000000000000000000102 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -559,7 +568,7 @@
 			};
 			name = Debug;
 		};
-		000000000000000000000103 /* Release configuration for PBXNativeTarget "Nexus" */ = {
+		000000000000000000000103 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -578,7 +587,7 @@
 			};
 			name = Release;
 		};
-		000000000000000000000202 /* Debug configuration for PBXNativeTarget "nexusd" */ = {
+		000000000000000000000202 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
@@ -589,7 +598,7 @@
 			};
 			name = Debug;
 		};
-		000000000000000000000203 /* Release configuration for PBXNativeTarget "nexusd" */ = {
+		000000000000000000000203 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
@@ -600,7 +609,7 @@
 			};
 			name = Release;
 		};
-		000000000000000000000302 /* Debug configuration for PBXNativeTarget "NexusCLI" */ = {
+		000000000000000000000302 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
@@ -612,7 +621,7 @@
 			};
 			name = Debug;
 		};
-		000000000000000000000303 /* Release configuration for PBXNativeTarget "NexusCLI" */ = {
+		000000000000000000000303 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
@@ -624,7 +633,7 @@
 			};
 			name = Release;
 		};
-		000000000000000000000402 /* Debug configuration for PBXNativeTarget "NexusHelper" */ = {
+		000000000000000000000402 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
@@ -635,7 +644,7 @@
 			};
 			name = Debug;
 		};
-		000000000000000000000403 /* Release configuration for PBXNativeTarget "NexusHelper" */ = {
+		000000000000000000000403 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
@@ -652,8 +661,8 @@
 		000000000000000000000010 /* Build configuration list for PBXProject "Nexus" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				000000000000000000000011 /* Debug configuration for PBXProject "Nexus" */,
-				000000000000000000000012 /* Release configuration for PBXProject "Nexus" */,
+				000000000000000000000011 /* Debug */,
+				000000000000000000000012 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -661,8 +670,8 @@
 		000000000000000000000101 /* Build configuration list for PBXNativeTarget "Nexus" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				000000000000000000000102 /* Debug configuration for PBXNativeTarget "Nexus" */,
-				000000000000000000000103 /* Release configuration for PBXNativeTarget "Nexus" */,
+				000000000000000000000102 /* Debug */,
+				000000000000000000000103 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -670,8 +679,8 @@
 		000000000000000000000201 /* Build configuration list for PBXNativeTarget "nexusd" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				000000000000000000000202 /* Debug configuration for PBXNativeTarget "nexusd" */,
-				000000000000000000000203 /* Release configuration for PBXNativeTarget "nexusd" */,
+				000000000000000000000202 /* Debug */,
+				000000000000000000000203 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -679,8 +688,8 @@
 		000000000000000000000301 /* Build configuration list for PBXNativeTarget "NexusCLI" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				000000000000000000000302 /* Debug configuration for PBXNativeTarget "NexusCLI" */,
-				000000000000000000000303 /* Release configuration for PBXNativeTarget "NexusCLI" */,
+				000000000000000000000302 /* Debug */,
+				000000000000000000000303 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -688,8 +697,8 @@
 		000000000000000000000401 /* Build configuration list for PBXNativeTarget "NexusHelper" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				000000000000000000000402 /* Debug configuration for PBXNativeTarget "NexusHelper" */,
-				000000000000000000000403 /* Release configuration for PBXNativeTarget "NexusHelper" */,
+				000000000000000000000402 /* Debug */,
+				000000000000000000000403 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -719,6 +728,18 @@
 		0000000000000000000000D4 /* NexusCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = NexusCore;
+		};
+		0000000000000000000000D5 /* NexusEngine */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NexusEngine;
+		};
+		0000000000000000000000D6 /* NexusIPC */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NexusIPC;
+		};
+		0000000000000000000000D7 /* NexusCommands */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NexusCommands;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
