@@ -97,6 +97,7 @@
 		0000000000000000000000B4 /* NexusHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = NexusHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		0000000000000000000000C1 /* nl.roodfruit.nexus.daemon.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = nl.roodfruit.nexus.daemon.plist; sourceTree = "<group>"; };
 		0000000000000000000000C2 /* nl.roodfruit.nexus.helper.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = nl.roodfruit.nexus.helper.plist; sourceTree = "<group>"; };
+		0000000000000000000000C3 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -166,8 +167,17 @@
 				0000000000000000000000A3 /* NexusCLI */,
 				0000000000000000000000A4 /* NexusHelper */,
 				000000000000000000000003 /* LaunchServices */,
+				000000000000000000000004 /* Config */,
 				000000000000000000000002 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		000000000000000000000004 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				0000000000000000000000C3 /* Signing.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 		000000000000000000000002 /* Products */ = {
@@ -400,6 +410,7 @@
 /* Begin XCBuildConfiguration section */
 		000000000000000000000011 /* Debug configuration for PBXProject "Nexus" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0000000000000000000000C3 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -436,7 +447,6 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = 4G5C39PFB2;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -470,6 +480,7 @@
 		};
 		000000000000000000000012 /* Release configuration for PBXProject "Nexus" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0000000000000000000000C3 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -506,7 +517,6 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = 4G5C39PFB2;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

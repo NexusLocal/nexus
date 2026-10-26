@@ -63,9 +63,10 @@ Folders in ~/Library/Application Support/Nexus:
 Work:
 1. Remove the "Untitled Project" template (the deletions are staged already).
 2. Make the Xcode project `Nexus` with the four targets and the local package `NexusKit`.
-3. Use automatic signing with the team Rood Fruit B.V. The Apple ID must be signed in to Xcode
-   with valid credentials. Xcode then makes the Apple Development certificate at the first
-   build. SMAppService needs a signed app, also for local tests.
+3. Use automatic signing. Copy Config/Signing.local.xcconfig.example to
+   Config/Signing.local.xcconfig and set your own team. A free Personal Team is enough for
+   local builds. SMAppService needs a signed app, also for local tests. Do not choose a team in
+   the Xcode Team menu, because Xcode then writes the team into the project file.
 4. Make the public repository `NexusLocal/binaries` (D9).
 5. Add a CI job for the app repository that runs `swift test` on the `xcode-27` runner.
 
