@@ -32,8 +32,8 @@ struct NexusEngineTests {
     private let workspace = FileManager.default.temporaryDirectory
         .appending(path: "Nexus Engine Tests \(UUID().uuidString)", directoryHint: .isDirectory)
 
-    private let helper = RecordingHelper()
-    private let keyStore = MemoryKeyStore()
+    let helper = RecordingHelper()
+    let keyStore = MemoryKeyStore()
 
     private var paths: NexusPaths {
         NexusPaths(root: workspace.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
@@ -64,7 +64,7 @@ struct NexusEngineTests {
                                sha256: try FileChecksum.sha256(of: archive), format: .tarXZ)
     }
 
-    private func freePort() -> Int {
+    func freePort() -> Int {
         let listener = socket(AF_INET, SOCK_STREAM, 0)
         defer { close(listener) }
         var address = sockaddr_in()

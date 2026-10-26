@@ -95,9 +95,9 @@ public actor ProcessSupervisor {
             return
         }
 
-        process.terminate()
+        kill(process.processIdentifier, managed.definition.stopSignal)
 
-        let deadline = ContinuousClock.now + policy.stopTimeout
+        let deadline = ContinuousClock.now + (managed.definition.stopTimeout ?? policy.stopTimeout)
         while process.isRunning, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
         }
@@ -109,9 +109,13 @@ public actor ProcessSupervisor {
         markStopped(id)
     }
 
+    // The services stop at the same time, so a database that writes its data to disk does not
+    // make the others wait.
     public func stopAll() async {
-        for id in services.keys {
-            try? await stop(id)
+        await withTaskGroup { group in
+            for id in services.keys {
+                group.addTask { try? await self.stop(id) }
+            }
         }
     }
 
@@ -142,12 +146,12 @@ public actor ProcessSupervisor {
         }
 
         let definition = managed.definition
-        let log = try openLog(definition.logFile)
+        let log = try LogFile.openForAppending(definition.logFile)
 
         let process = Process()
         process.executableURL = definition.executable
         process.arguments = definition.arguments
-        process.environment = baseEnvironment().merging(definition.environment) { _, service in service }
+        process.environment = ChildEnvironment.base().merging(definition.environment) { _, service in service }
         process.currentDirectoryURL = definition.workingDirectory
         process.standardOutput = log
         process.standardError = log
@@ -218,7 +222,10 @@ public actor ProcessSupervisor {
         services[id] = managed
     }
 
-    private func openLog(_ file: URL) throws -> FileHandle {
+}
+
+public enum LogFile {
+    public static func openForAppending(_ file: URL) throws -> FileHandle {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
 
@@ -230,8 +237,12 @@ public actor ProcessSupervisor {
         try handle.seekToEnd()
         return handle
     }
+}
 
-    private func baseEnvironment() -> [String: String] {
+// Every child process starts with this environment, not with the environment of nexusd. So a
+// PATH or a setting such as MYSQL_HOME from the shell of the user cannot change a service.
+enum ChildEnvironment {
+    static func base() -> [String: String] {
         let inherited = ProcessInfo.processInfo.environment
 
         return [

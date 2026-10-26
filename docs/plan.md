@@ -268,6 +268,37 @@ Done when:
 - The development database of a real project comes over from MAMP. That project then works on
   Nexus with only DB_PORT changed in its .env.
 
+Built: each installed version line of MySQL, MariaDB and PostgreSQL is one instance, for example
+mysql-8.4. Its name is also its port key: `nexus port mysql-8.4 13307`. The data folder is
+data/<instance>. Before the first start, Nexus makes the data folder in a hidden folder next to
+it and moves it into place only when the initialization succeeds. MySQL uses
+`--initialize-insecure` with an init file, MariaDB uses mariadb-install-db with an extra SQL
+file, and PostgreSQL uses initdb. Every instance gets root with the password root on 127.0.0.1
+and ::1. PostgreSQL also accepts root without a password on its socket in run/, which only the
+user can open. config/<mysql|mariadb>/<line>/my.cnf belongs to the user. Nexus sets the port, the
+address, the folders and the socket on the command line. PostgreSQL stops with SIGINT, because
+it waits for every client after SIGTERM. Redis keeps 256 databases for each instance (D47).
+
+`nexus db` lists the instances. `nexus db copy <database> --to <instance>` copies a database
+from another server. The default source is root/root on 127.0.0.1 on the standard port of the
+instance (3306 or 5432). `--as` gives the copy another name, and `--replace` drops a database
+with the same name in the instance first. `nexus db open <instance> [database]` opens TablePlus
+or Sequel Ace. The checks ran with MySQL 8.0, 8.4 and 9.7 on 13306, 13307 and 13309, MariaDB
+11.4 on 13308 and PostgreSQL 17 on 15432. A Laravel 13 application from MAMP PRO (217 tables)
+ran on Nexus with only DB_PORT changed. The copy had the same row count in every table.
+
+Not built: a setting for another user or password (D35). The copy and the open action use
+root/root.
+
+Risk: the dump uses the tools of the receiving instance (D7). A dump from MySQL does not always
+restore into MariaDB, or the other way. In a test, MariaDB refused a generated column of MySQL.
+A collation that only one of the two knows, such as utf8mb4_0900_ai_ci of MySQL 8 in a MariaDB
+older than 11.4.5, stops the copy too. The copy then stops with the error of the server, and
+Nexus drops the half copy. Copy into the same kind of server for a full copy.
+
+Risk: the copy shows no progress. A database of some GB takes minutes, and the CLI waits. The
+app needs a progress display in step 6.
+
 ## Step 6 - The app window and the menu bar
 
 Before any screen is built, its design is made in pen.dev through the pen.dev MCP, and the owner

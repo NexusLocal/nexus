@@ -20,6 +20,7 @@ struct NexusCommand: AsyncParsableCommand {
             Status.self, Start.self, Stop.self, Port.self, Available.self, Runtimes.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
             SiteCommand.self, Park.self, Unpark.self, Ext.self, Module.self, Lan.self,
+            Database.self,
         ]
     )
 }
@@ -373,6 +374,119 @@ struct Lan: AsyncParsableCommand {
     func run() async throws {
         try finish(try await send(.lan(enabled: state.map { $0 == .on })))
     }
+}
+
+extension DatabaseApp: ExpressibleByArgument {}
+
+struct Database: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "db",
+        abstract: "Lists the database instances, copies a database into one, and opens one in a database app.",
+        subcommands: [List.self, Copy.self, Open.self],
+        defaultSubcommand: List.self
+    )
+
+    struct List: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Lists the MySQL, MariaDB and PostgreSQL instances.")
+
+        func run() async throws {
+            let instances = try await databaseInstances()
+
+            if instances.isEmpty {
+                print("Nexus has no database instance. Install one with: nexus install mysql 8.4")
+                return
+            }
+
+            for instance in instances {
+                let state = instance.running ? "running" : "stopped"
+                let account = "\(instance.account.user)/\(instance.account.password)"
+                print([instance.id.padding(to: 14), state.padding(to: 8), "port \(instance.port)".padding(to: 11), account.padding(to: 10), instance.dataFolder].joined(separator: " "))
+            }
+        }
+    }
+
+    struct Copy: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Copies a database from another server into a Nexus instance, for example: nexus db copy shop --to mysql-8.4",
+            discussion: "Nexus makes a dump on the other server and restores it into the instance. It only reads the other server. The default source is root/root on 127.0.0.1, on the standard port of the instance: 3306 for MySQL and MariaDB, 5432 for PostgreSQL."
+        )
+
+        @Argument(help: "The database on the other server.") var database: String
+        @Option(help: "The Nexus instance that gets the copy, as nexus db list shows it.") var to: String
+        @Option(name: .customLong("as"), help: "The name of the copy. The default is the name of the original.") var name: String?
+        @Option(help: "The host of the other server.") var fromHost = "127.0.0.1"
+        @Option(help: "The port of the other server.") var fromPort: Int?
+        @Option(help: "The user on the other server.") var fromUser = DatabaseAccount.standard.user
+        @Option(help: "The password on the other server.") var fromPassword = DatabaseAccount.standard.password
+        @Flag(help: "Drop the database in the Nexus instance first when it exists.") var replace = false
+
+        func run() async throws {
+            let source = DatabaseServer(host: fromHost, port: fromPort, account: DatabaseAccount(user: fromUser, password: fromPassword))
+            print("Nexus copies \(database) now. A large database can take some minutes.")
+            try finish(try await send(.copyDatabase(DatabaseCopy(source: source, database: database, instance: to, name: name, replace: replace))))
+        }
+    }
+
+    struct Open: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Opens an instance in TablePlus or Sequel Ace, for example: nexus db open mysql-8.4 shop")
+
+        @Argument(help: "The instance, as nexus db list shows it.") var instance: String
+        @Argument(help: "The database to open.") var database: String?
+        @Option(help: "table_plus or sequel_ace. The default is the first one that is installed.") var app: DatabaseApp?
+
+        func run() async throws {
+            guard let found = try await databaseInstances().first(where: { $0.id == instance }) else {
+                FileHandle.standardError.write(Data("Nexus has no database instance \(instance). See: nexus db list\n".utf8))
+                throw ExitCode.failure
+            }
+
+            guard let url = found.url(database: database) else {
+                FileHandle.standardError.write(Data("\(database ?? instance) is not a valid database name.\n".utf8))
+                throw ExitCode.failure
+            }
+
+            if let app, !app.opens(found.kind) {
+                FileHandle.standardError.write(Data("\(app.name) cannot open \(found.kind.displayName). Use: --app table_plus\n".utf8))
+                throw ExitCode.failure
+            }
+
+            let apps = (app.map { [$0] } ?? DatabaseApp.allCases).filter { $0.opens(found.kind) }
+
+            for candidate in apps where open(url, with: candidate) {
+                print("\(candidate.name) opens \(instance)\(database.map { " with the database \($0)" } ?? "").")
+                return
+            }
+
+            FileHandle.standardError.write(Data("No app opened the instance. Install \(apps.map(\.name).joined(separator: " or ")), or connect to \(url.absoluteString)\n".utf8))
+            throw ExitCode.failure
+        }
+
+        private func open(_ url: URL, with app: DatabaseApp) -> Bool {
+            let process = Process()
+            process.executableURL = URL(filePath: "/usr/bin/open")
+            process.arguments = ["-b", app.bundleIdentifier, url.absoluteString]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+
+            guard (try? process.run()) != nil else {
+                return false
+            }
+
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        }
+    }
+}
+
+private func databaseInstances() async throws -> [DatabaseInstance] {
+    let response = try await send(.databases)
+
+    guard case .databases(let instances) = response else {
+        try finish(response)
+        return []
+    }
+
+    return instances
 }
 
 enum OnOff: String, ExpressibleByArgument {

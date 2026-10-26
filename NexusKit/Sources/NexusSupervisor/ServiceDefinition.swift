@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
@@ -9,6 +10,12 @@ public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
     public let workingDirectory: URL?
     public let ports: [Int]
     public let logFile: URL
+    // PostgreSQL waits for every client to disconnect after SIGTERM. SIGINT stops it at once.
+    public let stopSignal: Int32
+    // A database can need longer than a web server to start after a crash or an upgrade, and
+    // to write its data to disk at a stop. A stop timeout of nil uses the restart policy.
+    public let startTimeout: Duration
+    public let stopTimeout: Duration?
 
     public init(
         id: String,
@@ -18,7 +25,10 @@ public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
         environment: [String: String] = [:],
         workingDirectory: URL? = nil,
         ports: [Int] = [],
-        logFile: URL
+        logFile: URL,
+        stopSignal: Int32 = SIGTERM,
+        startTimeout: Duration = .seconds(3),
+        stopTimeout: Duration? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -28,6 +38,9 @@ public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
         self.workingDirectory = workingDirectory
         self.ports = ports
         self.logFile = logFile
+        self.stopSignal = stopSignal
+        self.startTimeout = startTimeout
+        self.stopTimeout = stopTimeout
     }
 }
 
