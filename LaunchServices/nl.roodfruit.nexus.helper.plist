@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>nl.roodfruit.nexus.helper</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/NexusHelper</string>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>nl.roodfruit.nexus</string>
+	</array>
+	<key>MachServices</key>
+	<dict>
+		<key>nl.roodfruit.nexus.helper</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

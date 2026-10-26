@@ -1,0 +1,716 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0000000000000000000000E1 /* NexusCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000D1 /* NexusCore */; };
+		0000000000000000000000E2 /* NexusCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000D2 /* NexusCore */; };
+		0000000000000000000000E3 /* NexusCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000D3 /* NexusCore */; };
+		0000000000000000000000E4 /* NexusCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000D4 /* NexusCore */; };
+		0000000000000000000000F2 /* nexusd in Embed Executables */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B2 /* nexusd */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		0000000000000000000000F3 /* nexus in Embed Command Line Tool */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B3 /* nexus */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		0000000000000000000000F4 /* NexusHelper in Embed Executables */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B4 /* NexusHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		0000000000000000000000F5 /* nl.roodfruit.nexus.daemon.plist in Embed Launch Agents */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000C1 /* nl.roodfruit.nexus.daemon.plist */; };
+		0000000000000000000000F6 /* nl.roodfruit.nexus.helper.plist in Embed Launch Daemons */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000C2 /* nl.roodfruit.nexus.helper.plist */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		000000000000000000000502 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000000000200;
+			remoteInfo = nexusd;
+		};
+		000000000000000000000503 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000000000300;
+			remoteInfo = NexusCLI;
+		};
+		000000000000000000000504 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000000000400;
+			remoteInfo = NexusHelper;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		000000000000000000000107 /* Embed Executables */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 6;
+			files = (
+				0000000000000000000000F2 /* nexusd in Embed Executables */,
+				0000000000000000000000F4 /* NexusHelper in Embed Executables */,
+			);
+			name = "Embed Executables";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000108 /* Embed Command Line Tool */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 1;
+			files = (
+				0000000000000000000000F3 /* nexus in Embed Command Line Tool */,
+			);
+			name = "Embed Command Line Tool";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000109 /* Embed Launch Agents */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
+			files = (
+				0000000000000000000000F5 /* nl.roodfruit.nexus.daemon.plist in Embed Launch Agents */,
+			);
+			name = "Embed Launch Agents";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		00000000000000000000010A /* Embed Launch Daemons */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LaunchDaemons;
+			dstSubfolderSpec = 1;
+			files = (
+				0000000000000000000000F6 /* nl.roodfruit.nexus.helper.plist in Embed Launch Daemons */,
+			);
+			name = "Embed Launch Daemons";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0000000000000000000000B1 /* Nexus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Nexus.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0000000000000000000000B2 /* nexusd */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = nexusd; sourceTree = BUILT_PRODUCTS_DIR; };
+		0000000000000000000000B3 /* nexus */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = nexus; sourceTree = BUILT_PRODUCTS_DIR; };
+		0000000000000000000000B4 /* NexusHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = NexusHelper; sourceTree = BUILT_PRODUCTS_DIR; };
+		0000000000000000000000C1 /* nl.roodfruit.nexus.daemon.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = nl.roodfruit.nexus.daemon.plist; sourceTree = "<group>"; };
+		0000000000000000000000C2 /* nl.roodfruit.nexus.helper.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = nl.roodfruit.nexus.helper.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		0000000000000000000000A1 /* Nexus */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Nexus;
+			sourceTree = "<group>";
+		};
+		0000000000000000000000A2 /* NexusDaemon */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = NexusDaemon;
+			sourceTree = "<group>";
+		};
+		0000000000000000000000A3 /* NexusCLI */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = NexusCLI;
+			sourceTree = "<group>";
+		};
+		0000000000000000000000A4 /* NexusHelper */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = NexusHelper;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		000000000000000000000105 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0000000000000000000000E1 /* NexusCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000205 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0000000000000000000000E2 /* NexusCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000305 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0000000000000000000000E3 /* NexusCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000405 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0000000000000000000000E4 /* NexusCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		000000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				0000000000000000000000A1 /* Nexus */,
+				0000000000000000000000A2 /* NexusDaemon */,
+				0000000000000000000000A3 /* NexusCLI */,
+				0000000000000000000000A4 /* NexusHelper */,
+				000000000000000000000003 /* LaunchServices */,
+				000000000000000000000002 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		000000000000000000000002 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0000000000000000000000B1 /* Nexus.app */,
+				0000000000000000000000B2 /* nexusd */,
+				0000000000000000000000B3 /* nexus */,
+				0000000000000000000000B4 /* NexusHelper */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		000000000000000000000003 /* LaunchServices */ = {
+			isa = PBXGroup;
+			children = (
+				0000000000000000000000C1 /* nl.roodfruit.nexus.daemon.plist */,
+				0000000000000000000000C2 /* nl.roodfruit.nexus.helper.plist */,
+			);
+			path = LaunchServices;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		000000000000000000000100 /* Nexus */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000101 /* Build configuration list for PBXNativeTarget "Nexus" */;
+			buildPhases = (
+				000000000000000000000104 /* Sources */,
+				000000000000000000000105 /* Frameworks */,
+				000000000000000000000106 /* Resources */,
+				000000000000000000000107 /* Embed Executables */,
+				000000000000000000000108 /* Embed Command Line Tool */,
+				000000000000000000000109 /* Embed Launch Agents */,
+				00000000000000000000010A /* Embed Launch Daemons */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				000000000000000000000602 /* PBXTargetDependency */,
+				000000000000000000000603 /* PBXTargetDependency */,
+				000000000000000000000604 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				0000000000000000000000A1 /* Nexus */,
+			);
+			name = Nexus;
+			packageProductDependencies = (
+				0000000000000000000000D1 /* NexusCore */,
+			);
+			productName = Nexus;
+			productReference = 0000000000000000000000B1 /* Nexus.app */;
+			productType = "com.apple.product-type.application";
+		};
+		000000000000000000000200 /* nexusd */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000201 /* Build configuration list for PBXNativeTarget "nexusd" */;
+			buildPhases = (
+				000000000000000000000204 /* Sources */,
+				000000000000000000000205 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				0000000000000000000000A2 /* NexusDaemon */,
+			);
+			name = nexusd;
+			packageProductDependencies = (
+				0000000000000000000000D2 /* NexusCore */,
+			);
+			productName = nexusd;
+			productReference = 0000000000000000000000B2 /* nexusd */;
+			productType = "com.apple.product-type.tool";
+		};
+		000000000000000000000300 /* NexusCLI */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000301 /* Build configuration list for PBXNativeTarget "NexusCLI" */;
+			buildPhases = (
+				000000000000000000000304 /* Sources */,
+				000000000000000000000305 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				0000000000000000000000A3 /* NexusCLI */,
+			);
+			name = NexusCLI;
+			packageProductDependencies = (
+				0000000000000000000000D3 /* NexusCore */,
+			);
+			productName = nexus;
+			productReference = 0000000000000000000000B3 /* nexus */;
+			productType = "com.apple.product-type.tool";
+		};
+		000000000000000000000400 /* NexusHelper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000401 /* Build configuration list for PBXNativeTarget "NexusHelper" */;
+			buildPhases = (
+				000000000000000000000404 /* Sources */,
+				000000000000000000000405 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				0000000000000000000000A4 /* NexusHelper */,
+			);
+			name = NexusHelper;
+			packageProductDependencies = (
+				0000000000000000000000D4 /* NexusCore */,
+			);
+			productName = NexusHelper;
+			productReference = 0000000000000000000000B4 /* NexusHelper */;
+			productType = "com.apple.product-type.tool";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		000000000000000000000000 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					000000000000000000000100 = {
+						CreatedOnToolsVersion = 27.1;
+					};
+					000000000000000000000200 = {
+						CreatedOnToolsVersion = 27.1;
+					};
+					000000000000000000000300 = {
+						CreatedOnToolsVersion = 27.1;
+					};
+					000000000000000000000400 = {
+						CreatedOnToolsVersion = 27.1;
+					};
+				};
+			};
+			buildConfigurationList = 000000000000000000000010 /* Build configuration list for PBXProject "Nexus" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 000000000000000000000001;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				0000000000000000000000D0 /* XCLocalSwiftPackageReference "NexusKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 000000000000000000000002 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				000000000000000000000100 /* Nexus */,
+				000000000000000000000200 /* nexusd */,
+				000000000000000000000300 /* NexusCLI */,
+				000000000000000000000400 /* NexusHelper */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		000000000000000000000106 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		000000000000000000000104 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000204 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000304 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000404 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		000000000000000000000602 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000000000200 /* nexusd */;
+			targetProxy = 000000000000000000000502 /* PBXContainerItemProxy */;
+		};
+		000000000000000000000603 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000000000300 /* NexusCLI */;
+			targetProxy = 000000000000000000000503 /* PBXContainerItemProxy */;
+		};
+		000000000000000000000604 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000000000400 /* NexusHelper */;
+			targetProxy = 000000000000000000000504 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		000000000000000000000011 /* Debug configuration for PBXProject "Nexus" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 4G5C39PFB2;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 0.1.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		000000000000000000000012 /* Release configuration for PBXProject "Nexus" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 4G5C39PFB2;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 0.1.0;
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		000000000000000000000102 /* Debug configuration for PBXNativeTarget "Nexus" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Nexus;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2026 Rood Fruit B.V.";
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Debug;
+		};
+		000000000000000000000103 /* Release configuration for PBXNativeTarget "Nexus" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Nexus;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2026 Rood Fruit B.V.";
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
+		000000000000000000000202 /* Debug configuration for PBXNativeTarget "nexusd" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus.daemon;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		000000000000000000000203 /* Release configuration for PBXNativeTarget "nexusd" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus.daemon;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		000000000000000000000302 /* Debug configuration for PBXNativeTarget "NexusCLI" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus.cli;
+				PRODUCT_MODULE_NAME = NexusCLI;
+				PRODUCT_NAME = nexus;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		000000000000000000000303 /* Release configuration for PBXNativeTarget "NexusCLI" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus.cli;
+				PRODUCT_MODULE_NAME = NexusCLI;
+				PRODUCT_NAME = nexus;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		000000000000000000000402 /* Debug configuration for PBXNativeTarget "NexusHelper" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus.helper;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		000000000000000000000403 /* Release configuration for PBXNativeTarget "NexusHelper" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus.helper;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		000000000000000000000010 /* Build configuration list for PBXProject "Nexus" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000011 /* Debug configuration for PBXProject "Nexus" */,
+				000000000000000000000012 /* Release configuration for PBXProject "Nexus" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000101 /* Build configuration list for PBXNativeTarget "Nexus" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000102 /* Debug configuration for PBXNativeTarget "Nexus" */,
+				000000000000000000000103 /* Release configuration for PBXNativeTarget "Nexus" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000201 /* Build configuration list for PBXNativeTarget "nexusd" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000202 /* Debug configuration for PBXNativeTarget "nexusd" */,
+				000000000000000000000203 /* Release configuration for PBXNativeTarget "nexusd" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000301 /* Build configuration list for PBXNativeTarget "NexusCLI" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000302 /* Debug configuration for PBXNativeTarget "NexusCLI" */,
+				000000000000000000000303 /* Release configuration for PBXNativeTarget "NexusCLI" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000401 /* Build configuration list for PBXNativeTarget "NexusHelper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000402 /* Debug configuration for PBXNativeTarget "NexusHelper" */,
+				000000000000000000000403 /* Release configuration for PBXNativeTarget "NexusHelper" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		0000000000000000000000D0 /* XCLocalSwiftPackageReference "NexusKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = NexusKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0000000000000000000000D1 /* NexusCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NexusCore;
+		};
+		0000000000000000000000D2 /* NexusCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NexusCore;
+		};
+		0000000000000000000000D3 /* NexusCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NexusCore;
+		};
+		0000000000000000000000D4 /* NexusCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NexusCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 000000000000000000000000 /* Project object */;
+}

@@ -1,0 +1,227 @@
+# Nexus - decision record
+
+Result of the design interview on 2026-10-26. Nexus is a free macOS app that serves local
+websites, PHP, databases and Redis, like MAMP PRO and Herd Pro. Its main feature is workspaces:
+an isolated copy of a site for each git worktree. So many tickets can run at the same time, each
+with its own domain, database and processes.
+
+Nexus must work for every Laravel application. The evidence below comes from the 22 sites in the
+owner's MAMP PRO setup (19 Laravel applications, Laravel 8.83 to 13.38). The record describes
+these applications by their patterns, not by their names.
+
+Out of scope: Memcached, Mailhog, Dynamic DNS and Valkey.
+
+## Decisions
+
+### Product
+
+1. Nexus is for other users too. The owner tests it locally first.
+2. Nexus is free. There is no license key, no paid tier and no payment code.
+3. Version 1 contains everything in this record. There is no split into version 1 and 2.
+4. Native Swift and SwiftUI app for Apple silicon. The minimum is macOS 27, for the app and
+   for all binaries. Risk: users on macOS 26 or older cannot install Nexus. CI builds on the
+   `xcode-27` runner (macOS 27, Apple silicon), generally available since 2026-10-15.
+5. UI: a main window for sites and services, and a menu bar item for status, start and stop.
+   "Start at login" is a setting that is on by default.
+6. App updates use Sparkle.
+6b. The Apple team Rood Fruit B.V. (4G5C39PFB2) signs Nexus. (user)
+6c. Bundle IDs: nl.roodfruit.nexus for the app, with .daemon, .helper and .cli for the other
+    programs. Chosen by Claude from roodfruit.nl, the domain of the team. It cannot change after
+    the first release.
+
+### Binaries
+
+7. Nexus uses only binaries that it installed itself, in ~/Library/Application Support/Nexus.
+   It never uses a binary from MAMP PRO, Homebrew, the system or the PATH. A PHP 8.5 in MAMP
+   PRO does not count as a PHP 8.5 for Nexus.
+8. Nexus downloads prebuilt binaries. GitHub Actions builds them and GitHub Releases hosts them.
+   Homebrew is not the source: its bottles work only in /opt/homebrew, which the user's own
+   installs share, and other users may not have Homebrew.
+9. Both repositories are in the GitHub organization NexusLocal (created 2026-10-26):
+   NexusLocal/nexus for the app and NexusLocal/binaries for the build scripts.
+   The build scripts go in a separate public repository. Standard GitHub-hosted runners are free
+   for public repositories. A public repository with links to the source also covers the GPL
+   rule for the MySQL and MariaDB binaries.
+   Source: docs.github.com/en/billing/reference/actions-runner-pricing.
+10. Node is not compiled. Nexus downloads the official macOS arm64 builds from nodejs.org and
+    checks them against SHASUMS256.txt.
+11. Nexus ships Composer (composer.phar) and runs it only with its own PHP.
+12. Each version line gets the newest patch release. A binary update comes from a manifest in
+    the build repository. Nexus keeps a version that gets no security fixes any more and marks
+    it as such in the window.
+
+### Versions in version 1
+
+Dates are the end of security fixes, from endoflife.date on 2026-10-26.
+
+13. PHP: 8.2 (2026-12-31), 8.3, 8.4, 8.5.
+14. MySQL: 8.0 (ended 2026-04-30), 8.4 LTS, 9.7 LTS.
+15. MariaDB: 10.11, 11.4, 11.8, 12.3. All are LTS.
+16. PostgreSQL: 14 (2026-11-12), 15, 16, 17, 18.
+17. Redis: 7.2, 8.2 and the newest 8 (now 8.10). 7.2 has the BSD license. Redis 8 has AGPLv3
+    as one of its licenses. 7.4 is left out: its licenses are RSALv2 or SSPLv1, and RSALv2
+    forbids distribution "in a manner that makes the functionality of the Software available to
+    third parties" (redis.io/legal/rsalv2-agreement).
+18. nginx: the newest stable line (now 1.30). One version only, because nginx is the front
+    server for all sites.
+19. Apache: 2.4 (now 2.4.69).
+20. Node: 22, 24, 26.
+21. A site gets its Node version from .nvmrc, .node-version or "engines" in package.json, else
+    the newest LTS. A setting can override it.
+
+### Web servers, PHP, DNS and SSL
+
+22. Each site chooses Apache or nginx. nginx is the default for a new site.
+23. nginx always listens on 80 and 443 and does TLS for all sites. It serves nginx sites itself
+    and proxies Apache sites to Apache on an internal port. Apache sets HTTPS=on from
+    X-Forwarded-Proto and takes the client IP from mod_remoteip. So PHP sees HTTPS without a
+    TrustProxies change in the application.
+24. nginx and Apache bind *:80 and *:443 as the normal user. Access rules allow only loopback by
+    default. A LAN setting can open it.
+    Evidence: a test on macOS 27. 0.0.0.0:81 binds as a normal user. 127.0.0.1:81 gives
+    "Permission denied".
+25. Module toggles: Apache uses LoadModule lines. nginx is built with --with-compat, and the
+    toggles cover the modules that nginx can load as dynamic modules. The modules that the front
+    needs (ssl, http2, proxy) cannot be turned off.
+26. PHP runs as php-fpm, one master for each PHP version. Every PHP process gets
+    OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES.
+    Evidence: php-cgi children of MAMP PRO crash on macOS 27 because the parent loads the
+    Objective-C runtime before it forks.
+27. Extensions follow the MAMP model. Core extensions are built into the binary. Optional
+    extensions (xdebug, pcov, opcache, redis, imagick, igbinary, apcu, yaml and more) are shared
+    .so files. Nexus turns them on or off in the php.ini of that PHP version, not for one site.
+    Evidence: MAMP PHP 8.4.17 has 43 built-in modules and 18 shared .so files.
+28. DNS: a wildcard resolver for the dev TLD (.test by default) through /etc/resolver/test and a
+    small DNS server in Nexus. /etc/hosts gets lines only for hosts outside the dev TLD, such as
+    .local hosts. Reason: workspaces add hosts often, and MAMP PRO writes 78 lines to /etc/hosts.
+29. SSL: Nexus makes its own root CA. The user trusts it one time. Nexus signs a certificate for
+    each host and each workspace. The CA private key stays in the login keychain.
+30. One small privileged helper (SMAppService) writes /etc/resolver/<tld> and the /etc/hosts
+    lines. It refuses every other path. The trust of the root CA needs no helper: it is a trust
+    setting in the login keychain, and macOS asks for the password. The DNS server needs no
+    root either: it listens on a high port, and /etc/resolver sets that port (resolver(5)).
+31. Ports: defaults 80, 443, 3306, 5432 and 6379. When a port is in use, Nexus shows the process
+    that holds it and offers two actions: stop that app, or pick another port. The user can
+    change every port.
+32. One launchd user agent, nexusd, starts and watches all services as child processes. So
+    services keep running when the window closes, and the user sees one background item. The
+    app and the CLI talk to nexusd over XPC.
+
+### Sites and databases
+
+33. A site comes from an added folder or from a parked folder, where each subfolder is a site.
+    The document root is public/ when it exists, else the folder.
+34. More than one version of a service can run at the same time. Each instance has its own
+    version, port and data folder.
+35. A new database instance gets the user root with the password root, on 127.0.0.1 only. The
+    user can change this. Reason: root and root is the MAMP default, so imported sites work.
+36. A button opens a database in the app that the user has (TablePlus, Sequel Ace). Nexus has no
+    built-in admin tool.
+37. Import from MAMP PRO: the hosts (name, aliases, document root, PHP version, SSL). Database
+    data comes over with the action "copy a database from another server" (a dump and a
+    restore through the port).
+
+### CLI
+
+38. A `nexus` CLI ships with the app. `nexus php`, `nexus composer`, `nexus node` and
+    `nexus npm` pick the version of the site that contains the current folder.
+    `nexus workspace info --json` gives the URL, the databases and the ports of a workspace.
+39. By default Nexus changes no shell file. A setting "Add Nexus to PATH" is off by default.
+    When it is on, Nexus adds one line at the end of ~/.zshrc that puts
+    ~/Library/Application Support/Nexus/bin first on the PATH. Turning it off removes the line.
+    It must be the end of ~/.zshrc: zsh reads ~/.zshrc last, and a ~/.zshrc can add other PHP
+    folders to the front of the PATH. An alias still wins over the PATH.
+
+### Workspaces
+
+40. Nexus creates a workspace for each new worktree of a site, and removes it when the worktree
+    goes away. A site setting turns this off. It is on by default. `nexus workspace create`
+    works when the setting is off. `nexus workspace wait` waits until a workspace is ready.
+    Evidence: 9 sites have worktrees, up to 14 for one site.
+41. The workspace name is the worktree folder name in lowercase. Every character outside a-z,
+    0-9 and - becomes -. TICKET-123 becomes ticket-123.
+42. Domain: every host keeps its subdomains. The label before the TLD gets "-<workspace>".
+    my.shop.test becomes my.shop-ticket-123.test. A host outside the dev TLD gets the dev
+    TLD: blog.local becomes blog-ticket-123.test.
+    Reason: for the browser each workspace is a separate site, so no cookie goes between the
+    main site and a workspace. A prefix such as "workspace." is not used: some applications bind
+    their routes to a fixed subdomain (one application binds all routes to "my.").
+43. Nexus reads the configuration of the application, not only its .env. It boots the
+    application with its own PHP and runs only the bootstrappers LoadEnvironmentVariables and
+    LoadConfiguration, so no service provider runs. It sets a unique marker value for each env
+    key that config/*.php uses. So Nexus learns which env key feeds which database, Redis,
+    session, cache, queue and broadcast setting.
+    Evidence: one application hardcodes 'default' => 'main' in config/database.php and has four MySQL
+    connections and four Redis connections. Four sites use their own connection names (app,
+    cms, crm, main). Some keys have no line in .env and use the default in the config file.
+44. The workspace .env: when the worktree has no .env, Nexus copies the .env of the main
+    checkout. Nexus then changes only these values, and keeps all other lines:
+    - Hosts: every value that contains a host of the site, or its parent domain with a leading
+      dot, gets the workspace host. This covers APP_URL, SESSION_DOMAIN and custom keys.
+      Evidence: sites use SESSION_DOMAIN=.${APP_HOST}, ${APP_DOMAIN}, .shop.test and
+      site.local.
+    - Databases: see 46.
+    - Redis: see 47.
+    When an env key that Nexus must change has no line in .env, Nexus adds the line.
+45. A site can add more keys with placeholders: {workspace}, {host}, {database} and
+    {port:<name>}. Each {port:<name>} gets its own free port for each workspace. Use this for
+    services that Nexus does not manage, such as Pusher or a search server.
+46. Databases: Nexus copies every database of the site that is on a Nexus MySQL, MariaDB or
+    PostgreSQL instance. The copy is called <database>_<workspace>. Nexus changes each env key
+    that feeds the name of such a database. A SQLite file gets an APFS clone.
+47. Redis: one instance for each Redis version. Each Redis connection of each workspace gets
+    its own database index. Nexus sets "databases" in redis.conf high enough for all of them.
+48. Safety: when a database name or a Redis index comes from a hardcoded value and not from an
+    env key, Nexus cannot isolate it. Then the workspace is "not isolated". Nexus shows which
+    connection is the cause and starts no background process for that workspace. Reason: a
+    workspace that writes into the main database is worse than no workspace.
+49. Files: Nexus makes APFS clones (copy on write) of vendor, node_modules, the build output and
+    storage/app from the main checkout. A clone takes seconds and uses no extra disk until a
+    file changes. Nexus runs `composer install` only when composer.lock is different from the
+    main checkout, and the same for package-lock.json. No symlinks: a `composer require` in a
+    worktree would then change the main checkout.
+50. Nexus never writes a file that git sees. Before it writes .env or makes a clone, it checks
+    the path with `git check-ignore`. When the path is not ignored, Nexus skips it and shows a
+    warning.
+51. Each site has a list of commands that Nexus runs after the database copy. For example: reset
+    a custom domain that the application keeps in its database.
+52. Background processes: each site has a list of commands that every workspace runs as its own
+    copy. A site setting turns this on or off. It is on by default. For a Laravel site the list
+    starts with a preset that follows the configuration:
+    - `php artisan queue:work` when the queue connection is not sync.
+    - `php artisan schedule:work`.
+    - `php artisan reverb:start --port={port:reverb}` when the broadcast connection is reverb.
+      Nexus also changes the Reverb port keys.
+    - `npm run dev -- --port {port:vite} --strictPort` when the site has a vite.config file.
+    An asset process is in the preset only when its output folder is ignored by git.
+    Evidence: one application uses Laravel Mix and has 115 built files in public/ in git. A build in
+    a workspace would change those files.
+    The same list can run for the main checkout. That switch is off by default.
+53. Removal: Nexus removes a workspace only when git no longer lists the worktree. Before it drops
+    a workspace database, it writes a compressed dump to the Nexus trash folder. The trash keeps
+    a dump for 7 days (a setting). Nexus empties the Redis indexes of the workspace.
+54. A site that is not a Laravel application gets a workspace with only the domain, the
+    certificate and the file clones.
+55. Site settings live in the storage of Nexus, not in the repository.
+
+## Open and deferred
+
+- Public or private for the app repository. Reopen when CI for the app itself is set up.
+- PHP 7.4, 8.0 and 8.1. PHP 7.x needs patches to build against OpenSSL 3. Reopen when a user
+  asks for one of them.
+- Import from Herd. Reopen when a user asks for it.
+- A settings file in the repository that a team can share. Reopen when a team asks for it.
+- A Claude Code plugin that tells Claude the workspace URL and the `nexus php` command. Reopen
+  after version 1 works.
+
+## Plan changes from the interview
+
+- Removed: Homebrew as the binary source. Added: a separate public build repository with CI.
+  All other work depends on it.
+- Removed: Valkey.
+- Added: Node, Composer, the `nexus` CLI, the privileged helper, Sparkle, background processes
+  for each workspace, the database dump before a workspace is removed, and the MAMP PRO import.
+- Added: nginx as the fixed front server, also for Apache sites.
+- Added: Nexus reads the real configuration of each application, so workspaces work for every
+  Laravel application and not only for applications with a standard .env.
+- Rejected: a version 2 for part of the features.
