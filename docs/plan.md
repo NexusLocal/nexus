@@ -236,7 +236,10 @@ Done when:
 
 Work:
 1. Instances of MySQL, MariaDB and PostgreSQL. Each has its own version, port and data folder
-   (D34). The user root with the password root on 127.0.0.1 (D35).
+   (D34). The user root with the password root on 127.0.0.1 (D35). MariaDB: run
+   scripts/mariadb-install-db with the package folder as the working folder and --basedir=. ,
+   because the script breaks on the space in "Application Support". The data folder can have a
+   space.
 2. Redis instances with "databases" set high enough for all workspaces (D47).
 3. The action "copy a database from another server": a dump from the other server and a
    restore into a Nexus instance (D37). The other server is only read.
@@ -249,12 +252,16 @@ Done when:
 
 ## Step 6 - The app window and the menu bar
 
+Before any screen is built, its design is made in pen.dev through the pen.dev MCP, and the owner
+reviews it (D57). The screens use the standard macOS 27 controls and styling, not custom
+components.
+
 Each step adds its own screens. This step completes them:
 1. Overview: services, sites, workspaces and their state.
 2. Sites: the settings of each site, the workspace settings and the background processes.
 3. Services: versions, instances, ports, logs and the module and extension toggles.
-4. The first-run flow: install the first versions, trust the CA, set the resolver, start at
-   login, and the PATH setting (off by default).
+4. The first-run flow: pick the packages to install (D56), trust the CA, set the resolver,
+   start at login, and the PATH setting (off by default).
 5. The menu bar item: state, start, stop, open a site.
 
 Done when: a new user can go from the first launch to a working site without the terminal.
