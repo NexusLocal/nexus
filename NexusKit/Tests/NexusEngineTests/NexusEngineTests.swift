@@ -27,6 +27,7 @@ struct CopyDownloader: PackageDownloader {
     }
 }
 
+@Suite(.serialized)
 struct NexusEngineTests {
     private let workspace = FileManager.default.temporaryDirectory
         .appending(path: "Nexus Engine Tests \(UUID().uuidString)", directoryHint: .isDirectory)
@@ -239,8 +240,7 @@ struct NexusEngineTests {
         let engine = try makeEngine(package: try makeFakeRedis(), port: freePort(), dnsPort: dnsPort)
         await engine.startEnabledServices()
         let other = DNSServer(responder: DNSResponder(tld: "test"))
-        let takenPort = freeUDPPort()
-        try other.start(port: takenPort)
+        let takenPort = try startOnFreePort(other)
         defer { other.stop() }
 
         let response = await engine.handle(.setPort(service: "dns", port: takenPort))
@@ -254,8 +254,7 @@ struct NexusEngineTests {
 
     @Test func aNewDNSPortStartsAFailedServer() async throws {
         let other = DNSServer(responder: DNSResponder(tld: "test"))
-        let takenPort = freeUDPPort()
-        try other.start(port: takenPort)
+        let takenPort = try startOnFreePort(other)
         defer { other.stop() }
         let engine = try makeEngine(package: try makeFakeRedis(), port: freePort(), dnsPort: takenPort)
         await engine.startEnabledServices()
