@@ -93,8 +93,12 @@ Work:
    old signature.
 4. A check tool runs `otool -L` on every Mach-O file. It fails the build when a path points
    outside the package, /usr/lib or /System.
-5. Each package is a .tar.zst with a LICENSE file and a SOURCE file (the URL and the SHA-256 of
-   the source archive).
+5. Each package is a .tar.xz with a licenses folder and a SOURCE file (the URL and the SHA-256
+   of each source archive). Not .tar.zst: the tar of macOS 27 cannot read zstd, and Nexus
+   unpacks with /usr/bin/tar.
+6. The build starts in an empty environment with the PATH /usr/bin:/bin:/usr/sbin:/sbin. The
+   build tools (cmake, ninja, pkgconf) come with the scripts. Reason: on the owner's Mac the PATH
+   puts MAMP's pkg-config, autoconf, libtool and curl first.
 
 Done when:
 - The check tool passes on every package.
