@@ -105,8 +105,8 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
     setting in the login keychain, and macOS asks for the password. The DNS server needs no
     root either: it listens on a high port, and /etc/resolver sets that port (resolver(5)).
 31. Ports: defaults 80, 443, 3306, 5432 and 6379. When a port is in use, Nexus shows the process
-    that holds it and offers two actions: stop that app, or pick another port. The user can
-    change every port.
+    that holds it and offers two actions: stop that app, or pick another port. Every port of
+    every service can change, in the app and with `nexus port <service> <port>`. (user)
 32. One launchd user agent, nexusd, starts and watches all services as child processes. So
     services keep running when the window closes, and the user sees one background item. The
     app and the CLI talk to nexusd over XPC.

@@ -259,7 +259,8 @@ components.
 Each step adds its own screens. This step completes them:
 1. Overview: services, sites, workspaces and their state.
 2. Sites: the settings of each site, the workspace settings and the background processes.
-3. Services: versions, instances, ports, logs and the module and extension toggles.
+3. Services: versions, instances, ports, logs and the module and extension toggles. Every
+   port of every service can be changed here (D31).
 4. The first-run flow: pick the packages to install (D56), trust the CA, set the resolver,
    start at login, and the PATH setting (off by default).
 5. The menu bar item: state, start, stop, open a site.
