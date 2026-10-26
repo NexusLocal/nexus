@@ -208,7 +208,22 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
     certificate and the file clones.
 55. Site settings live in the storage of Nexus, not in the repository.
 
+### Installation and design
+
+56. The app contains no service. Nexus downloads every package from the manifest itself. At
+    the first launch the user picks what to install, and the window can install or remove any
+    version later. Reason: the app download stays small, and packages outside the app bundle do
+    not need a Developer ID signature or notarization. (user: "the user is in charge")
+    The first launch preselects nginx, the newest PHP and Composer. Everything else starts
+    unselected. (user)
+57. The UI is designed in pen.dev first (through its MCP), so the owner can say what must
+    change before it is built. The app uses the standard macOS 27 controls and styling as much
+    as possible, not custom components. (user)
+
 ## Open and deferred
+
+- Remove docs/ from the public repository and from its history. The owner wants this
+  eventually. Reopen before the first release to other users.
 
 - Public or private for the app repository. Reopen when CI for the app itself is set up.
 - PHP 7.4, 8.0 and 8.1. PHP 7.x needs patches to build against OpenSSL 3. Reopen when a user
