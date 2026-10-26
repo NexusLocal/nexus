@@ -24,14 +24,22 @@ public struct NexusPaths: Sendable, Equatable {
         [runtimes, config, data, run, logs, certs, trash, bin]
     }
 
-    public func runtime(_ name: String, version: String) -> URL {
+    public func runtime(_ name: String, line: String) -> URL {
         runtimes
             .appending(path: name, directoryHint: .isDirectory)
-            .appending(path: version, directoryHint: .isDirectory)
+            .appending(path: line, directoryHint: .isDirectory)
     }
 
-    public func dataFolder(service: String, version: String) -> URL {
-        data.appending(path: "\(service)-\(version)", directoryHint: .isDirectory)
+    public var runtimeStaging: URL {
+        runtimes.appending(path: ".staging", directoryHint: .isDirectory)
+    }
+
+    public func dataFolder(service: String, line: String) -> URL {
+        data.appending(path: "\(service)-\(line)", directoryHint: .isDirectory)
+    }
+
+    public func log(_ name: String) -> URL {
+        logs.appending(path: "\(name).log", directoryHint: .notDirectory)
     }
 
     public func createFolders(using fileManager: FileManager = .default) throws {
