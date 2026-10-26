@@ -54,6 +54,6 @@ let package = Package(
             .product(name: "X509", package: "swift-certificates"),
             .product(name: "Crypto", package: "swift-crypto"),
         ]),
-        .target(name: "NexusTestSupport", dependencies: ["NexusTLS", "NexusIPC"], path: "Tests/NexusTestSupport"),
+        .target(name: "NexusTestSupport", dependencies: ["NexusTLS", "NexusIPC", "NexusDNS"], path: "Tests/NexusTestSupport"),
     ]
 )

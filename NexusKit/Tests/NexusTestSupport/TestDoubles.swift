@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import NexusDNS
 import NexusIPC
 import NexusTLS
 @preconcurrency import Security
@@ -87,6 +88,21 @@ public final class RecordingHelper: PrivilegedHelper {
             $0.requests.append(request)
         }
     }
+}
+
+public func startOnFreePort(_ server: DNSServer) throws -> Int {
+    for _ in 0..<20 {
+        let port = freeUDPPort()
+
+        do {
+            try server.start(port: port)
+            return port
+        } catch DNSServerError.portInUse {
+            continue
+        }
+    }
+
+    throw DNSServerError.socketFailed("no free UDP port after 20 tries")
 }
 
 public func freeUDPPort() -> Int {

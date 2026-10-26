@@ -249,11 +249,13 @@ public actor NexusEngine {
         // The answer goes back only when the service accepts connections, so a request right
         // after the command does not fail.
         let deadline = ContinuousClock.now + .seconds(3)
-        while !PortInspector.acceptsConnections(definition.ports[0]), ContinuousClock.now < deadline {
+        var accepting = PortInspector.acceptsConnections(definition.ports[0])
+        while !accepting, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
+            accepting = PortInspector.acceptsConnections(definition.ports[0])
         }
 
-        guard case .running = await supervisor.state(of: id), PortInspector.acceptsConnections(definition.ports[0]) else {
+        guard accepting, case .running = await supervisor.state(of: id) else {
             throw SupervisorError.launchFailed("\(definition.displayName) does not accept connections on port \(definition.ports[0]). See \(definition.logFile.path(percentEncoded: false)).")
         }
 

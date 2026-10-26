@@ -17,9 +17,8 @@ struct DNSServerTests {
     }
 
     @Test func digGetsTheLoopbackAddressForANameInTheTLD() throws {
-        let port = freeUDPPort()
         let server = DNSServer(responder: DNSResponder(tld: "test"))
-        try server.start(port: port)
+        let port = try startOnFreePort(server)
         defer { server.stop() }
 
         #expect(try dig("anything.test", port: port) == "127.0.0.1")
@@ -27,9 +26,8 @@ struct DNSServerTests {
     }
 
     @Test func aSecondServerOnTheSamePortReportsThePort() throws {
-        let port = freeUDPPort()
         let first = DNSServer(responder: DNSResponder(tld: "test"))
-        try first.start(port: port)
+        let port = try startOnFreePort(first)
         defer { first.stop() }
 
         #expect(throws: DNSServerError.portInUse(port)) {
@@ -38,9 +36,8 @@ struct DNSServerTests {
     }
 
     @Test func stopFreesThePort() throws {
-        let port = freeUDPPort()
         let server = DNSServer(responder: DNSResponder(tld: "test"))
-        try server.start(port: port)
+        let port = try startOnFreePort(server)
 
         server.stop()
 
