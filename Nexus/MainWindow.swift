@@ -45,8 +45,8 @@ struct MainWindow: View {
                 AddSiteSheet()
             case .importDatabase(let instance):
                 ImportDatabaseSheet(instance: instance)
-            case .portInUse(let id):
-                if let service = model.service(id), let holder = service.problem?.portHolder {
+            case .portInUse(let id, let holder):
+                if let service = model.service(id) {
                     PortInUseSheet(service: service, holder: holder)
                 } else {
                     Color.clear

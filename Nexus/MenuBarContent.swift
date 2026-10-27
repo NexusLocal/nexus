@@ -57,10 +57,10 @@ struct MenuBarContent: View {
             }
 
             if let blocked = model.blockedService {
-                Notice(text: "\(blocked.service.name): port \(blocked.service.shortPortSummary) is in use", detail: blocked.service.problem?.detail ?? "") {
+                Notice(text: "\(blocked.service.name): port \(blocked.holder.port) is in use", detail: blocked.service.problem?.detail ?? "") {
                     Button("Fix…") {
                         open()
-                        model.sheet = .portInUse(service: blocked.service.id)
+                        model.sheet = .portInUse(service: blocked.service.id, holder: blocked.holder)
                     }
                 }
             }

@@ -56,6 +56,8 @@ public actor NexusEngine {
     private var publishing = false
     private var publishAgain = false
     private var observesSupervisor = false
+    // The last start of each service that failed on a port in use (D31).
+    private var portConflicts: [String: PortConflict] = [:]
 
     public init(
         paths: NexusPaths,
@@ -148,10 +150,16 @@ public actor NexusEngine {
                 return .done(message: try await serialWeb { try await self.lan(enabled) })
             case .databases:
                 return .databases(try await databaseInstances())
+            case .databaseSizes(let instance):
+                return .databaseSizes(try await databaseSizes(instance))
+            case .setAccount(let instance, let account):
+                return .done(message: try await serialWeb { try await self.setAccount(instance, account) })
             case .copyDatabase(let copy):
                 // A copy can take minutes, so it does not wait in the queue of the changes.
                 return .done(message: try await copyDatabase(copy))
             }
+        } catch let conflict as PortConflict {
+            return .portInUse(conflict)
         } catch {
             return .failure(message: String(describing: error))
         }
@@ -220,14 +228,17 @@ public actor NexusEngine {
                 continue
             }
 
-            if let status = supervised[id] {
+            if let status = supervised[id], status.state.isActive {
                 all.append((runtime, status))
                 continue
             }
 
+            // A service that does not run shows the ports of its next start, not those of its
+            // last run.
             let ports = try await self.ports(for: runtime)
             let definition = catalog.definition(for: runtime, ports: ports)
-            all.append((runtime, ServiceStatus(id: id, displayName: definition?.displayName ?? id, ports: definition?.ports ?? [], state: .stopped)))
+            let state = supervised[id]?.state ?? .stopped
+            all.append((runtime, ServiceStatus(id: id, displayName: definition?.displayName ?? id, ports: definition?.ports ?? [], state: state)))
         }
 
         return all.sorted { $0.status.id < $1.status.id }
@@ -236,16 +247,33 @@ public actor NexusEngine {
     private func serviceList() async throws -> ServiceList {
         let all = try await services()
         let dnsProblem = await dnsNamesProblem()
-        let services = all.map { runtime, status in
-            ServiceInfo(
+        var services: [ServiceInfo] = []
+
+        for (runtime, status) in all {
+            guard let runtime else {
+                services.append(ServiceInfo(id: status.id, name: Self.dnsServiceID, line: "", version: "", ports: status.ports, state: status.state, problem: dnsProblem))
+                continue
+            }
+
+            let tools = ServiceCatalog.databaseKind(of: runtime).map { DatabaseTools(id: status.id, kind: $0, runtime: runtime) }
+            let ownsData = tools != nil || runtime.name == "redis"
+            var account: DatabaseAccount?
+            if let tools {
+                account = try await self.account(of: tools)
+            }
+
+            services.append(ServiceInfo(
                 id: status.id,
-                name: runtime?.name ?? Self.dnsServiceID,
-                line: runtime?.line ?? "",
-                version: runtime?.version ?? "",
+                name: runtime.name,
+                line: runtime.line,
+                version: runtime.version,
                 ports: status.ports,
                 state: status.state,
-                problem: runtime == nil ? dnsProblem : nil
-            )
+                portConflict: status.state.isActive ? nil : portConflicts[status.id],
+                logFile: paths.log(status.id).path(percentEncoded: false),
+                dataFolder: ownsData ? catalog.dataFolder(for: runtime).path(percentEncoded: false) : nil,
+                account: account
+            ))
         }
 
         let waiting = await stateStore.current().stoppedByStopAll
@@ -319,7 +347,15 @@ public actor NexusEngine {
             throw SupervisorError.unknownService(id)
         }
 
-        try await supervisor.start(definition)
+        do {
+            try await supervisor.start(definition)
+        } catch SupervisorError.portInUse(let port, let owner) {
+            let conflict = PortConflict(service: id, port: port, owner: owner, suggestedPort: await suggestedPort(after: port))
+            portConflicts[id] = conflict
+            throw conflict
+        }
+
+        portConflicts[id] = nil
 
         if definition.ports.isEmpty {
             return "\(definition.displayName) runs."
@@ -348,6 +384,7 @@ public actor NexusEngine {
             return "The DNS server stopped. It starts again with nexusd, or with: nexus start dns"
         }
 
+        portConflicts[id] = nil
         try await supervisor.stop(id)
         try await stateStore.update {
             if disable {
@@ -356,6 +393,18 @@ public actor NexusEngine {
             $0.stoppedByStopAll.remove(id)
         }
         return "\(id) stopped."
+    }
+
+    // The next port above the one in use that is free and that no other Nexus service has.
+    private func suggestedPort(after port: Int) async -> Int {
+        let taken = Set(await stateStore.current().ports.values)
+        var candidate = port + 1
+
+        while candidate < 65535, taken.contains(candidate) || !PortInspector.isFree(candidate) {
+            candidate += 1
+        }
+
+        return candidate
     }
 
     private func restart(_ id: String) async throws -> String {
@@ -464,6 +513,9 @@ public actor NexusEngine {
             }
             throw RuntimeError.unsupported("Nexus has no port named \(id). The ports are: \(names.sorted().joined(separator: ", ")).")
         }
+
+        let nginxPortKeys = [ServiceCatalog.httpPortKey, ServiceCatalog.httpsPortKey]
+        portConflicts[nginxPortKeys.contains(id) ? ServiceCatalog.nginxID : id] = nil
 
         if id == Self.dnsServiceID {
             return try await setDNSPort(port)
@@ -598,7 +650,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .hosts, .sites, .extensions, .modules, .databases: true
+        case .status, .available, .installed, .hosts, .sites, .extensions, .modules, .databases, .databaseSizes: true
         default: false
         }
     }

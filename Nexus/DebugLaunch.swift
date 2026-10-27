@@ -29,7 +29,10 @@ enum DebugLaunch {
         switch value(of: "--sheet") {
         case "add-site": model.sheet = .addSite
         case "import": model.sheet = .importDatabase(instance: "mysql-8.0")
-        case "port": model.sheet = .portInUse(service: "mysql-8.4")
+        case "port":
+            if let blocked = model.blockedService {
+                model.sheet = .portInUse(service: blocked.service.id, holder: blocked.holder)
+            }
         default: break
         }
     }

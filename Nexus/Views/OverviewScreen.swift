@@ -91,11 +91,13 @@ private struct ProblemBanner: View {
     var body: some View {
         Banner(
             title: "\(service.name) cannot start",
-            message: "Port \(service.shortPortSummary) is in use by \(holder.process) of \(holder.app) (process \(holder.processNumber))."
+            message: "Port \(holder.port) is in use by \(holder.process) of \(holder.app) (process \(holder.processNumber))."
         ) {
-            Button("Quit \(holder.app)") {}
+            Button("Quit \(holder.app)") {
+                model.quit(holder, andStart: service)
+            }
             Button("Change port…") {
-                model.sheet = .portInUse(service: service.id)
+                model.sheet = .portInUse(service: service.id, holder: holder)
             }
         }
     }

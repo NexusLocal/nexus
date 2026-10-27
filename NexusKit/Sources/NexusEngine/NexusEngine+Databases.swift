@@ -68,7 +68,7 @@ extension NexusEngine {
                 kind: tools.kind,
                 version: tools.runtime.version,
                 port: try await port(of: tools),
-                account: .standard,
+                account: try await account(of: tools),
                 running: await supervisor.state(of: tools.id)?.isActive == true,
                 dataFolder: catalog.dataFolder(for: tools.runtime).path(percentEncoded: false)
             ))
@@ -113,9 +113,10 @@ extension NexusEngine {
         try? FileManager.default.removeItem(at: staging)
         try FileManager.default.createDirectory(at: paths.data, withIntermediateDirectories: true)
 
+        let account = try await account(of: tools)
         let output: CommandOutput
         do {
-            output = try await initialize(tools, into: staging)
+            output = try await initialize(tools, into: staging, account: account)
         } catch {
             try? FileManager.default.removeItem(at: staging)
             throw RuntimeError.unsupported("Nexus could not make the data folder of \(tools.kind.displayName) \(line). \(error)")
@@ -123,6 +124,7 @@ extension NexusEngine {
 
         try? FileManager.default.removeItem(at: data)
         try FileManager.default.moveItem(at: staging, to: data)
+        try await stateStore.update { $0.databaseAccounts[tools.id] = account }
 
         if let log = try? LogFile.openForAppending(paths.log(tools.id)) {
             try? log.write(contentsOf: Data((output.standardOutput + output.standardError).utf8))
@@ -135,10 +137,10 @@ extension NexusEngine {
         return FileManager.default.fileExists(atPath: folder.appending(path: marker).path(percentEncoded: false))
     }
 
-    // Each way ends with the user root and the password root on 127.0.0.1 (D35). A file with
-    // the password lives only during the initialization.
-    private func initialize(_ tools: DatabaseTools, into folder: URL) async throws -> CommandOutput {
-        let account = DatabaseAccount.standard
+    // Each way ends with the account on 127.0.0.1 (D35). A file with the password lives only
+    // during the initialization. PostgreSQL cannot have an empty password. So a connection over
+    // TCP needs no password when the account has none.
+    private func initialize(_ tools: DatabaseTools, into folder: URL, account: DatabaseAccount) async throws -> CommandOutput {
         let secret = paths.run.appending(path: ".\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: secret) }
 
@@ -175,16 +177,19 @@ extension NexusEngine {
                 workingDirectory: tools.runtime.folder
             ))
         case .postgresql:
-            try Self.writePrivate("\(account.password)\n", to: secret)
             var arguments = [
                 "-D", datadir,
                 "-U", account.user,
-                "--pwfile=\(secret.path(percentEncoded: false))",
                 "--auth-local=trust",
-                "--auth-host=scram-sha-256",
+                "--auth-host=\(PostgreSQLAccess.hostMethod(for: account))",
                 "--encoding=UTF8",
                 "--locale=en_US.UTF-8",
             ]
+
+            if !account.password.isEmpty {
+                try Self.writePrivate("\(account.password)\n", to: secret)
+                arguments.append("--pwfile=\(secret.path(percentEncoded: false))")
+            }
 
             // PostgreSQL 15 is the first version that can sort with ICU.
             if !VersionLine.isOlder(tools.runtime.line, than: "15") {
@@ -212,9 +217,9 @@ extension NexusEngine {
 
         let database = try DatabaseName.validated(request.database)
         let name = try DatabaseName.validated(request.name ?? request.database)
-        let port = try await port(of: tools)
+        let port = try await connectionPort(of: tools)
         let source = DatabaseEndpoint(host: request.source.host, port: request.source.port ?? tools.kind.standardPort, account: request.source.account)
-        let target = DatabaseEndpoint(host: "127.0.0.1", port: port, account: .standard)
+        let target = DatabaseEndpoint(host: "127.0.0.1", port: port, account: try await account(of: tools))
 
         if source.isLocal, source.port == port, database == name {
             throw RuntimeError.unsupported("\(database) cannot be copied onto itself. Give the copy another name with --as.")
@@ -249,7 +254,7 @@ extension NexusEngine {
 
         return """
             \(database) is copied from \(source.host):\(source.port) to \(request.instance) as \(name), with \(contents).
-            Connect to port \(port) on 127.0.0.1 with the user \(target.account.user) and the password \(target.account.password).
+            Connect to port \(port) on 127.0.0.1 with the user \(target.account.user) and \(target.account.password.isEmpty ? "no password" : "the password \(target.account.password)").
             """
     }
 }
@@ -268,22 +273,24 @@ struct DatabaseEndpoint {
 // the environment, so no password shows in the process list.
 struct DatabaseCopier {
     let tools: DatabaseTools
-    let source: DatabaseEndpoint
-    let target: DatabaseEndpoint
-    let work: URL
+    private let sourceClient: DatabaseClient
+    private let targetClient: DatabaseClient
 
-    private var sourceOptions: URL { work.appending(path: "source.cnf") }
-    private var targetOptions: URL { work.appending(path: "target.cnf") }
+    init(tools: DatabaseTools, source: DatabaseEndpoint, target: DatabaseEndpoint, work: URL) {
+        self.tools = tools
+        sourceClient = DatabaseClient(tools: tools, endpoint: source, options: work.appending(path: "source.cnf"))
+        targetClient = DatabaseClient(tools: tools, endpoint: target, options: work.appending(path: "target.cnf"))
+    }
+
+    private var source: DatabaseEndpoint { sourceClient.endpoint }
+    private var target: DatabaseEndpoint { targetClient.endpoint }
+    private var sourceOptions: URL { sourceClient.options }
+    private var targetOptions: URL { targetClient.options }
     private var kind: DatabaseKind { tools.kind }
 
     func prepare() throws {
-        guard kind.usesMySQLProtocol else {
-            return
-        }
-
-        let plugins = tools.runtime.folder.appending(path: "lib/plugin", directoryHint: .isDirectory)
-        try Data(DatabaseConfig.clientOptions(host: source.host, port: source.port, account: source.account, pluginFolder: plugins).utf8).write(to: sourceOptions)
-        try Data(DatabaseConfig.clientOptions(host: target.host, port: target.port, account: target.account, pluginFolder: plugins).utf8).write(to: targetOptions)
+        try sourceClient.prepare()
+        try targetClient.prepare()
     }
 
     // Names are checked with DatabaseName.validated, so they have no quotes.
@@ -398,22 +405,6 @@ struct DatabaseCopier {
 
     @discardableResult
     private func query(_ side: Side, _ sql: String, database: String? = nil) async throws -> String {
-        let endpoint = side == .source ? source : target
-
-        guard kind.usesMySQLProtocol else {
-            let command = Command(
-                executable: tools.client,
-                arguments: ["-X", "-q", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1", "-h", endpoint.host, "-p", String(endpoint.port), "-U", endpoint.account.user, "-d", database ?? "postgres", "-c", sql],
-                environment: ["PGPASSWORD": endpoint.account.password]
-            )
-            return try await CommandRunner.run(command).trimmed
-        }
-
-        let options = side == .source ? sourceOptions : targetOptions
-        let command = Command(
-            executable: tools.client,
-            arguments: ["--defaults-file=\(options.path(percentEncoded: false))", "-N", "-B", "-e", sql] + (database.map { [$0] } ?? [])
-        )
-        return try await CommandRunner.run(command).trimmed
+        try await (side == .source ? sourceClient : targetClient).query(sql, database: database)
     }
 }

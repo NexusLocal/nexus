@@ -32,6 +32,10 @@ public struct EngineState: Codable, Sendable, Equatable {
     public var phpExtensions: [String: Set<String>] = [:]
     public var apacheModules: Set<String>?
     public var nginxModules: Set<String> = []
+    // The account of each database instance. An instance without an entry that already has its
+    // data has root/root, because Nexus made it before the accounts could change (D35).
+    public var databaseAccounts: [String: DatabaseAccount] = [:]
+    public var newInstanceAccount = DatabaseAccount.newInstance
 
     public init() {}
 
@@ -54,6 +58,8 @@ public struct EngineState: Codable, Sendable, Equatable {
         phpExtensions = try container.decodeIfPresent([String: Set<String>].self, forKey: .phpExtensions) ?? defaults.phpExtensions
         apacheModules = try container.decodeIfPresent(Set<String>.self, forKey: .apacheModules)
         nginxModules = try container.decodeIfPresent(Set<String>.self, forKey: .nginxModules) ?? defaults.nginxModules
+        databaseAccounts = try container.decodeIfPresent([String: DatabaseAccount].self, forKey: .databaseAccounts) ?? defaults.databaseAccounts
+        newInstanceAccount = try container.decodeIfPresent(DatabaseAccount.self, forKey: .newInstanceAccount) ?? defaults.newInstanceAccount
     }
 }
 

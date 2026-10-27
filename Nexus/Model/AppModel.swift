@@ -1,5 +1,7 @@
-import Foundation
+import AppKit
+import NexusCore
 import NexusIPC
+import NexusSupervisor
 import Observation
 
 enum SidebarItem: Hashable {
@@ -13,18 +15,21 @@ enum SidebarItem: Hashable {
 enum SheetKind: Identifiable {
     case addSite
     case importDatabase(instance: String)
-    case portInUse(service: String)
+    case portInUse(service: String, holder: PortHolder)
 
     var id: String {
         switch self {
         case .addSite: "add-site"
         case .importDatabase(let instance): "import-\(instance)"
-        case .portInUse(let service): "port-\(service)"
+        case .portInUse(let service, _): "port-\(service)"
         }
     }
 }
 
+// The port is the one in use. nginx has two ports. So it is not always the first port of the
+// service.
 struct PortHolder {
+    let port: Int
     let app: String
     let process: String
     let processNumber: Int
@@ -86,6 +91,8 @@ final class AppModel {
     var search = ""
     var siteEntries: [SiteEntry] = []
     var services: [ServiceVersion] = []
+    var databaseLists: [String: [DatabaseItem]] = [:]
+    var databaseListProblems: [String: String] = [:]
     var stoppedByStopAll: [String] = []
     var nexusdProblem: String?
     var failure: ActionFailure?
@@ -238,29 +245,141 @@ final class AppModel {
         services[index].problem = nil
     }
 
-    private func send(_ request: NexusRequest, failure title: String, place: ActionPlace, finished: ((Bool) -> Void)? = nil) {
-        guard let client else {
+    func databases(of service: ServiceVersion) -> [DatabaseItem] {
+        client == nil ? service.databases : databaseLists[service.id] ?? []
+    }
+
+    // The list loads without a click of the user. So a failure shows in the list and not in an
+    // alert. A failure of an instance that stopped in the meantime does not show. A stopped
+    // instance shows no databases.
+    func loadDatabases(of service: ServiceVersion) {
+        let id = service.id
+
+        guard let client, service.kind.isDatabase, service.isActive else {
+            databaseLists[id] = nil
+            databaseListProblems[id] = nil
             return
         }
 
         Task {
-            let message: String?
+            let response: NexusResponse
 
             do {
-                if case .failure(let text) = try await client.send(request) {
-                    message = text
-                } else {
-                    message = nil
-                }
+                response = try await client.send(.databaseSizes(instance: id))
             } catch {
-                message = String(describing: error)
+                response = .failure(message: String(describing: error))
             }
 
-            finished?(message == nil)
-
-            if let message {
-                failure = ActionFailure(title: title, message: message, place: place)
+            switch response {
+            case .databaseSizes(let sizes):
+                databaseLists[id] = sizes.map { DatabaseItem(name: $0.name, usedBy: nil, size: $0.bytes.formatted(.byteCount(style: .file))) }
+                databaseListProblems[id] = nil
+            case .failure(let message):
+                databaseListProblems[id] = self.service(id)?.isActive == true ? message : nil
+            default:
+                break
             }
+        }
+    }
+
+    // A database or Redis gets its new port at a start. So a running one starts again. nginx,
+    // Apache and DNS move at once.
+    func changePort(_ port: ServicePort, of service: ServiceVersion, to number: Int) {
+        Task {
+            guard await perform(.setPort(service: port.key, port: number), failure: "\(service.name) did not get port \(number)", place: .window) != nil else {
+                return
+            }
+
+            if service.isActive, service.kind.isDatabase || service.kind == .redis {
+                await perform(.restart(service: service.id), failure: "\(service.name) did not restart", place: .window)
+            }
+        }
+    }
+
+    func changeAccount(of service: ServiceVersion, to account: DatabaseAccount) {
+        let change = NexusCore.DatabaseAccount(user: account.user, password: account.password)
+
+        Task {
+            guard await perform(.setAccount(instance: service.id, account: change), failure: "The account of \(service.name) did not change", place: .window) != nil else {
+                return
+            }
+
+            loadDatabases(of: service)
+        }
+    }
+
+    func start(_ service: ServiceVersion, movingPortOf holder: PortHolder, to number: Int) {
+        guard let key = (service.ports.first(where: { $0.number == holder.port }) ?? service.ports.first)?.key else {
+            return
+        }
+
+        Task {
+            guard await perform(.setPort(service: key, port: number), failure: "\(service.name) did not get port \(number)", place: .window) != nil else {
+                return
+            }
+
+            await perform(.start(service: service.id), failure: "\(service.name) did not start", place: .window)
+        }
+    }
+
+    // An app quits as a user would quit it. A program that is not an app, such as a mysqld of
+    // Homebrew, gets SIGTERM. The start then waits up to 10 seconds for the port. A server that
+    // an earlier nexusd left behind belongs to "Nexus". This app must not quit itself then.
+    func quit(_ holder: PortHolder, andStart service: ServiceVersion) {
+        let ownProcess = ProcessInfo.processInfo.processIdentifier
+        let app = NSWorkspace.shared.runningApplications.first { $0.localizedName == holder.app && $0.processIdentifier != ownProcess }
+
+        if let app {
+            app.terminate()
+        } else if holder.processNumber > 0 {
+            kill(pid_t(holder.processNumber), SIGTERM)
+        }
+
+        Task {
+            let deadline = ContinuousClock.now + .seconds(10)
+            while !PortInspector.isFree(holder.port), ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+
+            await perform(.start(service: service.id), failure: "\(service.name) did not start", place: .window)
+        }
+    }
+
+    private func send(_ request: NexusRequest, failure title: String, place: ActionPlace, finished: ((Bool) -> Void)? = nil) {
+        Task {
+            let succeeded = await perform(request, failure: title, place: place) != nil
+            finished?(succeeded)
+        }
+    }
+
+    // Returns the answer, or nil when the request failed. A port in use opens its sheet in the
+    // window. The menu bar panel shows it from the next event.
+    @discardableResult
+    private func perform(_ request: NexusRequest, failure title: String, place: ActionPlace) async -> NexusResponse? {
+        guard let client else {
+            return nil
+        }
+
+        let response: NexusResponse
+
+        do {
+            response = try await client.send(request)
+        } catch {
+            failure = ActionFailure(title: title, message: String(describing: error), place: place)
+            return nil
+        }
+
+        switch response {
+        case .failure(let message):
+            failure = ActionFailure(title: title, message: message, place: place)
+            return nil
+        case .portInUse(let conflict):
+            if place == .window {
+                sheet = .portInUse(service: conflict.service, holder: PortHolder(conflict))
+            }
+            return nil
+        default:
+            return response
         }
     }
 

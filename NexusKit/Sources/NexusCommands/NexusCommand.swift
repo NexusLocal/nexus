@@ -416,7 +416,7 @@ struct Database: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "db",
         abstract: "Lists the database instances, copies a database into one, and opens one in a database app.",
-        subcommands: [List.self, Copy.self, Open.self],
+        subcommands: [List.self, Copy.self, Open.self, Account.self],
         defaultSubcommand: List.self
     )
 
@@ -458,6 +458,18 @@ struct Database: AsyncParsableCommand {
             let source = DatabaseServer(host: fromHost, port: fromPort, account: DatabaseAccount(user: fromUser, password: fromPassword))
             print("Nexus copies \(database) now. A large database can take some minutes.")
             try finish(try await send(.copyDatabase(DatabaseCopy(source: source, database: database, instance: to, name: name, replace: replace))))
+        }
+    }
+
+    struct Account: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Changes the user and the password of a running instance, for example: nexus db account mysql-8.4 root --password secret")
+
+        @Argument(help: "The instance, as nexus db list shows it.") var instance: String
+        @Argument(help: "The user.") var user: String
+        @Option(help: "The password. Leave it out for no password.") var password = ""
+
+        func run() async throws {
+            try finish(try await send(.setAccount(instance: instance, account: DatabaseAccount(user: user, password: password))))
         }
     }
 
@@ -562,6 +574,9 @@ private func finish(_ response: NexusResponse) throws {
         print(message)
     case .failure(let message):
         FileHandle.standardError.write(Data("\(message)\n".utf8))
+        throw ExitCode.failure
+    case .portInUse(let conflict):
+        FileHandle.standardError.write(Data("\(conflict)\n".utf8))
         throw ExitCode.failure
     default:
         break

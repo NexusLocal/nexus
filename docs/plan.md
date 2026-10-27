@@ -370,6 +370,13 @@ Work:
 Done when: MySQL 8.0 shows `3rdrisk_platform` with its size. "Open" opens it in TablePlus. A port
 that MAMP PRO holds shows the alert with the name MAMP PRO.
 
+Built: the events of nexusd carry the account, the data folder, the log file and a port conflict
+of each service. The app reads the newest 100 log lines itself and follows the file. New CLI
+command: `nexus db account <instance> <user> --password <password>`, for a running instance.
+PostgreSQL cannot have an empty password, so an instance without a password trusts the
+connections over TCP on 127.0.0.1. The tests in `RealDatabaseTests.swift` run real MySQL, MariaDB
+and PostgreSQL servers in /tmp, only when `NEXUS_REAL_RUNTIMES` names the runtimes folder.
+
 ### 6d. PHP, webservers and DNS
 
 Work:
