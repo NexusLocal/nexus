@@ -2,24 +2,50 @@ import SwiftUI
 
 @main
 struct NexusApp: App {
-    @State private var daemon = BackgroundServiceRegistration.daemon()
-    @State private var helper = BackgroundServiceRegistration.helper()
+    @State private var background = BackgroundServices()
+    @State private var model = AppModel.sample()
+    @AppStorage(AppPreference.showInMenuBar) private var showInMenuBar = true
 
     var body: some Scene {
         Window("Nexus", id: MainWindow.id) {
             MainWindow()
-                .task {
-                    daemon.registerIfNeeded()
-                    helper.registerIfNeeded()
-                }
+                .environment(model)
+                .environment(background)
+                .plainTextInput()
+        }
+        .defaultSize(width: 1180, height: 820)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                AddMenuItems()
+                    .environment(model)
+            }
         }
 
-        MenuBarExtra("Nexus", systemImage: "server.rack") {
-            MenuBarContent(daemon: daemon, helper: helper)
-                .onAppear {
-                    daemon.refresh()
-                    helper.refresh()
-                }
+        Window("Welcome to Nexus", id: FirstRunWindow.id) {
+            FirstRunWindow()
+                .environment(model)
+                .plainTextInput()
         }
+        .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
+        .defaultLaunchBehavior(.suppressed)
+
+        Settings {
+            SettingsWindow()
+                .environment(model)
+                .environment(background)
+                .plainTextInput()
+        }
+
+        MenuBarExtra(isInserted: $showInMenuBar) {
+            MenuBarContent()
+                .environment(model)
+                .onAppear {
+                    background.refresh()
+                }
+        } label: {
+            Image("MenuBarIcon")
+        }
+        .menuBarExtraStyle(.window)
     }
 }

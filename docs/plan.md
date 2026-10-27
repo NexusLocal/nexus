@@ -301,20 +301,149 @@ app needs a progress display in step 6.
 
 ## Step 6 - The app window and the menu bar
 
-Before any screen is built, its design is made in pen.dev through the pen.dev MCP, and the owner
-reviews it (D57). The screens use the standard macOS 27 controls and styling, not custom
-components.
+The design is docs/design/nexus.pen. The owner approved it on 2026-10-27 (D57). Its frames "UX
+Rules" and "Notes" apply to every part below. The screens use the standard macOS 27 controls and
+styling, not custom components. Compare each screen with its light and dark frame.
 
-Each step adds its own screens. This step completes them:
-1. Overview: services, sites, workspaces and their state.
-2. Sites: the settings of each site, the workspace settings and the background processes.
-3. Services: versions, instances, ports, logs and the module and extension toggles. Every
-   port of every service can be changed here (D31).
-4. The first-run flow: pick the packages to install (D56), trust the CA, set the resolver,
-   start at login, and the PATH setting (off by default).
-5. The menu bar item: state, start, stop, open a site.
+The design also shows parts that work only from a later step: workspaces, background processes,
+commands after the copy, environment keys, the database connections of a site and the Workspaces
+tab of Settings (step 8), the Node version and the PATH setting (step 7), the import from MAMP PRO
+(step 9) and app updates with Sparkle (step 10). Step 6 does not build these parts. The step that
+makes them work also adds them to the screens.
 
-Done when: a new user can go from the first launch to a working site without the terminal.
+Step 6 has 8 parts. Part 6a builds all screens with sample data and no function (owner,
+2026-10-27). Parts 6b to 6h then connect the screens to nexusd, one area at a time, and add the
+nexusd work of that area. Each part ends with `swift test`, the app build, a code review and a
+commit with a push.
+
+### 6a. All screens with sample data
+
+Work:
+1. The app icon and the menu bar icon from the design. The colors of the design as named colors
+   for light and dark mode.
+2. One app model holds everything that the screens show. In 6a, sample data fills it. Parts 6b
+   to 6h fill it from nexusd, so the screens do not change for that.
+3. The main window: the sidebar with the sections Sites and Services, one row for each kind of
+   service, the search field, and the + and sort buttons at the bottom. Minimum size 900 × 600 pt.
+4. Every screen, sheet, alert, menu and settings tab of the design, the first run and the menu
+   bar panel. A button that has no function yet does nothing.
+
+Done when: the owner compares each screen with its frame in the design, in light and dark mode,
+and approves it.
+
+### 6b. Live state, Overview and menu bar
+
+Work:
+1. nexusd pushes each change to the app over XPC, so the app does not ask for the status again
+   and again.
+2. Restart a service in one request. "Stop all services" remembers which services ran, and
+   "Start stopped services" starts only those (D63).
+3. The sidebar, the Overview and the menu bar panel show the real services. The switches start
+   and stop them.
+4. The problem banner of the Overview and the menu bar panel shows when the helper needs the
+   approval of the user in Login Items. The menu bar showed this before step 6.
+
+Done when: a switch in the window and in the menu bar panel starts and stops a service. A
+`nexus start` or `nexus stop` in the terminal shows in the window within one second.
+
+### 6c. Database and Redis services
+
+Work:
+1. Connect the screens of MySQL, MariaDB, PostgreSQL and Redis. Each version shows its state,
+   port, account, data folder and log.
+2. nexusd lists the databases in an instance with their size.
+3. Change the account of an instance. A new instance gets root without a password (D35). The
+   instances that exist now keep root/root.
+4. "Open" is a split button. It uses the mysql:// or postgresql:// link and lists only the
+   installed apps that can open the link, and "Copy URL" (D36).
+5. A log shows the newest 100 lines. "Open log file" opens the full log.
+6. Change the port of each instance (D31).
+7. The alert for a port in use: nexusd names the program that holds the port (app, process,
+   process number and path). The alert can quit that app or pick another port (D31).
+
+Done when: MySQL 8.0 shows `3rdrisk_platform` with its size. "Open" opens it in TablePlus. A port
+that MAMP PRO holds shows the alert with the name MAMP PRO.
+
+### 6d. PHP, webservers and DNS
+
+Work:
+1. Connect the PHP screen: the extensions with a switch and a tooltip each.
+2. Custom php.ini lines for each PHP version. nexusd adds them after its own settings and checks
+   them before the restart. On an error it keeps the old lines, and the app shows the line and
+   the error (D60).
+3. Connect the webservers screen for nginx and for Apache: the modules, the ports and the LAN
+   setting. Apache shows its internal port.
+4. Connect the DNS screen: the state and the port.
+
+Done when: a wrong php.ini line shows its error, and PHP keeps running with the old lines. A
+module switch changes the server config and restarts the server.
+
+### 6e. Sites
+
+Work:
+1. Connect the Site screen: hosts, aliases, folder, document root, PHP version and webserver. The
+   actions "Open in browser", "Open in <terminal app>", "Open in <code editor>" and "Show in
+   Finder". The app finds the installed terminal apps and code editors itself.
+2. Connect the "Add a site" sheet, the + menu, the sort menu and the right-click menu of a site.
+3. Site groups, "Move to group" and "Sort by name" (D58). The sidebar can collapse its sections
+   and each group. Drag and drop in the sidebar comes in phase 2.
+4. Defaults for new sites in nexusd: webserver and PHP (D59).
+5. nexusd watches each parked folder. A new folder becomes a site with the defaults, without the
+   app (D62).
+6. The drop area on the Overview adds a folder as a site.
+7. A site in ~/Documents, ~/Desktop or ~/Downloads: the app tells why macOS asks for access.
+
+Done when: a folder that you drop on the Overview opens over HTTPS. A new folder in a parked
+folder shows in the sidebar without a click.
+
+### 6f. Packages and tasks
+
+Work:
+1. The manifest gets the end date of security fixes and an LTS flag for each package. This
+   changes the build scripts in nexus-binaries too.
+2. Connect the Packages screen: install, remove and update each version. It marks a version without
+   security fixes (D12). The update check runs at launch, once a day and on a click.
+3. Progress and stop for a package download and a database import. The import still runs
+   outside the change queue.
+4. "Activity" on the Overview and the running tasks in the menu bar panel.
+5. Connect the "Import a database" sheet. nexusd lists the databases on the source server.
+
+Done when: a download of MySQL 9.7 shows its progress and stops on a click without a half
+install. A copy of a large database shows its progress in the window and in the menu bar panel.
+
+### 6g. Settings
+
+Work: connect 7 of the 8 tabs of the design. The Workspaces tab comes in step 8.
+1. General: start at login, the app icon in the Dock, the menu bar or both, the terminal app, the
+   code editor and the notifications (D5, D61).
+2. Sites: the defaults for new sites (D59). The rows for background processes, commands and keys
+   come in step 8.
+3. Databases: the database apps and the account for new instances (D35, D36).
+4. Network: the ports, the LAN setting and the dev domain. nexusd can change the dev domain after
+   the first run (D28).
+5. Certificates: nexusd tells if the root CA is trusted. The trust action and the instruction for
+   Firefox.
+6. Updates: the package update check. App updates with Sparkle come in step 10.
+7. Advanced: the folders, the background items and the uninstall.
+
+A user can remove the menu bar icon with a Cmd-drag. When the Dock icon is off at that moment,
+Nexus turns the Dock icon on again, so the app stays reachable.
+
+Done when: a change of the dev domain from .test to .internal makes every site open on its new
+name.
+
+### 6h. First run and Command line
+
+Work:
+1. Connect the first run in 3 steps: Packages, Domains and Settings. nginx, one PHP version and Composer
+   are required. nginx, the newest PHP and Composer are preselected (D56).
+2. The Domains step sets the resolver, approves the helper and trusts the root CA.
+3. Connect the Command line page: the nexus commands with a copy button (D64).
+4. A launch argument shows the first run again. It deletes nothing.
+
+Done when: a new user can go from the first launch to a working site without the terminal. Test
+this on the owner's Mac with the launch argument. The Mac already has MAMP PRO and Nexus
+packages, as most users have other tools. Do not make a new macOS user account. (owner)
 
 ## Step 7 - CLI and the PATH setting
 
@@ -460,6 +589,23 @@ Work:
 
 Done when: a notarized build installs on a second Mac with macOS 27 without a warning, and an
 update through Sparkle works.
+
+## Phase 2
+
+Work that comes after step 10 (owner, 2026-10-27).
+
+### Drag and drop in the sidebar
+
+Work: drag sites and groups to set their order by hand, and drag a site into or out of a group
+(D58). Use the macOS outline list (NSOutlineView), the control of the sidebars of Finder and Mail.
+It draws the insertion line and handles the selection itself.
+
+Reason: a SwiftUI List on macOS 27 failed in step 6a. A drop target on the ForEach made the app
+crash when a group was open. A drag modifier on a row made the list wait for a mouse-up event
+that the drag had taken, so the app took no clicks after the first drag.
+
+Done when: a site moves before another site, into a group and out of a group. A group moves
+between the other rows. Clicks and drags still work after many drags.
 
 ## Order and parallel work
 
