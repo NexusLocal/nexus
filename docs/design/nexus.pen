@@ -1111,7 +1111,7 @@
                       "name": "Row Icon",
                       "width": 15,
                       "height": 15,
-                      "icon": "folder-tree",
+                      "icon": "folder-cog",
                       "library": "lucide",
                       "fill": "$accent"
                     },
@@ -1122,7 +1122,7 @@
                       "fill": "$label",
                       "textGrowth": "fixed-width",
                       "width": "fill_container",
-                      "content": "~/Sites",
+                      "content": "Sites",
                       "fontFamily": "$font",
                       "fontSize": 13,
                       "fontWeight": "normal"
@@ -3271,6 +3271,7 @@
                   "name": "Group",
                   "clip": true,
                   "width": "fill_container",
+                  "height": 208,
                   "fill": "$menu-group",
                   "cornerRadius": 10,
                   "layout": "vertical",
@@ -3325,6 +3326,61 @@
                           "type": "ref",
                           "ref": "U8SOGP",
                           "name": "Toggle On"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fuwAL",
+                      "name": "Service Apache 2.4",
+                      "width": "fill_container",
+                      "stroke": "$separator",
+                      "strokeWidth": {
+                        "bottom": 1
+                      },
+                      "gap": 8,
+                      "padding": [
+                        5,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "id": "JfZWx",
+                          "type": "ref",
+                          "ref": "DEm0L",
+                          "name": "Dot",
+                          "fill": "$gray"
+                        },
+                        {
+                          "type": "text",
+                          "id": "fLGeR",
+                          "name": "Apache 2.4",
+                          "fill": "$label",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Apache 2.4",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "t7iIHl",
+                          "name": "8081",
+                          "fill": "$secondary-label",
+                          "content": "8081",
+                          "fontFamily": "$mono",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "id": "Boroj",
+                          "type": "ref",
+                          "ref": "U8SOGP",
+                          "name": "Toggle Off",
+                          "fill": "$switch-off",
+                          "justifyContent": "start"
                         }
                       ]
                     },
@@ -3544,6 +3600,116 @@
                     },
                     {
                       "type": "frame",
+                      "id": "W4QQG",
+                      "name": "Service MySQL 9.7",
+                      "width": "fill_container",
+                      "stroke": "$separator",
+                      "strokeWidth": {
+                        "bottom": 1
+                      },
+                      "gap": 8,
+                      "padding": [
+                        5,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "id": "UHRug",
+                          "type": "ref",
+                          "ref": "DEm0L",
+                          "name": "Dot",
+                          "fill": "$gray"
+                        },
+                        {
+                          "type": "text",
+                          "id": "MK92O",
+                          "name": "MySQL 9.7",
+                          "fill": "$label",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "MySQL 9.7",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "yNQa0",
+                          "name": "13309",
+                          "fill": "$secondary-label",
+                          "content": "13309",
+                          "fontFamily": "$mono",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "id": "PwrBg",
+                          "type": "ref",
+                          "ref": "U8SOGP",
+                          "name": "Toggle Off",
+                          "fill": "$switch-off",
+                          "justifyContent": "start"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "l5455a",
+                      "name": "Service MariaDB 11.4",
+                      "width": "fill_container",
+                      "stroke": "$separator",
+                      "strokeWidth": {
+                        "bottom": 1
+                      },
+                      "gap": 8,
+                      "padding": [
+                        5,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "id": "vFx3N",
+                          "type": "ref",
+                          "ref": "DEm0L",
+                          "name": "Dot",
+                          "fill": "$gray"
+                        },
+                        {
+                          "type": "text",
+                          "id": "O4AMli",
+                          "name": "MariaDB 11.4",
+                          "fill": "$label",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "MariaDB 11.4",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "TfCLT",
+                          "name": "13308",
+                          "fill": "$secondary-label",
+                          "content": "13308",
+                          "fontFamily": "$mono",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "id": "ZoqdR",
+                          "type": "ref",
+                          "ref": "U8SOGP",
+                          "name": "Toggle Off",
+                          "fill": "$switch-off",
+                          "justifyContent": "start"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
                       "id": "Y1RK7U",
                       "name": "Service PostgreSQL 17",
                       "width": "fill_container",
@@ -3643,6 +3809,71 @@
                           "name": "Toggle On"
                         }
                       ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "CotO8",
+                      "name": "Service DNS",
+                      "width": "fill_container",
+                      "stroke": "$separator",
+                      "strokeWidth": {
+                        "bottom": 1
+                      },
+                      "gap": 8,
+                      "padding": [
+                        5,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "id": "tfMDT",
+                          "type": "ref",
+                          "ref": "DEm0L",
+                          "name": "Dot",
+                          "fill": "$green"
+                        },
+                        {
+                          "type": "text",
+                          "id": "JIP4N",
+                          "name": "DNS",
+                          "fill": "$label",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "DNS",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "d6t8r",
+                          "name": "10053",
+                          "fill": "$secondary-label",
+                          "content": "10053",
+                          "fontFamily": "$mono",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "id": "X3BOol",
+                          "type": "ref",
+                          "ref": "U8SOGP",
+                          "name": "Toggle On"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 2,
+                      "id": "PRuGM",
+                      "layoutPosition": "absolute",
+                      "x": 310,
+                      "y": 4,
+                      "name": "Scrollbar",
+                      "fill": "$scrollbar",
+                      "width": 3,
+                      "height": 140
                     }
                   ]
                 }
@@ -16205,7 +16436,7 @@
               "name": "Icon folder-tree",
               "width": 14,
               "height": 14,
-              "icon": "folder-tree",
+              "icon": "folder-cog",
               "library": "lucide",
               "fill": "$label"
             },
