@@ -9,8 +9,9 @@ struct MenuBarContent: View {
     @State private var listHeight: CGFloat = 0
 
     // The list shows every service. The switch of a stopped service can then start it. Above
-    // eight rows the list scrolls. This keeps the panel small.
-    private let maximumListHeight: CGFloat = 8 * 27
+    // eight rows the list scrolls. This keeps the panel small. RowGroup gives each row 36 points
+    // and puts a line of 1 point between two rows.
+    private let maximumListHeight: CGFloat = 8 * 36 + 7
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -92,7 +93,6 @@ struct MenuBarContent: View {
                                 ServiceSwitch(service: service, place: .menuBar)
                                     .controlSize(.mini)
                             }
-                            .frame(minHeight: 26)
                         }
                     }
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
