@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PortInUseSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppModel.self) private var model
     let service: ServiceVersion
     let holder: PortHolder
 
@@ -14,15 +15,15 @@ struct PortInUseSheet: View {
                 .resizable()
                 .frame(width: 56, height: 56)
 
-            Text("Port \(service.shortPortSummary) is in use.")
+            Text("Port \(String(holder.port)) is in use.")
                 .font(.headline)
 
-            Text("\(service.name) cannot start. This program uses port \(service.shortPortSummary):")
+            Text("\(service.name) cannot start. This program uses port \(String(holder.port)):")
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(spacing: 2) {
-                Text("\(holder.app) · \(holder.process) · process \(holder.processNumber)")
+                Text(verbatim: "\(holder.app) · \(holder.process) · process \(holder.processNumber)")
                     .fontWeight(.semibold)
                 Text(holder.path)
                     .font(.system(.caption, design: .monospaced))
@@ -41,11 +42,13 @@ struct PortInUseSheet: View {
             VStack(spacing: 8) {
                 Button("Use port \(newPort.formatted(.number.grouping(.never)))") {
                     dismiss()
+                    model.start(service, movingPortOf: holder, to: newPort)
                 }
                 .keyboardShortcut(.defaultAction)
 
                 Button("Quit \(holder.app)") {
                     dismiss()
+                    model.quit(holder, andStart: service)
                 }
 
                 Button("Cancel", role: .cancel) {

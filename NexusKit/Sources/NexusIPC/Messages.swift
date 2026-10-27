@@ -70,17 +70,55 @@ public struct DatabaseInstance: Codable, Sendable, Equatable {
         self.dataFolder = dataFolder
     }
 
-    // Without a database, a PostgreSQL client opens the database with the name of the user,
-    // and initdb makes no database root. So PostgreSQL opens the database postgres.
     public func url(database: String? = nil) -> URL? {
+        kind.url(port: port, account: account, database: database)
+    }
+}
+
+extension DatabaseKind {
+    // Without a database, a PostgreSQL client opens the database with the name of the user,
+    // and initdb makes no database root. So PostgreSQL opens the database postgres. An empty
+    // password gives no password in the link.
+    public func url(port: Int, account: DatabaseAccount, database: String? = nil) -> URL? {
         var components = URLComponents()
-        components.scheme = kind.urlScheme
+        components.scheme = urlScheme
         components.user = account.user
-        components.password = account.password
+        components.password = account.password.isEmpty ? nil : account.password
         components.host = "127.0.0.1"
         components.port = port
-        components.path = (database ?? (kind == .postgresql ? "postgres" : nil)).map { "/\($0)" } ?? ""
+        components.path = (database ?? (self == .postgresql ? "postgres" : nil)).map { "/\($0)" } ?? ""
         return components.url
+    }
+}
+
+public struct DatabaseSize: Codable, Sendable, Equatable {
+    public let name: String
+    public let bytes: Int64
+
+    public init(name: String, bytes: Int64) {
+        self.name = name
+        self.bytes = bytes
+    }
+}
+
+// A start that failed because another program listens on the port of the service (D31). The
+// owner is nil when the program belongs to another user, because lsof cannot see it then.
+public struct PortConflict: Error, Codable, Sendable, Equatable, CustomStringConvertible {
+    public let service: String
+    public let port: Int
+    public let owner: PortOwner?
+    public let suggestedPort: Int
+
+    public init(service: String, port: Int, owner: PortOwner?, suggestedPort: Int) {
+        self.service = service
+        self.port = port
+        self.owner = owner
+        self.suggestedPort = suggestedPort
+    }
+
+    public var description: String {
+        let holder = owner.map { "\($0.description)" } ?? "a process that Nexus cannot see, probably one of another user"
+        return "Port \(port) is in use by \(holder). Stop that app, or give \(service) another port, for example: nexus port \(service) \(suggestedPort)"
     }
 }
 
@@ -142,7 +180,8 @@ public struct DatabaseCopy: Codable, Sendable, Equatable {
 
 // One service as the app shows it. The name is the package, for example nginx, httpd, php or
 // mysql. DNS has the name dns and no line or version. A problem does not change the state: a DNS
-// server that macOS does not use yet still runs and holds its port.
+// server that macOS does not use yet still runs and holds its port. Only a database instance has
+// an account. Only a service with its own data has a data folder.
 public struct ServiceInfo: Codable, Sendable, Equatable, Identifiable {
     public let id: String
     public let name: String
@@ -151,8 +190,24 @@ public struct ServiceInfo: Codable, Sendable, Equatable, Identifiable {
     public let ports: [Int]
     public let state: ServiceState
     public let problem: String?
+    public let portConflict: PortConflict?
+    public let logFile: String?
+    public let dataFolder: String?
+    public let account: DatabaseAccount?
 
-    public init(id: String, name: String, line: String, version: String, ports: [Int], state: ServiceState, problem: String? = nil) {
+    public init(
+        id: String,
+        name: String,
+        line: String,
+        version: String,
+        ports: [Int],
+        state: ServiceState,
+        problem: String? = nil,
+        portConflict: PortConflict? = nil,
+        logFile: String? = nil,
+        dataFolder: String? = nil,
+        account: DatabaseAccount? = nil
+    ) {
         self.id = id
         self.name = name
         self.line = line
@@ -160,6 +215,10 @@ public struct ServiceInfo: Codable, Sendable, Equatable, Identifiable {
         self.ports = ports
         self.state = state
         self.problem = problem
+        self.portConflict = portConflict
+        self.logFile = logFile
+        self.dataFolder = dataFolder
+        self.account = account
     }
 }
 
@@ -209,6 +268,8 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case setModule(server: WebServer, name: String, enabled: Bool)
     case lan(enabled: Bool?)
     case databases
+    case databaseSizes(instance: String)
+    case setAccount(instance: String, account: DatabaseAccount)
     case copyDatabase(DatabaseCopy)
 }
 
@@ -221,6 +282,8 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case sites([SiteInfo])
     case toggles([Toggle])
     case databases([DatabaseInstance])
+    case databaseSizes([DatabaseSize])
+    case portInUse(PortConflict)
     case failure(message: String)
 }
 

@@ -661,6 +661,59 @@ extension NexusEngineTests {
         await engine.shutdown()
     }
 
+    @Test func aStartOnAPortInUseNamesTheProgramAndAFreePortUntilThePortChanges() async throws {
+        let port = freePort()
+        let engine = try makeEngine(package: try makeFakeRedis(), port: port)
+        _ = await engine.handle(.install(name: "redis", line: "1.0"))
+        let listener = try listen(on: port)
+        defer { close(listener) }
+        let events = await recordEvents(of: engine)
+
+        let response = await engine.handle(.start(service: "redis-1.0"))
+        let shown = await events.next { $0.services.contains { $0.portConflict != nil } }
+        _ = await engine.handle(.setPort(service: "redis-1.0", port: freePort()))
+        let cleared = await events.next { $0.services.allSatisfy { $0.portConflict == nil } }
+
+        guard case .portInUse(let conflict) = response else {
+            Issue.record("no port conflict: \(response)")
+            return
+        }
+        #expect(conflict.service == "redis-1.0")
+        #expect(conflict.port == port)
+        #expect(conflict.owner?.pid == getpid())
+        #expect(conflict.suggestedPort > port)
+        #expect(shown?.services.first { $0.id == "redis-1.0" }?.portConflict == conflict)
+        #expect(cleared != nil)
+        await engine.shutdown()
+    }
+
+    private func listen(on port: Int) throws -> Int32 {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(UInt16(port).bigEndian)
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        try #require(bound == 0)
+        try #require(Darwin.listen(descriptor, 1) == 0)
+        return descriptor
+    }
+
+    @Test func aStoppedServiceShowsItsNewPortAndNotThePortOfItsLastRun() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        _ = await engine.handle(.install(name: "redis", line: "1.0"))
+        _ = await engine.handle(.start(service: "redis-1.0"))
+        _ = await engine.handle(.stop(service: "redis-1.0"))
+        let newPort = freePort()
+
+        _ = await engine.handle(.setPort(service: "redis-1.0", port: newPort))
+        let status = services(await engine.handle(.status))["redis-1.0"]
+
+        #expect(status?.ports == [newPort])
+        #expect(status?.state == .stopped)
+        await engine.shutdown()
+    }
+
     @Test func startStoppedWithoutAStopAllStartsNothing() async throws {
         let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
         _ = await engine.handle(.install(name: "redis", line: "1.0"))

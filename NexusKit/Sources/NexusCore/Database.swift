@@ -32,10 +32,12 @@ public enum DatabaseKind: String, Codable, Sendable, CaseIterable {
     }
 }
 
-// The account that a new database instance gets: root with the password root, as in MAMP PRO
-// (D35).
+// A new database instance gets root without a password (D35). The account root with the
+// password root is the one of MAMP PRO. The instances that Nexus made before part 6c of step 6
+// have it too.
 public struct DatabaseAccount: Codable, Sendable, Equatable {
     public static let standard = DatabaseAccount(user: "root", password: "root")
+    public static let newInstance = DatabaseAccount(user: "root", password: "")
 
     public let user: String
     public let password: String

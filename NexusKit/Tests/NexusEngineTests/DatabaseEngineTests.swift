@@ -105,7 +105,8 @@ extension NexusEngineTests {
         #expect(started == .done(message: "MySQL 1.0.0 runs on port \(port)."))
         #expect(restarted == started)
         #expect(FileManager.default.fileExists(atPath: marker.path(percentEncoded: false)))
-        #expect(try String(contentsOf: data.appending(path: "init.sql"), encoding: .utf8).contains("IDENTIFIED BY 'root'"))
+        #expect(try String(contentsOf: data.appending(path: "init.sql"), encoding: .utf8).contains("IDENTIFIED BY ''"))
+        #expect(await engine.stateStore.current().databaseAccounts["mysql-1.0"] == .newInstance)
         #expect(FileManager.default.fileExists(atPath: paths.databaseConfig(.mysql, line: "1.0").path(percentEncoded: false)))
         #expect(hiddenFiles(in: paths.run).isEmpty)
         #expect(hiddenFiles(in: paths.data).isEmpty)
@@ -163,10 +164,64 @@ extension NexusEngineTests {
         #expect(instances.count == 1)
         #expect(instance.id == "mysql-1.0")
         #expect(instance.port == port)
-        #expect(instance.account == .standard)
+        #expect(instance.account == .newInstance)
         #expect(!instance.running)
-        #expect(instance.url(database: "shop")?.absoluteString == "mysql://root:root@127.0.0.1:\(port)/shop")
-        #expect(instance.url()?.absoluteString == "mysql://root:root@127.0.0.1:\(port)")
+        #expect(instance.url(database: "shop")?.absoluteString == "mysql://root@127.0.0.1:\(port)/shop")
+        #expect(instance.url()?.absoluteString == "mysql://root@127.0.0.1:\(port)")
+    }
+
+    @Test func anInstanceThatNexusMadeBeforeTheAccountsKeepsRootWithThePasswordRoot() async throws {
+        let root = databaseRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try await makeDatabaseEngine(root: root, package: try makeFakeMySQL(in: root), port: freePort())
+        let data = databasePaths(root).dataFolder(service: "mysql", line: "1.0")
+        try FileManager.default.createDirectory(at: data.appending(path: "mysql"), withIntermediateDirectories: true)
+
+        let response = await engine.handle(.databases)
+
+        guard case .databases(let instances) = response else {
+            Issue.record("no database list: \(response)")
+            return
+        }
+        #expect(instances.first?.account == .standard)
+        #expect(await engine.stateStore.current().databaseAccounts["mysql-1.0"] == .standard)
+    }
+
+    @Test func anAccountWithALineBreakOrAnOddUserNameIsRefused() async throws {
+        let root = databaseRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try await makeDatabaseEngine(root: root, package: try makeFakeMySQL(in: root), port: freePort())
+
+        let oddUser = await engine.handle(.setAccount(instance: "mysql-1.0", account: DatabaseAccount(user: "root'@'%", password: "")))
+        let lineBreak = await engine.handle(.setAccount(instance: "mysql-1.0", account: DatabaseAccount(user: "root", password: "a\nb")))
+        let stopped = await engine.handle(.setAccount(instance: "mysql-1.0", account: DatabaseAccount(user: "root", password: "secret")))
+
+        #expect(oddUser == .failure(message: "root'@'% is not a user name that Nexus can use. Use 1 to 32 characters: letters, digits, _, - and dots."))
+        #expect(lineBreak == .failure(message: "A password cannot have a line break or another control character."))
+        #expect(stopped == .failure(message: "Start mysql-1.0 first."))
+    }
+
+    @Test func aPasswordOnPostgreSQLChangesOnlyTheHostLinesOfPgHba() throws {
+        let root = databaseRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let original = """
+            # TYPE  DATABASE        USER            ADDRESS                 METHOD
+            local   all             all                                     trust
+            host    all             all             127.0.0.1/32            trust
+            host    all             all             ::1/128                 trust
+
+            """
+        try Data(original.utf8).write(to: root.appending(path: "pg_hba.conf"))
+
+        try PostgreSQLAccess.setHostMethod("scram-sha-256", in: root)
+        let lines = try String(contentsOf: root.appending(path: "pg_hba.conf"), encoding: .utf8).components(separatedBy: "\n")
+
+        #expect(lines[0] == "# TYPE  DATABASE        USER            ADDRESS                 METHOD")
+        #expect(lines[1] == "local   all             all                                     trust")
+        #expect(lines[2].hasSuffix("scram-sha-256"))
+        #expect(lines[3].hasSuffix("scram-sha-256"))
+        #expect(lines[2].hasPrefix("host"))
     }
 
     @Test func postgreSQLOpensThePostgresDatabaseWhenNoDatabaseIsGiven() {
@@ -190,7 +245,7 @@ extension NexusEngineTests {
         #expect(invalidName == .failure(message: DatabaseNameError.invalid("shop; drop").description))
         #expect(unknownInstance == .failure(message: "Nexus has no database instance mysql-9.9. See: nexus db list"))
         #expect(await engine.handle(.databases) == .databases([
-            DatabaseInstance(id: "mysql-1.0", kind: .mysql, version: "1.0.0", port: port, account: .standard, running: false,
+            DatabaseInstance(id: "mysql-1.0", kind: .mysql, version: "1.0.0", port: port, account: .newInstance, running: false,
                              dataFolder: databasePaths(root).dataFolder(service: "mysql", line: "1.0").path(percentEncoded: false)),
         ]))
     }

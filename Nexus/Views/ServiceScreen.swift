@@ -50,7 +50,10 @@ struct ServiceScreen: View {
                             .padding(.top, 16)
                     }
 
+                    // Each version gets its own form. So a field that the user did not send
+                    // yet does not move to another version.
                     ServiceForm(service: binding(to: selectedService))
+                        .id(selectedService.id)
                 }
             } else {
                 ContentUnavailableView {
@@ -160,7 +163,7 @@ private struct ServiceToolbar: ToolbarContent {
             MoreMenu {
                 if service.kind.isDatabase {
                     Button("Copy connection URL", systemImage: "link") {
-                        copyToPasteboard(service.databaseURL)
+                        copyToPasteboard(service.databaseURL()?.absoluteString ?? "")
                     }
                 }
 
@@ -199,7 +202,7 @@ private struct ServiceForm: View {
             }
 
             if service.kind != .dns {
-                LogSection(lines: service.log)
+                LogSection(file: service.logFile, sampleLines: service.log)
             }
         }
         .formStyle(.grouped)
@@ -246,15 +249,20 @@ private struct StateSection: View {
                 }
             }
 
-            if [.mysql, .mariadb, .postgresql, .redis, .dns].contains(service.kind), !service.ports.isEmpty {
-                PortRow(title: "Port", port: $service.ports[0].number)
+            if [.mysql, .mariadb, .postgresql, .redis, .dns].contains(service.kind), let port = service.ports.first {
+                PortRow(title: "Port", port: port.number) {
+                    model.changePort(port, of: service, to: $0)
+                }
             }
 
             if let dataFolder = service.dataFolder {
                 LabeledContent("Data folder") {
                     HStack {
                         PathText(dataFolder)
-                        Button("Show in Finder") {}
+                        Button("Show in Finder") {
+                            let folder = URL(filePath: (dataFolder as NSString).expandingTildeInPath)
+                            NSWorkspace.shared.activateFileViewerSelecting([folder])
+                        }
                     }
                 }
             }
@@ -287,6 +295,7 @@ private struct StateSection: View {
 }
 
 private struct WebserverSections: View {
+    @Environment(AppModel.self) private var model
     @Binding var service: ServiceVersion
 
     private var requiredNames: String {
@@ -300,9 +309,11 @@ private struct WebserverSections: View {
     }
 
     var body: some View {
-        if service.internalPort {
+        if service.internalPort, let port = service.ports.first {
             Section {
-                PortRow(title: "Internal port", port: $service.ports[0].number)
+                PortRow(title: "Internal port", port: port.number) {
+                    model.changePort(port, of: service, to: $0)
+                }
             } header: {
                 Text("Port")
             } footer: {
@@ -310,8 +321,10 @@ private struct WebserverSections: View {
             }
         } else {
             Section {
-                ForEach($service.ports) { $port in
-                    PortRow(title: port.name, port: $port.number)
+                ForEach(service.ports) { port in
+                    PortRow(title: port.name, port: port.number) {
+                        model.changePort(port, of: service, to: $0)
+                    }
                 }
             } header: {
                 Text("Ports")
@@ -370,12 +383,18 @@ private struct PHPSections: View {
 private struct DatabaseSections: View {
     @Environment(AppModel.self) private var model
     @Binding var service: ServiceVersion
+    @State private var editedUser: String?
+    @State private var editedPassword: String?
+
+    private var databases: [DatabaseItem] {
+        model.databases(of: service)
+    }
 
     var body: some View {
-        if service.account != nil {
+        if let account = service.account {
             Section {
                 LabeledContent("User") {
-                    TextField("User", text: accountBinding(\.user))
+                    TextField("User", text: Binding(get: { editedUser ?? account.user }, set: { editedUser = $0 }))
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .multilineTextAlignment(.leading)
@@ -385,41 +404,49 @@ private struct DatabaseSections: View {
 
                 LabeledContent("Password") {
                     HStack {
-                        SecureField("Password", text: accountBinding(\.password), prompt: Text("No password"))
+                        SecureField("Password", text: Binding(get: { editedPassword ?? account.password }, set: { editedPassword = $0 }), prompt: Text("No password"))
                             .labelsHidden()
                             .textFieldStyle(.roundedBorder)
                             .multilineTextAlignment(.leading)
                             .frame(width: 180)
-                        Button("Change…") {}
+                        Button("Change") {
+                            model.changeAccount(of: service, to: DatabaseAccount(user: editedUser ?? account.user, password: editedPassword ?? account.password))
+                            editedUser = nil
+                            editedPassword = nil
+                        }
+                        .disabled(!service.isActive || (editedUser ?? account.user) == account.user && (editedPassword ?? account.password) == account.password)
                     }
                 }
             } header: {
                 Text("Account")
             } footer: {
-                Text("Nexus uses this account when it imports or opens a database on \(service.name).")
+                Text("Nexus uses this account when it imports or opens a database on \(service.name). A change needs \(service.name) to run.")
             }
         }
 
         Section {
-            if service.databases.isEmpty {
-                Text(service.isRunning ? "No databases yet." : "Start \(service.name) to see its databases.")
+            if let problem = model.databaseListProblems[service.id] {
+                Text("Nexus cannot list the databases. \(problem)")
+                    .foregroundStyle(Color.orangeText)
+            } else if databases.isEmpty {
+                Text(service.isActive ? "No databases yet." : "Start \(service.name) to see its databases.")
                     .foregroundStyle(.secondary)
             }
 
-            ForEach(service.databases) { database in
+            ForEach(databases) { database in
                 HStack(spacing: 10) {
                     Image(systemName: "cylinder")
                         .foregroundStyle(.secondary)
                     MonoText(database.name)
                     Spacer()
-                    Text(database.usedBy ?? "No site")
+                    Text(database.usedBy ?? "")
                         .foregroundStyle(.secondary)
                         .frame(width: 160, alignment: .leading)
                     Text(database.size ?? "")
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                         .frame(width: 64, alignment: .trailing)
-                    OpenDatabaseButton(kind: service.kind, url: "\(service.databaseURL)/\(database.name)")
+                    OpenDatabaseButton(kind: service.kind, url: service.databaseURL(database.name))
                 }
             }
         } header: {
@@ -433,12 +460,8 @@ private struct DatabaseSections: View {
         } footer: {
             Text("\"Import database\" copies a database from another server into \(service.name), for example from MAMP PRO. The other server does not change.")
         }
-    }
-
-    private func accountBinding(_ keyPath: WritableKeyPath<DatabaseAccount, String>) -> Binding<String> {
-        Binding(
-            get: { service.account?[keyPath: keyPath] ?? "" },
-            set: { service.account?[keyPath: keyPath] = $0 }
-        )
+        .task(id: "\(service.id) \(service.isActive)") {
+            model.loadDatabases(of: service)
+        }
     }
 }

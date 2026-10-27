@@ -45,9 +45,11 @@ enum ServiceKind: String, CaseIterable, Identifiable {
     }
 }
 
+// The key is the name of the port in nexusd, for example http, https or mysql-8.4.
 struct ServicePort: Identifiable {
     let name: String
     var number: Int
+    var key = ""
 
     var id: String { name }
 }
@@ -108,6 +110,7 @@ struct ServiceVersion: Identifiable {
     var usedBy: [String] = []
     var note: String?
     var log: [String] = []
+    var logFile: String?
 
     var isRunning: Bool {
         health == .running
@@ -138,12 +141,6 @@ struct ServiceVersion: Identifiable {
 
     var shortPortSummary: String {
         kind == .php ? "fpm" : ports.first.map { "\($0.number)" } ?? ""
-    }
-
-    var databaseURL: String {
-        let scheme = kind == .postgresql ? "postgresql" : "mysql"
-        let user = account?.user ?? "root"
-        return "\(scheme)://\(user)@127.0.0.1:\(ports.first?.number ?? 0)"
     }
 }
 

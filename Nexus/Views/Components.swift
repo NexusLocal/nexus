@@ -114,16 +114,28 @@ extension View {
     }
 }
 
+// The field keeps the new number until "Change" sends it. A new port from nexusd then shows.
 struct PortRow: View {
     let title: String
-    @Binding var port: Int
+    let port: Int
+    let change: (Int) -> Void
+    @State private var newPort: Int?
 
     var body: some View {
         LabeledContent(title) {
             HStack {
-                PortField(port: $port)
-                Button("Change") {}
+                PortField(port: Binding(get: { newPort ?? port }, set: { newPort = $0 }))
+                Button("Change") {
+                    if let newPort {
+                        change(newPort)
+                    }
+                    newPort = nil
+                }
+                .disabled(newPort == nil || newPort == port)
             }
+        }
+        .onChange(of: port) {
+            newPort = nil
         }
     }
 }
@@ -220,63 +232,190 @@ struct ToggleGrid: View {
     }
 }
 
+// Shows the newest 100 lines of a log file. The lines change while the service writes. Without a
+// file, the section shows the lines of the sample data.
 struct LogSection: View {
-    let lines: [String]
+    let file: String?
+    let sampleLines: [String]
+    @State private var lines: [String] = []
+    @State private var position = ScrollPosition(edge: .bottom)
 
     var body: some View {
+        let shown = file == nil ? sampleLines : lines
+
         Section {
             ScrollView {
-                Text(lines.isEmpty ? "No log lines yet." : lines.suffix(100).joined(separator: "\n"))
+                Text(shown.isEmpty ? "No log lines yet." : shown.suffix(100).joined(separator: "\n"))
                     .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(lines.isEmpty ? .tertiary : .secondary)
+                    .foregroundStyle(shown.isEmpty ? .tertiary : .secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(height: 96)
-            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .scrollPosition($position)
             .defaultScrollAnchor(.top, for: .alignment)
+            .onChange(of: shown) {
+                position.scrollTo(edge: .bottom)
+            }
         } header: {
             HStack {
                 Text("Log")
                 Spacer()
-                Button("Open log file") {}
+                Button("Open log file") {
+                    if let file {
+                        NSWorkspace.shared.open(URL(filePath: file))
+                    }
+                }
+                .disabled(file == nil)
             }
         } footer: {
             Text("The newest 100 lines. \"Open log file\" shows the full log.")
         }
+        .task(id: file) {
+            guard let file else {
+                return
+            }
+
+            for await tail in LogTail.lines(of: URL(filePath: file)) {
+                lines = tail
+            }
+        }
     }
 }
 
+// The last lines of a log file, again after each write. It reads only the end of the file. So a
+// large log costs no time. It works off the main thread.
+nonisolated enum LogTail {
+    static func lines(of file: URL, count: Int = 100) -> AsyncStream<[String]> {
+        AsyncStream { continuation in
+            let source = Watcher(file: file) {
+                continuation.yield(read(file, count: count))
+            }
+            continuation.yield(read(file, count: count))
+            continuation.onTermination = { _ in source.cancel() }
+        }
+    }
+
+    static func read(_ file: URL, count: Int) -> [String] {
+        guard let handle = try? FileHandle(forReadingFrom: file) else {
+            return []
+        }
+        defer { try? handle.close() }
+
+        let size = (try? handle.seekToEnd()) ?? 0
+        let start = size > 65_536 ? size - 65_536 : 0
+        try? handle.seek(toOffset: start)
+        let text = String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
+        let lines = text.split(separator: "\n").map(String.init)
+
+        // A read from the middle of the file starts in the middle of a line.
+        return Array((start > 0 ? lines.dropFirst() : lines[...]).suffix(count))
+    }
+
+    // A log can be replaced or truncated. So the watch starts again on the new file. After a
+    // cancel no new watch starts, because only the cancel handler of a source closes its file.
+    private final class Watcher: @unchecked Sendable {
+        private let file: URL
+        private let changed: @Sendable () -> Void
+        private let queue = DispatchQueue(label: "nexus.log-tail")
+        private var source: (any DispatchSourceFileSystemObject)?
+        private var cancelled = false
+
+        init(file: URL, changed: @escaping @Sendable () -> Void) {
+            self.file = file
+            self.changed = changed
+            queue.async { self.watch() }
+        }
+
+        func cancel() {
+            queue.async {
+                self.cancelled = true
+                self.source?.cancel()
+                self.source = nil
+            }
+        }
+
+        private func watch() {
+            guard !cancelled else {
+                return
+            }
+
+            let descriptor = open(file.path(percentEncoded: false), O_EVTONLY)
+            guard descriptor >= 0 else {
+                queue.asyncAfter(deadline: .now() + 2) { [weak self] in self?.watch() }
+                return
+            }
+
+            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .extend, .delete, .rename], queue: queue)
+            source.setEventHandler { [weak self] in
+                guard let self else {
+                    return
+                }
+
+                self.changed()
+
+                if !source.data.isDisjoint(with: [.delete, .rename]) {
+                    source.cancel()
+                    self.queue.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.watch() }
+                }
+            }
+            source.setCancelHandler { close(descriptor) }
+            self.source = source
+            source.resume()
+        }
+    }
+}
+
+// The database apps are the installed apps that macOS knows for the link (D36). The primary
+// action uses the app of Settings > Databases when it is installed, else the default of macOS.
 struct OpenDatabaseButton: View {
     @Environment(AppModel.self) private var model
     let kind: ServiceKind
-    let url: String
+    let url: URL?
 
-    private var defaultApp: String {
+    private var chosenApp: String {
         kind == .postgresql ? model.settings.postgresqlApp : model.settings.mysqlApp
     }
 
-    private var apps: [AppChoice] {
-        model.settings.databaseApps.filter { $0.canOpen(kind) }
-    }
-
     var body: some View {
+        let apps = url.map { NSWorkspace.shared.urlsForApplications(toOpen: $0) } ?? []
+        let primaryApp = apps.first { appName($0) == chosenApp } ?? url.flatMap { NSWorkspace.shared.urlForApplication(toOpen: $0) }
+
         Menu("Open") {
             Section("Open with") {
-                ForEach(apps) { app in
-                    Button(app.name == defaultApp ? "\(app.name) (default)" : app.name, systemImage: "cylinder.split.1x2") {}
+                ForEach(apps, id: \.self) { app in
+                    Button(app == primaryApp ? "\(appName(app)) (default)" : appName(app), systemImage: "cylinder.split.1x2") {
+                        open(with: app)
+                    }
                 }
             }
 
             Divider()
 
             Button("Copy URL", systemImage: "link") {
-                copyToPasteboard(url)
+                copyToPasteboard(url?.absoluteString ?? "")
             }
 
-            Text(url)
-        } primaryAction: {}
+            Text(url?.absoluteString ?? "")
+        } primaryAction: {
+            if let primaryApp {
+                open(with: primaryApp)
+            }
+        }
         .fixedSize()
+        .disabled(url == nil)
+    }
+
+    private func appName(_ app: URL) -> String {
+        FileManager.default.displayName(atPath: app.path(percentEncoded: false)).replacingOccurrences(of: ".app", with: "")
+    }
+
+    private func open(with app: URL) {
+        guard let url else {
+            return
+        }
+
+        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
     }
 }
 

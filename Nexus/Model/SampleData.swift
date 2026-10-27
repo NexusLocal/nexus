@@ -173,6 +173,7 @@ extension AppModel {
                     summary: "Port in use",
                     detail: "Port 3306 is in use by MAMP PRO (mysqld, process 812). Stop that app, or give the service another port.",
                     portHolder: PortHolder(
+                        port: 3306,
                         app: "MAMP PRO",
                         process: "mysqld",
                         processNumber: 812,
