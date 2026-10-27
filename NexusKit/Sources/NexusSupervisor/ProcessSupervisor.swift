@@ -69,13 +69,18 @@ public actor ProcessSupervisor {
         self.policy = policy
     }
 
-    public func start(_ definition: ServiceDefinition) throws {
+    public func start(_ definition: ServiceDefinition) async throws {
         if let current = services[definition.id], current.state.isActive {
             return
         }
 
-        for port in definition.ports where !PortInspector.isFree(port) {
+        for port in definition.ports where !(await PortInspector.becomesFree(port)) {
             throw SupervisorError.portInUse(port: port, owner: PortInspector.owner(of: port))
+        }
+
+        // Another start of the same service can run during the wait for the ports.
+        if let current = services[definition.id], current.state.isActive {
+            return
         }
 
         services[definition.id] = Managed(definition: definition, state: .stopped)

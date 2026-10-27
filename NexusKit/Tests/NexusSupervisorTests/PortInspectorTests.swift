@@ -17,7 +17,7 @@ struct PortInspectorTests {
         return (descriptor, Int(UInt16(bigEndian: bound.sin_port)))
     }
 
-    @Test func aListenerOnLoopbackOrOnAllAddressesHoldsThePort() throws {
+    @Test func aListenerOnLoopbackOrOnAllAddressesHoldsThePort() async throws {
         for address in ["127.0.0.1", "0.0.0.0"] {
             let listener = try listen(on: address)
 
@@ -25,16 +25,16 @@ struct PortInspectorTests {
             #expect(PortInspector.acceptsConnections(listener.port))
 
             close(listener.descriptor)
-            #expect(PortInspector.isFree(listener.port))
+            #expect(await PortInspector.becomesFree(listener.port))
         }
     }
 
-    @Test func aClosedConnectionDoesNotHoldThePort() throws {
+    @Test func aClosedConnectionDoesNotHoldThePort() async throws {
         let listener = try listen(on: "127.0.0.1")
         #expect(PortInspector.acceptsConnections(listener.port))
         close(listener.descriptor)
 
-        #expect(PortInspector.isFree(listener.port))
+        #expect(await PortInspector.becomesFree(listener.port))
     }
 
     @Test func aLowPortWithoutAListenerIsFree() {

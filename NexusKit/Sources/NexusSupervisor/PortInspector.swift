@@ -47,6 +47,22 @@ public enum PortInspector {
         !isInUse(port, address: INADDR_ANY) && !isInUse(port, address: inet_addr("127.0.0.1"))
     }
 
+    // A listener that just closed can keep its port for some milliseconds, for example when a
+    // connection still waited in its queue. A start right after a stop waits for that.
+    public static func becomesFree(_ port: Int, within timeout: Duration = .seconds(1)) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+
+        while !isFree(port) {
+            guard ContinuousClock.now < deadline else {
+                return false
+            }
+
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        return true
+    }
+
     public static func acceptsConnections(_ port: Int) -> Bool {
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)
         guard descriptor >= 0 else {
