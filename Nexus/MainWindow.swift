@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct MainWindow: View {
@@ -45,7 +46,7 @@ struct MainWindow: View {
             case .importDatabase(let instance):
                 ImportDatabaseSheet(instance: instance)
             case .portInUse(let id):
-                if let service = model.service(id), let holder = model.portHolder {
+                if let service = model.service(id), let holder = service.problem?.portHolder {
                     PortInUseSheet(service: service, holder: holder)
                 } else {
                     Color.clear
@@ -53,6 +54,29 @@ struct MainWindow: View {
                 }
             }
         }
+        .alert(windowFailure?.title ?? "", isPresented: showsFailure, presenting: windowFailure) { _ in
+            Button("OK") {}
+        } message: { failure in
+            Text(failure.message)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            background.refresh()
+        }
+    }
+
+    private var windowFailure: ActionFailure? {
+        model.failure.flatMap { $0.place == .window ? $0 : nil }
+    }
+
+    private var showsFailure: Binding<Bool> {
+        Binding(
+            get: { windowFailure != nil },
+            set: { shown in
+                if !shown {
+                    model.failure = nil
+                }
+            }
+        )
     }
 
     @ViewBuilder

@@ -346,6 +346,12 @@ Work:
 Done when: a switch in the window and in the menu bar panel starts and stops a service. A
 `nexus start` or `nexus stop` in the terminal shows in the window within one second.
 
+Built: the app keeps one XPC connection to nexusd open and calls `watch()` on it. nexusd then
+sends the service list after each change, also after an exit that nobody asked for. When nexusd
+stops, the app shows a banner and connects again every 2 seconds. New CLI commands:
+`nexus restart <service>`, `nexus stop --all` and `nexus start --stopped`. A debug build with the
+launch argument `--sample` shows only sample data, for a check of the screens against the design.
+
 ### 6c. Database and Redis services
 
 Work:

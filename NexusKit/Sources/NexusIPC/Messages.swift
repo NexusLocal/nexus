@@ -140,10 +140,52 @@ public struct DatabaseCopy: Codable, Sendable, Equatable {
     }
 }
 
+// One service as the app shows it. The name is the package, for example nginx, httpd, php or
+// mysql. DNS has the name dns and no line or version. A problem does not change the state: a DNS
+// server that macOS does not use yet still runs and holds its port.
+public struct ServiceInfo: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let name: String
+    public let line: String
+    public let version: String
+    public let ports: [Int]
+    public let state: ServiceState
+    public let problem: String?
+
+    public init(id: String, name: String, line: String, version: String, ports: [Int], state: ServiceState, problem: String? = nil) {
+        self.id = id
+        self.name = name
+        self.line = line
+        self.version = version
+        self.ports = ports
+        self.state = state
+        self.problem = problem
+    }
+}
+
+public struct ServiceList: Codable, Sendable, Equatable {
+    public let services: [ServiceInfo]
+    // The services that "Start stopped services" starts (D63).
+    public let stoppedByStopAll: [String]
+
+    public init(services: [ServiceInfo], stoppedByStopAll: [String]) {
+        self.services = services
+        self.stoppedByStopAll = stoppedByStopAll
+    }
+}
+
+// What nexusd sends to the app without a request, after each change.
+public enum NexusEvent: Codable, Sendable, Equatable {
+    case services(ServiceList)
+}
+
 public enum NexusRequest: Codable, Sendable, Equatable {
     case status
     case start(service: String)
     case stop(service: String)
+    case restart(service: String)
+    case stopAll
+    case startStopped
     case setPort(service: String, port: Int)
     case available
     case installed

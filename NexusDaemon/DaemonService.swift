@@ -2,13 +2,15 @@ import Foundation
 import NexusEngine
 import NexusIPC
 
-final class DaemonService: NSObject, NSXPCListenerDelegate, NexusXPCService, @unchecked Sendable {
+final class DaemonService: NSObject, NSXPCListenerDelegate, NexusDaemonXPCService, @unchecked Sendable {
     private let engine: NexusEngine
     private let requirement: String?
+    private let watchers: NexusEventWatchers
 
     init(engine: NexusEngine) {
         self.engine = engine
         self.requirement = CodeSigning.ownTeamIdentifier().map { "anchor apple generic and certificate leaf[subject.OU] = \"\($0)\"" }
+        self.watchers = NexusEventWatchers { await engine.events() }
     }
 
     // Only programs that are signed by the same team as nexusd may connect, so another app on
@@ -18,8 +20,9 @@ final class DaemonService: NSObject, NSXPCListenerDelegate, NexusXPCService, @un
             connection.setCodeSigningRequirement(requirement)
         }
 
-        connection.exportedInterface = NSXPCInterface(with: NexusXPCService.self)
+        connection.exportedInterface = NSXPCInterface(with: NexusDaemonXPCService.self)
         connection.exportedObject = self
+        watchers.prepare(connection)
         connection.resume()
         return true
     }
@@ -37,5 +40,9 @@ final class DaemonService: NSObject, NSXPCListenerDelegate, NexusXPCService, @un
 
             reply((try? NexusMessageCoding.encode(response)) ?? Data())
         }
+    }
+
+    func watch() {
+        watchers.watchCurrentConnection()
     }
 }

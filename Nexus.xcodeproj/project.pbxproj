@@ -17,6 +17,8 @@
 		0000000000000000000000E8 /* NexusDNS in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000D8 /* NexusDNS */; };
 		0000000000000000000000E9 /* NexusIPC in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000D9 /* NexusIPC */; };
 		0000000000000000000000EA /* NexusTLS in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000DA /* NexusTLS */; };
+		0000000000000000000000EB /* NexusIPC in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000DB /* NexusIPC */; };
+		0000000000000000000000EC /* NexusSupervisor in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000DC /* NexusSupervisor */; };
 		0000000000000000000000F2 /* nexusd in Embed Executables */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B2 /* nexusd */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0000000000000000000000F3 /* nexus in Embed Command Line Tool */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B3 /* nexus */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0000000000000000000000F4 /* NexusHelper in Embed Executables */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B4 /* NexusHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
@@ -135,6 +137,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				0000000000000000000000E1 /* NexusCore in Frameworks */,
+				0000000000000000000000EB /* NexusIPC in Frameworks */,
+				0000000000000000000000EC /* NexusSupervisor in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -240,6 +244,8 @@
 			name = Nexus;
 			packageProductDependencies = (
 				0000000000000000000000D1 /* NexusCore */,
+				0000000000000000000000DB /* NexusIPC */,
+				0000000000000000000000DC /* NexusSupervisor */,
 			);
 			productName = Nexus;
 			productReference = 0000000000000000000000B1 /* Nexus.app */;
@@ -763,6 +769,14 @@
 		0000000000000000000000DA /* NexusTLS */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = NexusTLS;
+		};
+		0000000000000000000000DB /* NexusIPC */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NexusIPC;
+		};
+		0000000000000000000000DC /* NexusSupervisor */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NexusSupervisor;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

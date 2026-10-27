@@ -10,13 +10,6 @@ extension AppModel {
             ActivityItem(title: "Importing 3rdrisk_platform into MySQL 8.0", shortTitle: "Importing 3rdrisk_platform", progress: 0.62),
             ActivityItem(title: "Downloading PostgreSQL 18", shortTitle: "Downloading PostgreSQL 18", progress: 0.48),
         ]
-        model.portHolder = PortHolder(
-            app: "MAMP PRO",
-            process: "mysqld",
-            processNumber: 812,
-            path: "/Applications/MAMP/Library/bin/mysql80/bin/mysqld",
-            suggestedPort: 13307
-        )
         model.packagesChecked = "08:55"
         model.commandSections = sampleCommands
         model.settings = sampleSettings
@@ -176,7 +169,17 @@ extension AppModel {
                 version: "8.4.7",
                 health: .attention,
                 ports: [ServicePort(name: "Port", number: 3306)],
-                problem: "Port in use",
+                problem: ServiceProblem(
+                    summary: "Port in use",
+                    detail: "Port 3306 is in use by MAMP PRO (mysqld, process 812). Stop that app, or give the service another port.",
+                    portHolder: PortHolder(
+                        app: "MAMP PRO",
+                        process: "mysqld",
+                        processNumber: 812,
+                        path: "/Applications/MAMP/Library/bin/mysql80/bin/mysqld",
+                        suggestedPort: 13307
+                    )
+                ),
                 dataFolder: "~/Library/Application Support/Nexus/data/mysql-8.4",
                 account: DatabaseAccount(user: "root", password: ""),
                 log: [
@@ -313,6 +316,9 @@ extension AppModel {
                 CommandItem(command: "nexus status", help: "Lists the services and their state."),
                 CommandItem(command: "nexus start mysql-8.4", help: "Starts a service."),
                 CommandItem(command: "nexus stop mysql-8.4", help: "Stops a service."),
+                CommandItem(command: "nexus restart mysql-8.4", help: "Stops a service and starts it again."),
+                CommandItem(command: "nexus stop --all", help: "Stops every service."),
+                CommandItem(command: "nexus start --stopped", help: "Starts the services that nexus stop --all stopped."),
                 CommandItem(command: "nexus port mysql-8.4 13307", help: "Gives a service another port."),
             ]),
             CommandSection(title: "Packages", commands: [

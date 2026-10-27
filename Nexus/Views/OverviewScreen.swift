@@ -1,14 +1,36 @@
+import AppKit
+import NexusCore
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct OverviewScreen: View {
     @Environment(AppModel.self) private var model
+    @Environment(BackgroundServices.self) private var background
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                if let service = model.problemService, let holder = model.portHolder {
-                    ProblemBanner(service: service, holder: holder)
+                if let problem = model.nexusdProblem {
+                    Banner(
+                        title: "Nexus cannot reach its background service",
+                        message: "\(problem) Nexus tries again every few seconds. Check that Nexus is on in Login Items."
+                    ) {
+                        Button("Open Login Items") {
+                            background.helper.openLoginItemsSettings()
+                        }
+                    }
+                }
+
+                if let approval = background.approvalNeeded {
+                    Banner(title: "Nexus needs your approval", message: approval) {
+                        Button("Open Login Items") {
+                            background.helper.openLoginItemsSettings()
+                        }
+                    }
+                }
+
+                if let blocked = model.blockedService {
+                    ProblemBanner(service: blocked.service, holder: blocked.holder)
                 }
 
                 DropArea()
@@ -40,13 +62,21 @@ struct OverviewScreen: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 MoreMenu {
-                    Button("Stop all services", systemImage: "stop") {}
-                    Button("Start stopped services", systemImage: "play") {}
-                        .disabled(true)
+                    Button("Stop all services", systemImage: "stop") {
+                        model.stopAllServices()
+                    }
+                    .disabled(!model.hasActiveService)
+
+                    Button("Start stopped services", systemImage: "play") {
+                        model.startStoppedServices()
+                    }
+                    .disabled(model.stoppedByStopAll.isEmpty)
 
                     Divider()
 
-                    Button("Show logs folder", systemImage: "folder") {}
+                    Button("Show logs folder", systemImage: "folder") {
+                        NSWorkspace.shared.open(NexusPaths.standard.logs)
+                    }
                 }
             }
         }
@@ -59,24 +89,40 @@ private struct ProblemBanner: View {
     let holder: PortHolder
 
     var body: some View {
+        Banner(
+            title: "\(service.name) cannot start",
+            message: "Port \(service.shortPortSummary) is in use by \(holder.process) of \(holder.app) (process \(holder.processNumber))."
+        ) {
+            Button("Quit \(holder.app)") {}
+            Button("Change port…") {
+                model.sheet = .portInUse(service: service.id)
+            }
+        }
+    }
+}
+
+private struct Banner<Actions: View>: View {
+    let title: String
+    let message: String
+    @ViewBuilder let actions: Actions
+
+    var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.title3)
                 .foregroundStyle(Color.statusOrange)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(service.name) cannot start")
+                Text(title)
                     .fontWeight(.semibold)
-                Text("Port \(service.shortPortSummary) is in use by \(holder.process) of \(holder.app) (process \(holder.processNumber)).")
+                Text(message)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 12)
 
-            Button("Quit \(holder.app)") {}
-            Button("Change port…") {
-                model.sheet = .portInUse(service: service.id)
-            }
+            actions
         }
         .padding(12)
         .background(Color.warningBackground, in: .rect(cornerRadius: 10))
@@ -251,9 +297,10 @@ private struct ServiceRow: View {
             Spacer()
 
             if let problem = service.problem {
-                Text(problem)
+                Text(problem.summary)
                     .font(.callout)
                     .foregroundStyle(Color.orangeText)
+                    .help(problem.detail)
             }
 
             Text(service.portSummary)
@@ -261,13 +308,8 @@ private struct ServiceRow: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
 
-            Toggle(service.name, isOn: Binding(
-                get: { service.isRunning },
-                set: { model.setRunning($0, service: service.id) }
-            ))
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .controlSize(.mini)
+            ServiceSwitch(service: service)
+                .controlSize(.mini)
 
             Image(systemName: "chevron.right")
                 .font(.caption)

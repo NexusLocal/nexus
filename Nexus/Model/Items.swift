@@ -79,6 +79,13 @@ struct SettingsError {
     let message: String
 }
 
+// The summary is short, for a row. The detail is the full text of nexusd.
+struct ServiceProblem {
+    let summary: String
+    let detail: String
+    var portHolder: PortHolder?
+}
+
 struct ServiceVersion: Identifiable {
     let id: String
     let kind: ServiceKind
@@ -86,9 +93,10 @@ struct ServiceVersion: Identifiable {
     let version: String
     var health: Health
     var since: String?
+    var activeWithProblem = false
     var ports: [ServicePort] = []
     var internalPort = false
-    var problem: String?
+    var problem: ServiceProblem?
     var update: String?
     var securityNote: String?
     var dataFolder: String?
@@ -103,6 +111,13 @@ struct ServiceVersion: Identifiable {
 
     var isRunning: Bool {
         health == .running
+    }
+
+    // nexusd keeps some services active while they have a problem: a service that it starts
+    // again after an exit that nobody asked for, and a DNS server that macOS does not use yet.
+    // Their switch stays on, so the user can stop them.
+    var isActive: Bool {
+        isRunning || activeWithProblem
     }
 
     var portSummary: String {

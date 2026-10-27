@@ -17,7 +17,7 @@ struct NexusCommand: AsyncParsableCommand {
         abstract: "Controls the Nexus services from the terminal.",
         version: NexusVersion.current(),
         subcommands: [
-            Status.self, Start.self, Stop.self, Port.self, Available.self, Runtimes.self, Install.self, Remove.self,
+            Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Runtimes.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
             SiteCommand.self, Park.self, Unpark.self, Ext.self, Module.self, Lan.self,
             Database.self,
@@ -63,20 +63,54 @@ struct Status: AsyncParsableCommand {
 struct Start: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Starts a service, for example redis-8.2.")
 
-    @Argument(help: "The service, as nexus status shows it.") var service: String
+    @Argument(help: "The service, as nexus status shows it.") var service: String?
+    @Flag(help: "Start the services that nexus stop --all stopped.") var stopped = false
+
+    func validate() throws {
+        if (service == nil) == !stopped {
+            throw ValidationError("Give a service or --stopped.")
+        }
+    }
 
     func run() async throws {
-        try finish(try await send(.start(service: service)))
+        if let service {
+            try finish(try await send(.start(service: service)))
+            return
+        }
+
+        try finish(try await send(.startStopped))
     }
 }
 
 struct Stop: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Stops a service.")
 
+    @Argument(help: "The service, as nexus status shows it.") var service: String?
+    @Flag(help: "Stop every service. nexus start --stopped starts them again.") var all = false
+
+    func validate() throws {
+        if (service == nil) == !all {
+            throw ValidationError("Give a service or --all.")
+        }
+    }
+
+    func run() async throws {
+        if let service {
+            try finish(try await send(.stop(service: service)))
+            return
+        }
+
+        try finish(try await send(.stopAll))
+    }
+}
+
+struct Restart: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Stops a service and starts it again.")
+
     @Argument(help: "The service, as nexus status shows it.") var service: String
 
     func run() async throws {
-        try finish(try await send(.stop(service: service)))
+        try finish(try await send(.restart(service: service)))
     }
 }
 
