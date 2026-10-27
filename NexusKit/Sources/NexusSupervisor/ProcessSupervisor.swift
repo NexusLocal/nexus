@@ -63,10 +63,18 @@ public actor ProcessSupervisor {
     }
 
     private let policy: RestartPolicy
-    private var services: [String: Managed] = [:]
+    private var changeHandler: (@Sendable () -> Void)?
+    private var services: [String: Managed] = [:] {
+        didSet { changeHandler?() }
+    }
 
     public init(policy: RestartPolicy = .standard) {
         self.policy = policy
+    }
+
+    // The handler runs after each change of a service, also after an exit that nobody asked for.
+    public func onChange(_ handler: @escaping @Sendable () -> Void) {
+        changeHandler = handler
     }
 
     public func start(_ definition: ServiceDefinition) async throws {

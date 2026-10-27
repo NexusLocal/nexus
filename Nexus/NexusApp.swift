@@ -3,7 +3,7 @@ import SwiftUI
 @main
 struct NexusApp: App {
     @State private var background = BackgroundServices()
-    @State private var model = AppModel.sample()
+    @State private var model = AppModel.forLaunch()
     @AppStorage(AppPreference.showInMenuBar) private var showInMenuBar = true
 
     var body: some Scene {
@@ -40,6 +40,7 @@ struct NexusApp: App {
         MenuBarExtra(isInserted: $showInMenuBar) {
             MenuBarContent()
                 .environment(model)
+                .environment(background)
                 .onAppear {
                     background.refresh()
                 }

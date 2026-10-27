@@ -145,7 +145,7 @@ private struct ServiceKindRow: View {
                 Text(problem.version.split(separator: ".").prefix(2).joined(separator: "."))
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.orangeText)
-                    .help("\(problem.name): \(problem.problem ?? "needs attention")")
+                    .help("\(problem.name): \(problem.problem?.detail ?? "needs attention")")
             }
 
             StatusDot(health: model.health(of: kind))

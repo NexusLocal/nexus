@@ -22,22 +22,35 @@ struct ServiceScreen: View {
         )
     }
 
-    private var serviceIndex: Int? {
-        model.services.firstIndex { $0.id == selectedID.wrappedValue }
+    private var selectedService: ServiceVersion? {
+        model.service(selectedID.wrappedValue)
+    }
+
+    // Each event of nexusd replaces the list of services. A binding by position could then read a
+    // position that no longer exists, or change another service.
+    private func binding(to service: ServiceVersion) -> Binding<ServiceVersion> {
+        Binding(
+            get: { model.service(service.id) ?? service },
+            set: { changed in
+                guard let index = model.services.firstIndex(where: { $0.id == service.id }) else {
+                    return
+                }
+
+                model.services[index] = changed
+            }
+        )
     }
 
     var body: some View {
-        @Bindable var model = model
-
         Group {
-            if let serviceIndex {
+            if let selectedService {
                 VStack(spacing: 0) {
                     if versions.count > 1 {
                         VersionPicker(versions: versions, selection: selectedID)
                             .padding(.top, 16)
                     }
 
-                    ServiceForm(service: $model.services[serviceIndex])
+                    ServiceForm(service: binding(to: selectedService))
                 }
             } else {
                 ContentUnavailableView {
@@ -53,8 +66,8 @@ struct ServiceScreen: View {
         }
         .screenTitle(kind.title, subtitle: subtitle)
         .toolbar {
-            if let serviceIndex {
-                ServiceToolbar(service: model.services[serviceIndex])
+            if let selectedService {
+                ServiceToolbar(model: model, service: selectedService)
             }
         }
     }
@@ -129,16 +142,18 @@ private struct VersionPicker: NSViewRepresentable {
 }
 
 private struct ServiceToolbar: ToolbarContent {
+    let model: AppModel
     let service: ServiceVersion
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Button {
+                model.restart(service)
             } label: {
                 Label("Restart", systemImage: "arrow.clockwise")
             }
             .labelStyle(.titleAndIcon)
-            .disabled(!service.isRunning)
+            .disabled(!service.isActive)
         }
 
         ToolbarItem(placement: .primaryAction) {
@@ -202,12 +217,7 @@ private struct StateSection: View {
                     Text(stateText)
                         .foregroundStyle(service.problem == nil ? .secondary : Color.orangeText)
 
-                    Toggle("Running", isOn: Binding(
-                        get: { service.isRunning },
-                        set: { model.setRunning($0, service: service.id) }
-                    ))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
+                    ServiceSwitch(service: service)
                 }
             }
 
@@ -251,7 +261,10 @@ private struct StateSection: View {
         } header: {
             Text(service.name)
         } footer: {
-            if let note = service.securityNote {
+            if let problem = service.problem {
+                Text(problem.detail)
+                    .foregroundStyle(Color.orangeText)
+            } else if let note = service.securityNote {
                 Text(note)
                     .foregroundStyle(Color.orangeText)
             } else if let note = service.note {
@@ -262,7 +275,7 @@ private struct StateSection: View {
 
     private var stateText: String {
         if let problem = service.problem {
-            return problem
+            return problem.summary
         }
 
         guard service.isRunning else {

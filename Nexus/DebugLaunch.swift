@@ -3,6 +3,7 @@ import AppKit
 
 // Launch arguments of a debug build that open one screen. They let a check of the look work
 // without clicks: --screen service:mysql --sheet port --appearance light --settings network
+// The services of the sample data, such as the port problem of --sheet port, need --sample.
 enum DebugLaunch {
     static func apply(to model: AppModel, openSettings: () -> Void) {
         HangWatchdog.shared.start()

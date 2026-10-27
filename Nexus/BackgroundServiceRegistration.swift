@@ -16,6 +16,21 @@ final class BackgroundServices {
         daemon.refresh()
         helper.refresh()
     }
+
+    // The text for a banner when the user must turn Nexus on in Login Items.
+    var approvalNeeded: String? {
+        let place = "Turn on Nexus in System Settings > General > Login Items & Extensions."
+
+        if daemon.needsApproval {
+            return "\(place) Without it, no service runs."
+        }
+
+        if helper.needsApproval {
+            return "\(place) Without it, macOS does not send the names of your sites to Nexus."
+        }
+
+        return nil
+    }
 }
 
 // Registers one of the two launchd jobs in the app bundle: the agent nexusd, and the helper

@@ -280,6 +280,22 @@ struct OpenDatabaseButton: View {
     }
 }
 
+// Starts or stops a service. It shows the asked state while nexusd works.
+struct ServiceSwitch: View {
+    @Environment(AppModel.self) private var model
+    let service: ServiceVersion
+    var place: ActionPlace = .window
+
+    var body: some View {
+        Toggle(service.name, isOn: Binding(
+            get: { model.isSwitchedOn(service) },
+            set: { model.setRunning($0, service: service, from: place) }
+        ))
+        .labelsHidden()
+        .toggleStyle(.switch)
+    }
+}
+
 struct MoreMenu<Content: View>: View {
     @ViewBuilder let content: Content
 

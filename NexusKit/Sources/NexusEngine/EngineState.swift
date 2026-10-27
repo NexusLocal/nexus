@@ -19,6 +19,9 @@ public struct EngineState: Codable, Sendable, Equatable {
     public var portProfile: PortProfile = .standard
     public var ports: [String: Int] = [:]
     public var enabledServices: Set<String> = []
+    // The services that "Stop all services" stopped. "Start stopped services" starts only these
+    // (D63). Until then, nexusd does not start them. A start or a stop of one service removes it.
+    public var stoppedByStopAll: Set<String> = []
     public var manifestURL: URL = URL(string: "https://github.com/NexusLocal/binaries/releases/download/manifest/manifest.json")!
     public var tld = "test"
     public var hosts: Set<String> = []
@@ -41,6 +44,7 @@ public struct EngineState: Codable, Sendable, Equatable {
         portProfile = try container.decodeIfPresent(PortProfile.self, forKey: .portProfile) ?? defaults.portProfile
         ports = try container.decodeIfPresent([String: Int].self, forKey: .ports) ?? defaults.ports
         enabledServices = try container.decodeIfPresent(Set<String>.self, forKey: .enabledServices) ?? defaults.enabledServices
+        stoppedByStopAll = try container.decodeIfPresent(Set<String>.self, forKey: .stoppedByStopAll) ?? defaults.stoppedByStopAll
         manifestURL = try container.decodeIfPresent(URL.self, forKey: .manifestURL) ?? defaults.manifestURL
         tld = try container.decodeIfPresent(String.self, forKey: .tld) ?? defaults.tld
         hosts = try container.decodeIfPresent(Set<String>.self, forKey: .hosts) ?? defaults.hosts

@@ -48,6 +48,7 @@ let package = Package(
         .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusTestSupport"]),
         .testTarget(name: "NexusDNSTests", dependencies: ["NexusDNS", "NexusTestSupport"]),
         .testTarget(name: "NexusConfigTests", dependencies: ["NexusConfig"]),
+        .testTarget(name: "NexusIPCTests", dependencies: ["NexusIPC", "NexusSupervisor"]),
         .testTarget(name: "NexusTLSTests", dependencies: [
             "NexusTLS",
             "NexusTestSupport",

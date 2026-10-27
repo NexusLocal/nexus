@@ -51,6 +51,11 @@ public actor NexusEngine {
     private var helperRetry: Task<Void, Never>?
     private var uninstalling = false
     private var webQueue: Task<Void, Never>?
+    private var watchers: [UUID: AsyncStream<NexusEvent>.Continuation] = [:]
+    private var publishedServices: ServiceList?
+    private var publishing = false
+    private var publishAgain = false
+    private var observesSupervisor = false
 
     public init(
         paths: NexusPaths,
@@ -77,6 +82,12 @@ public actor NexusEngine {
     }
 
     public func handle(_ request: NexusRequest) async -> NexusResponse {
+        defer {
+            if !request.onlyReads {
+                servicesChanged()
+            }
+        }
+
         do {
             switch request {
             case .status:
@@ -85,6 +96,12 @@ public actor NexusEngine {
                 return .done(message: try await serialWeb { try await self.start(id) })
             case .stop(let id):
                 return .done(message: try await serialWeb { try await self.stop(id) })
+            case .restart(let id):
+                return .done(message: try await serialWeb { try await self.restart(id) })
+            case .stopAll:
+                return .done(message: try await serialWeb { try await self.stopAll() })
+            case .startStopped:
+                return .done(message: try await serialWeb { try await self.startStopped() })
             case .setPort(let id, let port):
                 return .done(message: try await serialWeb { try await self.setPort(id, port) })
             case .available:
@@ -160,20 +177,43 @@ public actor NexusEngine {
         _ = try? await startDNS()
         _ = try? await applyWeb()
 
-        for id in await stateStore.current().enabledServices.sorted() {
+        let state = await stateStore.current()
+        for id in state.enabledServices.subtracting(state.stoppedByStopAll).sorted() {
             _ = try? await start(id)
         }
+
+        servicesChanged()
     }
 
     public func shutdown() async {
         helperRetry?.cancel()
         await supervisor.stopAll()
         stopDNS()
+
+        for watcher in watchers.values {
+            watcher.finish()
+        }
+        watchers = [:]
     }
 
+    // nexus status shows a running DNS server as failed while macOS does not send it the names,
+    // because the names of the sites do not work then.
     private func serviceStatus() async throws -> [ServiceStatus] {
+        let dnsProblem = await dnsNamesProblem()
+
+        return try await services().map { runtime, status in
+            guard runtime == nil, let dnsProblem else {
+                return status
+            }
+
+            return ServiceStatus(id: status.id, displayName: status.displayName, ports: status.ports, state: .failed(reason: dnsProblem))
+        }
+    }
+
+    // DNS has no runtime. Each service has its real state here.
+    private func services() async throws -> [(runtime: InstalledRuntime?, status: ServiceStatus)] {
         let supervised = Dictionary(uniqueKeysWithValues: await supervisor.status().map { ($0.id, $0) })
-        var all = [await dnsStatus()]
+        var all: [(runtime: InstalledRuntime?, status: ServiceStatus)] = [(nil, await dnsStatus())]
 
         for runtime in await serviceRuntimes() {
             guard let id = catalog.serviceID(for: runtime) else {
@@ -181,16 +221,36 @@ public actor NexusEngine {
             }
 
             if let status = supervised[id] {
-                all.append(status)
+                all.append((runtime, status))
                 continue
             }
 
             let ports = try await self.ports(for: runtime)
             let definition = catalog.definition(for: runtime, ports: ports)
-            all.append(ServiceStatus(id: id, displayName: definition?.displayName ?? id, ports: definition?.ports ?? [], state: .stopped))
+            all.append((runtime, ServiceStatus(id: id, displayName: definition?.displayName ?? id, ports: definition?.ports ?? [], state: .stopped)))
         }
 
-        return all.sorted { $0.id < $1.id }
+        return all.sorted { $0.status.id < $1.status.id }
+    }
+
+    private func serviceList() async throws -> ServiceList {
+        let all = try await services()
+        let dnsProblem = await dnsNamesProblem()
+        let services = all.map { runtime, status in
+            ServiceInfo(
+                id: status.id,
+                name: runtime?.name ?? Self.dnsServiceID,
+                line: runtime?.line ?? "",
+                version: runtime?.version ?? "",
+                ports: status.ports,
+                state: status.state,
+                problem: runtime == nil ? dnsProblem : nil
+            )
+        }
+
+        let waiting = await stateStore.current().stoppedByStopAll
+        let stopped = all.map(\.status).filter { !$0.state.isActive && waiting.contains($0.id) }.map(\.id)
+        return ServiceList(services: services, stoppedByStopAll: stopped)
     }
 
     // One runtime for each service. nginx and Apache use the newest installed version line.
@@ -221,9 +281,14 @@ public actor NexusEngine {
         return ports
     }
 
-    func start(_ id: String) async throws -> String {
+    // A service that the user starts runs again at the next start of nexusd. A restart and
+    // "Start stopped services" keep that choice as it was, so a web service that only a site
+    // needs stops again with the last site.
+    func start(_ id: String, enable: Bool = true) async throws -> String {
         if id == Self.dnsServiceID {
-            return try await startDNS()
+            let message = try await startDNS()
+            try await stateStore.update { $0.stoppedByStopAll.remove(id) }
+            return message
         }
 
         if isWebService(id) {
@@ -239,7 +304,12 @@ public actor NexusEngine {
         }
 
         let message = try await startService(id)
-        try await stateStore.update { $0.enabledServices.insert(id) }
+        try await stateStore.update {
+            if enable {
+                $0.enabledServices.insert(id)
+            }
+            $0.stoppedByStopAll.remove(id)
+        }
         return message
     }
 
@@ -271,15 +341,107 @@ public actor NexusEngine {
         return "\(definition.displayName) runs on port \(definition.ports.map(String.init).joined(separator: " and "))."
     }
 
-    private func stop(_ id: String) async throws -> String {
+    private func stop(_ id: String, disable: Bool = true) async throws -> String {
         if id == Self.dnsServiceID {
             stopDNS()
+            try await stateStore.update { $0.stoppedByStopAll.remove(id) }
             return "The DNS server stopped. It starts again with nexusd, or with: nexus start dns"
         }
 
         try await supervisor.stop(id)
-        try await stateStore.update { $0.enabledServices.remove(id) }
+        try await stateStore.update {
+            if disable {
+                $0.enabledServices.remove(id)
+            }
+            $0.stoppedByStopAll.remove(id)
+        }
         return "\(id) stopped."
+    }
+
+    private func restart(_ id: String) async throws -> String {
+        let running = id == Self.dnsServiceID
+            ? dnsState.isActive
+            : await supervisor.state(of: id)?.isActive == true
+
+        guard running else {
+            return try await start(id)
+        }
+
+        _ = try await stop(id, disable: false)
+        return try await start(id, enable: false)
+    }
+
+    // The services stop at the same time, so a database that writes its data to disk does not
+    // make the others wait. The services that an earlier "Stop all services" stopped stay in the
+    // list (D63). Each one stays in enabledServices or out of it. So "Start stopped services" does
+    // not change which services nexusd starts at its next start. Until then, nexusd skips them.
+    private func stopAll() async throws -> String {
+        let running = try await services().map(\.status).filter(\.state.isActive).map(\.id)
+
+        guard !running.isEmpty else {
+            return "No service runs."
+        }
+
+        let results = await withTaskGroup(of: (id: String, failure: String?).self) { group in
+            for id in running {
+                group.addTask {
+                    do {
+                        _ = try await self.stop(id, disable: false)
+                        return (id, nil)
+                    } catch {
+                        return (id, "\(id): \(error)")
+                    }
+                }
+            }
+
+            var results: [(id: String, failure: String?)] = []
+            for await result in group {
+                results.append(result)
+            }
+            return results
+        }
+
+        let stopped = results.filter { $0.failure == nil }.map(\.id)
+        let failures = results.compactMap(\.failure).sorted()
+        try await stateStore.update { $0.stoppedByStopAll.formUnion(stopped) }
+
+        guard failures.isEmpty else {
+            throw RuntimeError.unsupported("Nexus stopped \(Self.count(stopped.count, "service")). These did not stop:\n\(failures.joined(separator: "\n"))")
+        }
+
+        return "Nexus stopped \(Self.count(stopped.count, "service")). Start the stopped services again with: nexus start --stopped"
+    }
+
+    // A remembered service that runs again, for example DNS after a new start of nexusd, needs
+    // no start.
+    private func startStopped() async throws -> String {
+        let stopped = Set(try await services().map(\.status).filter { !$0.state.isActive }.map(\.id))
+        try await stateStore.update { $0.stoppedByStopAll.formIntersection(stopped) }
+        let waiting = await stateStore.current().stoppedByStopAll.sorted()
+
+        guard !waiting.isEmpty else {
+            return "No service to start. This starts only the services that \"Stop all services\" stopped."
+        }
+
+        var failures: [String] = []
+        for id in waiting {
+            do {
+                _ = try await start(id, enable: false)
+            } catch {
+                failures.append("\(id): \(error)")
+            }
+        }
+
+        guard failures.isEmpty else {
+            let started = waiting.count - failures.count
+            throw RuntimeError.unsupported("Nexus started \(Self.count(started, "service")). These did not start:\n\(failures.joined(separator: "\n"))")
+        }
+
+        return "Nexus started \(Self.count(waiting.count, "service"))."
+    }
+
+    static func count(_ number: Int, _ noun: String) -> String {
+        number == 1 ? "1 \(noun)" : "\(number) \(noun)s"
     }
 
     private func setPort(_ id: String, _ port: Int) async throws -> String {
@@ -314,7 +476,7 @@ public actor NexusEngine {
         try await stateStore.update { $0.ports[id] = port }
 
         if await supervisor.state(of: id)?.isActive == true {
-            return "\(id) gets port \(port) at its next start. Run: nexus stop \(id) && nexus start \(id)"
+            return "\(id) gets port \(port) at its next start. Run: nexus restart \(id)"
         }
 
         return "\(id) uses port \(port)."
@@ -370,6 +532,75 @@ public actor NexusEngine {
 
     private func manifest() async throws -> Manifest {
         try await manifestSource.manifest(from: stateStore.current().manifestURL)
+    }
+}
+
+// The events that nexusd sends to the app without a request.
+extension NexusEngine {
+    // The stream starts with the current services. A new watcher makes every watcher get the
+    // list again. That does no harm.
+    public func events() async -> AsyncStream<NexusEvent> {
+        if !observesSupervisor {
+            observesSupervisor = true
+            await supervisor.onChange { [weak self] in
+                Task { await self?.servicesChanged() }
+            }
+        }
+
+        let (stream, continuation) = AsyncStream.makeStream(of: NexusEvent.self)
+        let id = UUID()
+        watchers[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeWatcher(id) }
+        }
+
+        publishedServices = nil
+        servicesChanged()
+        return stream
+    }
+
+    private func removeWatcher(_ id: UUID) {
+        watchers[id] = nil
+    }
+
+    // A change during a publish makes the loop run once more. So many changes in a short time
+    // give few events, and the last event always has the newest state.
+    func servicesChanged() {
+        guard !watchers.isEmpty else {
+            return
+        }
+
+        guard !publishing else {
+            publishAgain = true
+            return
+        }
+
+        publishing = true
+        Task { await publishServices() }
+    }
+
+    private func publishServices() async {
+        repeat {
+            publishAgain = false
+
+            if let list = try? await serviceList(), list != publishedServices {
+                publishedServices = list
+                for watcher in watchers.values {
+                    watcher.yield(.services(list))
+                }
+            }
+        } while publishAgain
+
+        publishing = false
+    }
+}
+
+private extension NexusRequest {
+    var onlyReads: Bool {
+        switch self {
+        case .status, .available, .installed, .hosts, .sites, .extensions, .modules, .databases: true
+        default: false
+        }
     }
 }
 
@@ -440,17 +671,20 @@ extension NexusEngine {
             ?? "The DNS server runs on port \(port), and /etc/resolver names it."
     }
 
-    // A failed DNS server or a missing resolver file both mean that .test names do not work.
     private func dnsStatus() async -> ServiceStatus {
         let state = await stateStore.current()
         let port = state.ports[Self.dnsServiceID] ?? DNSServer.defaultPort
-        var current = dnsState
 
-        if let systemFilesProblem, dnsState.isActive {
-            current = .failed(reason: "macOS does not send .\(state.tld) names to Nexus yet. \(systemFilesProblem)")
+        return ServiceStatus(id: Self.dnsServiceID, displayName: "DNS for .\(state.tld)", ports: [port], state: dnsState)
+    }
+
+    // A missing resolver file means that .test names do not work, also while the DNS server runs.
+    private func dnsNamesProblem() async -> String? {
+        guard let systemFilesProblem, dnsState.isActive else {
+            return nil
         }
 
-        return ServiceStatus(id: Self.dnsServiceID, displayName: "DNS for .\(state.tld)", ports: [port], state: current)
+        return "macOS does not send .\(await stateStore.current().tld) names to Nexus yet. \(systemFilesProblem)"
     }
 
     // Each call waits for the call before it, and reads the state only when its turn comes. So
@@ -496,6 +730,7 @@ extension NexusEngine {
 
         let messages = problems.map { String(describing: $0) }
         systemFilesProblem = messages.isEmpty ? nil : Array(Set(messages)).sorted().joined(separator: " ")
+        servicesChanged()
 
         if problems.contains(where: { ($0 as? HelperError)?.isNotReachable == true }) {
             scheduleHelperRetry()

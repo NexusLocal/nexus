@@ -463,3 +463,211 @@ struct NexusEngineTests {
         #expect(state.hosts.isEmpty)
     }
 }
+
+// Keeps each service list that the engine sends. next(where:) waits up to 5 seconds and drops
+// the lists before the match, as an iterator does.
+private final class EventRecorder: Sendable {
+    private let lists = Mutex<[ServiceList]>([])
+
+    func record(_ events: AsyncStream<NexusEvent>) {
+        Task {
+            for await case .services(let list) in events {
+                lists.withLock { $0.append(list) }
+            }
+        }
+    }
+
+    func next(where condition: (ServiceList) -> Bool) async -> ServiceList? {
+        let deadline = ContinuousClock.now + .seconds(5)
+
+        while ContinuousClock.now < deadline {
+            let match = lists.withLock { lists -> ServiceList? in
+                guard let index = lists.firstIndex(where: condition) else {
+                    return nil
+                }
+
+                defer { lists.removeFirst(index + 1) }
+                return lists[index]
+            }
+
+            if let match {
+                return match
+            }
+
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+
+        return nil
+    }
+}
+
+// The events for the app, restart, and "Stop all services" with "Start stopped services" (D63).
+extension NexusEngineTests {
+    private func recordEvents(of engine: NexusEngine) async -> EventRecorder {
+        let recorder = EventRecorder()
+        recorder.record(await engine.events())
+        return recorder
+    }
+
+    private func state(of id: String, in list: ServiceList?) -> ServiceState? {
+        list?.services.first { $0.id == id }?.state
+    }
+
+    private func pid(_ state: ServiceState?) -> Int32? {
+        if case .running(let pid, _) = state {
+            return pid
+        }
+
+        return nil
+    }
+
+    @Test func theEventsStartWithTheServicesAndFollowEachChange() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        _ = await engine.handle(.install(name: "redis", line: "1.0"))
+        let events = await recordEvents(of: engine)
+
+        let first = await events.next { _ in true }
+        _ = await engine.handle(.start(service: "redis-1.0"))
+        let started = await events.next { self.pid(self.state(of: "redis-1.0", in: $0)) != nil }
+
+        let redis = first?.services.last
+        #expect(first?.services.map(\.id) == ["dns", "redis-1.0"])
+        #expect(redis?.name == "redis")
+        #expect(redis?.line == "1.0")
+        #expect(redis?.version == "1.0.0")
+        #expect(redis?.state == .stopped)
+        #expect(started != nil)
+        await engine.shutdown()
+    }
+
+    @Test func anExitThatNobodyAskedForReachesTheWatchers() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        _ = await engine.handle(.install(name: "redis", line: "1.0"))
+        _ = await engine.handle(.start(service: "redis-1.0"))
+        let events = await recordEvents(of: engine)
+        let running = await events.next { self.pid(self.state(of: "redis-1.0", in: $0)) != nil }
+        let processNumber = pid(state(of: "redis-1.0", in: running))
+
+        if let processNumber {
+            kill(processNumber, SIGKILL)
+        }
+        let after = await events.next { self.pid(self.state(of: "redis-1.0", in: $0)) != processNumber }
+
+        #expect(processNumber != nil)
+        #expect(after != nil)
+        await engine.shutdown()
+    }
+
+    @Test func aRestartGivesTheServiceANewProcess() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        _ = await engine.handle(.install(name: "redis", line: "1.0"))
+        _ = await engine.handle(.start(service: "redis-1.0"))
+        let before = pid(services(await engine.handle(.status))["redis-1.0"]?.state)
+
+        let restarted = await engine.handle(.restart(service: "redis-1.0"))
+        let after = pid(services(await engine.handle(.status))["redis-1.0"]?.state)
+
+        if case .done = restarted {} else { Issue.record("the restart failed: \(restarted)") }
+        #expect(before != nil)
+        #expect(after != nil)
+        #expect(after != before)
+        await engine.shutdown()
+    }
+
+    @Test func startStoppedStartsOnlyTheServicesThatStopAllStopped() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        _ = await engine.handle(.install(name: "redis", line: "1.0"))
+        _ = await engine.handle(.start(service: "dns"))
+        _ = await engine.handle(.start(service: "redis-1.0"))
+        let events = await recordEvents(of: engine)
+
+        let stopped = await engine.handle(.stopAll)
+        let remembered = await events.next { $0.stoppedByStopAll == ["dns", "redis-1.0"] }
+        _ = await engine.handle(.start(service: "redis-1.0"))
+        _ = await engine.handle(.stop(service: "redis-1.0"))
+        let started = await engine.handle(.startStopped)
+        let status = services(await engine.handle(.status))
+        let afterwards = await events.next { $0.stoppedByStopAll.isEmpty }
+
+        #expect(stopped == .done(message: "Nexus stopped 2 services. Start the stopped services again with: nexus start --stopped"))
+        #expect(remembered != nil)
+        #expect(started == .done(message: "Nexus started 1 service."))
+        if case .running = status["dns"]?.state {} else { Issue.record("DNS does not run: \(status)") }
+        #expect(status["redis-1.0"]?.state == .stopped)
+        #expect(afterwards != nil)
+        await engine.shutdown()
+    }
+
+    @Test func aServiceThatStopAllStoppedWaitsForStartStoppedAfterANewStartOfNexusd() async throws {
+        let first = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        _ = await first.handle(.install(name: "redis", line: "1.0"))
+        _ = await first.handle(.start(service: "redis-1.0"))
+        _ = await first.handle(.stopAll)
+        await first.shutdown()
+
+        let engine = makeEngine(package: try makeFakeRedis())
+        await engine.startEnabledServices()
+        let afterLaunch = services(await engine.handle(.status))["redis-1.0"]?.state
+        let started = await engine.handle(.startStopped)
+        let afterStart = pid(services(await engine.handle(.status))["redis-1.0"]?.state)
+        let state = await engine.stateStore.current()
+
+        #expect(afterLaunch == .stopped)
+        #expect(started == .done(message: "Nexus started 1 service."))
+        #expect(afterStart != nil)
+        #expect(state.enabledServices.contains("redis-1.0"))
+        #expect(state.stoppedByStopAll.isEmpty)
+        await engine.shutdown()
+    }
+
+    @Test func stopAllStopsADNSServerThatMacOSDoesNotUseYet() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        helper.setReachable(false)
+        await engine.startEnabledServices()
+
+        let stopped = await engine.handle(.stopAll)
+        let state = services(await engine.handle(.status))["dns"]?.state
+
+        #expect(stopped == .done(message: "Nexus stopped 1 service. Start the stopped services again with: nexus start --stopped"))
+        #expect(state == .stopped)
+        await engine.shutdown()
+    }
+
+    @Test func theAppSeesADNSServerThatMacOSDoesNotUseYetAsRunningWithAProblem() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        helper.setReachable(false)
+        await engine.startEnabledServices()
+        let events = await recordEvents(of: engine)
+
+        let list = await events.next { _ in true }
+        let dns = list?.services.first { $0.id == "dns" }
+
+        #expect(pid(dns?.state) != nil)
+        #expect(dns?.problem?.contains("Login Items & Extensions") == true)
+        await engine.shutdown()
+    }
+
+    @Test func aRestartKeepsTheChoiceOfTheUserAboutTheNextStartOfNexusd() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        _ = await engine.handle(.install(name: "redis", line: "1.0"))
+        _ = await engine.handle(.start(service: "redis-1.0"))
+        try await engine.stateStore.update { $0.enabledServices.remove("redis-1.0") }
+
+        let restarted = await engine.handle(.restart(service: "redis-1.0"))
+        let state = await engine.stateStore.current()
+
+        if case .done = restarted {} else { Issue.record("the restart failed: \(restarted)") }
+        #expect(!state.enabledServices.contains("redis-1.0"))
+        await engine.shutdown()
+    }
+
+    @Test func startStoppedWithoutAStopAllStartsNothing() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        _ = await engine.handle(.install(name: "redis", line: "1.0"))
+
+        let response = await engine.handle(.startStopped)
+
+        #expect(response == .done(message: "No service to start. This starts only the services that \"Stop all services\" stopped."))
+        #expect(services(await engine.handle(.status))["redis-1.0"]?.state == .stopped)
+    }
+}
