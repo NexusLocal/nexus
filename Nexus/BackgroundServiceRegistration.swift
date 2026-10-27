@@ -2,6 +2,22 @@ import NexusCore
 import Observation
 import ServiceManagement
 
+@Observable
+final class BackgroundServices {
+    let daemon = BackgroundServiceRegistration.daemon()
+    let helper = BackgroundServiceRegistration.helper()
+
+    func registerIfNeeded() {
+        daemon.registerIfNeeded()
+        helper.registerIfNeeded()
+    }
+
+    func refresh() {
+        daemon.refresh()
+        helper.refresh()
+    }
+}
+
 // Registers one of the two launchd jobs in the app bundle: the agent nexusd, and the helper
 // daemon that writes /etc/resolver and /etc/hosts. The helper needs the approval of the user in
 // System Settings. nexusd does not.
@@ -24,6 +40,10 @@ final class BackgroundServiceRegistration {
     private init(service: SMAppService, name: String) {
         self.service = service
         self.name = name
+    }
+
+    var isEnabled: Bool {
+        status == .enabled
     }
 
     var needsApproval: Bool {

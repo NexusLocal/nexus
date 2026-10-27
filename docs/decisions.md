@@ -22,7 +22,10 @@ Out of scope: Memcached, Mailhog, Dynamic DNS and Valkey.
    for all binaries. Risk: users on macOS 26 or older cannot install Nexus. CI builds on the
    `xcode-27` runner (macOS 27, Apple silicon), generally available since 2026-10-15.
 5. UI: a main window for sites and services, and a menu bar item for status, start and stop.
-   "Start at login" is a setting that is on by default.
+   "Start at login" is a setting that is on by default. The menu bar item opens a small panel
+   with the services, their switches and the running tasks. It lists no sites, because a user
+   can have many. A setting shows the app icon in the Dock, in the menu bar or in both. (user,
+   step 6 design)
 6. App updates use Sparkle.
 6b. The Apple team Rood Fruit B.V. signs the releases of Nexus. (user) The team has no active
     paid membership now, so it cannot sign yet. Release signing (Developer ID and
@@ -128,10 +131,14 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
 34. More than one version of a service can run at the same time. Each instance has its own
     version, port and data folder. Nexus has one instance for each installed version line, for
     example mysql-8.0 and mysql-8.4. (step 5)
-35. A new database instance gets the user root with the password root, on 127.0.0.1 only. The
-    user can change this. Reason: root and root is the MAMP default, so imported sites work.
-36. A button opens a database in the app that the user has (TablePlus, Sequel Ace). Nexus has no
-    built-in admin tool.
+35. A new database instance gets the user root without a password, on 127.0.0.1 only. The user
+    can change the account of each instance, and the default for new instances in Settings.
+    The MAMP PRO import sets root/root on the instances that it fills, because MAMP PRO sites
+    have DB_PASSWORD=root in their .env. (user, step 6 design. Was root/root for every
+    instance.)
+36. A button opens a database through its mysql:// or postgresql:// link, in the app that the
+    user chose in Settings > Databases. Nexus finds the installed database apps, and the user
+    can add one. Nexus has no built-in admin tool. (user, step 6 design)
 37. Import from MAMP PRO: the hosts (name, aliases, document root, PHP version, SSL). Database
     data comes over with the action "copy a database from another server" (a dump and a
     restore through the port). The tools of the instance that receives the copy make the dump,
@@ -230,9 +237,38 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
     not need a Developer ID signature or notarization. (user: "the user is in charge")
     The first launch preselects nginx, the newest PHP and Composer. Everything else starts
     unselected. (user)
+    nginx, at least one PHP version and Composer are required at the first launch. Every site
+    needs nginx, and workspaces need Composer. (user, step 6 design)
 57. The UI is designed in pen.dev first (through its MCP), so the owner can say what must
     change before it is built. The app uses the standard macOS 27 controls and styling as much
     as possible, not custom components. (user)
+    The design is docs/design/nexus.pen. The owner approved it on 2026-10-27. Its frame "UX
+    Rules" holds the rules for every screen. Two of them differ from Apple's guidelines (user):
+    - All text uses sentence case. Only names and abbreviations keep their capitals.
+    - "webserver" is one word.
+58. Sites can go in named groups. The user sets the order of the groups and the sites by hand,
+    and "Sort by name" sorts the groups, the sites outside a group and the sites in each group.
+    The sidebar can collapse its sections, each group and the workspaces of each site. (user)
+    The order by hand needs drag and drop, which comes in phase 2 of docs/plan.md. Until then,
+    "Move to group" puts a site in a group. (user, 2026-10-27)
+59. Settings > Sites holds the defaults for a new site: webserver, PHP, Node, background
+    processes, commands after the database copy and environment keys. A change does not change
+    existing sites. (user)
+60. Each PHP version has custom php.ini lines. Nexus adds them after its own settings, checks
+    them before the restart, and keeps the old lines when a line has an error. The app shows
+    the line and the error. (user)
+61. Settings > General holds the terminal app and the code editor. Nexus finds the installed
+    apps, and the user can add one. A site then has "Open in <app>" actions. Notifications for a
+    stopped service, a ready workspace and a finished import are settings too. (user)
+62. nexusd watches each parked folder. A new folder in it becomes a site with the defaults,
+    without the app. (user)
+63. "Stop all services" remembers which services ran. "Start stopped services" starts only
+    those. There is no "Start all", because it would also start services that the user turned
+    off. (user)
+64. The app has a "Command line" page that lists the nexus commands with a copy button. (user)
+65. A name of a site outside the dev TLD, for example an alias blog.local, gets its /etc/hosts
+    line without a setting. So Settings has no list of host names. `nexus hosts` stays for a
+    name that belongs to no site. (user)
 
 ## Open and deferred
 
@@ -246,6 +282,8 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
 - A settings file in the repository that a team can share. Reopen when a team asks for it.
 - A Claude Code plugin that tells Claude the workspace URL and the `nexus php` command. Reopen
   after version 1 works.
+- An MCP server, so AI tools can use Nexus through MCP tools next to the nexus CLI. Reopen after
+  version 1 works. (user, 2026-10-27)
 
 ## Plan changes from the interview
 
