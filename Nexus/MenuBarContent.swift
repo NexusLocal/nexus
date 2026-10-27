@@ -5,10 +5,11 @@ struct MenuBarContent: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
     @Environment(AppModel.self) private var model
+    @State private var listHeight: CGFloat = 0
 
-    private var services: [ServiceVersion] {
-        model.services.filter { $0.kind != .dns && ($0.isRunning || $0.problem != nil) }
-    }
+    // The list shows every service. The switch of a stopped service can then start it. Above
+    // eight rows the list scrolls. This keeps the panel small.
+    private let maximumListHeight: CGFloat = 8 * 27
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -58,26 +59,31 @@ struct MenuBarContent: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
 
-                RowGroup {
-                    ForEach(services) { service in
-                        HStack(spacing: 8) {
-                            StatusDot(health: service.health)
-                            Text(service.name)
-                            Spacer()
-                            Text(service.shortPortSummary)
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                            Toggle(service.name, isOn: Binding(
-                                get: { service.isRunning },
-                                set: { model.setRunning($0, service: service.id) }
-                            ))
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .controlSize(.mini)
+                ScrollView {
+                    RowGroup {
+                        ForEach(model.services) { service in
+                            HStack(spacing: 8) {
+                                StatusDot(health: service.health)
+                                Text(service.name)
+                                Spacer()
+                                Text(service.shortPortSummary)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                Toggle(service.name, isOn: Binding(
+                                    get: { service.isRunning },
+                                    set: { model.setRunning($0, service: service.id) }
+                                ))
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.mini)
+                            }
+                            .frame(minHeight: 26)
                         }
-                        .frame(minHeight: 26)
                     }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
                 }
+                .frame(height: min(listHeight, maximumListHeight))
+                .scrollBounceBehavior(.basedOnSize)
             }
 
             ForEach(model.activities) { activity in
