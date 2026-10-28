@@ -530,8 +530,12 @@ Work:
 1. Connect the first run in 3 steps: Packages, Domains and Settings. nginx, one PHP version and Composer
    are required. nginx, the newest PHP and Composer are preselected (D56).
 2. The Domains step sets the resolver, approves the helper and trusts the root CA.
-3. Connect the Command line page: the nexus commands with a copy button (D64).
-4. A launch argument shows the first run again. It deletes nothing.
+3. The Settings step turns on "Start at login" (D5) and asks macOS for the permission to show
+   notifications. Both notification settings are on by default, so the question comes when the
+   user expects it. Without it, macOS asks at the first notification, and a user who misses that
+   banner gets no notifications. (owner)
+4. Connect the Command line page: the nexus commands with a copy button (D64).
+5. A launch argument shows the first run again. It deletes nothing.
 
 Done when: a new user can go from the first launch to a working site without the terminal. Test
 this on the owner's Mac with the launch argument. The Mac already has MAMP PRO and Nexus
