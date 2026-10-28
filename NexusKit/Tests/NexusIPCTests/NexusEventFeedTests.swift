@@ -92,24 +92,29 @@ struct NexusEventFeedTests {
         listener.invalidate()
     }
 
-    @Test func anEventOfAnOlderNexusdWithoutTheNewKeysStillReads() throws {
-        let list = ServiceList(
-            services: [ServiceInfo(id: "php-8.4", name: "php", line: "8.4", version: "8.4.27", ports: [], state: .stopped, toggles: [Toggle(name: "xdebug", enabled: false, required: false, help: "Debugger")], usedBy: ["shop.test"])],
-            stoppedByStopAll: [],
-            lanAccess: true
-        )
-        var json = try #require(JSONSerialization.jsonObject(with: NexusMessageCoding.encode(list)) as? [String: Any])
-        var service = try #require((json["services"] as? [[String: Any]])?.first)
-        service["toggles"] = nil
-        service["usedBy"] = nil
-        json["services"] = [service]
-        json["lanAccess"] = nil
+    // A nexusd of part 6c sends this. A new key that is not optional makes this test fail.
+    @Test func anEventOfTheNexusdOfPart6cStillReads() throws {
+        let old = #"""
+            {"services":{"_0":{"services":[
+                {"id":"mysql-8.0","name":"mysql","line":"8.0","version":"8.0.46","ports":[13306],
+                 "state":{"running":{"pid":2442,"since":"2026-10-28T07:00:00Z"}},
+                 "logFile":"/logs/mysql-8.0.log","dataFolder":"/data/mysql-8.0","account":{"user":"root","password":"root"}},
+                {"id":"dns","name":"dns","line":"","version":"","ports":[10053],"state":{"stopped":{}}}
+            ],"stoppedByStopAll":["redis-8.2"]}}}
+            """#
+        let toggle = #"{"name":"xdebug","enabled":false,"required":false}"#
 
-        let old = try NexusMessageCoding.decode(ServiceList.self, from: JSONSerialization.data(withJSONObject: json))
+        let event = try NexusMessageCoding.decode(NexusEvent.self, from: Data(old.utf8))
+        let oldToggle = try NexusMessageCoding.decode(Toggle.self, from: Data(toggle.utf8))
 
-        #expect(old.services.first?.toggles == [])
-        #expect(old.services.first?.usedBy == [])
-        #expect(old.lanAccess == false)
+        guard case .services(let list) = event else {
+            Issue.record("no service list")
+            return
+        }
+        #expect(list.services.map(\.id) == ["mysql-8.0", "dns"])
+        #expect(list.services.first?.toggles == nil)
+        #expect(list.lanAccess == nil)
+        #expect(oldToggle.help == nil)
     }
 
     @Test func anEventThatTheAppCannotReadShowsAProblem() async {

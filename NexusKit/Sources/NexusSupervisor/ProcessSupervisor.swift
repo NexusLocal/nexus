@@ -153,17 +153,25 @@ public actor ProcessSupervisor {
         return kill(process.processIdentifier, signal) == 0
     }
 
-    // Sends a reload signal and keeps the definition of the new configuration. The process stays,
-    // but its ports can change, for example after a graceful restart of Apache. The status then
-    // shows the new ports. Returns false when the service does not run.
+    // Sends a reload signal and keeps the definition of the new configuration. The process stays.
+    // Its ports can change, for example after a graceful restart of Apache. The status then shows
+    // the new ports. A service that waits for a restart gets the new definition at that restart.
+    // Returns false when the service does not run.
     @discardableResult
     public func reload(_ definition: ServiceDefinition, signal: Int32) -> Bool {
-        guard var managed = services[definition.id], let process = managed.process, process.isRunning else {
+        guard var managed = services[definition.id] else {
             return false
         }
 
-        managed.definition = definition
-        services[definition.id] = managed
+        if managed.definition != definition {
+            managed.definition = definition
+            services[definition.id] = managed
+        }
+
+        guard let process = managed.process, process.isRunning else {
+            return false
+        }
+
         return kill(process.processIdentifier, signal) == 0
     }
 

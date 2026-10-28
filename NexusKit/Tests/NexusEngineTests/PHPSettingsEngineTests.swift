@@ -120,10 +120,10 @@ extension NexusEngineTests {
         let php = try #require(list.services.first { $0.id == "php-8.5" })
         let dns = try #require(list.services.first { $0.id == NexusEngine.dnsServiceID })
 
-        #expect(php.toggles.map(\.name) == ["xdebug"])
-        #expect(php.toggles.first?.help.contains("debugger") == true)
+        #expect(php.toggles?.map(\.name) == ["xdebug"])
+        #expect(php.toggles?.first?.help?.contains("debugger") == true)
         #expect(php.customSettings == ["memory_limit = 512M"])
-        #expect(php.usedBy.isEmpty)
+        #expect(php.usedBy == [])
         #expect(dns.note?.contains("/etc/resolver/test") == true)
         #expect(list.lanAccess == false)
     }
@@ -167,26 +167,67 @@ extension NexusEngineTests {
         #expect(apache.filter(\.enabled).map(\.name) == ["cache", "cache_disk"])
     }
 
-    @Test func theServiceListReadsTheExtensionsAgainOnlyAfterAListRequest() async throws {
+    @Test func theCacheKeepsTheNamesUntilTheFolderChanges() async throws {
         let root = phpRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makePHPEngine(root: root, package: try makeFakeCheckingPHP(in: root))
         _ = await engine.handle(.install(name: "php", line: "8.5"))
         let runtime = try #require(await engine.runtime(named: "php", line: "8.5"))
+        let folder = runtime.folder.appending(path: "lib/php/extensions/no-debug-non-zts-20250925")
+        let date = try #require(try FileManager.default.attributesOfItem(atPath: folder.path(percentEncoded: false))[.modificationDate] as? Date)
 
         let first = await engine.toggleNames(of: runtime)
-        try Data().write(to: runtime.folder.appending(path: "lib/php/extensions/no-debug-non-zts-20250925/pcov.so"))
+        try Data().write(to: folder.appending(path: "pcov.so"))
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: folder.path(percentEncoded: false))
         let cached = await engine.toggleNames(of: runtime)
-        let listed = await engine.handle(.extensions(php: "8.5"))
+        try FileManager.default.setAttributes([.modificationDate: date.addingTimeInterval(1)], ofItemAtPath: folder.path(percentEncoded: false))
         let after = await engine.toggleNames(of: runtime)
 
         #expect(first == ["xdebug"])
         #expect(cached == ["xdebug"])
+        #expect(after == ["pcov", "xdebug"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aListRequestThatFindsANewExtensionSendsTheServiceListAgain() async throws {
+        let root = phpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try makePHPEngine(root: root, package: try makeFakeCheckingPHP(in: root))
+        _ = await engine.handle(.install(name: "php", line: "8.5"))
+        let runtime = try #require(await engine.runtime(named: "php", line: "8.5"))
+        var events = await engine.events().makeAsyncIterator()
+        _ = await events.next()
+
+        try Data().write(to: runtime.folder.appending(path: "lib/php/extensions/no-debug-non-zts-20250925/pcov.so"))
+        _ = await engine.handle(.extensions(php: "8.5"))
+        let update = await events.next()
+
+        guard case .services(let list) = update else {
+            Issue.record("no service list: \(String(describing: update))")
+            return
+        }
+        #expect(list.services.first { $0.id == "php-8.5" }?.toggles?.map(\.name) == ["pcov", "xdebug"])
+    }
+
+    @Test func anExtensionThatLoadsForAnotherOneStaysOnWhenTheOtherOneTurnsOff() async throws {
+        let root = phpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try makePHPEngine(root: root, package: try makeFakeCheckingPHP(in: root))
+        _ = await engine.handle(.install(name: "php", line: "8.5"))
+        let runtime = try #require(await engine.runtime(named: "php", line: "8.5"))
+        let extensions = runtime.folder.appending(path: "lib/php/extensions/no-debug-non-zts-20250925")
+        try Data().write(to: extensions.appending(path: "igbinary.so"))
+        try Data().write(to: extensions.appending(path: "redis.so"))
+        try await engine.stateStore.update { $0.phpExtensions["8.5"] = ["redis"] }
+
+        let response = await engine.handle(.setExtension(php: "8.5", name: "redis", enabled: false))
+        let listed = await engine.handle(.extensions(php: "8.5"))
+
+        #expect(response == .done(message: "redis off for PHP 8.5. Other PHP versions do not change."))
         guard case .toggles(let toggles) = listed else {
             Issue.record("no toggles: \(listed)")
             return
         }
-        #expect(toggles.map(\.name) == ["pcov", "xdebug"])
-        #expect(after == ["pcov", "xdebug"])
+        #expect(toggles.filter(\.enabled).map(\.name) == ["igbinary"])
     }
 }

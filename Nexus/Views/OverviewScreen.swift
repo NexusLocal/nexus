@@ -10,7 +10,8 @@ struct OverviewScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                if let problem = model.nexusdProblem {
+                switch model.nexusdProblem {
+                case .unreachable(let problem):
                     Banner(
                         title: "Nexus cannot reach its background service",
                         message: "\(problem) Nexus tries again every few seconds. Check that Nexus is on in Login Items."
@@ -19,6 +20,14 @@ struct OverviewScreen: View {
                             background.helper.openLoginItemsSettings()
                         }
                     }
+                case .otherVersion(let problem):
+                    Banner(title: "Nexus cannot read its background service", message: problem) {
+                        Button("Start it again") {
+                            model.restartNexusd(from: .window)
+                        }
+                    }
+                case nil:
+                    EmptyView()
                 }
 
                 if let approval = background.approvalNeeded {

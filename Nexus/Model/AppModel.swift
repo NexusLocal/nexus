@@ -42,6 +42,13 @@ enum AppPreference {
     static let showInDock = "showInDock"
 }
 
+// nexusd does not answer, or it sends events that this app cannot read. The second means that
+// nexusd has another version, for example when it did not start again after an update.
+enum NexusdProblem: Equatable {
+    case unreachable(String)
+    case otherVersion(String)
+}
+
 enum ActionPlace {
     case window
     case menuBar
@@ -94,7 +101,7 @@ final class AppModel {
     var databaseLists: [String: [DatabaseItem]] = [:]
     var databaseListProblems: [String: String] = [:]
     var stoppedByStopAll: [String] = []
-    var nexusdProblem: String?
+    var nexusdProblem: NexusdProblem?
     var failure: ActionFailure?
     // The state that a switch shows while nexusd works: the id of a service, a toggle key or the
     // LAN key.
@@ -363,6 +370,20 @@ final class AppModel {
         send(.startStopped, failure: "Nexus did not start the stopped services", place: .window)
     }
 
+    // launchd starts nexusd again from the app, so it gets the version of the app. The event feed
+    // then connects again. The services stop and start with nexusd.
+    func restartNexusd(from place: ActionPlace) {
+        let process = Process()
+        process.executableURL = URL(filePath: "/bin/launchctl")
+        process.arguments = ["kickstart", "-k", "gui/\(getuid())/\(NexusIdentifiers.daemon)"]
+
+        do {
+            try process.run()
+        } catch {
+            failure = ActionFailure(title: "Nexus did not start its background service again", message: String(describing: error), place: place)
+        }
+    }
+
     private func setSampleRunning(_ running: Bool, service id: String) {
         guard let index = services.firstIndex(where: { $0.id == id }) else {
             return
@@ -558,14 +579,16 @@ final class AppModel {
             nexusdProblem = nil
             services = list.services.compactMap(ServiceVersion.init).sorted(by: ServiceVersion.showsBefore)
             stoppedByStopAll = list.stoppedByStopAll
-            settings.lanAccess = list.lanAccess
+            settings.lanAccess = list.lanAccess ?? false
 
             for id in finishedSwitches {
                 switching[id] = nil
             }
             finishedSwitches = []
-        case .unreachable(let reason), .unreadable(let reason):
-            nexusdProblem = reason
+        case .unreachable(let reason):
+            nexusdProblem = .unreachable(reason)
+        case .unreadable(let reason):
+            nexusdProblem = .otherVersion(reason)
         }
     }
 

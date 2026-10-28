@@ -40,12 +40,21 @@ struct MenuBarContent: View {
                 .help("Settings")
             }
 
-            if let problem = model.nexusdProblem {
+            switch model.nexusdProblem {
+            case .unreachable(let problem):
                 Notice(text: "Nexus cannot reach its background service", detail: problem) {
                     Button("Open…") {
                         background.helper.openLoginItemsSettings()
                     }
                 }
+            case .otherVersion(let problem):
+                Notice(text: "Nexus cannot read its background service", detail: problem) {
+                    Button("Start again") {
+                        model.restartNexusd(from: .menuBar)
+                    }
+                }
+            case nil:
+                EmptyView()
             }
 
             if let approval = background.approvalNeeded {

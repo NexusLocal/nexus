@@ -62,9 +62,9 @@ extension ServiceVersion {
         dataFolder = info.dataFolder.map { ($0 as NSString).abbreviatingWithTildeInPath }
         account = info.account.map { DatabaseAccount(user: $0.user, password: $0.password) }
         logFile = info.logFile
-        toggles = info.toggles.map { ToggleItem(name: $0.name, enabled: $0.enabled, required: $0.required, help: $0.help) }
+        toggles = (info.toggles ?? []).map { ToggleItem(name: $0.name, enabled: $0.enabled, required: $0.required, help: $0.help ?? "") }
         customSettings = info.customSettings ?? []
-        usedBy = info.usedBy
+        usedBy = info.usedBy ?? []
         note = info.note
 
         switch info.state {

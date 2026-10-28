@@ -399,12 +399,17 @@ error. A message without a line number gets the first line that makes it show. N
 `nexus ini <php> [lines] [--clear]`. Some modules need another module first, for example dav_fs
 needs dav and ngx_stream_js_module needs ngx_stream_module. A switch turns both on or off. The
 configuration loads them in the right order. A module whose needed module is not installed does
-not turn on. A switch shows what loads. nginx shows ssl, http2 and proxy as always on. The
-toggles of Apache leave out mpm_prefork and mpm_worker. A new port of Apache needs only a graceful
-restart. The supervisor then keeps the new port. So the app shows it. nexusd reads the .so files
-of a runtime once, and again after an install, a removal or a list request. An app can read the
-events of an older nexusd. An event that the app cannot read shows a problem in the app. The LAN
-switch is in Settings > Network, as in the design.
+not turn on. A switch shows what loads. A change keeps a name on that loads for another name. nginx
+shows ssl, http2 and proxy as always on. The toggles of Apache leave out mpm_prefork and
+mpm_worker. A new port of Apache needs only a graceful restart. The supervisor then keeps the new
+port. So the app shows it. nexusd waits until Apache accepts connections on the new port. When it
+does not, the old port comes back. A port, a module or the LAN switch only reloads the running
+web services. It starts and stops nothing. So the services that "Stop all services" stopped stay
+stopped (D63). nexusd reads the .so files of a runtime again only when the modification date of
+their folder changes. New names send the service list to the app. Each key of the messages that
+came after part 6c is optional. So an app can read the events of an older nexusd. An event that
+the app cannot read shows its own problem in the app, with a button that starts nexusd again.
+The LAN switch is in Settings > Network, as in the design.
 
 ### 6e. Sites
 
