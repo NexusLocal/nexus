@@ -176,11 +176,15 @@ struct ToggleCell: View {
         HStack(spacing: 6) {
             HelpName(name: toggle.name, help: toggle.help)
             Spacer()
+            // macOS draws a disabled switch that is on almost as an enabled one. The design
+            // shows a switch that cannot change at 45 percent.
             Toggle(toggle.name, isOn: $isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .disabled(toggle.required)
+                .opacity(toggle.required ? 0.45 : 1)
+                .help(toggle.required ? "Always on" : "")
         }
     }
 }
