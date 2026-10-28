@@ -163,18 +163,6 @@ extension NexusEngineTests {
         }
     }
 
-    // The engine stops also when a step throws, so no watch or process stays after the test.
-    private func whileRunning(_ engine: NexusEngine, _ steps: () async throws -> Void) async throws {
-        do {
-            try await steps()
-        } catch {
-            await engine.shutdown()
-            throw error
-        }
-
-        await engine.shutdown()
-    }
-
     @Test func theDatabaseUsersComeFromTheEnvOfEachSite() async throws {
         let root = siteTestRoot()
         defer { try? FileManager.default.removeItem(at: root) }
