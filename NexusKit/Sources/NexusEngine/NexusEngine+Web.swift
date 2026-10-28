@@ -264,7 +264,7 @@ extension NexusEngine {
         if needed {
             try await ensureRunning(id, reload: reload)
         } else if running, enabled.contains(id) {
-            await supervisor.signal(id, reload)
+            await self.reload(id, reload)
         } else if running {
             try await supervisor.stop(id)
         }
@@ -273,12 +273,25 @@ extension NexusEngine {
     private func ensureRunning(_ id: String, reload: Int32?) async throws {
         if await supervisor.state(of: id)?.isActive == true {
             if let reload {
-                await supervisor.signal(id, reload)
+                await self.reload(id, reload)
             }
             return
         }
 
         _ = try await startService(id)
+    }
+
+    // The process stays, and the supervisor gets the definition of the new configuration. So a
+    // new port of Apache shows at once, without a stop of Apache.
+    private func reload(_ id: String, _ signal: Int32) async {
+        guard let runtime = await serviceRuntimes().first(where: { catalog.serviceID(for: $0) == id }),
+              let ports = try? await ports(for: runtime),
+              let definition = catalog.definition(for: runtime, ports: ports) else {
+            await supervisor.signal(id, signal)
+            return
+        }
+
+        await supervisor.reload(definition, signal: signal)
     }
 
     private func writeChecked(_ contents: String, to file: URL, check: () throws -> Void) throws {
@@ -509,15 +522,37 @@ extension NexusEngine {
             throw RuntimeError.unsupported("PHP \(line) is not installed.")
         }
 
-        return Self.extensionToggles(of: runtime, state: await stateStore.current())
+        return Self.extensionToggles(line: line, available: toggleNames(of: runtime, fresh: true), state: await stateStore.current())
     }
 
-    static func extensionToggles(of runtime: InstalledRuntime, state: EngineState) -> [Toggle] {
-        let enabled = state.phpExtensions[runtime.line] ?? PHPConfig.defaultExtensions
+    // A switch shows what loads. An extension that another one needs loads also when the state
+    // does not name it, for example igbinary in a state from before the dependencies.
+    static func extensionToggles(line: String, available: Set<String>, state: EngineState) -> [Toggle] {
+        let loaded = Set(PHPConfig.extensionsToLoad(enabled: state.phpExtensions[line] ?? PHPConfig.defaultExtensions, available: available))
 
-        return phpExtensions(of: runtime).available.sorted().map {
-            Toggle(name: $0, enabled: enabled.contains($0), required: false, help: ToggleHelp.phpExtension($0))
+        return available.sorted().map {
+            Toggle(name: $0, enabled: loaded.contains($0), required: false, help: ToggleHelp.phpExtension($0))
         }
+    }
+
+    // A list request reads the .so files again, so a manual change of a runtime shows. The
+    // service list uses the names that the last read found.
+    func toggleNames(of runtime: InstalledRuntime, fresh: Bool = false) -> Set<String> {
+        let key = "\(runtime.folder.path(percentEncoded: false)) \(runtime.version)"
+
+        if !fresh, let names = toggleNameCache[key] {
+            return names
+        }
+
+        let names: Set<String> = switch runtime.name {
+        case "php": Self.phpExtensions(of: runtime).available
+        case "httpd": Self.apacheModules(of: runtime)
+        case "nginx": Self.nginxModules(of: runtime)
+        default: []
+        }
+
+        toggleNameCache[key] = names
+        return names
     }
 
     func setExtension(line: String, name: String, enabled: Bool) async throws -> String {
@@ -547,22 +582,25 @@ extension NexusEngine {
     }
 
     func moduleToggles(_ server: WebServer) async throws -> [Toggle] {
-        Self.moduleToggles(server, runtime: try await webRuntime(server), state: await stateStore.current())
+        let runtime = try await webRuntime(server)
+        return Self.moduleToggles(server, available: toggleNames(of: runtime, fresh: true), state: await stateStore.current())
     }
 
-    // nginx shows its built-in modules first. They are always on.
-    static func moduleToggles(_ server: WebServer, runtime: InstalledRuntime, state: EngineState) -> [Toggle] {
+    // A switch shows what loads, as for the extensions. nginx shows its built-in modules first.
+    // They are always on.
+    static func moduleToggles(_ server: WebServer, available: Set<String>, state: EngineState) -> [Toggle] {
         switch server {
         case .apache:
-            let enabled = state.apacheModules ?? ApacheConfig.defaultModules
-            return apacheModules(of: runtime).sorted().map {
+            let loaded = Set(ApacheConfig.dependencies.loadOrder(state.apacheModules ?? ApacheConfig.defaultModules, available: available))
+            return available.sorted().map {
                 let required = ApacheConfig.requiredModules.contains($0)
-                return Toggle(name: $0, enabled: required || enabled.contains($0), required: required, help: ToggleHelp.apacheModule($0))
+                return Toggle(name: $0, enabled: required || loaded.contains($0), required: required, help: ToggleHelp.apacheModule($0))
             }
         case .nginx:
+            let loaded = Set(NginxConfig.dependencies.loadOrder(state.nginxModules, available: available))
             let builtIn = NginxConfig.builtInModules.map { Toggle(name: $0, enabled: true, required: true, help: ToggleHelp.nginxModule($0)) }
-            return builtIn + nginxModules(of: runtime).sorted().map {
-                Toggle(name: $0, enabled: state.nginxModules.contains($0), required: false, help: ToggleHelp.nginxModule($0))
+            return builtIn + available.sorted().map {
+                Toggle(name: $0, enabled: loaded.contains($0), required: false, help: ToggleHelp.nginxModule($0))
             }
         }
     }
@@ -613,7 +651,7 @@ extension NexusEngine {
 
             let change = NginxConfig.dependencies.set(name, on: enabled, in: await stateStore.current().nginxModules)
             changed = change.changed
-            try await changeAndRestart(ServiceCatalog.nginxID) { $0.nginxModules = change.enabled }
+            try await changeAndRestartNginx { $0.nginxModules = change.enabled }
         }
 
         let names = changed.sorted().joined(separator: " and ")
@@ -642,49 +680,43 @@ extension NexusEngine {
             throw SupervisorError.portInUse(port: port, owner: PortInspector.owner(of: port))
         }
 
+        // A graceful restart moves Apache to the new port, and nginx reads the new port of Apache.
         if key == ServiceCatalog.apacheID {
-            try await changeAndRestart(ServiceCatalog.apacheID) { $0.ports[key] = port }
+            _ = try await changeWeb { $0.ports[key] = port }
             return "Apache uses port \(port) on 127.0.0.1."
         }
 
-        try await changeAndRestart(ServiceCatalog.nginxID) { $0.ports[key] = port }
+        try await changeAndRestartNginx { $0.ports[key] = port }
         return "nginx uses port \(port) for \(key.uppercased())."
     }
 
     // nginx opens a new port and loads a dynamic module only at a start, not when it reads its
-    // configuration again. Apache moves to a new port with a graceful restart. But the supervisor
-    // then keeps the port of the start. The app then shows the old port. So both servers start
-    // again. When the change fails, the old ports and modules come back. A server that ran before
-    // the change then starts again with them. This is also true when the failed start stopped it.
-    private func changeAndRestart(_ id: String, _ change: @Sendable (inout EngineState) -> Void) async throws {
+    // configuration again. When the change fails, the old ports and modules come back. nginx then
+    // starts again with them when it ran before the change. This is also true when the failed
+    // start stopped it.
+    private func changeAndRestartNginx(_ change: @Sendable (inout EngineState) -> Void) async throws {
         let previous = await stateStore.current()
-        let running = await supervisor.state(of: id)?.isActive == true
+        let running = await supervisor.state(of: ServiceCatalog.nginxID)?.isActive == true
         try await stateStore.update(change)
 
         do {
-            try await restartWebServer(id, running: running)
+            try await restartNginx(running: running)
         } catch {
             try? await stateStore.update { state in
                 state.ports = previous.ports
                 state.nginxModules = previous.nginxModules
             }
-            try? await restartWebServer(id, running: running)
+            try? await restartNginx(running: running)
             throw error
         }
     }
 
-    // nginx sends the Apache sites to the port of Apache. So it reads its configuration again
-    // after a new start of Apache.
-    private func restartWebServer(_ id: String, running: Bool) async throws {
+    private func restartNginx(running: Bool) async throws {
         _ = try await writeWebConfig()
 
         if running {
-            try await supervisor.stop(id)
-            _ = try await startService(id)
-        }
-
-        if id == ServiceCatalog.apacheID, await supervisor.state(of: ServiceCatalog.nginxID)?.isActive == true {
-            await supervisor.signal(ServiceCatalog.nginxID, SIGHUP)
+            try await supervisor.stop(ServiceCatalog.nginxID)
+            _ = try await startService(ServiceCatalog.nginxID)
         }
     }
 }

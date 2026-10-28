@@ -44,6 +44,19 @@ struct ProcessSupervisorTests {
         return nil
     }
 
+    @Test func aReloadKeepsTheProcessAndShowsTheNewPorts() async throws {
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        try await supervisor.start(definition("sleeper", executable: "/bin/sleep", arguments: ["30"]))
+        let first = try #require(pid(await supervisor.state(of: "sleeper")))
+
+        let reloaded = await supervisor.reload(definition("sleeper", executable: "/bin/sleep", arguments: ["30"], ports: [18091]), signal: 0)
+
+        #expect(reloaded)
+        #expect(pid(await supervisor.state(of: "sleeper")) == first)
+        #expect(await supervisor.status().first?.ports == [18091])
+        await supervisor.stopAll()
+    }
+
     @Test func aKilledServiceComesBackWithANewProcess() async throws {
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition("sleeper", executable: "/bin/sleep", arguments: ["30"]))

@@ -91,4 +91,39 @@ struct NexusEventFeedTests {
         feed.stop()
         listener.invalidate()
     }
+
+    @Test func anEventOfAnOlderNexusdWithoutTheNewKeysStillReads() throws {
+        let list = ServiceList(
+            services: [ServiceInfo(id: "php-8.4", name: "php", line: "8.4", version: "8.4.27", ports: [], state: .stopped, toggles: [Toggle(name: "xdebug", enabled: false, required: false, help: "Debugger")], usedBy: ["shop.test"])],
+            stoppedByStopAll: [],
+            lanAccess: true
+        )
+        var json = try #require(JSONSerialization.jsonObject(with: NexusMessageCoding.encode(list)) as? [String: Any])
+        var service = try #require((json["services"] as? [[String: Any]])?.first)
+        service["toggles"] = nil
+        service["usedBy"] = nil
+        json["services"] = [service]
+        json["lanAccess"] = nil
+
+        let old = try NexusMessageCoding.decode(ServiceList.self, from: JSONSerialization.data(withJSONObject: json))
+
+        #expect(old.services.first?.toggles == [])
+        #expect(old.services.first?.usedBy == [])
+        #expect(old.lanAccess == false)
+    }
+
+    @Test func anEventThatTheAppCannotReadShowsAProblem() async {
+        let feed = NexusEventFeed(retryDelay: .milliseconds(50)) { NSXPCConnection() }
+        var updates = feed.updates.makeAsyncIterator()
+
+        feed.receive(Data("{}".utf8))
+        let update = await updates.next()
+
+        if case .unreadable(let reason) = update {
+            #expect(reason.contains("another version"))
+        } else {
+            Issue.record("no problem reported: \(String(describing: update))")
+        }
+        feed.stop()
+    }
 }

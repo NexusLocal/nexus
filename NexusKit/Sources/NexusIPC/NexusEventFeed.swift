@@ -14,6 +14,8 @@ import NexusCore
 public enum NexusFeedUpdate: Sendable, Equatable {
     case event(NexusEvent)
     case unreachable(String)
+    // nexusd answers, but the app cannot read the event. nexusd then has another version.
+    case unreadable(String)
 }
 
 // Keeps one connection to nexusd open and gives each event of nexusd to the app. When nexusd
@@ -72,6 +74,7 @@ public final class NexusEventFeed: NSObject, NexusEventReceiver, @unchecked Send
 
     public func receive(_ event: Data) {
         guard let decoded = try? NexusMessageCoding.decode(NexusEvent.self, from: event) else {
+            continuation.yield(.unreadable("Nexus cannot read the state that nexusd sends. nexusd has probably another version than the app. Start nexusd again: launchctl kickstart -k gui/\(getuid())/\(NexusIdentifiers.daemon)"))
             return
         }
 

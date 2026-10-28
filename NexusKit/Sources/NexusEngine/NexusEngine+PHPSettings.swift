@@ -129,19 +129,21 @@ extension NexusEngine {
     }
 
     func webDetails(of runtime: InstalledRuntime, state: EngineState, sites: [Site]) -> WebDetails {
+        let available = toggleNames(of: runtime)
+
         switch runtime.name {
         case "php":
             return WebDetails(
-                toggles: Self.extensionToggles(of: runtime, state: state),
+                toggles: Self.extensionToggles(line: runtime.line, available: available, state: state),
                 customSettings: state.phpCustomSettings[runtime.line] ?? [],
                 usedBy: sites.filter { $0.php == runtime.line }.map(\.host).sorted()
             )
         case "nginx":
-            return WebDetails(toggles: Self.moduleToggles(.nginx, runtime: runtime, state: state))
+            return WebDetails(toggles: Self.moduleToggles(.nginx, available: available, state: state))
         case "httpd":
             let users = sites.filter { $0.server == .apache }.map(\.host).sorted()
             return WebDetails(
-                toggles: Self.moduleToggles(.apache, runtime: runtime, state: state),
+                toggles: Self.moduleToggles(.apache, available: available, state: state),
                 usedBy: users,
                 note: users.isEmpty ? "Apache runs only when a site uses it. No site uses Apache now." : nil
             )
