@@ -2061,7 +2061,10 @@
           "id": "B557qI",
           "name": "Purple for the name Nexus. The",
           "fill": "$secondary-label",
-          "content": "The app icon and the menu bar icon. The menu bar icon has one color, so macOS can show it in light and dark menu bars.",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "The app icon, the menu bar icon and the icon for the binaries repository. The menu bar icon has one color, so macOS can show it in light and dark menu bars. The GitHub images to the right use these icons.",
+          "lineHeight": 1.4,
           "fontFamily": "$font",
           "fontSize": 12,
           "fontWeight": "normal"
@@ -2471,6 +2474,57 @@
                   "name": "Menu bar icon",
                   "fill": "$secondary-label",
                   "content": "Menu bar icon",
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "LSiIm",
+              "name": "Binaries Icon Card",
+              "layout": "vertical",
+              "gap": 12,
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "fgTX7",
+                  "type": "ref",
+                  "ref": "yks5i",
+                  "name": "Icon Binaries",
+                  "width": 200,
+                  "height": 200,
+                  "cornerRadius": 46,
+                  "padding": 13,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#4A1D9E55",
+                    "offset": {
+                      "x": 0,
+                      "y": 8
+                    },
+                    "blur": 20
+                  },
+                  "descendants": {
+                    "gmXQz": {
+                      "width": 52,
+                      "height": 52,
+                      "cornerRadius": 14
+                    },
+                    "htJ2f": {
+                      "width": 30,
+                      "height": 30
+                    }
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "BjA5l",
+                  "name": "Binaries icon",
+                  "fill": "$secondary-label",
+                  "content": "Icon for the binaries repository",
                   "fontFamily": "$font",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -31982,6 +32036,304 @@
       "theme": {
         "mode": "dark"
       }
+    },
+    {
+      "type": "frame",
+      "id": "hptST",
+      "x": 4462,
+      "y": 0,
+      "name": "GitHub Avatar NexusLocal",
+      "reusable": true,
+      "clip": true,
+      "width": 512,
+      "height": 512,
+      "fill": {
+        "type": "image",
+        "enabled": true,
+        "url": "app-icon-a.png",
+        "mode": "cover"
+      }
+    },
+    {
+      "type": "frame",
+      "id": "yks5i",
+      "x": 5094,
+      "y": 0,
+      "name": "Icon Nexus Binaries",
+      "reusable": true,
+      "clip": true,
+      "width": 512,
+      "height": 512,
+      "fill": {
+        "type": "image",
+        "enabled": true,
+        "url": "app-icon-a.png",
+        "mode": "cover"
+      },
+      "layout": "vertical",
+      "padding": 32,
+      "justifyContent": "end",
+      "alignItems": "end",
+      "children": [
+        {
+          "type": "frame",
+          "id": "gmXQz",
+          "name": "Package Badge",
+          "width": 132,
+          "height": 132,
+          "fill": "#F4EEFF",
+          "cornerRadius": 34,
+          "effect": {
+            "type": "shadow",
+            "shadowType": "outer",
+            "color": "#0A0420B3",
+            "offset": {
+              "x": 0,
+              "y": 8
+            },
+            "blur": 28
+          },
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "htJ2f",
+              "name": "Package",
+              "width": 76,
+              "height": 76,
+              "icon": "package",
+              "library": "lucide",
+              "fill": "#5B2EA6"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "Z9mBkP",
+      "x": 5726,
+      "y": 0,
+      "name": "GitHub Social Preview nexus",
+      "clip": true,
+      "width": 1280,
+      "height": 640,
+      "fill": {
+        "type": "gradient",
+        "gradientType": "linear",
+        "enabled": true,
+        "rotation": 225,
+        "size": {
+          "height": 1
+        },
+        "colors": [
+          {
+            "color": "#081230",
+            "position": 0
+          },
+          {
+            "color": "#1A1046",
+            "position": 0.45
+          },
+          {
+            "color": "#3A1155",
+            "position": 1
+          }
+        ]
+      },
+      "gap": 72,
+      "padding": [
+        0,
+        96
+      ],
+      "alignItems": "center",
+      "children": [
+        {
+          "id": "tRIk3",
+          "type": "ref",
+          "ref": "hptST",
+          "name": "Icon",
+          "width": 400,
+          "height": 400,
+          "cornerRadius": 90,
+          "effect": {
+            "type": "shadow",
+            "shadowType": "outer",
+            "color": "#00000080",
+            "offset": {
+              "x": 0,
+              "y": 24
+            },
+            "blur": 60
+          }
+        },
+        {
+          "type": "frame",
+          "id": "G4NsBP",
+          "name": "Text",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 24,
+          "children": [
+            {
+              "type": "text",
+              "id": "d0Hdt",
+              "name": "Title",
+              "fill": "#FFFFFF",
+              "content": "Nexus",
+              "fontFamily": "Inter",
+              "fontSize": 84,
+              "fontWeight": "700",
+              "letterSpacing": -2
+            },
+            {
+              "type": "text",
+              "id": "lIcY5",
+              "name": "Description",
+              "fill": "#D9CCF5",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Local websites, PHP, databases and isolated workspaces for git worktrees on macOS",
+              "lineHeight": 1.35,
+              "fontFamily": "Inter",
+              "fontSize": 32,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "uWqsA",
+              "name": "Meta",
+              "fill": "#A98BE0",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "github.com/NexusLocal/nexus",
+              "fontFamily": "JetBrains Mono",
+              "fontSize": 22,
+              "fontWeight": "normal"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "A1F8IA",
+      "x": 7126,
+      "y": 0,
+      "name": "GitHub Social Preview binaries",
+      "clip": true,
+      "width": 1280,
+      "height": 640,
+      "fill": {
+        "type": "gradient",
+        "gradientType": "linear",
+        "enabled": true,
+        "rotation": 225,
+        "size": {
+          "height": 1
+        },
+        "colors": [
+          {
+            "color": "#081230",
+            "position": 0
+          },
+          {
+            "color": "#1A1046",
+            "position": 0.45
+          },
+          {
+            "color": "#3A1155",
+            "position": 1
+          }
+        ]
+      },
+      "gap": 72,
+      "padding": [
+        0,
+        96
+      ],
+      "alignItems": "center",
+      "children": [
+        {
+          "id": "BdTj7",
+          "type": "ref",
+          "ref": "yks5i",
+          "name": "Icon",
+          "width": 400,
+          "height": 400,
+          "cornerRadius": 90,
+          "effect": {
+            "type": "shadow",
+            "shadowType": "outer",
+            "color": "#00000080",
+            "offset": {
+              "x": 0,
+              "y": 24
+            },
+            "blur": 60
+          },
+          "padding": 25,
+          "descendants": {
+            "gmXQz": {
+              "width": 104,
+              "height": 104,
+              "cornerRadius": 27
+            },
+            "htJ2f": {
+              "width": 60,
+              "height": 60
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "eP1M8",
+          "name": "Text",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 24,
+          "children": [
+            {
+              "type": "text",
+              "id": "VqF2f",
+              "name": "Title",
+              "fill": "#FFFFFF",
+              "content": "Nexus Binaries",
+              "fontFamily": "Inter",
+              "fontSize": 84,
+              "fontWeight": "700",
+              "letterSpacing": -2
+            },
+            {
+              "type": "text",
+              "id": "jGdKS",
+              "name": "Description",
+              "fill": "#D9CCF5",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Build scripts and releases for the binaries that the Nexus app downloads",
+              "lineHeight": 1.35,
+              "fontFamily": "Inter",
+              "fontSize": 32,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "jv7Rk",
+              "name": "Meta",
+              "fill": "#A98BE0",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "PHP · nginx · Apache · MySQL · MariaDB · PostgreSQL · Redis",
+              "lineHeight": 1.5,
+              "fontFamily": "JetBrains Mono",
+              "fontSize": 22,
+              "fontWeight": "normal"
+            }
+          ]
+        }
+      ]
     }
   ],
   "themes": {
