@@ -146,6 +146,10 @@ public actor NexusEngine {
                 return .toggles(try await moduleToggles(server))
             case .setModule(let server, let name, let enabled):
                 return .done(message: try await serialWeb { try await self.setModule(server, name: name, enabled: enabled) })
+            case .customSettings(let php):
+                return .lines(try await customSettings(line: php))
+            case .setCustomSettings(let php, let lines):
+                return .done(message: try await serialWeb { try await self.setCustomSettings(line: php, lines: lines) })
             case .lan(let enabled):
                 return .done(message: try await serialWeb { try await self.lan(enabled) })
             case .databases:
@@ -160,6 +164,8 @@ public actor NexusEngine {
             }
         } catch let conflict as PortConflict {
             return .portInUse(conflict)
+        } catch let settings as PHPSettingsError {
+            return .invalidSettings(settings)
         } catch {
             return .failure(message: String(describing: error))
         }
@@ -247,11 +253,14 @@ public actor NexusEngine {
     private func serviceList() async throws -> ServiceList {
         let all = try await services()
         let dnsProblem = await dnsNamesProblem()
+        let state = await stateStore.current()
+        let sites = resolvedSites(state).map(\.site)
         var services: [ServiceInfo] = []
 
         for (runtime, status) in all {
             guard let runtime else {
-                services.append(ServiceInfo(id: status.id, name: Self.dnsServiceID, line: "", version: "", ports: status.ports, state: status.state, problem: dnsProblem))
+                let note = "The DNS server answers 127.0.0.1 for every name that ends in .\(state.tld). /etc/resolver/\(state.tld) sends these names to this port."
+                services.append(ServiceInfo(id: status.id, name: Self.dnsServiceID, line: "", version: "", ports: status.ports, state: status.state, problem: dnsProblem, note: note))
                 continue
             }
 
@@ -262,6 +271,7 @@ public actor NexusEngine {
                 account = try await self.account(of: tools)
             }
 
+            let details = webDetails(of: runtime, state: state, sites: sites)
             services.append(ServiceInfo(
                 id: status.id,
                 name: runtime.name,
@@ -272,13 +282,16 @@ public actor NexusEngine {
                 portConflict: status.state.isActive ? nil : portConflicts[status.id],
                 logFile: paths.log(status.id).path(percentEncoded: false),
                 dataFolder: ownsData ? catalog.dataFolder(for: runtime).path(percentEncoded: false) : nil,
-                account: account
+                account: account,
+                toggles: details.toggles,
+                customSettings: details.customSettings,
+                usedBy: details.usedBy,
+                note: details.note
             ))
         }
 
-        let waiting = await stateStore.current().stoppedByStopAll
-        let stopped = all.map(\.status).filter { !$0.state.isActive && waiting.contains($0.id) }.map(\.id)
-        return ServiceList(services: services, stoppedByStopAll: stopped)
+        let stopped = all.map(\.status).filter { !$0.state.isActive && state.stoppedByStopAll.contains($0.id) }.map(\.id)
+        return ServiceList(services: services, stoppedByStopAll: stopped, lanAccess: state.lanAccess)
     }
 
     // One runtime for each service. nginx and Apache use the newest installed version line.
@@ -650,7 +663,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .hosts, .sites, .extensions, .modules, .databases, .databaseSizes: true
+        case .status, .available, .installed, .hosts, .sites, .extensions, .modules, .customSettings, .databases, .databaseSizes: true
         default: false
         }
     }

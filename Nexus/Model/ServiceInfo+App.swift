@@ -56,11 +56,16 @@ extension ServiceVersion {
         }
 
         self.init(id: info.id, kind: kind, name: name, version: info.version, health: .stopped)
+        line = info.line
         ports = Self.ports(of: info)
         internalPort = info.name == "httpd"
         dataFolder = info.dataFolder.map { ($0 as NSString).abbreviatingWithTildeInPath }
         account = info.account.map { DatabaseAccount(user: $0.user, password: $0.password) }
         logFile = info.logFile
+        toggles = info.toggles.map { ToggleItem(name: $0.name, enabled: $0.enabled, required: $0.required, help: $0.help) }
+        customSettings = info.customSettings ?? []
+        usedBy = info.usedBy
+        note = info.note
 
         switch info.state {
         case .stopped:
@@ -100,6 +105,14 @@ extension ServiceVersion {
         }
 
         return first.name.compare(second.name, options: .numeric) == .orderedAscending
+    }
+
+    var webServer: WebServer? {
+        guard kind == .webservers else {
+            return nil
+        }
+
+        return id == "apache" ? .apache : .nginx
     }
 
     // The link of a database app (D36), with the account of the instance.

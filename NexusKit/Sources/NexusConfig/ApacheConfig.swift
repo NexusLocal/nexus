@@ -30,6 +30,26 @@ public enum ApacheConfig {
         "authn_file", "authz_user", "authz_groupfile", "brotli",
     ]
 
+    // httpd -t accepts auth_form, heartmonitor, proxy_balancer and proxy_hcheck without the modules
+    // that they need. Apache then stops at its start.
+    public static let dependencies = ToggleDependencies([
+        "auth_form": ["request", "session"],
+        "cache_disk": ["cache"],
+        "cache_socache": ["cache"],
+        "dav_fs": ["dav"],
+        "dav_lock": ["dav"],
+        "heartbeat": ["watchdog"],
+        "heartmonitor": ["slotmem_shm", "watchdog"],
+        "proxy_balancer": ["slotmem_shm"],
+        "proxy_hcheck": ["watchdog"],
+        "session_cookie": ["session"],
+        "session_crypto": ["session"],
+        "session_dbd": ["session"],
+    ])
+
+    // Apache loads only one MPM. Nexus uses mpm_event. So the toggles leave out the others.
+    public static let otherMPMs: Set<String> = ["mpm_prefork", "mpm_worker"]
+
     public static func render(sites: [WebSite], settings: ApacheSettings) throws -> String {
         let run = settings.runFolder.appending(path: "apache", directoryHint: .isDirectory)
         var lines = [

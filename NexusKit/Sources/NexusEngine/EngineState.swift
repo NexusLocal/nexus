@@ -30,6 +30,8 @@ public struct EngineState: Codable, Sendable, Equatable {
     public var lanAccess = false
     // A PHP version without an entry uses PHPConfig.defaultExtensions.
     public var phpExtensions: [String: Set<String>] = [:]
+    // The custom php.ini lines of each PHP version (D60). PHP accepted them at the last change.
+    public var phpCustomSettings: [String: [String]] = [:]
     public var apacheModules: Set<String>?
     public var nginxModules: Set<String> = []
     // The account of each database instance. An instance without an entry that already has its
@@ -56,6 +58,7 @@ public struct EngineState: Codable, Sendable, Equatable {
         parked = try container.decodeIfPresent([ParkedFolder].self, forKey: .parked) ?? defaults.parked
         lanAccess = try container.decodeIfPresent(Bool.self, forKey: .lanAccess) ?? defaults.lanAccess
         phpExtensions = try container.decodeIfPresent([String: Set<String>].self, forKey: .phpExtensions) ?? defaults.phpExtensions
+        phpCustomSettings = try container.decodeIfPresent([String: [String]].self, forKey: .phpCustomSettings) ?? defaults.phpCustomSettings
         apacheModules = try container.decodeIfPresent(Set<String>.self, forKey: .apacheModules)
         nginxModules = try container.decodeIfPresent(Set<String>.self, forKey: .nginxModules) ?? defaults.nginxModules
         databaseAccounts = try container.decodeIfPresent([String: DatabaseAccount].self, forKey: .databaseAccounts) ?? defaults.databaseAccounts

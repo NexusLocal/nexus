@@ -27,15 +27,37 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     }
 }
 
+// An extension or a module with a switch. The help says what it does.
 public struct Toggle: Codable, Sendable, Equatable {
     public let name: String
     public let enabled: Bool
     public let required: Bool
+    public let help: String
 
-    public init(name: String, enabled: Bool, required: Bool) {
+    public init(name: String, enabled: Bool, required: Bool, help: String = "") {
         self.name = name
         self.enabled = enabled
         self.required = required
+        self.help = help
+    }
+}
+
+// A custom php.ini line that PHP refused (D60). The line counts from 1. It is nil when PHP
+// refused the lines together but not one line alone.
+public struct PHPSettingsError: Error, Codable, Sendable, Equatable, CustomStringConvertible {
+    public let php: String
+    public let line: Int?
+    public let message: String
+
+    public init(php: String, line: Int?, message: String) {
+        self.php = php
+        self.line = line
+        self.message = message
+    }
+
+    public var description: String {
+        let place = line.map { "Line \($0): " } ?? ""
+        return "\(place)\(message). PHP \(php) keeps its old custom settings."
     }
 }
 
@@ -181,7 +203,9 @@ public struct DatabaseCopy: Codable, Sendable, Equatable {
 // One service as the app shows it. The name is the package, for example nginx, httpd, php or
 // mysql. DNS has the name dns and no line or version. A problem does not change the state: a DNS
 // server that macOS does not use yet still runs and holds its port. Only a database instance has
-// an account. Only a service with its own data has a data folder.
+// an account. Only a service with its own data has a data folder. The toggles are the extensions
+// of PHP and the modules of nginx and Apache. Only PHP has custom settings. usedBy names the
+// sites of a PHP version. The note explains how the service works.
 public struct ServiceInfo: Codable, Sendable, Equatable, Identifiable {
     public let id: String
     public let name: String
@@ -194,6 +218,10 @@ public struct ServiceInfo: Codable, Sendable, Equatable, Identifiable {
     public let logFile: String?
     public let dataFolder: String?
     public let account: DatabaseAccount?
+    public let toggles: [Toggle]
+    public let customSettings: [String]?
+    public let usedBy: [String]
+    public let note: String?
 
     public init(
         id: String,
@@ -206,7 +234,11 @@ public struct ServiceInfo: Codable, Sendable, Equatable, Identifiable {
         portConflict: PortConflict? = nil,
         logFile: String? = nil,
         dataFolder: String? = nil,
-        account: DatabaseAccount? = nil
+        account: DatabaseAccount? = nil,
+        toggles: [Toggle] = [],
+        customSettings: [String]? = nil,
+        usedBy: [String] = [],
+        note: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -219,6 +251,10 @@ public struct ServiceInfo: Codable, Sendable, Equatable, Identifiable {
         self.logFile = logFile
         self.dataFolder = dataFolder
         self.account = account
+        self.toggles = toggles
+        self.customSettings = customSettings
+        self.usedBy = usedBy
+        self.note = note
     }
 }
 
@@ -226,10 +262,13 @@ public struct ServiceList: Codable, Sendable, Equatable {
     public let services: [ServiceInfo]
     // The services that "Start stopped services" starts (D63).
     public let stoppedByStopAll: [String]
+    // Whether other devices on the network can open the sites. nginx applies it.
+    public let lanAccess: Bool
 
-    public init(services: [ServiceInfo], stoppedByStopAll: [String]) {
+    public init(services: [ServiceInfo], stoppedByStopAll: [String], lanAccess: Bool = false) {
         self.services = services
         self.stoppedByStopAll = stoppedByStopAll
+        self.lanAccess = lanAccess
     }
 }
 
@@ -266,6 +305,8 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case setExtension(php: String, name: String, enabled: Bool)
     case modules(server: WebServer)
     case setModule(server: WebServer, name: String, enabled: Bool)
+    case customSettings(php: String)
+    case setCustomSettings(php: String, lines: [String])
     case lan(enabled: Bool?)
     case databases
     case databaseSizes(instance: String)
@@ -281,9 +322,11 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case hosts([String])
     case sites([SiteInfo])
     case toggles([Toggle])
+    case lines([String])
     case databases([DatabaseInstance])
     case databaseSizes([DatabaseSize])
     case portInUse(PortConflict)
+    case invalidSettings(PHPSettingsError)
     case failure(message: String)
 }
 

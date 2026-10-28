@@ -96,8 +96,14 @@ final class AppModel {
     var stoppedByStopAll: [String] = []
     var nexusdProblem: String?
     var failure: ActionFailure?
-    // The state that a switch shows while nexusd starts or stops its service.
+    // The state that a switch shows while nexusd works: the id of a service, a toggle key or the
+    // LAN key.
     var switching: [String: Bool] = [:]
+    // The custom php.ini lines that the user changed and did not save yet, and the last line that
+    // PHP refused, for each PHP version (D60).
+    var settingsDrafts: [String: [String]] = [:]
+    var settingsErrors: [String: SettingsError] = [:]
+    var savingSettings: Set<String> = []
     var packages: [PackageItem] = []
     var activities: [ActivityItem] = []
     var packagesChecked = ""
@@ -119,6 +125,8 @@ final class AppModel {
 
         let model = sample()
         model.services = []
+        model.settingsDrafts = [:]
+        model.settingsErrors = [:]
         model.watchNexusd()
         return model
     }
@@ -219,7 +227,127 @@ final class AppModel {
             failure: running ? "\(service.name) did not start" : "\(service.name) did not stop",
             place: place
         ) { [weak self] succeeded in
-            self?.finishSwitch(id, succeeded: succeeded)
+            self?.finishSwitch(id, succeeded: succeeded, current: self?.service(id)?.isActive)
+        }
+    }
+
+    // A space is not part of a service id. So a toggle key is never the key of a service.
+    private static func toggleKey(_ toggle: ToggleItem, of service: ServiceVersion) -> String {
+        "\(service.id) \(toggle.name)"
+    }
+
+    private static let lanKey = "settings lan"
+
+    func isToggleOn(_ toggle: ToggleItem, of service: ServiceVersion) -> Bool {
+        switching[Self.toggleKey(toggle, of: service)] ?? toggle.enabled
+    }
+
+    // nexusd changes the configuration and reloads PHP or restarts the webserver. A module or an
+    // extension that another one needs changes with it. The next event shows that.
+    func setToggle(_ toggle: ToggleItem, of service: ServiceVersion, to enabled: Bool) {
+        guard client != nil else {
+            setSampleToggle(toggle.name, of: service.id, to: enabled)
+            return
+        }
+
+        let request: NexusRequest
+        if let server = service.webServer {
+            request = .setModule(server: server, name: toggle.name, enabled: enabled)
+        } else {
+            request = .setExtension(php: service.line, name: toggle.name, enabled: enabled)
+        }
+
+        let key = Self.toggleKey(toggle, of: service)
+        let serviceID = service.id
+        let name = toggle.name
+        switching[key] = enabled
+        finishedSwitches.remove(key)
+
+        send(request, failure: "\(toggle.name) did not turn \(enabled ? "on" : "off") for \(service.name)", place: .window) { [weak self] succeeded in
+            self?.finishSwitch(key, succeeded: succeeded, current: self?.service(serviceID)?.toggles.first { $0.name == name }?.enabled)
+        }
+    }
+
+    private func setSampleToggle(_ name: String, of id: String, to enabled: Bool) {
+        guard let index = services.firstIndex(where: { $0.id == id }),
+              let toggle = services[index].toggles.firstIndex(where: { $0.name == name }) else {
+            return
+        }
+
+        services[index].toggles[toggle].enabled = enabled
+    }
+
+    var isLANAccessOn: Bool {
+        switching[Self.lanKey] ?? settings.lanAccess
+    }
+
+    func setLANAccess(_ enabled: Bool) {
+        guard client != nil else {
+            settings.lanAccess = enabled
+            return
+        }
+
+        switching[Self.lanKey] = enabled
+        finishedSwitches.remove(Self.lanKey)
+
+        send(.lan(enabled: enabled), failure: enabled ? "Other devices did not get access to the sites" : "Other devices still have access to the sites", place: .window) { [weak self] succeeded in
+            self?.finishSwitch(Self.lanKey, succeeded: succeeded, current: self?.settings.lanAccess)
+        }
+    }
+
+    func customSettings(of service: ServiceVersion) -> [String] {
+        settingsDrafts[service.id] ?? service.customSettings
+    }
+
+    // The editor gives one empty line for an empty text. So the lines compare as text.
+    func editCustomSettings(of service: ServiceVersion, to lines: [String]) {
+        let unchanged = lines.joined(separator: "\n") == service.customSettings.joined(separator: "\n")
+        settingsDrafts[service.id] = unchanged ? nil : lines
+    }
+
+    func revertCustomSettings(of service: ServiceVersion) {
+        settingsDrafts[service.id] = nil
+        settingsErrors[service.id] = nil
+    }
+
+    // PHP checks the lines first (D60). A refused line keeps the draft and shows the error, so
+    // the user can correct the line. The draft stays when the user typed during the save.
+    func saveCustomSettings(of service: ServiceVersion) {
+        let id = service.id
+        let lines = customSettings(of: service)
+
+        guard client != nil else {
+            showSavedCustomSettings(lines, of: id)
+            return
+        }
+
+        savingSettings.insert(id)
+
+        Task {
+            let response = await perform(.setCustomSettings(php: service.line, lines: lines), failure: "\(service.name) did not get the new settings", place: .window)
+            savingSettings.remove(id)
+
+            switch response {
+            case .invalidSettings(let error):
+                settingsErrors[id] = SettingsError(line: error.line, message: error.message)
+            case .done:
+                showSavedCustomSettings(lines, of: id)
+            default:
+                break
+            }
+        }
+    }
+
+    // The next event of nexusd has the same lines. Until then the editor shows the saved lines.
+    private func showSavedCustomSettings(_ lines: [String], of id: String) {
+        settingsErrors[id] = nil
+
+        if let index = services.firstIndex(where: { $0.id == id }) {
+            services[index].customSettings = lines
+        }
+
+        if settingsDrafts[id] == lines {
+            settingsDrafts[id] = nil
         }
     }
 
@@ -386,27 +514,28 @@ final class AppModel {
     // The answer and the event of nexusd can arrive in either order. After a success the switch
     // keeps the asked state until the next event, so it does not jump back for a moment. nexusd
     // sends no event when the list stays the same, for example after a start of a DNS server
-    // that macOS does not use yet. The switch then shows the real state after a short wait.
-    private func finishSwitch(_ id: String, succeeded: Bool) {
-        guard succeeded, service(id)?.isActive != switching[id] else {
-            switching[id] = nil
+    // that macOS does not use yet. The switch then shows the real state after a short wait. The
+    // current state is the one of the last event.
+    private func finishSwitch(_ key: String, succeeded: Bool, current: Bool?) {
+        guard succeeded, current != switching[key] else {
+            switching[key] = nil
             return
         }
 
-        finishedSwitches.insert(id)
+        finishedSwitches.insert(key)
 
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
-            self?.dropFinishedSwitch(id)
+            self?.dropFinishedSwitch(key)
         }
     }
 
-    private func dropFinishedSwitch(_ id: String) {
-        guard finishedSwitches.remove(id) != nil else {
+    private func dropFinishedSwitch(_ key: String) {
+        guard finishedSwitches.remove(key) != nil else {
             return
         }
 
-        switching[id] = nil
+        switching[key] = nil
     }
 
     private func watchNexusd() {
@@ -429,6 +558,7 @@ final class AppModel {
             nexusdProblem = nil
             services = list.services.compactMap(ServiceVersion.init).sorted(by: ServiceVersion.showsBefore)
             stoppedByStopAll = list.stoppedByStopAll
+            settings.lanAccess = list.lanAccess
 
             for id in finishedSwitches {
                 switching[id] = nil

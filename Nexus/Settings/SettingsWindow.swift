@@ -237,7 +237,7 @@ private struct NetworkSettings: View {
                     ForEach(AppSettings.devDomains, id: \.self) { Text(".\($0)").tag($0) }
                 }
 
-                Toggle("Allow other devices on the network", isOn: $model.settings.lanAccess)
+                Toggle("Allow other devices on the network", isOn: Binding(get: { model.isLANAccessOn }, set: { model.setLANAccess($0) }))
                     .toggleStyle(.switch)
             } header: {
                 Text("Domains")

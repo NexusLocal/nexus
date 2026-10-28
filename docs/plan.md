@@ -391,6 +391,18 @@ Work:
 Done when: a wrong php.ini line shows its error, and PHP keeps running with the old lines. A
 module switch changes the server config and restarts the server.
 
+Built: the events of nexusd carry the extensions and modules with a help text each, the custom
+lines and the sites of each PHP version, a note for Apache and DNS, and the LAN setting. nexusd
+writes the custom lines to `conf.d/99-custom.ini`. Before that, the command line PHP of the same
+version reads them in a copy of conf.d. A message that is not there without the new lines is an
+error. A message without a line number gets the first line that makes it show. New CLI command:
+`nexus ini <php> [lines] [--clear]`. Some modules need another module first, for example dav_fs
+needs dav and ngx_stream_js_module needs ngx_stream_module. A switch turns both on or off. The
+configuration loads them in the right order. A module whose needed module is not installed does
+not turn on. nginx shows ssl, http2 and proxy as always on. The toggles of Apache leave out
+mpm_prefork and mpm_worker. A new port of Apache starts Apache again. So the app shows the new
+port. The LAN switch is in Settings > Network, as in the design.
+
 ### 6e. Sites
 
 Work:

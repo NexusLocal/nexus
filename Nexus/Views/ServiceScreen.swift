@@ -192,9 +192,9 @@ private struct ServiceForm: View {
 
             switch service.kind {
             case .webservers:
-                WebserverSections(service: $service)
+                WebserverSections(service: service)
             case .php:
-                PHPSections(service: $service)
+                PHPSections(service: service)
             case .mysql, .mariadb, .postgresql:
                 DatabaseSections(service: $service)
             case .redis, .dns:
@@ -296,16 +296,19 @@ private struct StateSection: View {
 
 private struct WebserverSections: View {
     @Environment(AppModel.self) private var model
-    @Binding var service: ServiceVersion
+    let service: ServiceVersion
 
-    private var requiredNames: String {
+    private var modulesFooter: String {
         let names = service.toggles.filter(\.required).map(\.name)
+        let help = "Click a name to see what it does."
 
-        guard let last = names.last, names.count > 1 else {
-            return names.first ?? ""
+        guard let last = names.last else {
+            return help
         }
 
-        return "\(names.dropLast().joined(separator: ", ")) and \(last)"
+        let list = names.count == 1 ? last : "\(names.dropLast().joined(separator: ", ")) and \(last)"
+        let reason = service.internalPort ? "Apache needs them behind nginx" : "nginx needs them for every site"
+        return "\(list) \(names.count == 1 ? "stays" : "stay") on, because \(reason). \(help)"
     }
 
     var body: some View {
@@ -334,21 +337,26 @@ private struct WebserverSections: View {
         }
 
         Section {
-            ToggleGrid(toggles: $service.toggles)
+            ToggleGrid(service: service)
         } header: {
             Text("Modules")
         } footer: {
-            Text("\(requiredNames) stay on, because \(service.internalPort ? "Apache needs them behind nginx" : "nginx needs them for every site"). Click a name to see what it does.")
+            Text(modulesFooter)
         }
     }
 }
 
 private struct PHPSections: View {
-    @Binding var service: ServiceVersion
+    @Environment(AppModel.self) private var model
+    let service: ServiceVersion
 
     var body: some View {
+        let error = model.settingsErrors[service.id]
+        let changed = model.settingsDrafts[service.id] != nil
+        let saving = model.savingSettings.contains(service.id)
+
         Section {
-            ToggleGrid(toggles: $service.toggles)
+            ToggleGrid(service: service)
         } header: {
             Text("Extensions")
         } footer: {
@@ -356,27 +364,42 @@ private struct PHPSections: View {
         }
 
         Section {
-            if let error = service.settingsError {
-                Label("Line \(error.line): \(error.message). \(service.name) still runs with the old settings.", systemImage: "xmark.circle")
+            if let error {
+                Label(errorText(error), systemImage: "xmark.circle")
                     .foregroundStyle(Color.redText)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
                     .background(Color.errorBackground, in: .rect(cornerRadius: 6))
             }
 
-            CodeEditor(lines: $service.customSettings, errorLine: service.settingsError?.line)
-                .frame(height: 96)
+            CodeEditor(
+                lines: Binding(get: { model.customSettings(of: service) }, set: { model.editCustomSettings(of: service, to: $0) }),
+                errorLine: error?.line
+            )
+            .frame(height: 96)
         } header: {
             HStack {
                 Text("Custom settings")
                 Spacer()
-                Button("Revert") {}
-                Button("Save and restart") {}
-                    .buttonStyle(.borderedProminent)
+                Button("Revert") {
+                    model.revertCustomSettings(of: service)
+                }
+                .disabled(saving || !changed && error == nil)
+                Button("Save and restart") {
+                    model.saveCustomSettings(of: service)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(saving || !changed)
             }
         } footer: {
             Text("Nexus adds these lines after its own settings in php.ini. Nexus checks the lines before it restarts \(service.name). When a line has an error, \(service.name) keeps the old settings.")
         }
+    }
+
+    private func errorText(_ error: SettingsError) -> String {
+        let place = error.line.map { "Line \($0): " } ?? ""
+        let state = service.isActive ? "still runs with the old settings" : "keeps the old settings"
+        return "\(place)\(error.message). \(service.name) \(state)."
     }
 }
 

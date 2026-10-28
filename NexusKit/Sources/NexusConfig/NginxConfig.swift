@@ -24,6 +24,15 @@ public struct NginxSettings: Sendable, Equatable {
 // The front server. It listens on all addresses for HTTP and HTTPS, does TLS for every site,
 // serves the nginx sites through php-fpm and sends the Apache sites to Apache (D23, D24).
 public enum NginxConfig {
+    // These are part of the nginx program. So they are always on. Every site needs them.
+    public static let builtInModules = ["ssl", "http2", "proxy"]
+
+    public static let dependencies = ToggleDependencies([
+        "ngx_stream_geoip2_module": ["ngx_stream_module"],
+        "ngx_stream_js_module": ["ngx_stream_module"],
+    ])
+
+    // The modules load in the order of the settings.
     public static func render(sites: [WebSite], settings: NginxSettings) throws -> String {
         let temp = settings.runFolder.appending(path: "nginx", directoryHint: .isDirectory)
         var lines: [String] = [
