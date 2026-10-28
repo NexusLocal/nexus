@@ -58,6 +58,9 @@ public actor NexusEngine {
     private var observesSupervisor = false
     // The last start of each service that failed on a port in use (D31).
     private var portConflicts: [String: PortConflict] = [:]
+    // The extensions and modules of each runtime. Its .so files change only at an install or a
+    // removal, and the service list needs them after each change of a service.
+    var toggleNameCache: [String: Set<String>] = [:]
 
     public init(
         paths: NexusPaths,
@@ -559,6 +562,7 @@ public actor NexusEngine {
         }
 
         let runtime = try await installer.install(package)
+        toggleNameCache = [:]
         return "\(runtime.name) \(runtime.version) is installed in \(runtime.folder.path(percentEncoded: false))"
     }
 
@@ -587,6 +591,7 @@ public actor NexusEngine {
         }
 
         try await installer.remove(name: name, line: line)
+        toggleNameCache = [:]
 
         if ServiceCatalog.databaseKind(of: runtime) != nil {
             return "\(name) \(line) is removed. Its data folder stays: \(catalog.dataFolder(for: runtime).path(percentEncoded: false))"

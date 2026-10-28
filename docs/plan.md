@@ -399,9 +399,12 @@ error. A message without a line number gets the first line that makes it show. N
 `nexus ini <php> [lines] [--clear]`. Some modules need another module first, for example dav_fs
 needs dav and ngx_stream_js_module needs ngx_stream_module. A switch turns both on or off. The
 configuration loads them in the right order. A module whose needed module is not installed does
-not turn on. nginx shows ssl, http2 and proxy as always on. The toggles of Apache leave out
-mpm_prefork and mpm_worker. A new port of Apache starts Apache again. So the app shows the new
-port. The LAN switch is in Settings > Network, as in the design.
+not turn on. A switch shows what loads. nginx shows ssl, http2 and proxy as always on. The
+toggles of Apache leave out mpm_prefork and mpm_worker. A new port of Apache needs only a graceful
+restart. The supervisor then keeps the new port. So the app shows it. nexusd reads the .so files
+of a runtime once, and again after an install, a removal or a list request. An app can read the
+events of an older nexusd. An event that the app cannot read shows a problem in the app. The LAN
+switch is in Settings > Network, as in the design.
 
 ### 6e. Sites
 

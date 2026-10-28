@@ -154,4 +154,39 @@ extension NexusEngineTests {
         #expect(later.message.contains("upload_max_filesize"))
         #expect(saved == .done(message: "PHP 8.4 uses the new custom settings at its next start."))
     }
+
+    @Test func aSwitchIsOnForANameThatLoadsBecauseAnotherNameNeedsIt() {
+        var state = EngineState()
+        state.phpExtensions["8.4"] = ["redis"]
+        state.apacheModules = ["cache_disk"]
+
+        let php = NexusEngine.extensionToggles(line: "8.4", available: ["redis", "igbinary", "apcu"], state: state)
+        let apache = NexusEngine.moduleToggles(.apache, available: ["cache", "cache_disk", "rewrite"], state: state)
+
+        #expect(php.filter(\.enabled).map(\.name) == ["igbinary", "redis"])
+        #expect(apache.filter(\.enabled).map(\.name) == ["cache", "cache_disk"])
+    }
+
+    @Test func theServiceListReadsTheExtensionsAgainOnlyAfterAListRequest() async throws {
+        let root = phpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try makePHPEngine(root: root, package: try makeFakeCheckingPHP(in: root))
+        _ = await engine.handle(.install(name: "php", line: "8.5"))
+        let runtime = try #require(await engine.runtime(named: "php", line: "8.5"))
+
+        let first = await engine.toggleNames(of: runtime)
+        try Data().write(to: runtime.folder.appending(path: "lib/php/extensions/no-debug-non-zts-20250925/pcov.so"))
+        let cached = await engine.toggleNames(of: runtime)
+        let listed = await engine.handle(.extensions(php: "8.5"))
+        let after = await engine.toggleNames(of: runtime)
+
+        #expect(first == ["xdebug"])
+        #expect(cached == ["xdebug"])
+        guard case .toggles(let toggles) = listed else {
+            Issue.record("no toggles: \(listed)")
+            return
+        }
+        #expect(toggles.map(\.name) == ["pcov", "xdebug"])
+        #expect(after == ["pcov", "xdebug"])
+    }
 }

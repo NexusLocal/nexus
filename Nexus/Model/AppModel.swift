@@ -564,7 +564,7 @@ final class AppModel {
                 switching[id] = nil
             }
             finishedSwitches = []
-        case .unreachable(let reason):
+        case .unreachable(let reason), .unreadable(let reason):
             nexusdProblem = reason
         }
     }

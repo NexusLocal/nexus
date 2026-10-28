@@ -258,6 +258,57 @@ public struct ServiceInfo: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+// An older nexusd does not send the keys that came later. They get their default. So a new app
+// can read the events of a nexusd that did not start again after an update of the app.
+extension Toggle {
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        self.init(
+            name: try container.decode(String.self, forKey: .name),
+            enabled: try container.decode(Bool.self, forKey: .enabled),
+            required: try container.decode(Bool.self, forKey: .required),
+            help: try container.decodeIfPresent(String.self, forKey: .help) ?? ""
+        )
+    }
+}
+
+extension ServiceInfo {
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        self.init(
+            id: try container.decode(String.self, forKey: .id),
+            name: try container.decode(String.self, forKey: .name),
+            line: try container.decode(String.self, forKey: .line),
+            version: try container.decode(String.self, forKey: .version),
+            ports: try container.decode([Int].self, forKey: .ports),
+            state: try container.decode(ServiceState.self, forKey: .state),
+            problem: try container.decodeIfPresent(String.self, forKey: .problem),
+            portConflict: try container.decodeIfPresent(PortConflict.self, forKey: .portConflict),
+            logFile: try container.decodeIfPresent(String.self, forKey: .logFile),
+            dataFolder: try container.decodeIfPresent(String.self, forKey: .dataFolder),
+            account: try container.decodeIfPresent(DatabaseAccount.self, forKey: .account),
+            toggles: try container.decodeIfPresent([Toggle].self, forKey: .toggles) ?? [],
+            customSettings: try container.decodeIfPresent([String].self, forKey: .customSettings),
+            usedBy: try container.decodeIfPresent([String].self, forKey: .usedBy) ?? [],
+            note: try container.decodeIfPresent(String.self, forKey: .note)
+        )
+    }
+}
+
+extension ServiceList {
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        self.init(
+            services: try container.decode([ServiceInfo].self, forKey: .services),
+            stoppedByStopAll: try container.decodeIfPresent([String].self, forKey: .stoppedByStopAll) ?? [],
+            lanAccess: try container.decodeIfPresent(Bool.self, forKey: .lanAccess) ?? false
+        )
+    }
+}
+
 public struct ServiceList: Codable, Sendable, Equatable {
     public let services: [ServiceInfo]
     // The services that "Start stopped services" starts (D63).
