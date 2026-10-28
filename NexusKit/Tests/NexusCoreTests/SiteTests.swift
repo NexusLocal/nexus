@@ -53,6 +53,17 @@ struct SiteTests {
         #expect(HostName.label(from: String(repeating: "a", count: 80)).count == 63)
     }
 
+    @Test func aNewTLDChangesOnlyTheNamesInTheOldTLD() {
+        let site = Site(host: "shop.test", folder: root, aliases: ["www.shop.test", "shop.local", "test.local"], php: "8.5")
+
+        let moved = site.movingTLD(from: "test", to: "internal")
+        let layout = SiteLayoutEntry.group(name: "Work", hosts: ["shop.test", "blog.local"]).movingTLD(from: "test", to: "internal")
+
+        #expect(moved.hosts == ["shop.internal", "www.shop.internal", "shop.local", "test.local"])
+        #expect(layout == .group(name: "Work", hosts: ["shop.internal", "blog.local"]))
+        #expect(HostName.movingTLD("contest", from: "test", to: "internal") == "contest")
+    }
+
     @Test func versionLinesCompareByNumber() {
         #expect(VersionLine.isOlder("8.2", than: "8.10"))
         #expect(VersionLine.newest(["8.4", "8.10", "8.5"]) == "8.10")

@@ -14,7 +14,7 @@ import Testing
 extension NexusEngineTests {
     private static let realRuntimes = ProcessInfo.processInfo.environment["NEXUS_REAL_RUNTIMES"]
 
-    private func makeSiteEngine(root: URL, state: EngineState = EngineState(), runtimes: [(name: String, line: String)] = []) throws -> NexusEngine {
+    func makeSiteEngine(root: URL, state: EngineState = EngineState(), runtimes: [(name: String, line: String)] = []) throws -> NexusEngine {
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
         try paths.createFolders()
         var state = state
@@ -41,11 +41,11 @@ extension NexusEngineTests {
         )
     }
 
-    private func siteTestRoot() -> URL {
+    func siteTestRoot() -> URL {
         FileManager.default.temporaryDirectory.appending(path: "Nexus Site Tests \(UUID().uuidString)", directoryHint: .isDirectory)
     }
 
-    private func site(_ host: String, in folder: URL) -> Site {
+    func site(_ host: String, in folder: URL) -> Site {
         Site(host: host, folder: folder.appending(path: host, directoryHint: .isDirectory), php: "8.5")
     }
 
@@ -266,6 +266,66 @@ extension NexusEngineTests {
         #expect(third == "third")
         #expect(nginxAfterRestart != true)
         #expect(waiting.isSuperset(of: [ServiceCatalog.nginxID, "php-8.5"]))
+    }
+
+    // The "Done when" of part 6g: every site opens on its new name after a change of the dev TLD.
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func everyRealSiteOpensOnItsNewNameAfterAChangeOfTheTLD() async throws {
+        let root = URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
+        try paths.createFolders()
+
+        for runtime in ["nginx/1.30", "php/8.5"] {
+            let parts = runtime.split(separator: "/").map(String.init)
+            let link = paths.runtime(parts[0], line: parts[1])
+            try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: URL(filePath: Self.realRuntimes!).appending(path: runtime))
+        }
+
+        let httpsPort = freePort()
+        var state = EngineState()
+        state.ports[ServiceCatalog.httpPortKey] = freePort()
+        state.ports[ServiceCatalog.httpsPortKey] = httpsPort
+        state.ports[NexusEngine.dnsServiceID] = freeUDPPort()
+        try JSONEncoder().encode(state).write(to: paths.config.appending(path: "state.json"))
+
+        let parked = root.appending(path: "Sites", directoryHint: .isDirectory)
+        try project("parked", in: parked, publicFolder: false)
+        let added = root.appending(path: "projects", directoryHint: .isDirectory)
+        try project("added", in: added, publicFolder: true)
+
+        let engine = NexusEngine(
+            paths: paths,
+            helper: helper,
+            certificateAuthority: CertificateAuthority(paths: paths, store: keyStore),
+            systemFiles: SystemDNSFiles(
+                resolverFolder: root.appending(path: "etc/resolver", directoryHint: .isDirectory),
+                hostsFile: root.appending(path: "etc/hosts", directoryHint: .notDirectory)
+            )
+        )
+        var before, parkedPage, addedPage, aliasPage, oldName: String?
+
+        try await whileRunning(engine) {
+            await engine.startEnabledServices()
+            _ = await engine.handle(.park(folder: parked.path(percentEncoded: false), php: "8.5", server: nil))
+            _ = await engine.handle(.addSite(folder: added.appending(path: "added").path(percentEncoded: false), host: nil, aliases: ["www.added.test"], php: "8.5", server: nil))
+            before = await page("added.test", port: httpsPort, expecting: "added")
+
+            _ = await engine.handle(.tld("internal"))
+            parkedPage = await page("parked.internal", port: httpsPort, expecting: "parked")
+            addedPage = await page("added.internal", port: httpsPort, expecting: "added")
+            aliasPage = await page("www.added.internal", port: httpsPort, expecting: "added")
+            oldName = await page("added.test", port: httpsPort, expecting: "")
+
+            _ = await engine.handle(.stopAll)
+        }
+
+        #expect(before == "added")
+        #expect(parkedPage == "parked")
+        #expect(addedPage == "added")
+        #expect(aliasPage == "added")
+        #expect(oldName?.isEmpty == true)
     }
 
     // A project with its public folder after a short wait, as composer create-project makes it.

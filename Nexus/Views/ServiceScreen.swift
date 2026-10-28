@@ -1,4 +1,5 @@
 import AppKit
+import NexusCore
 import SwiftUI
 
 struct ServiceScreen: View {
@@ -438,8 +439,6 @@ private struct DatabaseSections: View {
                             .frame(width: 180)
                         Button("Change") {
                             model.changeAccount(of: service, to: DatabaseAccount(user: editedUser ?? account.user, password: editedPassword ?? account.password))
-                            editedUser = nil
-                            editedPassword = nil
                         }
                         .disabled(!service.isActive || (editedUser ?? account.user) == account.user && (editedPassword ?? account.password) == account.password)
                     }
@@ -448,6 +447,11 @@ private struct DatabaseSections: View {
                 Text("Account")
             } footer: {
                 Text("Nexus uses this account when it imports or opens a database on \(service.name). A change needs \(service.name) to run.")
+            }
+            // The fields keep a refused account, so the user can correct it.
+            .onChange(of: account) {
+                editedUser = nil
+                editedPassword = nil
             }
         }
 

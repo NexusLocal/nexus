@@ -43,8 +43,14 @@ struct PackagesScreen: View {
         }
         .formStyle(.grouped)
         .screenTitle("Packages", subtitle: subtitle)
+        // Without the automatic check, the first visit reads the manifest. Without it the screen
+        // cannot show what Nexus can install.
         .task {
-            await model.loadInstalledRuntimes()
+            if model.packagesChecked.isEmpty {
+                await model.checkPackages()
+            } else {
+                await model.loadInstalledRuntimes()
+            }
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

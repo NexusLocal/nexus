@@ -19,7 +19,7 @@ struct NexusCommand: AsyncParsableCommand {
         subcommands: [
             Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Runtimes.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
-            SiteCommand.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self,
+            SiteCommand.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
             Database.self,
         ]
     )
@@ -480,6 +480,20 @@ struct Lan: AsyncParsableCommand {
 
     func run() async throws {
         try finish(try await send(.lan(enabled: state.map { $0 == .on })))
+    }
+}
+
+struct TLD: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "tld",
+        abstract: "Shows or changes the dev TLD of the sites, for example: nexus tld internal",
+        discussion: "The dev TLD can be test, internal or localhost. A change gives every site a new name, for example shop.test becomes shop.internal."
+    )
+
+    @Argument(help: "test, internal or localhost.") var tld: String?
+
+    func run() async throws {
+        try finish(try await send(.tld(tld)))
     }
 }
 

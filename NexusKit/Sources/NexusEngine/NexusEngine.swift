@@ -48,6 +48,9 @@ public actor NexusEngine {
     var systemFilesProblem: String?
     var writtenHosts: [String]?
     private var systemFilesQueue: Task<Void, Never>?
+    // The new dev TLD while setTLD runs. Its resolver file exists before the state names it, so
+    // a write of the system files in that time must not remove it.
+    private var tldInChange: String?
     private var helperRetry: Task<Void, Never>?
     private(set) var uninstalling = false
     private var webQueue: Task<Void, Never>?
@@ -138,6 +141,8 @@ public actor NexusEngine {
                 return .done(message: try await remove(name: name, line: line))
             case .trust:
                 return .done(message: try await trust())
+            case .rootCertificate:
+                return .rootCertificate(rootCertificateInfo())
             case .certificate(let hosts):
                 return .done(message: try certificate(for: hosts))
             case .hosts:
@@ -180,12 +185,18 @@ public actor NexusEngine {
                 return .done(message: try await serialWeb { try await self.setCustomSettings(line: php, lines: lines) })
             case .lan(let enabled):
                 return .done(message: try await serialWeb { try await self.lan(enabled) })
+            case .tld(nil):
+                return .done(message: "The dev TLD is .\(await stateStore.current().tld).")
+            case .tld(let tld?):
+                return .done(message: try await serialWeb { try await self.setTLD(tld) })
             case .databases:
                 return .databases(try await databaseInstances())
             case .databaseSizes(let instance):
                 return .databaseSizes(try await databaseSizes(instance))
             case .setAccount(let instance, let account):
                 return .done(message: try await serialWeb { try await self.setAccount(instance, account) })
+            case .setNewInstanceAccount(let account):
+                return .done(message: try await setNewInstanceAccount(account))
             case .copyDatabase(let copy):
                 // A copy can take minutes, so it does not wait in the queue of the changes.
                 return .done(message: try await copyDatabase(copy))
@@ -329,7 +340,7 @@ public actor NexusEngine {
         }
 
         let stopped = all.map(\.status).filter { !$0.state.isActive && state.stoppedByStopAll.contains($0.id) }.map(\.id)
-        return ServiceList(services: services, stoppedByStopAll: stopped, lanAccess: state.lanAccess)
+        return ServiceList(services: services, stoppedByStopAll: stopped, lanAccess: state.lanAccess, newInstanceAccount: state.newInstanceAccount)
     }
 
     // One runtime for each service. nginx and Apache use the newest installed version line.
@@ -890,7 +901,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .databases, .databaseSizes, .sourceDatabases, .stopTask: true
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask: true
         default: false
         }
     }
@@ -982,20 +993,26 @@ extension NexusEngine {
     // Each call waits for the call before it, and reads the state only when its turn comes. So
     // the helper always gets the newest host list last.
     func applySystemFiles() async {
+        _ = try? await inSystemFilesTurn { await self.writeSystemFiles() }
+    }
+
+    // Every request to the helper waits for the request before it.
+    private func inSystemFilesTurn<Result: Sendable>(_ operation: @escaping @Sendable () async throws -> Result) async throws -> Result {
         let previous = systemFilesQueue
         let turn = Task {
             await previous?.value
-            await self.writeSystemFiles()
+            return try await operation()
         }
 
-        systemFilesQueue = turn
-        await turn.value
+        systemFilesQueue = Task { _ = try? await turn.value }
+        return try await turn.value
     }
 
     // The resolver file names the port of the DNS server, so it is only written while the server
     // runs. The /etc/hosts lines do not need the DNS server, so a refused resolver file does not
     // stop them. The helper does not answer before the user approves it. nexusd then asks it
-    // again every few seconds.
+    // again every few seconds. A resolver file of an old dev TLD goes, because its names do not
+    // work anymore.
     private func writeSystemFiles() async {
         guard !uninstalling else {
             return
@@ -1007,6 +1024,14 @@ extension NexusEngine {
         if let port = dnsServer?.port {
             do {
                 try await helper.send(.setResolver(tld: state.tld, port: port))
+            } catch {
+                problems.append(error)
+            }
+        }
+
+        for tld in systemFiles.nexusResolvers where tld != state.tld && tld != tldInChange {
+            do {
+                try await helper.send(.removeResolver(tld: tld))
             } catch {
                 problems.append(error)
             }
@@ -1074,6 +1099,87 @@ extension NexusEngine {
         return systemFilesProblem.map { "Nexus forgot \(host), but its /etc/hosts line stays until the helper answers. \($0)" }
             ?? "/etc/hosts has no line for \(host) now."
     }
+
+    // The dev TLD can change after the first run (D28). Every name in the old TLD gets the new
+    // one: the added sites, their aliases and the order of the sidebar. The sites of the parked
+    // folders get it from the state. The helper writes the resolver file of the new TLD first.
+    // So a helper that refuses it, or that does not answer, changes nothing. The resolver file of
+    // the old TLD goes at the next write of the system files.
+    func setTLD(_ requested: String) async throws -> String {
+        let tld = try HostName.validatedTLD(requested)
+        let state = await stateStore.current()
+        let old = state.tld
+
+        guard tld != old else {
+            return "The dev TLD is .\(tld) already."
+        }
+
+        let sites = state.sites.map { $0.movingTLD(from: old, to: tld) }
+        let layout = state.siteLayout.map { $0.movingTLD(from: old, to: tld) }
+        var names: Set<String> = []
+
+        for host in sites.flatMap(\.hosts) where !names.insert(host).inserted {
+            throw RuntimeError.unsupported("Nexus did not change the dev TLD, because two names would become \(host). Remove one of them from its site first.")
+        }
+
+        // An added site that takes the name of a parked site hides that site. Only a name that
+        // did not hide a parked site before the change counts.
+        let parkedBefore = Set(state.parked.flatMap { $0.sites(tld: old) }.map(\.host))
+        let parkedAfter = Set(state.parked.flatMap { $0.sites(tld: tld) }.map(\.host))
+
+        for (site, moved) in zip(state.sites, sites) {
+            for (before, after) in zip(site.hosts, moved.hosts) where parkedAfter.contains(after) && !parkedBefore.contains(before) {
+                throw RuntimeError.unsupported("Nexus did not change the dev TLD, because \(after) would be the name of an added site and of a site in a parked folder. Remove the name from the added site first.")
+            }
+        }
+
+        guard !uninstalling else {
+            throw RuntimeError.unsupported("Nexus did not change the dev TLD, because Nexus is being removed.")
+        }
+
+        tldInChange = tld
+        defer { tldInChange = nil }
+
+        if let port = dnsServer?.port {
+            do {
+                try await inSystemFilesTurn { try await self.helper.send(.setResolver(tld: tld, port: port)) }
+            } catch {
+                throw RuntimeError.unsupported("Nexus did not change the dev TLD, because /etc/resolver/\(tld) was not written. Nothing changed. \(error)")
+            }
+        }
+
+        var warnings: [String]
+        do {
+            warnings = try await changeWeb(.setting) { state in
+                state.tld = tld
+                state.sites = sites
+                state.siteLayout = layout
+            }
+        } catch {
+            tldInChange = nil
+            await applySystemFiles()
+            throw error
+        }
+
+        if let port = dnsServer?.port {
+            do {
+                try await bindDNS(port: port)
+            } catch {
+                warnings.append("The DNS server did not start again for .\(tld). Run: nexus restart dns. \(error)")
+            }
+        }
+
+        await applySystemFiles()
+
+        if let systemFilesProblem {
+            warnings.append(systemFilesProblem)
+        }
+
+        let renamed = resolvedSites(await stateStore.current()).map(\.site.host).first { $0.hasSuffix(".\(tld)") }
+        let summary = renamed.map { "Every site has a new name, for example \($0). Change APP_URL in the .env file of each site too." }
+            ?? "A new site gets a name that ends in .\(tld)."
+        return (["The dev TLD is .\(tld) now. \(summary)"] + warnings).joined(separator: "\n")
+    }
 }
 
 // The root CA and the certificates.
@@ -1100,6 +1206,16 @@ extension NexusEngine {
             """
     }
 
+    private func rootCertificateInfo() -> RootCertificateInfo {
+        let root = try? certificateAuthority.existingRoot()
+
+        return RootCertificateInfo(
+            trusted: root.map { certificateAuthority.isTrusted($0) } ?? false,
+            validUntil: root?.certificate.notValidAfter,
+            file: certificateAuthority.rootCertificateFile.path(percentEncoded: false)
+        )
+    }
+
     private func certificate(for hosts: [String]) throws -> String {
         let issued = try certificateAuthority.hostCertificate(for: hosts)
         var lines = [
@@ -1120,20 +1236,26 @@ extension NexusEngine {
 // Removing Nexus.
 extension NexusEngine {
     // Stops at the first step that fails. The system files go first. So nothing has changed yet
-    // when the helper does not answer. The helper stays registered while its files exist.
+    // when the helper does not answer. The helper stays registered while its files exist. A
+    // resolver file of an old dev TLD goes too.
     private func uninstall() async throws -> String {
-        let tld = await stateStore.current().tld
         uninstalling = true
         helperRetry?.cancel()
         await systemFilesQueue?.value
 
-        if systemFiles.hasNexusChanges(tld: tld) {
+        let resolvers = systemFiles.nexusResolvers
+        let systemFileNames = resolvers.map { "/etc/resolver/\($0)" } + ["its /etc/hosts lines"]
+        let removedFiles = Self.list(systemFileNames)
+
+        if !resolvers.isEmpty || systemFiles.hasNexusHosts {
             do {
-                try await helper.send(.removeResolver(tld: tld))
+                for resolver in resolvers {
+                    try await helper.send(.removeResolver(tld: resolver))
+                }
                 try await helper.send(.setHosts([]))
             } catch {
                 uninstalling = false
-                throw RuntimeError.unsupported("Nexus did not remove /etc/resolver/\(tld) and its /etc/hosts lines, so it stopped the removal. Nothing else changed. \(error)")
+                throw RuntimeError.unsupported("Nexus did not remove \(removedFiles), so it stopped the removal. Nothing else changed. \(error)")
             }
         }
 
@@ -1141,7 +1263,7 @@ extension NexusEngine {
         do {
             try await Task.detached { try authority.remove() }.value
         } catch {
-            throw RuntimeError.unsupported("Nexus removed /etc/resolver/\(tld) and its /etc/hosts lines, but not its root CA. Run nexus uninstall again. \(error)")
+            throw RuntimeError.unsupported("Nexus removed \(removedFiles), but not its root CA. Run nexus uninstall again. \(error)")
         }
 
         parkedWatcher?.stop()
@@ -1156,9 +1278,18 @@ extension NexusEngine {
         }
 
         return """
-            Nexus removed /etc/resolver/\(tld), its /etc/hosts lines, its root CA and its background services.
+            Nexus removed \(Self.list(systemFileNames + ["its root CA", "its background services"])).
             The packages and the databases stay in \(paths.root.path(percentEncoded: false)). Remove that folder to remove them too.
             Quit Nexus and move it to the Trash.
             """
+    }
+
+    // "a", "a and b", or "a, b and c".
+    static func list(_ items: [String]) -> String {
+        guard let last = items.last else {
+            return ""
+        }
+
+        return items.count == 1 ? last : "\(items.dropLast().joined(separator: ", ")) and \(last)"
     }
 }

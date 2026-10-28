@@ -605,6 +605,7 @@ extension NexusEngine {
             return try await applyWeb(kind)
         } catch {
             try? await stateStore.update { state in
+                state.tld = previous.tld
                 state.sites = previous.sites
                 state.parked = previous.parked
                 state.siteLayout = previous.siteLayout

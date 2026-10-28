@@ -6,6 +6,7 @@ import ServiceManagement
 final class BackgroundServices {
     let daemon = BackgroundServiceRegistration.daemon()
     let helper = BackgroundServiceRegistration.helper()
+    let login = BackgroundServiceRegistration.login()
 
     func registerIfNeeded() {
         daemon.registerIfNeeded()
@@ -15,6 +16,7 @@ final class BackgroundServices {
     func refresh() {
         daemon.refresh()
         helper.refresh()
+        login.refresh()
     }
 
     // The text for a banner when the user must turn Nexus on in Login Items.
@@ -35,7 +37,7 @@ final class BackgroundServices {
 
 // Registers one of the two launchd jobs in the app bundle: the agent nexusd, and the helper
 // daemon that writes /etc/resolver and /etc/hosts. The helper needs the approval of the user in
-// System Settings. nexusd does not.
+// System Settings. nexusd does not. The login item opens the app at login (D5).
 @Observable
 final class BackgroundServiceRegistration {
     private let service: SMAppService
@@ -50,6 +52,10 @@ final class BackgroundServiceRegistration {
 
     static func helper() -> BackgroundServiceRegistration {
         BackgroundServiceRegistration(service: .daemon(plistName: "\(NexusIdentifiers.helper).plist"), name: "Helper for DNS")
+    }
+
+    static func login() -> BackgroundServiceRegistration {
+        BackgroundServiceRegistration(service: .mainApp, name: "Start at login")
     }
 
     private init(service: SMAppService, name: String) {
@@ -93,6 +99,27 @@ final class BackgroundServiceRegistration {
     }
 
     func refresh() {
+        status = service.status
+    }
+
+    // An item that waits for approval counts as on. The user then turns it on in System
+    // Settings.
+    var isOn: Bool {
+        isEnabled || needsApproval
+    }
+
+    func setOn(_ on: Bool) {
+        do {
+            if on {
+                try service.register()
+            } else {
+                try service.unregister()
+            }
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
+
         status = service.status
     }
 

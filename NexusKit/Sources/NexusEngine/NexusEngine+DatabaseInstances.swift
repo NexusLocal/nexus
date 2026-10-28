@@ -143,6 +143,16 @@ extension NexusEngine {
         return "\(id) has the user \(new.user) with \(password) now. Change DB_USERNAME and DB_PASSWORD in the .env files of your sites too."
     }
 
+    // An instance that has data keeps its account (D35). So the change is only for the instances
+    // that start for the first time after it.
+    func setNewInstanceAccount(_ account: DatabaseAccount) async throws -> String {
+        let account = try DatabaseUser.validated(account)
+        try await stateStore.update { $0.newInstanceAccount = account }
+
+        let password = account.password.isEmpty ? "no password" : "a password"
+        return "A new instance gets the user \(account.user) with \(password). The instances that have data keep their account."
+    }
+
     // The supervisor marks an instance as running when its process starts. The server accepts
     // connections some seconds later. So a request right after a start waits for the port.
     private func runningClient(_ id: String) async throws -> (DatabaseTools, DatabaseClient, URL) {

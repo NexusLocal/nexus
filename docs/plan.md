@@ -508,6 +508,22 @@ Nexus turns the Dock icon on again, so the app stays reachable.
 Done when: a change of the dev domain from .test to .internal makes every site open on its new
 name.
 
+Built: Settings > Network and `nexus tld` change the dev TLD. Every name in the old TLD gets the
+new one: the added sites, their aliases and the order of the sidebar. The sites of the parked
+folders get it from the state. nexusd refuses a change that gives two sites one name. The helper
+writes the resolver file of the new TLD first, so a refused file changes nothing. The file of the
+old TLD goes at the next write of the system files. An uninstall removes the resolver file of each
+dev TLD. nexusd keeps the account for new instances and tells whether macOS trusts the root CA. The
+app keeps the settings that only it uses in UserDefaults: the Dock and menu bar icons, the chosen
+and added apps, the notifications and the package updates. A database app that the user adds can
+open every kind, because Nexus cannot ask it which links it opens. Without the automatic update
+check, the Packages screen reads the manifest at its first visit. "Start at login" is the login
+item of the app. The first run turns it on (D5). macOS shows a notification only while Nexus is
+not the active app. The Node default and the PATH setting come in step 7, the workspace
+notification in step 8. Checked on 2026-10-28 on the owner's Mac: in Settings > Network, a change
+from .test to .internal made three sites, one with an alias, open on their new names with a
+trusted certificate. The old names stopped. The change back to .test worked too.
+
 ### 6h. First run and Command line
 
 Work:

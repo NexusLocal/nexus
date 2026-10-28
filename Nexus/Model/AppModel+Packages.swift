@@ -8,11 +8,15 @@ extension AppModel {
     // A note shows when the security fixes end within this time, and after they ended (D12).
     static let securityNoteMonths = 6
 
-    // The update check runs at launch, once a day and on a click.
+    // The update check runs at launch, once a day and on a click. Without the automatic check
+    // in Settings > Updates, it runs only on a click and when the Packages screen opens for the
+    // first time.
     func watchPackageUpdates() {
         Task { [weak self] in
             repeat {
-                await self?.checkPackages()
+                if AppPreference.isOn(AppPreference.checkPackageUpdates) {
+                    await self?.checkPackages()
+                }
                 try? await Task.sleep(for: .seconds(24 * 60 * 60))
             } while self != nil
         }
@@ -39,6 +43,19 @@ extension AppModel {
         }
 
         await loadInstalledRuntimes()
+
+        if AppPreference.isOn(AppPreference.installPackageUpdates) {
+            installUpdates()
+        }
+    }
+
+    // An update of a running service starts it again (part 6f).
+    func installUpdates() {
+        for package in packages {
+            if case .update = package.state {
+                install(package)
+            }
+        }
     }
 
     func loadInstalledRuntimes() async {
@@ -278,6 +295,7 @@ extension AppModel {
                 if let service = service(copy.instance) {
                     loadDatabases(of: service)
                 }
+                Notifier.post("The import is done", "\(copy.name ?? copy.database) is in \(service(copy.instance)?.name ?? copy.instance) now.", setting: AppPreference.notifyImportDone)
             case .answer(.stopped(let message)):
                 if inSheet {
                     importResults[key] = .stopped(message)
@@ -295,6 +313,8 @@ extension AppModel {
     }
 
     private func showImportFailure(_ message: String, of copy: DatabaseCopy, key: String, inSheet: Bool) {
+        Notifier.post("\(copy.database) was not imported", message, setting: AppPreference.notifyImportDone)
+
         guard inSheet else {
             failure = ActionFailure(title: "\(copy.database) was not imported", message: message, place: .window)
             return

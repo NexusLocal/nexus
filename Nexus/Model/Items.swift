@@ -1,4 +1,5 @@
 import Foundation
+import NexusCore
 
 enum Health {
     case running
@@ -54,11 +55,6 @@ struct ServicePort: Identifiable {
     var id: String { name }
 }
 
-struct DatabaseAccount {
-    var user: String
-    var password: String
-}
-
 struct DatabaseItem: Identifiable {
     let name: String
     let usedBy: String?
@@ -97,6 +93,8 @@ struct ServiceVersion: Identifiable {
     var health: Health
     var since: String?
     var activeWithProblem = false
+    // The process ended without a request: nexusd starts it again, or it failed.
+    var stoppedUnexpectedly = false
     var ports: [ServicePort] = []
     var internalPort = false
     var problem: ServiceProblem?
@@ -314,11 +312,13 @@ struct CommandSection: Identifiable {
     var id: String { title }
 }
 
-// The location is nil for an app of the sample data.
+// The location is nil for an app of the sample data. An added app is one that the user added,
+// because Nexus did not find it.
 struct AppChoice: Identifiable, Hashable {
     let name: String
     var opens: String = ""
     var location: URL?
+    var added = false
 
     var id: String { name }
 

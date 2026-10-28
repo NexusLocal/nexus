@@ -309,11 +309,28 @@ public struct ServiceList: Codable, Sendable, Equatable {
     public let stoppedByStopAll: [String]
     // Whether other devices on the network can open the sites. nginx applies it.
     public let lanAccess: Bool?
+    // The account that a new database instance gets at its first start (D35).
+    public let newInstanceAccount: DatabaseAccount?
 
-    public init(services: [ServiceInfo], stoppedByStopAll: [String], lanAccess: Bool? = nil) {
+    public init(services: [ServiceInfo], stoppedByStopAll: [String], lanAccess: Bool? = nil, newInstanceAccount: DatabaseAccount? = nil) {
         self.services = services
         self.stoppedByStopAll = stoppedByStopAll
         self.lanAccess = lanAccess
+        self.newInstanceAccount = newInstanceAccount
+    }
+}
+
+// The root CA of Nexus. validUntil is nil when Nexus has no root CA yet. Nexus makes it for the
+// first site or at the first trust.
+public struct RootCertificateInfo: Codable, Sendable, Equatable {
+    public let trusted: Bool
+    public let validUntil: Date?
+    public let file: String
+
+    public init(trusted: Bool, validUntil: Date?, file: String) {
+        self.trusted = trusted
+        self.validUntil = validUntil
+        self.file = file
     }
 }
 
@@ -378,6 +395,7 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case install(name: String, line: String)
     case remove(name: String, line: String)
     case trust
+    case rootCertificate
     case certificate(hosts: [String])
     case hosts
     case addHost(String)
@@ -399,9 +417,12 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case customSettings(php: String)
     case setCustomSettings(php: String, lines: [String])
     case lan(enabled: Bool?)
+    // nil shows the dev TLD. Another value changes it.
+    case tld(String?)
     case databases
     case databaseSizes(instance: String)
     case setAccount(instance: String, account: DatabaseAccount)
+    case setNewInstanceAccount(DatabaseAccount)
     case copyDatabase(DatabaseCopy)
     // The databases on another server, read with the client of the instance.
     case sourceDatabases(source: DatabaseServer, instance: String)
@@ -420,6 +441,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case lines([String])
     case databases([DatabaseInstance])
     case databaseSizes([DatabaseSize])
+    case rootCertificate(RootCertificateInfo)
     case portInUse(PortConflict)
     case invalidSettings(PHPSettingsError)
     // A task that stopped because the user asked for it. The message says what changed.

@@ -69,9 +69,37 @@ struct PortHolder {
     let suggestedPort: Int
 }
 
+// The settings that only the app uses. nexusd keeps the others. A chosen app is the path of its
+// bundle. An added app is one that Nexus did not find itself.
 enum AppPreference {
     static let showInMenuBar = "showInMenuBar"
     static let showInDock = "showInDock"
+    static let notifyServiceStops = "notifyServiceStops"
+    static let notifyImportDone = "notifyImportDone"
+    static let checkPackageUpdates = "checkPackageUpdates"
+    static let installPackageUpdates = "installPackageUpdates"
+    static let terminalApp = "terminalApp"
+    static let editorApp = "editorApp"
+    static let addedTerminals = "addedTerminals"
+    static let addedEditors = "addedEditors"
+    static let addedDatabaseApps = "addedDatabaseApps"
+    static let mysqlApp = "mysqlApp"
+    static let postgresqlApp = "postgresqlApp"
+
+    static func registerDefaults() {
+        UserDefaults.standard.register(defaults: [
+            showInMenuBar: true,
+            showInDock: true,
+            notifyServiceStops: true,
+            notifyImportDone: true,
+            checkPackageUpdates: true,
+            installPackageUpdates: false,
+        ])
+    }
+
+    static func isOn(_ key: String) -> Bool {
+        UserDefaults.standard.bool(forKey: key)
+    }
 }
 
 // nexusd does not answer, or it sends events that this app cannot read. The second means that
@@ -84,6 +112,7 @@ enum NexusdProblem: Equatable {
 enum ActionPlace {
     case window
     case menuBar
+    case settings
 }
 
 enum RequestOutcome {
@@ -93,7 +122,7 @@ enum RequestOutcome {
 }
 
 // A request to nexusd that failed. The place decides where the app shows it: an alert in the
-// window, or a row in the menu bar panel.
+// window or in the settings, or a row in the menu bar panel.
 struct ActionFailure: Identifiable {
     let id = UUID()
     let title: String
@@ -110,20 +139,14 @@ struct AppSettings {
     var terminal = ""
     var editors: [AppChoice] = []
     var editor = ""
-    var notifyServiceStops = true
-    var notifyImportDone = true
     var defaultServer = "nginx"
     var defaultPHP = "newest"
-    var newInstanceAccount = DatabaseAccount(user: "root", password: "")
+    var newInstanceAccount = DatabaseAccount.newInstance
     var databaseApps: [AppChoice] = []
     var mysqlApp = ""
     var postgresqlApp = ""
     var tld = "test"
     var lanAccess = false
-    var caTrusted = true
-    var caValidUntil = ""
-    var checkPackageUpdates = true
-    var installPackageUpdates = false
 }
 
 // Everything that the screens show. Sample data fills it until each area is connected to nexusd.
@@ -174,6 +197,11 @@ final class AppModel {
     var importResults: [String: ImportResult] = [:]
     var commandSections: [CommandSection] = []
     var settings = AppSettings()
+    // Settings (part 6g). The dev TLD that nexusd changes to now, the root CA that nexusd
+    // reported last, and the answer of a finished uninstall.
+    var changingTLD: String?
+    var rootCertificate: RootCertificateInfo?
+    var uninstalled: String?
 
     @ObservationIgnored private(set) var client: NexusClient?
     @ObservationIgnored private var feed: NexusEventFeed?
@@ -182,6 +210,8 @@ final class AppModel {
     // A debug build with the launch argument --sample shows only sample data, for a check of
     // the screens against the design.
     static func forLaunch() -> AppModel {
+        AppPreference.registerDefaults()
+
         #if DEBUG
         if CommandLine.arguments.contains("--sample") {
             return sample()
@@ -189,6 +219,7 @@ final class AppModel {
         #endif
 
         let model = sample()
+        model.rootCertificate = nil
         model.services = []
         model.siteEntries = []
         model.settingsDrafts = [:]
@@ -365,7 +396,7 @@ final class AppModel {
         switching[Self.lanKey] = enabled
         finishedSwitches.remove(Self.lanKey)
 
-        send(.lan(enabled: enabled), failure: enabled ? "Other devices did not get access to the sites" : "Other devices still have access to the sites", place: .window) { [weak self] succeeded in
+        send(.lan(enabled: enabled), failure: enabled ? "Other devices did not get access to the sites" : "Other devices still have access to the sites", place: .settings) { [weak self] succeeded in
             self?.finishSwitch(Self.lanKey, succeeded: succeeded, current: self?.settings.lanAccess)
         }
     }
@@ -493,23 +524,21 @@ final class AppModel {
 
     // A database or Redis gets its new port at a start. So a running one starts again. nginx,
     // Apache and DNS move at once.
-    func changePort(_ port: ServicePort, of service: ServiceVersion, to number: Int) {
+    func changePort(_ port: ServicePort, of service: ServiceVersion, to number: Int, place: ActionPlace = .window) {
         Task {
-            guard await perform(.setPort(service: port.key, port: number), failure: "\(service.name) did not get port \(number)", place: .window) != nil else {
+            guard await perform(.setPort(service: port.key, port: number), failure: "\(service.name) did not get port \(number)", place: place) != nil else {
                 return
             }
 
             if service.isActive, service.kind.isDatabase || service.kind == .redis {
-                await perform(.restart(service: service.id), failure: "\(service.name) did not restart", place: .window)
+                await perform(.restart(service: service.id), failure: "\(service.name) did not restart", place: place)
             }
         }
     }
 
     func changeAccount(of service: ServiceVersion, to account: DatabaseAccount) {
-        let change = NexusCore.DatabaseAccount(user: account.user, password: account.password)
-
         Task {
-            guard await perform(.setAccount(instance: service.id, account: change), failure: "The account of \(service.name) did not change", place: .window) != nil else {
+            guard await perform(.setAccount(instance: service.id, account: account), failure: "The account of \(service.name) did not change", place: .window) != nil else {
                 return
             }
 
@@ -562,7 +591,8 @@ final class AppModel {
     }
 
     // Returns the answer, or nil when the request failed. A port in use opens its sheet in the
-    // window. The menu bar panel shows it from the next event.
+    // window. The menu bar panel shows it from the next event. The settings show the program
+    // that holds the port in an alert, because a new port in the settings starts no service.
     @discardableResult
     func perform(_ request: NexusRequest, failure title: String, place: ActionPlace) async -> NexusResponse? {
         switch await outcome(of: request) {
@@ -572,8 +602,13 @@ final class AppModel {
             failure = ActionFailure(title: title, message: message, place: place)
             return nil
         case .portInUse(let conflict):
-            if place == .window {
+            switch place {
+            case .window:
                 sheet = .portInUse(service: conflict.service, holder: PortHolder(conflict))
+            case .settings:
+                failure = ActionFailure(title: title, message: conflict.description, place: place)
+            case .menuBar:
+                break
             }
             return nil
         case nil:
@@ -647,10 +682,13 @@ final class AppModel {
         switch update {
         case .event(.services(let list)):
             nexusdProblem = nil
+            let previous = services
             let versions = Set(services.map { "\($0.id) \($0.version)" })
             services = list.services.compactMap(ServiceVersion.init).sorted(by: ServiceVersion.showsBefore)
             stoppedByStopAll = list.stoppedByStopAll
             settings.lanAccess = list.lanAccess ?? false
+            settings.newInstanceAccount = list.newInstanceAccount ?? settings.newInstanceAccount
+            notifyUnexpectedStops(from: previous)
 
             for id in finishedSwitches {
                 switching[id] = nil
@@ -659,8 +697,8 @@ final class AppModel {
 
             // The check at launch fails when nexusd does not answer yet. So an event of nexusd
             // checks again until one check works. Without a network that is at most once a
-            // minute.
-            if packagesChecked.isEmpty, lastPackageCheck.map({ Date.now.timeIntervalSince($0) > 60 }) ?? true {
+            // minute. Without the automatic check, only the installed packages load.
+            if packagesChecked.isEmpty, AppPreference.isOn(AppPreference.checkPackageUpdates), lastPackageCheck.map({ Date.now.timeIntervalSince($0) > 60 }) ?? true {
                 Task { await checkPackages() }
             } else if versions != Set(services.map { "\($0.id) \($0.version)" }) {
                 // The command line can install, update or remove a package too.

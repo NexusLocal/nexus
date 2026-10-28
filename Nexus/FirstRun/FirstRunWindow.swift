@@ -19,6 +19,8 @@ struct FirstRunWindow: View {
     }
 
     @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(AppModel.self) private var model
+    @Environment(BackgroundServices.self) private var background
     @State private var step = Step.packages
     @State private var selected: Set<String> = ["nginx 1.30", "PHP 8.5", "Composer"]
 
@@ -80,10 +82,12 @@ struct FirstRunWindow: View {
                     .foregroundStyle(Color.orangeText)
             }
 
+            // "Start Nexus at login" is on by default (D5). Settings > General changes it later.
             Button(step == .settings ? "Done" : "Continue") {
                 if let next = Step(rawValue: step.rawValue + 1) {
                     step = next
                 } else {
+                    background.login.setOn(model.settings.startAtLogin)
                     dismissWindow(id: Self.id)
                 }
             }

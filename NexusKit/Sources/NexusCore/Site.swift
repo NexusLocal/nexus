@@ -29,6 +29,13 @@ public struct Site: Codable, Sendable, Equatable {
         [host] + aliases
     }
 
+    public func movingTLD(from old: String, to new: String) -> Site {
+        var site = self
+        site.host = HostName.movingTLD(host, from: old, to: new)
+        site.aliases = aliases.map { HostName.movingTLD($0, from: old, to: new) }
+        return site
+    }
+
     // The document root is public/ when the folder has one, else the folder itself (D33).
     public var documentRoot: URL {
         let publicFolder = folder.appending(path: "public", directoryHint: .isDirectory)
@@ -129,6 +136,15 @@ extension SiteLayoutEntry {
         }
 
         return nil
+    }
+
+    public func movingTLD(from old: String, to new: String) -> SiteLayoutEntry {
+        switch self {
+        case .site(let host):
+            .site(HostName.movingTLD(host, from: old, to: new))
+        case .group(let name, let hosts):
+            .group(name: name, hosts: hosts.map { HostName.movingTLD($0, from: old, to: new) })
+        }
     }
 }
 

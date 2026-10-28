@@ -225,7 +225,7 @@ struct ImportDatabaseSheet: View {
             return
         }
 
-        let server = DatabaseServer(host: host, port: number, account: NexusCore.DatabaseAccount(user: user, password: password))
+        let server = DatabaseServer(host: host, port: number, account: DatabaseAccount(user: user, password: password))
         let result = await model.sourceDatabases(on: server, for: instance)
         guard !Task.isCancelled else {
             return
@@ -262,7 +262,7 @@ struct ImportDatabaseSheet: View {
         }
 
         let copyName = name.trimmingCharacters(in: .whitespaces)
-        let server = DatabaseServer(host: host, port: Int(port), account: NexusCore.DatabaseAccount(user: user, password: password))
+        let server = DatabaseServer(host: host, port: Int(port), account: DatabaseAccount(user: user, password: password))
         startedName = copyName
         model.startImport(DatabaseCopy(source: server, database: database, instance: instance, name: copyName, replace: replace))
     }

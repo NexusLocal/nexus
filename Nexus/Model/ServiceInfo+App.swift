@@ -60,7 +60,7 @@ extension ServiceVersion {
         ports = Self.ports(of: info)
         internalPort = info.name == "httpd"
         dataFolder = info.dataFolder.map { ($0 as NSString).abbreviatingWithTildeInPath }
-        account = info.account.map { DatabaseAccount(user: $0.user, password: $0.password) }
+        account = info.account
         logFile = info.logFile
         toggles = (info.toggles ?? []).map { ToggleItem(name: $0.name, enabled: $0.enabled, required: $0.required, help: $0.help ?? "") }
         customSettings = info.customSettings ?? []
@@ -85,9 +85,11 @@ extension ServiceVersion {
         case .restarting(let attempt):
             health = .attention
             activeWithProblem = true
+            stoppedUnexpectedly = true
             problem = ServiceProblem(summary: "Restarting", detail: "\(name) stopped without a request. Nexus starts it again, attempt \(attempt).")
         case .failed(let reason):
             health = .failed
+            stoppedUnexpectedly = true
             problem = ServiceProblem(summary: "Failed", detail: reason)
         }
     }
@@ -121,8 +123,7 @@ extension ServiceVersion {
             return nil
         }
 
-        let account = NexusCore.DatabaseAccount(user: account?.user ?? "root", password: account?.password ?? "")
-        return kind.url(port: port, account: account, database: database)
+        return kind.url(port: port, account: account ?? .newInstance, database: database)
     }
 
     private static func ports(of info: ServiceInfo) -> [ServicePort] {

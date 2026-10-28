@@ -1,4 +1,6 @@
 import Foundation
+import NexusCore
+import NexusIPC
 
 extension AppModel {
     static func sample() -> AppModel {
@@ -13,6 +15,7 @@ extension AppModel {
         model.packagesChecked = "08:55"
         model.commandSections = sampleCommands
         model.settings = sampleSettings
+        model.rootCertificate = sampleRootCertificate
         model.settingsDrafts["php-8.4"] = [
             "memory_limit = 512M",
             "upload_max_filesize = 64M",
@@ -382,7 +385,11 @@ extension AppModel {
         ]
         settings.mysqlApp = "TablePlus"
         settings.postgresqlApp = "TablePlus"
-        settings.caValidUntil = "2036-10-26"
         return settings
+    }
+
+    private static var sampleRootCertificate: RootCertificateInfo {
+        let validUntil = DateComponents(calendar: .current, year: 2036, month: 10, day: 26).date
+        return RootCertificateInfo(trusted: true, validUntil: validUntil, file: "~/Library/Application Support/Nexus/certs/nexus-root-ca.pem")
     }
 }

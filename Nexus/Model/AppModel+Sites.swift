@@ -39,21 +39,18 @@ enum KnownApps {
     static func installed(_ bundleIdentifiers: [String]) -> [AppChoice] {
         bundleIdentifiers.compactMap { identifier in
             NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier).map {
-                AppChoice(name: $0.deletingPathExtension().lastPathComponent, location: $0)
+                AppChoice(name: name(of: $0), location: $0)
             }
         }
+    }
+
+    static func name(of app: URL) -> String {
+        FileManager.default.displayName(atPath: app.path(percentEncoded: false)).replacingOccurrences(of: ".app", with: "")
     }
 }
 
 // The sites, the groups and the folders of projects (step 6, part 6e).
 extension AppModel {
-    func findApps() {
-        settings.terminals = KnownApps.installed(KnownApps.terminals)
-        settings.terminal = settings.terminals.first?.name ?? ""
-        settings.editors = KnownApps.installed(KnownApps.editors)
-        settings.editor = settings.editors.first?.name ?? ""
-    }
-
     var terminalApp: AppChoice? {
         settings.terminals.first { $0.name == settings.terminal }
     }
@@ -116,8 +113,17 @@ extension AppModel {
         }
 
         siteLayout = layout
-        settings.tld = list.tld
+        useTLD(list.tld)
         siteEntries = entries
+    }
+
+    // A new dev TLD renames the open site too, so its screen stays open.
+    func useTLD(_ tld: String) {
+        if case .site(let host) = selection, tld != settings.tld {
+            selection = .site(HostName.movingTLD(host, from: settings.tld, to: tld))
+        }
+
+        settings.tld = tld
     }
 
     // A site runs when nginx, its PHP version and for an Apache site Apache run.

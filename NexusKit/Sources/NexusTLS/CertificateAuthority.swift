@@ -116,7 +116,11 @@ public struct CertificateAuthority: Sendable {
             return false
         }
 
-        return store.isTrusted(root.secCertificate)
+        return isTrusted(root)
+    }
+
+    public func isTrusted(_ root: RootCertificate) -> Bool {
+        store.isTrusted(root.secCertificate)
     }
 
     // macOS asks for the password of the user before it changes a trust setting.

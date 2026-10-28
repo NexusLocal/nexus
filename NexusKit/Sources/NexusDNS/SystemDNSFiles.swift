@@ -47,13 +47,21 @@ public struct SystemDNSFiles: Sendable {
         self.hostsFile = hostsFile
     }
 
-    // Both files are readable by every user, so nexusd can check this without the helper.
-    public func hasNexusChanges(tld: String) -> Bool {
+    // Both files are readable by every user, so nexusd can check them without the helper.
+    public func hasNexusResolver(tld: String) -> Bool {
         let resolver = try? String(contentsOf: resolverFile(for: tld.lowercased()), encoding: .utf8)
-        let hosts = try? String(contentsOf: hostsFile, encoding: .utf8)
-
         return resolver?.hasPrefix(Self.resolverMarker) == true
-            || hosts?.components(separatedBy: "\n").contains(Self.hostsBegin) == true
+    }
+
+    public var hasNexusHosts: Bool {
+        let hosts = try? String(contentsOf: hostsFile, encoding: .utf8)
+        return hosts?.components(separatedBy: "\n").contains(Self.hostsBegin) == true
+    }
+
+    // The dev TLDs that have a resolver file of Nexus. After a change of the dev TLD, the file of
+    // the old one stays until the helper removes it.
+    public var nexusResolvers: [String] {
+        HostName.devTLDs.sorted().filter { hasNexusResolver(tld: $0) }
     }
 
     public static func resolverContents(port: Int) -> String {

@@ -1,9 +1,12 @@
 import NexusCore
+import NexusIPC
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsWindow: View {
     static let tabKey = "settingsTab"
 
+    @Environment(AppModel.self) private var model
     @AppStorage(tabKey) private var tab = "general"
 
     var body: some View {
@@ -37,20 +40,41 @@ struct SettingsWindow: View {
             }
         }
         .frame(width: 640)
+        .alert(settingsFailure?.title ?? "", isPresented: showsFailure, presenting: settingsFailure) { _ in
+            Button("OK") {}
+        } message: { failure in
+            Text(failure.message)
+        }
+    }
+
+    private var settingsFailure: ActionFailure? {
+        model.failure.flatMap { $0.place == .settings ? $0 : nil }
+    }
+
+    private var showsFailure: Binding<Bool> {
+        Binding(
+            get: { settingsFailure != nil },
+            set: { shown in
+                if !shown {
+                    model.failure = nil
+                }
+            }
+        )
     }
 }
 
 private struct GeneralSettings: View {
     @Environment(AppModel.self) private var model
+    @Environment(BackgroundServices.self) private var background
     @AppStorage(AppPreference.showInMenuBar) private var showInMenuBar = true
     @AppStorage(AppPreference.showInDock) private var showInDock = true
+    @AppStorage(AppPreference.notifyServiceStops) private var notifyServiceStops = true
+    @AppStorage(AppPreference.notifyImportDone) private var notifyImportDone = true
 
     var body: some View {
-        @Bindable var model = model
-
         Form {
             Section {
-                Toggle("Start Nexus at login", isOn: $model.settings.startAtLogin)
+                Toggle("Start Nexus at login", isOn: Binding(get: { background.login.isOn }, set: { background.login.setOn($0) }))
                 Toggle("Show Nexus in the menu bar", isOn: $showInMenuBar)
                     .disabled(!showInDock)
                 Toggle("Show Nexus in the Dock", isOn: $showInDock)
@@ -58,12 +82,33 @@ private struct GeneralSettings: View {
             } header: {
                 Text("Start")
             } footer: {
-                Text("One of the two always stays on. Without the Dock icon, open Nexus from the menu bar.")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("One of the two always stays on. Without the Dock icon, open Nexus from the menu bar.")
+
+                    if background.login.needsApproval {
+                        Text("Turn on Nexus in System Settings > General > Login Items & Extensions. Then Nexus starts at login.")
+                            .foregroundStyle(Color.orangeText)
+                    }
+
+                    if let error = background.login.lastError {
+                        Text(error)
+                            .foregroundStyle(Color.orangeText)
+                    }
+                }
             }
 
             Section {
-                AppPicker(title: "Terminal", systemImage: "apple.terminal", apps: model.settings.terminals, selection: $model.settings.terminal)
-                AppPicker(title: "Code editor", systemImage: "chevron.left.forwardslash.chevron.right", apps: model.settings.editors, selection: $model.settings.editor)
+                AppPicker(title: "Terminal", systemImage: "apple.terminal", apps: model.settings.terminals, selection: model.settings.terminal) {
+                    model.chooseTerminal($0)
+                } add: {
+                    model.addApp($0, as: .terminal)
+                }
+
+                AppPicker(title: "Code editor", systemImage: "chevron.left.forwardslash.chevron.right", apps: model.settings.editors, selection: model.settings.editor) {
+                    model.chooseEditor($0)
+                } add: {
+                    model.addApp($0, as: .editor)
+                }
             } header: {
                 Text("Apps")
             } footer: {
@@ -71,29 +116,50 @@ private struct GeneralSettings: View {
             }
 
             Section("Notifications") {
-                Toggle("When a service stops or fails", isOn: $model.settings.notifyServiceStops)
-                Toggle("When an import is done", isOn: $model.settings.notifyImportDone)
+                Toggle("When a service stops or fails", isOn: $notifyServiceStops)
+                Toggle("When an import is done", isOn: $notifyImportDone)
             }
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
         .fixedSize(horizontal: false, vertical: true)
+        .onChange(of: notifyServiceStops || notifyImportDone) {
+            if notifyServiceStops || notifyImportDone {
+                Notifier.requestPermission()
+            }
+        }
+        .onAppear {
+            background.refresh()
+
+            if model.isLive {
+                model.findApps()
+            }
+        }
     }
 }
 
+// "Choose another app…" opens a file dialog. The chosen app joins the list and becomes the
+// selected app.
 private struct AppPicker: View {
     let title: String
     let systemImage: String
     let apps: [AppChoice]
-    @Binding var selection: String
+    let selection: String
+    let choose: (String) -> Void
+    let add: (URL) -> Void
+    @State private var choosesApp = false
 
-    // "Choose another app…" adds an app that Nexus did not find. It never becomes the selected app.
+    // Its own tag, so it also opens the file dialog when no app is selected.
+    private static let chooseAnotherTag = "\u{1}choose"
+
     private var chosenApp: Binding<String> {
         Binding(
             get: { selection },
             set: { name in
-                if !name.isEmpty {
-                    selection = name
+                if name == Self.chooseAnotherTag {
+                    choosesApp = true
+                } else if !name.isEmpty {
+                    choose(name)
                 }
             }
         )
@@ -101,6 +167,11 @@ private struct AppPicker: View {
 
     var body: some View {
         Picker(title, selection: chosenApp) {
+            if selection.isEmpty {
+                Text("None")
+                    .tag("")
+            }
+
             ForEach(apps) { app in
                 Label(app.name, systemImage: systemImage)
                     .tag(app.name)
@@ -109,8 +180,20 @@ private struct AppPicker: View {
             Divider()
 
             Text("Choose another app…")
-                .tag("")
+                .tag(Self.chooseAnotherTag)
         }
+        .appChooser(isPresented: $choosesApp, add: add)
+    }
+}
+
+private extension View {
+    func appChooser(isPresented: Binding<Bool>, add: @escaping (URL) -> Void) -> some View {
+        fileImporter(isPresented: isPresented, allowedContentTypes: [.applicationBundle]) { result in
+            if case .success(let app) = result {
+                add(app)
+            }
+        }
+        .fileDialogDefaultDirectory(URL(filePath: "/Applications", directoryHint: .isDirectory))
     }
 }
 
@@ -166,14 +249,28 @@ private struct SitesSettings: View {
 
 private struct DatabasesSettings: View {
     @Environment(AppModel.self) private var model
+    @State private var editedUser: String?
+    @State private var editedPassword: String?
+    @State private var selectedApp: String?
+    @State private var addsApp = false
+
+    private var account: DatabaseAccount {
+        model.settings.newInstanceAccount
+    }
+
+    private var isChanged: Bool {
+        (editedUser ?? account.user) != account.user || (editedPassword ?? account.password) != account.password
+    }
+
+    private var removableApp: AppChoice? {
+        model.settings.databaseApps.first { $0.name == selectedApp && $0.added }
+    }
 
     var body: some View {
-        @Bindable var model = model
-
         Form {
             Section {
                 LabeledContent("User") {
-                    TextField("User", text: $model.settings.newInstanceAccount.user)
+                    TextField("User", text: Binding(get: { editedUser ?? account.user }, set: { editedUser = $0 }))
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .multilineTextAlignment(.leading)
@@ -182,11 +279,17 @@ private struct DatabasesSettings: View {
                 }
 
                 LabeledContent("Password") {
-                    SecureField("Password", text: $model.settings.newInstanceAccount.password, prompt: Text("No password"))
-                        .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
-                        .multilineTextAlignment(.leading)
-                        .frame(width: 180)
+                    HStack {
+                        SecureField("Password", text: Binding(get: { editedPassword ?? account.password }, set: { editedPassword = $0 }), prompt: Text("No password"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.leading)
+                            .frame(width: 180)
+                        Button("Change") {
+                            model.setNewInstanceAccount(DatabaseAccount(user: editedUser ?? account.user, password: editedPassword ?? account.password))
+                        }
+                        .disabled(!isChanged)
+                    }
                 }
             } header: {
                 Text("New instances")
@@ -202,22 +305,41 @@ private struct DatabasesSettings: View {
                     } label: {
                         Label(app.name, systemImage: "cylinder.split.1x2")
                     }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(selectedApp == app.name ? Color.accentSoft : .clear, in: .rect(cornerRadius: 6))
+                    .padding(.horizontal, -8)
+                    .padding(.vertical, -4)
+                    .contentShape(.rect)
+                    .onTapGesture {
+                        selectedApp = selectedApp == app.name ? nil : app.name
+                    }
                 }
 
-                ListButtons()
+                ListButtons(canRemove: removableApp != nil) {
+                    addsApp = true
+                } remove: {
+                    if let removableApp {
+                        model.removeDatabaseApp(removableApp)
+                        selectedApp = nil
+                    }
+                }
+                .appChooser(isPresented: $addsApp) {
+                    model.addApp($0, as: .database)
+                }
             } header: {
                 Text("Database apps")
             } footer: {
-                Text("Nexus finds the database apps on this Mac. Click + to add an app that Nexus did not find.")
+                Text("Nexus finds the database apps on this Mac. Click + to add an app that Nexus did not find. Select an app that you added to remove it with −.")
             }
 
             Section {
-                Picker("MySQL and MariaDB", selection: $model.settings.mysqlApp) {
-                    ForEach(model.settings.databaseApps.filter { $0.canOpen(.mysql) }) { Text($0.name).tag($0.name) }
+                Picker("MySQL and MariaDB", selection: Binding(get: { model.settings.mysqlApp }, set: { model.chooseDatabaseApp($0, for: .mysql) })) {
+                    ForEach(model.databaseApps(for: .mysql)) { Text($0.name).tag($0.name) }
                 }
 
-                Picker("PostgreSQL", selection: $model.settings.postgresqlApp) {
-                    ForEach(model.settings.databaseApps.filter { $0.canOpen(.postgresql) }) { Text($0.name).tag($0.name) }
+                Picker("PostgreSQL", selection: Binding(get: { model.settings.postgresqlApp }, set: { model.chooseDatabaseApp($0, for: .postgresql) })) {
+                    ForEach(model.databaseApps(for: .postgresql)) { Text($0.name).tag($0.name) }
                 }
             } header: {
                 Text("Open with")
@@ -227,38 +349,76 @@ private struct DatabasesSettings: View {
         }
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)
+        // The fields keep a refused account, so the user can correct it.
+        .onChange(of: account) {
+            editedUser = nil
+            editedPassword = nil
+        }
+        .onAppear {
+            if model.isLive {
+                model.findApps()
+            }
+        }
     }
 }
 
 // The + and − of a list sit at the bottom right (owner).
 struct ListButtons: View {
+    var canRemove = true
+    let add: () -> Void
+    let remove: () -> Void
+
     var body: some View {
         HStack(spacing: 12) {
             Spacer()
-            Button {
-            } label: {
+            Button(action: add) {
                 Image(systemName: "plus")
             }
-            Button {
-            } label: {
+            .help("Add")
+            Button(action: remove) {
                 Image(systemName: "minus")
             }
+            .help("Remove")
+            .disabled(!canRemove)
         }
         .buttonStyle(.borderless)
     }
 }
 
+// One row of the port list. The names of the ports repeat, for example "Port" of each database.
+// So the id names the service too. With the name alone, every database row showed the first
+// database.
+private struct PortLine: Identifiable {
+    let service: ServiceVersion
+    let port: ServicePort
+
+    var id: String {
+        "\(service.id) \(port.name)"
+    }
+}
+
 private struct NetworkSettings: View {
     @Environment(AppModel.self) private var model
+    @State private var newTLD: String?
+
+    private var tld: Binding<String> {
+        Binding(
+            get: { model.changingTLD ?? model.settings.tld },
+            set: { value in
+                if value != model.settings.tld {
+                    newTLD = value
+                }
+            }
+        )
+    }
 
     var body: some View {
-        @Bindable var model = model
-
         Form {
             Section {
-                Picker("Domain for sites", selection: $model.settings.tld) {
+                Picker("Domain for sites", selection: tld) {
                     ForEach(AppSettings.devDomains, id: \.self) { Text(".\($0)").tag($0) }
                 }
+                .disabled(model.changingTLD != nil)
 
                 Toggle("Allow other devices on the network", isOn: Binding(get: { model.isLANAccessOn }, set: { model.setLANAccess($0) }))
                     .toggleStyle(.switch)
@@ -269,11 +429,9 @@ private struct NetworkSettings: View {
             }
 
             Section {
-                ForEach($model.services) { $service in
-                    ForEach($service.ports) { $port in
-                        LabeledContent(portTitle(service: service, port: port)) {
-                            PortField(port: $port.number)
-                        }
+                ForEach(model.services.flatMap { service in service.ports.map { PortLine(service: service, port: $0) } }) { row in
+                    PortRow(title: portTitle(service: row.service, port: row.port), port: row.port.number) {
+                        model.changePort(row.port, of: row.service, to: $0, place: .settings)
                     }
                 }
             } header: {
@@ -284,6 +442,22 @@ private struct NetworkSettings: View {
         }
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)
+        .alert("Change the domain to .\(newTLD ?? "")?", isPresented: Binding(get: { newTLD != nil }, set: { if !$0 { newTLD = nil } }), presenting: newTLD) { tld in
+            Button("Change") {
+                model.changeTLD(to: tld)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { tld in
+            Text(tldChange(to: tld))
+        }
+    }
+
+    private func tldChange(to tld: String) -> String {
+        let example = model.allSites.map(\.host).first { $0.hasSuffix(".\(model.settings.tld)") }
+            .map { "\($0) becomes \(HostName.movingTLD($0, from: model.settings.tld, to: tld))" }
+            ?? "shop.\(model.settings.tld) becomes shop.\(tld)"
+
+        return "Every site gets a new name: \(example). The old names stop working. Change APP_URL in the .env file of each site yourself."
     }
 
     private func portTitle(service: ServiceVersion, port: ServicePort) -> String {
@@ -298,30 +472,45 @@ private struct NetworkSettings: View {
 private struct CertificatesSettings: View {
     @Environment(AppModel.self) private var model
 
+    private var certificateFile: String? {
+        model.rootCertificate.flatMap { info in
+            FileManager.default.fileExists(atPath: (info.file as NSString).expandingTildeInPath) ? info.file : nil
+        }
+    }
+
     var body: some View {
         Form {
             Section {
                 LabeledContent("Nexus Root CA") {
-                    if model.settings.caTrusted {
-                        Label("Trusted · valid until \(model.settings.caValidUntil)", systemImage: "checkmark.circle")
+                    if let info = model.rootCertificate, info.trusted {
+                        Label("Trusted · valid until \(info.validUntil?.formatted(Date.ISO8601FormatStyle(timeZone: .current).year().month().day()) ?? "")", systemImage: "checkmark.circle")
                             .foregroundStyle(.secondary)
                     } else {
-                        Button("Trust…") {}
+                        Button("Trust…") {
+                            model.trustRootCertificate()
+                        }
                     }
                 }
 
                 LabeledContent("Certificate file") {
-                    Button("Show in Finder") {}
+                    Button("Show in Finder") {
+                        if let certificateFile {
+                            model.showInFinder(certificateFile)
+                        }
+                    }
+                    .disabled(certificateFile == nil)
                 }
 
                 LabeledContent("Keychain") {
-                    Button("Open Keychain Access") {}
+                    Button("Open Keychain Access") {
+                        model.openKeychainAccess()
+                    }
                 }
             } header: {
                 Text("Root certificate")
             } footer: {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Nexus signs a certificate for each site with this root certificate. Its private key stays in your login keychain.")
+                    Text("Nexus signs a certificate for each site with this root certificate. Its private key stays in your login keychain. macOS asks for your password when you trust it.")
                     InfoBanner(text: "Firefox uses its own certificate list. In Firefox, open Settings > Privacy & Security > View Certificates > Authorities > Import, and choose the certificate file.")
                         .foregroundStyle(.primary)
                 }
@@ -329,39 +518,56 @@ private struct CertificatesSettings: View {
         }
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)
+        .task {
+            await model.loadRootCertificate()
+        }
     }
 }
 
 private struct UpdatesSettings: View {
     @Environment(AppModel.self) private var model
+    @AppStorage(AppPreference.checkPackageUpdates) private var checkPackageUpdates = true
+    @AppStorage(AppPreference.installPackageUpdates) private var installPackageUpdates = false
 
     var body: some View {
-        @Bindable var model = model
-
         Form {
             Section {
-                Toggle("Check for package updates automatically", isOn: $model.settings.checkPackageUpdates)
-                Toggle("Install package updates automatically", isOn: $model.settings.installPackageUpdates)
+                Toggle("Check for package updates automatically", isOn: $checkPackageUpdates)
+                Toggle("Install package updates automatically", isOn: $installPackageUpdates)
             } header: {
                 Text("Packages")
             } footer: {
-                Text("An update of a package keeps its data. Nexus restarts the service after the update.")
+                Text("Nexus checks at launch and once a day. An update of a package keeps its data. Nexus restarts the service after the update.")
             }
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
         .fixedSize(horizontal: false, vertical: true)
+        .onChange(of: checkPackageUpdates) {
+            if checkPackageUpdates {
+                Task { await model.checkPackages() }
+            }
+        }
+        .onChange(of: installPackageUpdates) {
+            if installPackageUpdates {
+                model.installUpdates()
+            }
+        }
     }
 }
 
 private struct AdvancedSettings: View {
+    @Environment(AppModel.self) private var model
     @Environment(BackgroundServices.self) private var background
+    @State private var confirmsUninstall = false
+
+    private let paths = NexusPaths.standard
 
     var body: some View {
         Form {
             Section("Folders") {
-                folderRow("Data", path: "~/Library/Application Support/Nexus")
-                folderRow("Logs", path: "~/Library/Application Support/Nexus/logs")
+                folderRow("Data", folder: paths.root)
+                folderRow("Logs", folder: paths.logs)
             }
 
             Section {
@@ -380,17 +586,19 @@ private struct AdvancedSettings: View {
             } header: {
                 Text("Background items")
             } footer: {
-                Text("nexusd runs the services. The helper writes /etc/resolver/test and the lines in /etc/hosts.")
+                Text("nexusd runs the services. The helper writes /etc/resolver/\(model.settings.tld) and the lines in /etc/hosts.")
             }
 
             Section {
                 LabeledContent("Remove Nexus from this Mac") {
-                    Button("Uninstall…") {}
+                    Button("Uninstall…") {
+                        confirmsUninstall = true
+                    }
                 }
             } header: {
                 Text("Uninstall")
             } footer: {
-                Text("Stops all services and removes the helper, the resolver file and the lines in /etc/hosts. Your sites, data folder and databases stay on disk.")
+                Text("Stops all services and removes the helper, the resolver file, the lines in /etc/hosts and the root CA. Your sites, data folder and databases stay on disk.")
             }
         }
         .formStyle(.grouped)
@@ -398,13 +606,32 @@ private struct AdvancedSettings: View {
         .onAppear {
             background.refresh()
         }
+        .alert("Remove Nexus from this Mac?", isPresented: $confirmsUninstall) {
+            Button("Uninstall", role: .destructive) {
+                model.uninstall()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Nexus stops all services. It removes the helper, the resolver file, the lines in /etc/hosts and the root CA. Your sites, the data folder and the databases stay on disk.")
+        }
+        .alert("Nexus is removed", isPresented: Binding(get: { model.uninstalled != nil }, set: { if !$0 { model.uninstalled = nil } }), presenting: model.uninstalled) { _ in
+            Button("Quit Nexus") {
+                NSApplication.shared.terminate(nil)
+            }
+        } message: { message in
+            Text(message)
+        }
     }
 
-    private func folderRow(_ title: String, path: String) -> some View {
-        LabeledContent(title) {
+    private func folderRow(_ title: String, folder: URL) -> some View {
+        let path = ((folder.path(percentEncoded: false) as NSString).standardizingPath as NSString).abbreviatingWithTildeInPath
+
+        return LabeledContent(title) {
             HStack {
                 PathText(path)
-                Button("Show in Finder") {}
+                Button("Show in Finder") {
+                    model.showInFinder(path)
+                }
             }
         }
     }

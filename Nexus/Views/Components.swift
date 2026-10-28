@@ -114,7 +114,8 @@ extension View {
     }
 }
 
-// The field keeps the new number until "Change" sends it. A new port from nexusd then shows.
+// The field keeps the new number until nexusd sends the new port. A refused port stays in the
+// field, so the user can correct it.
 struct PortRow: View {
     let title: String
     let port: Int
@@ -129,7 +130,6 @@ struct PortRow: View {
                     if let newPort {
                         change(newPort)
                     }
-                    newPort = nil
                 }
                 .disabled(newPort == nil || newPort == port)
             }
@@ -382,8 +382,9 @@ nonisolated enum LogTail {
     }
 }
 
-// The database apps are the installed apps that macOS knows for the link (D36). The primary
-// action uses the app of Settings > Databases when it is installed, else the default of macOS.
+// The database apps are the apps of Settings > Databases that open this kind (D36): the apps
+// that macOS knows for the link, and the apps that the user added. The primary action uses the
+// app of "Open with".
 struct OpenDatabaseButton: View {
     @Environment(AppModel.self) private var model
     let kind: ServiceKind
@@ -394,13 +395,13 @@ struct OpenDatabaseButton: View {
     }
 
     var body: some View {
-        let apps = url.map { NSWorkspace.shared.urlsForApplications(toOpen: $0) } ?? []
-        let primaryApp = apps.first { appName($0) == chosenApp } ?? url.flatMap { NSWorkspace.shared.urlForApplication(toOpen: $0) }
+        let apps = model.databaseApps(for: kind)
+        let primaryApp = apps.first { $0.name == chosenApp } ?? apps.first
 
         Menu("Open") {
             Section("Open with") {
-                ForEach(apps, id: \.self) { app in
-                    Button(app == primaryApp ? "\(appName(app)) (default)" : appName(app), systemImage: "cylinder.split.1x2") {
+                ForEach(apps) { app in
+                    Button(app == primaryApp ? "\(app.name) (default)" : app.name, systemImage: "cylinder.split.1x2") {
                         open(with: app)
                     }
                 }
@@ -422,16 +423,12 @@ struct OpenDatabaseButton: View {
         .disabled(url == nil)
     }
 
-    private func appName(_ app: URL) -> String {
-        FileManager.default.displayName(atPath: app.path(percentEncoded: false)).replacingOccurrences(of: ".app", with: "")
-    }
-
-    private func open(with app: URL) {
-        guard let url else {
+    private func open(with app: AppChoice) {
+        guard let url, let location = app.location else {
             return
         }
 
-        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+        NSWorkspace.shared.open([url], withApplicationAt: location, configuration: NSWorkspace.OpenConfiguration())
     }
 }
 

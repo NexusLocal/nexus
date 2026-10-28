@@ -52,6 +52,16 @@ public enum HostName {
         return host
     }
 
+    // A name in the old dev TLD gets the new one: shop.test becomes shop.internal. Another name,
+    // for example blog.local, stays as it is.
+    public static func movingTLD(_ host: String, from old: String, to new: String) -> String {
+        guard host.hasSuffix(".\(old)") else {
+            return host
+        }
+
+        return "\(host.dropLast(old.count))\(new)"
+    }
+
     // Makes a DNS label from a folder name: "My Shop_2" becomes "my-shop-2".
     public static func label(from name: String) -> String {
         let lowered = name.lowercased().map { character -> Character in
