@@ -103,9 +103,14 @@ struct NexusEventFeedTests {
             ],"stoppedByStopAll":["redis-8.2"]}}}
             """#
         let toggle = #"{"name":"xdebug","enabled":false,"required":false}"#
+        let site = #"""
+            {"hosts":["shop.test"],"folder":"/Sites/shop","documentRoot":"/Sites/shop/public","php":"8.5",
+             "server":"nginx","parked":true,"url":"https://shop.test"}
+            """#
 
         let event = try NexusMessageCoding.decode(NexusEvent.self, from: Data(old.utf8))
         let oldToggle = try NexusMessageCoding.decode(Toggle.self, from: Data(toggle.utf8))
+        let oldSite = try NexusMessageCoding.decode(SiteInfo.self, from: Data(site.utf8))
 
         guard case .services(let list) = event else {
             Issue.record("no service list")
@@ -115,6 +120,18 @@ struct NexusEventFeedTests {
         #expect(list.services.first?.toggles == nil)
         #expect(list.lanAccess == nil)
         #expect(oldToggle.help == nil)
+        #expect(oldSite.group == nil)
+        #expect(oldSite.parkedFolder == nil)
+        #expect(oldSite.problem == nil)
+    }
+
+    // An app of part 6e sends the group. An app before it does not.
+    @Test func anAddSiteRequestWithoutAGroupStillReads() throws {
+        let old = #"{"addSite":{"folder":"/Sites/shop","aliases":[],"php":"8.5"}}"#
+
+        let request = try NexusMessageCoding.decode(NexusRequest.self, from: Data(old.utf8))
+
+        #expect(request == .addSite(folder: "/Sites/shop", host: nil, aliases: [], php: "8.5", server: nil, group: nil))
     }
 
     @Test func anEventThatTheAppCannotReadShowsAProblem() async {

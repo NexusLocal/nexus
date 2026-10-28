@@ -104,6 +104,9 @@ public actor ProcessSupervisor {
         services[id] = managed
 
         guard let process = managed.process, process.isRunning else {
+            if let ended = managed.process {
+                endProcessGroup(of: ended)
+            }
             markStopped(id)
             return
         }
@@ -119,7 +122,25 @@ public actor ProcessSupervisor {
             kill(process.processIdentifier, SIGKILL)
         }
 
+        endProcessGroup(of: process)
         markStopped(id)
+    }
+
+    // Process starts each service in its own process group. Workers that stay after the main
+    // process ended, for example the workers of a php-fpm that got SIGKILL, keep the port or the
+    // socket of the service. Then each new start fails.
+    // macOS gives the number of a process to no new process while that process is not collected,
+    // or while a group with that number has processes. So the group is still the group of the
+    // service when the main process is not collected yet, or when no process has its number.
+    // When another process has the number, the group of the service has no processes left.
+    private func endProcessGroup(of process: Process) {
+        let pid = process.processIdentifier
+
+        guard process.isRunning || kill(pid, 0) == -1 && errno == ESRCH else {
+            return
+        }
+
+        kill(-pid, SIGKILL)
     }
 
     // The services stop at the same time, so a database that writes its data to disk does not
@@ -212,11 +233,12 @@ public actor ProcessSupervisor {
     }
 
     private func handleExit(of id: String, pid: Int32, status: Int32) async {
-        guard var managed = services[id], managed.process?.processIdentifier == pid else {
+        guard var managed = services[id], let process = managed.process, process.processIdentifier == pid else {
             return
         }
 
         managed.process = nil
+        endProcessGroup(of: process)
 
         if managed.stopping {
             managed.state = .stopped

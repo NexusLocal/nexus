@@ -1,3 +1,4 @@
+import NexusCore
 import SwiftUI
 
 struct SettingsWindow: View {
@@ -116,17 +117,39 @@ private struct AppPicker: View {
 private struct SitesSettings: View {
     @Environment(AppModel.self) private var model
 
-    var body: some View {
-        @Bindable var model = model
+    // nexusd keeps the defaults (D59). "newest" stands for a PHP version of nil. A default that
+    // is not installed anymore gives the newest version, in nexusd too.
+    private var server: Binding<String> {
+        Binding(
+            get: { model.siteDefaults.server.rawValue },
+            set: { value in
+                var defaults = model.siteDefaults
+                defaults.server = WebServer(rawValue: value) ?? .nginx
+                model.setSiteDefaults(defaults)
+            }
+        )
+    }
 
+    private var php: Binding<String> {
+        Binding(
+            get: { model.siteDefaults.php.flatMap { model.installedPHPVersions.contains($0) ? $0 : nil } ?? "newest" },
+            set: { value in
+                var defaults = model.siteDefaults
+                defaults.php = value == "newest" ? nil : value
+                model.setSiteDefaults(defaults)
+            }
+        )
+    }
+
+    var body: some View {
         Form {
             Section {
-                Picker("Webserver", selection: $model.settings.defaultServer) {
-                    Text("nginx").tag("nginx")
-                    Text("Apache").tag("apache")
+                Picker("Webserver", selection: server) {
+                    Text("nginx").tag(WebServer.nginx.rawValue)
+                    Text("Apache").tag(WebServer.apache.rawValue)
                 }
 
-                Picker("PHP", selection: $model.settings.defaultPHP) {
+                Picker("PHP", selection: php) {
                     Text("Newest installed").tag("newest")
                     ForEach(model.installedPHPVersions, id: \.self) { Text("PHP \($0)").tag($0) }
                 }

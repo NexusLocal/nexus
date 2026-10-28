@@ -27,7 +27,7 @@ enum DebugLaunch {
         }
 
         switch value(of: "--sheet") {
-        case "add-site": model.sheet = .addSite
+        case "add-site": model.sheet = .addSite(folder: URL(filePath: NSHomeDirectory()).appending(path: "Documents/clients/acme"), manyProjects: false)
         case "import": model.sheet = .importDatabase(instance: "mysql-8.0")
         case "port":
             if let blocked = model.blockedService {

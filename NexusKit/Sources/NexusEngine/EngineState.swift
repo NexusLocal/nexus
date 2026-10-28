@@ -27,6 +27,8 @@ public struct EngineState: Codable, Sendable, Equatable {
     public var hosts: Set<String> = []
     public var sites: [Site] = []
     public var parked: [ParkedFolder] = []
+    public var siteDefaults = SiteDefaults()
+    public var siteLayout: [SiteLayoutEntry] = []
     public var lanAccess = false
     // A PHP version without an entry uses PHPConfig.defaultExtensions.
     public var phpExtensions: [String: Set<String>] = [:]
@@ -56,6 +58,8 @@ public struct EngineState: Codable, Sendable, Equatable {
         hosts = try container.decodeIfPresent(Set<String>.self, forKey: .hosts) ?? defaults.hosts
         sites = try container.decodeIfPresent([Site].self, forKey: .sites) ?? defaults.sites
         parked = try container.decodeIfPresent([ParkedFolder].self, forKey: .parked) ?? defaults.parked
+        siteDefaults = try container.decodeIfPresent(SiteDefaults.self, forKey: .siteDefaults) ?? defaults.siteDefaults
+        siteLayout = try container.decodeIfPresent([SiteLayoutEntry].self, forKey: .siteLayout) ?? defaults.siteLayout
         lanAccess = try container.decodeIfPresent(Bool.self, forKey: .lanAccess) ?? defaults.lanAccess
         phpExtensions = try container.decodeIfPresent([String: Set<String>].self, forKey: .phpExtensions) ?? defaults.phpExtensions
         phpCustomSettings = try container.decodeIfPresent([String: [String]].self, forKey: .phpCustomSettings) ?? defaults.phpCustomSettings

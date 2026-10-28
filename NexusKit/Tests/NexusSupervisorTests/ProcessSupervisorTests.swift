@@ -44,6 +44,29 @@ struct ProcessSupervisorTests {
         return nil
     }
 
+    @Test(arguments: [false, true])
+    func theWorkersOfAServiceEndWithItsMainProcess(stoppedByTheSupervisor: Bool) async throws {
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let childFile = logs.appending(path: "child-\(stoppedByTheSupervisor).pid")
+        let script = "/bin/sleep 300 & echo $! > '\(childFile.path(percentEncoded: false))'; trap '' TERM; wait"
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        try await supervisor.start(definition("master", executable: "/bin/sh", arguments: ["-c", script]))
+        let main = try #require(pid(await supervisor.state(of: "master")))
+        let written = await waitFor { (try? String(contentsOf: childFile, encoding: .utf8)) != nil }
+        let child = try #require(Int32((try String(contentsOf: childFile, encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines)))
+
+        if stoppedByTheSupervisor {
+            try await supervisor.stop("master")
+        } else {
+            kill(main, SIGKILL)
+        }
+        let childEnded = await waitFor { kill(child, 0) != 0 }
+
+        #expect(written)
+        #expect(childEnded)
+        await supervisor.stopAll()
+    }
+
     @Test func aReloadKeepsTheProcessAndShowsTheNewPorts() async throws {
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition("sleeper", executable: "/bin/sleep", arguments: ["30"]))

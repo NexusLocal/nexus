@@ -146,6 +146,9 @@ struct ServiceVersion: Identifiable {
     }
 }
 
+// The folders show with ~ for the home folder. A site of a parked folder without settings of
+// its own cannot be removed. A site of a parked folder with its own settings goes back to the
+// settings of the folder.
 struct SiteItem: Identifiable, Hashable {
     let host: String
     var aliases: [String] = []
@@ -155,11 +158,32 @@ struct SiteItem: Identifiable, Hashable {
     var server = "nginx"
     var php = "8.4"
     var health: Health = .running
+    var url = ""
+    var parkedFolder: String?
+    var problem: String?
+    var hasOwnSettings = true
 
     var id: String { host }
 
-    var url: String {
-        "https://\(host):8443"
+    var folderURL: URL {
+        URL(filePath: (folder as NSString).expandingTildeInPath, directoryHint: .isDirectory)
+    }
+
+    var protectedFolder: String? {
+        ProtectedFolder.name(of: folder)
+    }
+}
+
+// macOS asks the user one time before an app reads Documents, Desktop or Downloads. nexusd,
+// nginx and PHP read the files of a site. So macOS asks for Nexus.
+enum ProtectedFolder {
+    static func name(of path: String) -> String? {
+        let path = (path as NSString).abbreviatingWithTildeInPath
+        return ["Documents", "Desktop", "Downloads"].first { path == "~/\($0)" || path.hasPrefix("~/\($0)/") }
+    }
+
+    static func explanation(_ name: String) -> String {
+        "This folder is in \(name). macOS asks one time if Nexus may read \(name), because the webserver and PHP read the files of the site. Click Allow."
     }
 }
 
@@ -167,7 +191,11 @@ struct SiteGroup: Identifiable {
     let name: String
     var sites: [SiteItem]
 
-    var id: String { "group:\(name)" }
+    var id: String { Self.id(named: name) }
+
+    static func id(named name: String) -> String {
+        "group:\(name)"
+    }
 }
 
 // A folder of projects. It looks like a group, and its gear shows that Nexus fills it.
@@ -270,9 +298,11 @@ struct CommandSection: Identifiable {
     var id: String { title }
 }
 
+// The location is nil for an app of the sample data.
 struct AppChoice: Identifiable, Hashable {
     let name: String
     var opens: String = ""
+    var location: URL?
 
     var id: String { name }
 

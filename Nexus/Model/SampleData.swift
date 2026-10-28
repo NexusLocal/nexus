@@ -24,7 +24,20 @@ extension AppModel {
     }
 
     private static func site(_ host: String, folder: String, server: String = "nginx", php: String = "8.4", aliases: [String] = [], group: String? = nil) -> SiteItem {
-        SiteItem(host: host, aliases: aliases, group: group, folder: folder, documentRoot: "\(folder)/public", server: server, php: php)
+        let parent = (folder as NSString).deletingLastPathComponent
+        let parked = parent == "~/Sites"
+        return SiteItem(
+            host: host,
+            aliases: aliases,
+            group: group,
+            folder: folder,
+            documentRoot: "\(folder)/public",
+            server: server,
+            php: php,
+            url: "https://\(host):8443",
+            parkedFolder: parked ? parent : nil,
+            hasOwnSettings: !parked
+        )
     }
 
     private static var sampleSites: [SiteEntry] {

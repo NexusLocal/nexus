@@ -161,7 +161,7 @@ private struct DropArea: View {
             Spacer(minLength: 12)
 
             Button("Choose folder…") {
-                model.sheet = .addSite
+                model.sheet = .addSite(folder: nil, manyProjects: false)
             }
         }
         .padding(16)
@@ -170,8 +170,11 @@ private struct DropArea: View {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(Color.accentText.opacity(targeted ? 1 : 0.6), lineWidth: 1.5)
         }
-        .onDrop(of: [.fileURL], delegate: FolderDropDelegate(targeted: $targeted, pointerInside: $pointerInside) { _ in
-            model.sheet = .addSite
+        .onDrop(of: [.fileURL], delegate: FolderDropDelegate(targeted: $targeted, pointerInside: $pointerInside) { folder in
+            Task {
+                let manyProjects = await Task.detached { ProjectFolder.holdsManyProjects(folder) }.value
+                model.sheet = .addSite(folder: folder, manyProjects: manyProjects)
+            }
         })
     }
 }

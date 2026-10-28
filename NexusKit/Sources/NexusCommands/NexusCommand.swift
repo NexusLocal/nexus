@@ -273,7 +273,7 @@ struct SiteCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "site",
         abstract: "Adds, lists, changes and removes sites.",
-        subcommands: [List.self, Add.self, Edit.self, Remove.self],
+        subcommands: [List.self, Add.self, Edit.self, Remove.self, Defaults.self],
         defaultSubcommand: List.self
     )
 
@@ -300,6 +300,14 @@ struct SiteCommand: AsyncParsableCommand {
                 if site.hosts.count > 1 {
                     print("    aliases: \(site.hosts.dropFirst().joined(separator: ", "))")
                 }
+
+                if let group = site.group {
+                    print("    group: \(group)")
+                }
+
+                if let problem = site.problem {
+                    print("    does not run: \(problem)")
+                }
             }
         }
     }
@@ -310,11 +318,43 @@ struct SiteCommand: AsyncParsableCommand {
         @Argument(help: "The folder of the site.") var folder: String = "."
         @Option(help: "The host. The default is the folder name with the dev TLD, for example shop.test.") var host: String?
         @Option(name: .customLong("alias"), help: "Another host for the same site. Repeat it for more hosts.") var aliases: [String] = []
-        @Option(help: "The PHP version line, for example 8.5. The default is the newest installed one.") var php: String?
-        @Option(help: "nginx or apache. The default is nginx.") var server: WebServer?
+        @Option(help: "The PHP version line, for example 8.5. The default comes from nexus site defaults.") var php: String?
+        @Option(help: "nginx or apache. The default comes from nexus site defaults.") var server: WebServer?
+        @Option(help: "The group of the site in the sidebar of the app.") var group: String?
 
         func run() async throws {
-            try finish(try await send(.addSite(folder: absolutePath(folder), host: host, aliases: aliases, php: php, server: server)))
+            try finish(try await send(.addSite(folder: absolutePath(folder), host: host, aliases: aliases, php: php, server: server, group: group)))
+        }
+    }
+
+    struct Defaults: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Shows or changes the webserver and the PHP version of a new site, for example: nexus site defaults --php 8.4")
+
+        @Option(help: "The PHP version line of a new site, or newest for the newest installed one.") var php: String?
+        @Option(help: "nginx or apache.") var server: WebServer?
+
+        func run() async throws {
+            let response = try await send(.siteDefaults)
+
+            guard case .siteDefaults(var defaults) = response else {
+                try finish(response)
+                return
+            }
+
+            guard php != nil || server != nil else {
+                print(defaults.summary)
+                return
+            }
+
+            if let php {
+                defaults.php = php == "newest" ? nil : php
+            }
+
+            if let server {
+                defaults.server = server
+            }
+
+            try finish(try await send(.setSiteDefaults(defaults)))
         }
     }
 
@@ -348,8 +388,8 @@ struct Park: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Makes each subfolder of a folder a site, for example ~/Sites/shop becomes shop.test.")
 
     @Argument(help: "The folder.") var folder: String = "."
-    @Option(help: "The PHP version line for these sites. The default is the newest installed one.") var php: String?
-    @Option(help: "nginx or apache. The default is nginx.") var server: WebServer?
+    @Option(help: "The PHP version line for these sites and for new folders in it. The default comes from nexus site defaults.") var php: String?
+    @Option(help: "nginx or apache. The default comes from nexus site defaults.") var server: WebServer?
 
     func run() async throws {
         try finish(try await send(.park(folder: absolutePath(folder), php: php, server: server)))

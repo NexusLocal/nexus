@@ -1,11 +1,43 @@
+import AppKit
 import SwiftUI
 
+// The closed groups and folders of projects, by their id, also after a new launch. A renamed group
+// stays closed. The id of a group that is gone leaves the list.
+enum CollapsedEntries {
+    static let key = "sidebarCollapsedEntries"
+
+    static func decode(_ list: String) -> Set<String> {
+        Set(list.split(separator: "\n").map(String.init))
+    }
+
+    static func encode(_ ids: Set<String>) -> String {
+        ids.sorted().joined(separator: "\n")
+    }
+
+    static func rename(_ id: String, to newID: String) {
+        var ids = decode(UserDefaults.standard.string(forKey: key) ?? "")
+
+        if ids.remove(id) != nil {
+            ids.insert(newID)
+            UserDefaults.standard.set(encode(ids), forKey: key)
+        }
+    }
+}
+
+// The sidebar keeps which sections and groups are closed, also after a new launch. The id of a
+// site row names its group or folder too. Without that, the list of macOS 27 kept an old row on
+// the screen when a site moved into a group or out of one.
 struct Sidebar: View {
     @Environment(AppModel.self) private var model
-    @State private var sitesExpanded = true
-    @State private var servicesExpanded = true
-    @State private var toolsExpanded = true
-    @State private var collapsedEntries: Set<String> = []
+    @AppStorage("sidebarSitesExpanded") private var sitesExpanded = true
+    @AppStorage("sidebarServicesExpanded") private var servicesExpanded = true
+    @AppStorage("sidebarToolsExpanded") private var toolsExpanded = true
+    @AppStorage(CollapsedEntries.key) private var collapsedList = ""
+
+    private var collapsedEntries: Set<String> {
+        get { CollapsedEntries.decode(collapsedList) }
+        nonmutating set { collapsedList = CollapsedEntries.encode(newValue) }
+    }
 
     var body: some View {
         @Bindable var model = model
@@ -21,16 +53,36 @@ struct Sidebar: View {
                         SiteRow(site: site)
                     case .group(let group):
                         DisclosureGroup(isExpanded: expansion(of: group.id)) {
-                            ForEach(group.sites) { SiteRow(site: $0) }
+                            ForEach(group.sites) { SiteRow(site: $0).id("\(group.id) \($0.host)") }
                         } label: {
                             CountRow(title: group.name, systemImage: "folder", count: group.sites.count)
+                                .contextMenu {
+                                    Button("Rename group…", systemImage: "pencil") {
+                                        model.groupNaming = .rename(group.name)
+                                    }
+                                    Button("Remove group", systemImage: "folder.badge.minus") {
+                                        model.removeGroup(group.name)
+                                    }
+                                    .help("The sites stay. They leave the group.")
+                                }
                         }
                     case .parked(let folder):
                         DisclosureGroup(isExpanded: expansion(of: folder.id)) {
-                            ForEach(folder.sites) { SiteRow(site: $0) }
+                            ForEach(folder.sites) { SiteRow(site: $0).id("\(folder.id) \($0.host)") }
                         } label: {
                             CountRow(title: folder.name, systemImage: ParkedFolder.systemImage, count: folder.sites.count)
                                 .help("\(folder.path)\nNexus makes a site of each project in this folder, also of new projects.")
+                                .contextMenu {
+                                    Button("Show in Finder", systemImage: "folder") {
+                                        NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: (folder.path as NSString).expandingTildeInPath)])
+                                    }
+
+                                    Divider()
+
+                                    Button("Remove folder of projects…", systemImage: "trash", role: .destructive) {
+                                        model.removal = .parkedFolder(folder)
+                                    }
+                                }
                         }
                     }
                 }
@@ -65,6 +117,13 @@ struct Sidebar: View {
             }
         }
         .listStyle(.sidebar)
+        .onChange(of: model.siteEntries.map(\.id)) { _, ids in
+            let kept = collapsedEntries.intersection(ids)
+
+            if kept != collapsedEntries {
+                collapsedEntries = kept
+            }
+        }
         .toolbar(removing: .sidebarToggle)
         .searchable(text: $model.search, placement: .sidebar, prompt: "Search sites")
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -86,7 +145,7 @@ struct Sidebar: View {
     }
 
     private func collapseAll() {
-        collapsedEntries = Set(model.siteEntries.map(\.id))
+        collapsedEntries = Set(model.siteEntries.filter { if case .site = $0 { false } else { true } }.map(\.id))
     }
 
     private func expandAll() {
@@ -98,6 +157,7 @@ struct Sidebar: View {
 }
 
 private struct SiteRow: View {
+    @Environment(AppModel.self) private var model
     let site: SiteItem
 
     var body: some View {
@@ -105,8 +165,9 @@ private struct SiteRow: View {
             Label(site.host, systemImage: "globe")
                 .lineLimit(1)
             Spacer()
-            StatusDot(health: site.health)
+            StatusDot(health: model.health(of: site))
         }
+        .help(site.problem.map { "\(site.host) does not run. \($0)" } ?? "")
         .tag(SidebarItem.site(site.host))
         .contextMenu {
             SiteActions(site: site)
@@ -204,16 +265,19 @@ struct AddMenuItems: View {
 
     var body: some View {
         Button("Add site…", systemImage: "globe") {
-            present(.addSite)
+            present(.addSite(folder: nil, manyProjects: false))
         }
         .keyboardShortcut("n")
 
         Button("Add folder of projects…", systemImage: ParkedFolder.systemImage) {
-            present(.addSite)
+            present(.addSite(folder: nil, manyProjects: true))
         }
 
-        Button("New group", systemImage: "folder.badge.plus") {}
-            .keyboardShortcut("n", modifiers: [.command, .shift])
+        Button("New group", systemImage: "folder.badge.plus") {
+            model.groupNaming = .new(movingSite: nil)
+            openWindow(id: MainWindow.id)
+        }
+        .keyboardShortcut("n", modifiers: [.command, .shift])
 
         Divider()
 
@@ -233,6 +297,8 @@ struct AddMenuItems: View {
     }
 }
 
+// A site of a parked folder goes away with its folder. So it has no "Remove site", unless it has
+// settings of its own. Then "Remove site" removes those settings.
 struct SiteActions: View {
     @Environment(AppModel.self) private var model
     let site: SiteItem
@@ -240,12 +306,26 @@ struct SiteActions: View {
 
     var body: some View {
         if includeBrowser {
-            Button("Open in browser", systemImage: "safari") {}
+            Button("Open in browser", systemImage: "safari") {
+                model.openInBrowser(site)
+            }
         }
 
-        Button("Show in Finder", systemImage: "folder") {}
-        Button("Open in \(model.settings.terminal)", systemImage: "apple.terminal") {}
-        Button("Open in \(model.settings.editor)", systemImage: "chevron.left.forwardslash.chevron.right") {}
+        Button("Show in Finder", systemImage: "folder") {
+            model.showInFinder(site)
+        }
+
+        if let terminal = model.terminalApp {
+            Button("Open in \(terminal.name)", systemImage: "apple.terminal") {
+                model.open(site, in: terminal)
+            }
+        }
+
+        if let editor = model.editorApp {
+            Button("Open in \(editor.name)", systemImage: "chevron.left.forwardslash.chevron.right") {
+                model.open(site, in: editor)
+            }
+        }
 
         Button("Copy URL", systemImage: "link") {
             copyToPasteboard(site.url)
@@ -255,19 +335,30 @@ struct SiteActions: View {
 
         Menu("Move to group", systemImage: "folder.badge.plus") {
             ForEach(model.groupNames, id: \.self) { group in
-                Button(group) {}
-                    .disabled(site.group == group)
+                Button(group) {
+                    model.move(site, toGroup: group)
+                }
+                .disabled(site.group == group)
             }
 
             Divider()
 
-            Button("No group") {}
-                .disabled(site.group == nil)
-            Button("New group…") {}
+            Button("No group") {
+                model.move(site, toGroup: nil)
+            }
+            .disabled(site.group == nil)
+
+            Button("New group…") {
+                model.groupNaming = .new(movingSite: site.host)
+            }
         }
 
-        Divider()
+        if site.parkedFolder == nil || site.hasOwnSettings {
+            Divider()
 
-        Button("Remove site…", systemImage: "trash", role: .destructive) {}
+            Button("Remove site…", systemImage: "trash", role: .destructive) {
+                model.removal = .site(site)
+            }
+        }
     }
 }
