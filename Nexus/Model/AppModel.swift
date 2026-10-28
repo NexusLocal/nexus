@@ -13,15 +13,44 @@ enum SidebarItem: Hashable {
 }
 
 enum SheetKind: Identifiable {
-    case addSite
+    case addSite(folder: URL?, manyProjects: Bool)
+    case editAliases(host: String)
     case importDatabase(instance: String)
     case portInUse(service: String, holder: PortHolder)
 
     var id: String {
         switch self {
         case .addSite: "add-site"
+        case .editAliases(let host): "aliases-\(host)"
         case .importDatabase(let instance): "import-\(instance)"
         case .portInUse(let service, _): "port-\(service)"
+        }
+    }
+}
+
+// The name of a new group, or the new name of a group. A new group from the menu of a site gets
+// that site.
+enum GroupNaming: Identifiable {
+    case new(movingSite: String?)
+    case rename(String)
+
+    var id: String {
+        switch self {
+        case .new(let host): "new \(host ?? "")"
+        case .rename(let name): "rename \(name)"
+        }
+    }
+}
+
+// A removal that waits for the confirmation of the user.
+enum Removal: Identifiable {
+    case site(SiteItem)
+    case parkedFolder(ParkedFolder)
+
+    var id: String {
+        switch self {
+        case .site(let site): "site \(site.host)"
+        case .parkedFolder(let folder): folder.id
         }
     }
 }
@@ -52,6 +81,12 @@ enum NexusdProblem: Equatable {
 enum ActionPlace {
     case window
     case menuBar
+}
+
+enum RequestOutcome {
+    case answer(NexusResponse)
+    case failure(String)
+    case portInUse(PortConflict)
 }
 
 // A request to nexusd that failed. The place decides where the app shows it: an alert in the
@@ -95,8 +130,14 @@ final class AppModel {
     var selection: SidebarItem? = .overview
     var selectedVersion: [ServiceKind: String] = [:]
     var sheet: SheetKind?
+    var groupNaming: GroupNaming?
+    var removal: Removal?
     var search = ""
     var siteEntries: [SiteEntry] = []
+    // The last site list of nexusd, and the order that the sidebar shows. A change of the order
+    // shows at once and goes back to the list of nexusd when nexusd refuses it.
+    var siteList: SiteList?
+    var siteLayout: [SiteLayoutEntry] = []
     var services: [ServiceVersion] = []
     var databaseLists: [String: [DatabaseItem]] = [:]
     var databaseListProblems: [String: String] = [:]
@@ -117,7 +158,7 @@ final class AppModel {
     var commandSections: [CommandSection] = []
     var settings = AppSettings()
 
-    @ObservationIgnored private var client: NexusClient?
+    @ObservationIgnored private(set) var client: NexusClient?
     @ObservationIgnored private var feed: NexusEventFeed?
     @ObservationIgnored private var finishedSwitches: Set<String> = []
 
@@ -132,10 +173,16 @@ final class AppModel {
 
         let model = sample()
         model.services = []
+        model.siteEntries = []
         model.settingsDrafts = [:]
         model.settingsErrors = [:]
+        model.findApps()
         model.watchNexusd()
         return model
+    }
+
+    var isLive: Bool {
+        client != nil
     }
 
     var allSites: [SiteItem] {
@@ -404,24 +451,16 @@ final class AppModel {
     func loadDatabases(of service: ServiceVersion) {
         let id = service.id
 
-        guard let client, service.kind.isDatabase, service.isActive else {
+        guard isLive, service.kind.isDatabase, service.isActive else {
             databaseLists[id] = nil
             databaseListProblems[id] = nil
             return
         }
 
         Task {
-            let response: NexusResponse
-
-            do {
-                response = try await client.send(.databaseSizes(instance: id))
-            } catch {
-                response = .failure(message: String(describing: error))
-            }
-
-            switch response {
-            case .databaseSizes(let sizes):
-                databaseLists[id] = sizes.map { DatabaseItem(name: $0.name, usedBy: nil, size: $0.bytes.formatted(.byteCount(style: .file))) }
+            switch await outcome(of: .databaseSizes(instance: id)) {
+            case .answer(.databaseSizes(let sizes)):
+                databaseLists[id] = sizes.map { DatabaseItem(name: $0.name, usedBy: $0.usedBy?.joined(separator: ", "), size: $0.bytes.formatted(.byteCount(style: .file))) }
                 databaseListProblems[id] = nil
             case .failure(let message):
                 databaseListProblems[id] = self.service(id)?.isActive == true ? message : nil
@@ -494,7 +533,7 @@ final class AppModel {
         }
     }
 
-    private func send(_ request: NexusRequest, failure title: String, place: ActionPlace, finished: ((Bool) -> Void)? = nil) {
+    func send(_ request: NexusRequest, failure title: String, place: ActionPlace, finished: ((Bool) -> Void)? = nil) {
         Task {
             let succeeded = await perform(request, failure: title, place: place) != nil
             finished?(succeeded)
@@ -504,21 +543,10 @@ final class AppModel {
     // Returns the answer, or nil when the request failed. A port in use opens its sheet in the
     // window. The menu bar panel shows it from the next event.
     @discardableResult
-    private func perform(_ request: NexusRequest, failure title: String, place: ActionPlace) async -> NexusResponse? {
-        guard let client else {
-            return nil
-        }
-
-        let response: NexusResponse
-
-        do {
-            response = try await client.send(request)
-        } catch {
-            failure = ActionFailure(title: title, message: String(describing: error), place: place)
-            return nil
-        }
-
-        switch response {
+    func perform(_ request: NexusRequest, failure title: String, place: ActionPlace) async -> NexusResponse? {
+        switch await outcome(of: request) {
+        case .answer(let response):
+            return response
         case .failure(let message):
             failure = ActionFailure(title: title, message: message, place: place)
             return nil
@@ -527,8 +555,29 @@ final class AppModel {
                 sheet = .portInUse(service: conflict.service, holder: PortHolder(conflict))
             }
             return nil
-        default:
-            return response
+        case nil:
+            return nil
+        }
+    }
+
+    // The outcome is nil without nexusd, for the sample data. A port in use is no answer,
+    // because the start did not happen.
+    func outcome(of request: NexusRequest) async -> RequestOutcome? {
+        guard let client else {
+            return nil
+        }
+
+        do {
+            switch try await client.send(request) {
+            case .failure(let message):
+                return .failure(message)
+            case .portInUse(let conflict):
+                return .portInUse(conflict)
+            case let response:
+                return .answer(response)
+            }
+        } catch {
+            return .failure(String(describing: error))
         }
     }
 
@@ -585,6 +634,10 @@ final class AppModel {
                 switching[id] = nil
             }
             finishedSwitches = []
+        case .event(.sites(let list)):
+            nexusdProblem = nil
+            siteList = list
+            show(list)
         case .unreachable(let reason):
             nexusdProblem = .unreachable(reason)
         case .unreadable(let reason):
@@ -592,8 +645,35 @@ final class AppModel {
         }
     }
 
-    // Groups first, then the sites outside a group, then the folders of projects (D58).
+    // Groups first, then the sites outside a group, then the folders of projects (D58). nexusd
+    // keeps the new order.
     func sortByName() {
+        guard isLive else {
+            sortSampleByName()
+            return
+        }
+
+        let byName: (String, String) -> Bool = { $0.localizedStandardCompare($1) == .orderedAscending }
+        let groups = siteLayout.compactMap { entry -> SiteLayoutEntry? in
+            guard case .group(let name, let hosts) = entry else {
+                return nil
+            }
+
+            return .group(name: name, hosts: hosts.sorted(by: byName))
+        }
+        let sites = siteLayout.compactMap { entry -> String? in
+            guard case .site(let host) = entry else {
+                return nil
+            }
+
+            return host
+        }
+
+        let sorted = groups.sorted { byName($0.groupName ?? "", $1.groupName ?? "") } + sites.sorted(by: byName).map(SiteLayoutEntry.site)
+        changeLayout(sorted, failure: "Nexus did not sort the sites")
+    }
+
+    private func sortSampleByName() {
         let sorted = siteEntries.map { entry -> SiteEntry in
             switch entry {
             case .site:

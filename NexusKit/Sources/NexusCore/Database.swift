@@ -30,6 +30,11 @@ public enum DatabaseKind: String, Codable, Sendable, CaseIterable {
     public var urlScheme: String {
         usesMySQLProtocol ? "mysql" : "postgresql"
     }
+
+    // The values of DB_CONNECTION in a Laravel .env that reach this kind of server.
+    public var laravelConnections: Set<String> {
+        usesMySQLProtocol ? ["mysql", "mariadb"] : ["pgsql"]
+    }
 }
 
 // A new database instance gets root without a password (D35). The account root with the

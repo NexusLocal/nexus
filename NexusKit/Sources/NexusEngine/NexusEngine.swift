@@ -49,10 +49,15 @@ public actor NexusEngine {
     var writtenHosts: [String]?
     private var systemFilesQueue: Task<Void, Never>?
     private var helperRetry: Task<Void, Never>?
-    private var uninstalling = false
+    private(set) var uninstalling = false
     private var webQueue: Task<Void, Never>?
     private var watchers: [UUID: AsyncStream<NexusEvent>.Continuation] = [:]
     private var publishedServices: ServiceList?
+    private var publishedSites: SiteList?
+    // The site list reads the parked folders and the runtimes on disk. So nexusd makes it again
+    // only after a request that changes something, a change in a parked folder or a new watcher,
+    // and not after each change of a process.
+    private var sitesMayHaveChanged = true
     private var publishing = false
     private var publishAgain = false
     private var observesSupervisor = false
@@ -61,6 +66,10 @@ public actor NexusEngine {
     // The extensions and modules of each runtime, with the modification dates of their folders.
     // The service list needs them after each change of a service.
     var toggleNameCache: [String: (stamp: [String], names: Set<String>)] = [:]
+    // The watch of the parked folders, and the sites of the last configuration that nginx and
+    // Apache accepted (D62).
+    var parkedWatcher: FolderWatcher?
+    var appliedSites: [String]?
 
     public init(
         paths: NexusPaths,
@@ -89,7 +98,7 @@ public actor NexusEngine {
     public func handle(_ request: NexusRequest) async -> NexusResponse {
         defer {
             if !request.onlyReads {
-                servicesChanged()
+                sitesChanged()
             }
         }
 
@@ -131,8 +140,8 @@ public actor NexusEngine {
                 return .done(message: try await uninstall())
             case .sites:
                 return .sites(await siteInfo())
-            case .addSite(let folder, let host, let aliases, let php, let server):
-                return .done(message: try await serialWeb { try await self.addSite(folder: folder, host: host, aliases: aliases, php: php, server: server) })
+            case .addSite(let folder, let host, let aliases, let php, let server, let group):
+                return .done(message: try await serialWeb { try await self.addSite(folder: folder, host: host, aliases: aliases, php: php, server: server, group: group) })
             case .removeSite(let host):
                 return .done(message: try await serialWeb { try await self.removeSite(host) })
             case .editSite(let host, let change):
@@ -141,6 +150,12 @@ public actor NexusEngine {
                 return .done(message: try await serialWeb { try await self.park(folder: folder, php: php, server: server) })
             case .unpark(let folder):
                 return .done(message: try await serialWeb { try await self.unpark(folder: folder) })
+            case .setSiteLayout(let layout):
+                return .done(message: try await serialWeb { try await self.setSiteLayout(layout) })
+            case .siteDefaults:
+                return .siteDefaults(await stateStore.current().siteDefaults)
+            case .setSiteDefaults(let defaults):
+                return .done(message: try await setSiteDefaults(defaults))
             case .extensions(let php):
                 return .toggles(try await extensionToggles(line: php))
             case .setExtension(let php, let name, let enabled):
@@ -189,20 +204,24 @@ public actor NexusEngine {
     }
 
     // Starts the DNS server, the web services that the sites need, and every other service that
-    // ran when nexusd stopped the last time.
+    // ran when nexusd stopped the last time. The services that "Stop all services" stopped wait
+    // for "Start stopped services" (D63).
     public func startEnabledServices() async {
         _ = try? await startDNS()
-        _ = try? await applyWeb()
+        _ = try? await serialWeb { await self.watchParkedFolders() }
+        _ = try? await serialWeb { try await self.applyWeb(.automatic) }
 
         let state = await stateStore.current()
         for id in state.enabledServices.subtracting(state.stoppedByStopAll).sorted() {
             _ = try? await start(id)
         }
 
-        servicesChanged()
+        sitesChanged()
     }
 
     public func shutdown() async {
+        parkedWatcher?.stop()
+        parkedWatcher = nil
         helperRetry?.cancel()
         await supervisor.stopAll()
         stopDNS()
@@ -585,10 +604,16 @@ public actor NexusEngine {
             throw RuntimeError.unsupported("\(name) \(line) is not installed.")
         }
 
-        let sites = resolvedSites(await stateStore.current()).map(\.site)
+        let state = await stateStore.current()
+        let sites = resolvedSites(state).map(\.site)
 
         if name == "php", let site = sites.first(where: { $0.php == line }) {
             throw RuntimeError.unsupported("\(site.host) uses PHP \(line). Give it another PHP version first: nexus site edit \(site.host) --php <version>")
+        }
+
+        // A new project in a parked folder gets the settings of that folder.
+        if name == "php", let parked = state.parked.first(where: { $0.php == line }) {
+            throw RuntimeError.unsupported("The new projects in \(parked.folder.path(percentEncoded: false)) get PHP \(line). Park the folder again with another PHP version first: nexus unpark, then nexus park --php <version>")
         }
 
         let otherLines = await installer.installedRuntimes().filter { $0.name == name && $0.line != line }
@@ -598,6 +623,10 @@ public actor NexusEngine {
 
         if name == "httpd", otherLines.isEmpty, let site = sites.first(where: { $0.server == .apache }) {
             throw RuntimeError.unsupported("\(site.host) uses Apache. Move it to nginx first: nexus site edit \(site.host) --server nginx")
+        }
+
+        if name == "httpd", otherLines.isEmpty, let parked = state.parked.first(where: { $0.server == .apache }) {
+            throw RuntimeError.unsupported("The new projects in \(parked.folder.path(percentEncoded: false)) get Apache. Park the folder again with nginx first: nexus unpark, then nexus park --server nginx")
         }
 
         if let id = catalog.serviceID(for: runtime), await supervisor.state(of: id)?.isActive == true {
@@ -620,8 +649,8 @@ public actor NexusEngine {
 
 // The events that nexusd sends to the app without a request.
 extension NexusEngine {
-    // The stream starts with the current services. A new watcher makes every watcher get the
-    // list again. That does no harm.
+    // The stream starts with the current services and sites. A new watcher makes every watcher
+    // get the lists again. That does no harm.
     public func events() async -> AsyncStream<NexusEvent> {
         if !observesSupervisor {
             observesSupervisor = true
@@ -638,7 +667,8 @@ extension NexusEngine {
         }
 
         publishedServices = nil
-        servicesChanged()
+        publishedSites = nil
+        sitesChanged()
         return stream
     }
 
@@ -662,6 +692,11 @@ extension NexusEngine {
         Task { await publishServices() }
     }
 
+    func sitesChanged() {
+        sitesMayHaveChanged = true
+        servicesChanged()
+    }
+
     private func publishServices() async {
         repeat {
             publishAgain = false
@@ -670,6 +705,18 @@ extension NexusEngine {
                 publishedServices = list
                 for watcher in watchers.values {
                     watcher.yield(.services(list))
+                }
+            }
+
+            if sitesMayHaveChanged {
+                sitesMayHaveChanged = false
+                let sites = await siteList()
+
+                if sites != publishedSites {
+                    publishedSites = sites
+                    for watcher in watchers.values {
+                        watcher.yield(.sites(sites))
+                    }
                 }
             }
         } while publishAgain
@@ -681,7 +728,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .hosts, .sites, .extensions, .modules, .customSettings, .databases, .databaseSizes: true
+        case .status, .available, .installed, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .databases, .databaseSizes: true
         default: false
         }
     }
@@ -935,6 +982,8 @@ extension NexusEngine {
             throw RuntimeError.unsupported("Nexus removed /etc/resolver/\(tld) and its /etc/hosts lines, but not its root CA. Run nexus uninstall again. \(error)")
         }
 
+        parkedWatcher?.stop()
+        parkedWatcher = nil
         await supervisor.stopAll()
         stopDNS()
 

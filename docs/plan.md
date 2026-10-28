@@ -429,6 +429,30 @@ Work:
 Done when: a folder that you drop on the Overview opens over HTTPS. A new folder in a parked
 folder shows in the sidebar without a click.
 
+Built: nexusd sends the sites in their own event, with the order of the sidebar, the folders of
+projects, the defaults and the dev domain. nexusd keeps the groups and the order of the sites
+(D58). The app sends the whole order after each change. A site of a parked folder shows in that
+folder, unless it is in a group. New CLI commands: `nexus site defaults [--php <version|newest>]
+[--server <nginx|apache>]` and `nexus site add --group <name>`. nexusd watches each parked folder
+with FSEvents. A new, removed or renamed project and a new public folder in a project change the
+configuration. A change deeper in a project does not. A new site from the watch and a new start
+of nexusd start no web service while "Stop all services" is in effect, unless the user started it
+after "Stop all services". That service then waits for "Start stopped services" (D63). A site
+that the user adds starts nginx and PHP (owner). A new
+project in a parked folder gets the webserver and the PHP version of that folder. So nexusd does
+not remove a PHP version or Apache that a parked folder uses. The drop area opens the "Add a site"
+sheet with the folder. The sheet chooses "Many projects" when the folder has no project file and a
+folder in it has one. The "Used by" column of a database comes from the .env of each site
+(DB_CONNECTION, DB_HOST, DB_PORT and DB_DATABASE), until step 8a reads the configuration of the
+application. The app finds 9 terminal apps and 12 code editors by their bundle identifier. The
+supervisor ends the process group of a service when its main process ends. Before this change, the
+workers of a php-fpm whose master got SIGKILL kept the socket, and each new start failed. The id
+of a site row in the sidebar names its group or folder too. Without that, the list of macOS 27
+kept an old row on the screen when a site moved into a group or out of one. A project with
+settings of its own in a folder of projects has "Remove site". It then gets the settings of the
+folder again. Settings > Sites already changes the defaults in nexusd. The other rows of that tab
+stay for part 6g and step 8.
+
 ### 6f. Packages and tasks
 
 Work:

@@ -61,13 +61,37 @@ extension NexusEngine {
         case .postgresql: "SELECT datname, pg_database_size(datname) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres' ORDER BY datname"
         }
 
+        let users = await databaseUsers(kind: tools.kind, port: client.endpoint.port)
+
         return try await client.rows(sql).compactMap { row in
             guard row.count == 2, let bytes = Int64(row[1]) else {
                 return nil
             }
 
-            return DatabaseSize(name: row[0], bytes: bytes)
+            return DatabaseSize(name: row[0], bytes: bytes, usedBy: users[row[0]])
         }
+    }
+
+    // The sites whose .env points to a database on this port, for each database. Step 8a reads
+    // the real configuration of each application (D43). Until then the .env is enough for this
+    // list. Laravel uses 127.0.0.1 without DB_HOST.
+    func databaseUsers(kind: DatabaseKind, port: Int) async -> [String: [String]] {
+        var users: [String: [String]] = [:]
+
+        for (site, _) in resolvedSites(await stateStore.current()) {
+            let env = EnvFile.values(of: site.folder.appending(path: ".env")).filter { !$0.value.isEmpty }
+
+            guard let connection = env["DB_CONNECTION"], kind.laravelConnections.contains(connection),
+                  let database = env["DB_DATABASE"],
+                  ["127.0.0.1", "localhost", "::1"].contains(env["DB_HOST"] ?? "127.0.0.1"),
+                  (env["DB_PORT"].flatMap { Int($0) } ?? kind.standardPort) == port else {
+                continue
+            }
+
+            users[database, default: []].append(site.host)
+        }
+
+        return users
     }
 
     // The instance must run, because the account lives in its data.

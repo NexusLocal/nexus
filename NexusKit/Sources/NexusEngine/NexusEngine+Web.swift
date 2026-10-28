@@ -14,6 +14,21 @@ struct WebPlan {
     var changedPHPLines: Set<String> = []
     var needsApache = false
     var warnings: [String] = []
+    var siteSignature: [String] = []
+}
+
+// What a change of the web configuration starts and stops.
+enum WebChange {
+    // The user changed the sites. nexusd starts what the sites need and stops what no site needs.
+    case sites
+    // nexusd changed the sites itself, for a new project in a parked folder or at its own start.
+    // While "Stop all services" is in effect, a web service that does not run waits for "Start
+    // stopped services" (D63). A service that the user started after "Stop all services" does
+    // not wait.
+    case automatic
+    // A port, a module or the LAN switch changed. nexusd only reloads the running servers. So
+    // the services that "Stop all services" stopped stay stopped.
+    case setting
 }
 
 // Sites, PHP, nginx and Apache (step 4).
@@ -56,6 +71,35 @@ extension NexusEngine {
         return (sites.sorted { $0.site.host < $1.site.host }, conflicts)
     }
 
+    // Why a site does not run, or nil when it can run.
+    static func problem(of site: Site, installed: [InstalledRuntime], checksNginx: Bool = true) -> String? {
+        if checksNginx, !installed.contains(where: { $0.name == "nginx" }) {
+            return "Every site needs nginx, and nginx is not installed. Run: nexus install nginx 1.30"
+        }
+
+        guard installed.contains(where: { $0.name == "php" && $0.line == site.php }) else {
+            return "PHP \(site.php) is not installed. Run: nexus install php \(site.php)"
+        }
+
+        guard site.server == .nginx || installed.contains(where: { $0.name == "httpd" }) else {
+            return "It uses Apache, and Apache is not installed. Run: nexus install httpd 2.4"
+        }
+
+        do {
+            try WebConfigPath.validate(site.documentRoot)
+        } catch {
+            return String(describing: error)
+        }
+
+        return nil
+    }
+
+    // What the configuration of nginx and Apache takes from the sites. A new public folder in a
+    // project changes its document root.
+    static func signature(of sites: [Site]) -> [String] {
+        sites.map { "\($0.hosts.joined(separator: " ")) \($0.documentRoot.path(percentEncoded: false)) \($0.php) \($0.server.rawValue)" }
+    }
+
     // The hosts outside the dev TLD need a line in /etc/hosts. The DNS server answers the others.
     func etcHosts(_ state: EngineState) -> [String] {
         let tld = DNSResponder(tld: state.tld)
@@ -72,7 +116,11 @@ extension NexusEngine {
     }
 
     func url(for host: String) async -> String {
-        let port = await stateStore.current().ports[ServiceCatalog.httpsPortKey] ?? 443
+        Self.url(for: host, in: await stateStore.current())
+    }
+
+    static func url(for host: String, in state: EngineState) -> String {
+        let port = state.ports[ServiceCatalog.httpsPortKey] ?? 443
         return port == 443 ? "https://\(host)" : "https://\(host):\(port)"
     }
 
@@ -81,26 +129,16 @@ extension NexusEngine {
     func writeWebConfig() async throws -> WebPlan {
         let state = await stateStore.current()
         let resolved = resolveSites(state)
+        let installed = await installer.installedRuntimes()
         let apache = await newestRuntime(named: "httpd")
-        var plan = WebPlan(warnings: resolved.conflicts)
+        var plan = WebPlan(warnings: resolved.conflicts, siteSignature: Self.signature(of: resolved.sites.map(\.site)))
         let root = resolved.sites.isEmpty ? nil : try certificateAuthority.root()
 
         // A site that cannot run is left out with a warning, so it does not stop the others.
+        // Without nginx no site runs. The check below the loop says that.
         for (site, _) in resolved.sites {
-            guard await runtime(named: "php", line: site.php) != nil else {
-                plan.warnings.append("\(site.host) does not run, because PHP \(site.php) is not installed. Run: nexus install php \(site.php)")
-                continue
-            }
-
-            guard site.server == .nginx || apache != nil else {
-                plan.warnings.append("\(site.host) does not run, because it uses Apache and Apache is not installed. Run: nexus install httpd 2.4")
-                continue
-            }
-
-            do {
-                try WebConfigPath.validate(site.documentRoot)
-            } catch {
-                plan.warnings.append("\(site.host) does not run. \(error)")
+            if let problem = Self.problem(of: site, installed: installed, checksNginx: false) {
+                plan.warnings.append("\(site.host) does not run. \(problem)")
                 continue
             }
 
@@ -246,18 +284,30 @@ extension NexusEngine {
     }
 
     // Starts what the sites need and makes the running servers read their new configuration. A
-    // web service that no site needs stops, unless the user started it with nexus start. A change
-    // of a setting, such as a port, a module or the LAN switch, only reloads the running servers.
-    // It starts and stops nothing. So the services that "Stop all services" stopped stay stopped
-    // (D63).
+    // web service that no site needs stops, unless the user started it with nexus start. See
+    // WebChange for what each kind of change starts and stops.
     @discardableResult
-    func applyWeb(startsAndStops: Bool = true) async throws -> [String] {
+    func applyWeb(_ change: WebChange = .sites) async throws -> [String] {
         let plan = try await writeWebConfig()
-        let enabled = await stateStore.current().enabledServices
+        let state = await stateStore.current()
+        let enabled = state.enabledServices
 
-        if startsAndStops {
+        switch change {
+        case .sites, .automatic:
+            var needed: Set<String> = []
+            var waiting: Set<String> = []
+            let stopAllInEffect = change == .automatic && !state.stoppedByStopAll.isEmpty
+            let waits = { (id: String) in
+                stopAllInEffect && (state.stoppedByStopAll.contains(id) || !enabled.contains(id))
+            }
+
             for line in plan.phpLines.sorted() {
-                try await ensureRunning(ServiceCatalog.phpID(line: line), reload: plan.changedPHPLines.contains(line) ? SIGUSR2 : nil)
+                let id = ServiceCatalog.phpID(line: line)
+                needed.insert(id)
+
+                if try await !ensureRunning(id, reload: plan.changedPHPLines.contains(line) ? SIGUSR2 : nil, waits: waits(id)) {
+                    waiting.insert(id)
+                }
             }
 
             for status in await supervisor.status() where status.id.hasPrefix("php-") && status.state.isActive {
@@ -266,9 +316,27 @@ extension NexusEngine {
                 }
             }
 
-            try await apply(ServiceCatalog.apacheID, needed: plan.needsApache, enabled: enabled, reload: SIGUSR1)
-            try await apply(ServiceCatalog.nginxID, needed: !plan.sites.isEmpty, enabled: enabled, reload: SIGHUP)
-        } else {
+            for (id, isNeeded, signal) in [(ServiceCatalog.apacheID, plan.needsApache, SIGUSR1), (ServiceCatalog.nginxID, !plan.sites.isEmpty, SIGHUP)] {
+                if isNeeded {
+                    needed.insert(id)
+                }
+
+                if try await !apply(id, needed: isNeeded, enabled: enabled, reload: signal, waits: waits(id)) {
+                    waiting.insert(id)
+                }
+            }
+
+            // A needed service that runs leaves the list of "Stop all services", as after nexus
+            // start. Otherwise it waits again at the next start of nexusd, although it ran.
+            let running = needed.subtracting(waiting)
+
+            if !waiting.isEmpty || !running.isDisjoint(with: state.stoppedByStopAll) {
+                try await stateStore.update {
+                    $0.stoppedByStopAll.formUnion(waiting)
+                    $0.stoppedByStopAll.subtract(running)
+                }
+            }
+        case .setting:
             for line in plan.changedPHPLines.sorted() where await supervisor.state(of: ServiceCatalog.phpID(line: line))?.isActive == true {
                 try await reload(ServiceCatalog.phpID(line: line), SIGUSR2)
             }
@@ -278,35 +346,50 @@ extension NexusEngine {
             }
         }
 
-        let state = await stateStore.current()
-        if etcHosts(state) != writtenHosts ?? [] {
+        // Only a change that the servers took counts. After a failure, the next change in a
+        // parked folder tries again.
+        appliedSites = plan.siteSignature
+
+        if etcHosts(await stateStore.current()) != writtenHosts ?? [] {
             await applySystemFiles()
         }
 
         return plan.warnings
     }
 
-    private func apply(_ id: String, needed: Bool, enabled: Set<String>, reload: Int32) async throws {
+    // Returns false when a needed service waits for "Start stopped services".
+    private func apply(_ id: String, needed: Bool, enabled: Set<String>, reload: Int32, waits: Bool) async throws -> Bool {
         let running = await supervisor.state(of: id)?.isActive == true
 
         if needed {
-            try await ensureRunning(id, reload: reload)
-        } else if running, enabled.contains(id) {
+            return try await ensureRunning(id, reload: reload, waits: waits)
+        }
+
+        if running, enabled.contains(id) {
             try await self.reload(id, reload)
         } else if running {
             try await supervisor.stop(id)
         }
+
+        return true
     }
 
-    private func ensureRunning(_ id: String, reload: Int32?) async throws {
+    // A service that does not run stays stopped when it waits for "Start stopped services". The
+    // answer is false then.
+    private func ensureRunning(_ id: String, reload: Int32?, waits: Bool) async throws -> Bool {
         if await supervisor.state(of: id)?.isActive == true {
             if let reload {
                 try await self.reload(id, reload)
             }
-            return
+            return true
+        }
+
+        if waits {
+            return false
         }
 
         _ = try await startService(id)
+        return true
     }
 
     // The process stays. The supervisor gets the definition of the new configuration. So a new
@@ -370,57 +453,167 @@ extension NexusEngine {
 // The commands for sites and parked folders.
 extension NexusEngine {
     func siteInfo() async -> [SiteInfo] {
-        var all: [SiteInfo] = []
+        await siteList().sites
+    }
 
-        for (site, parked) in resolvedSites(await stateStore.current()) {
-            all.append(SiteInfo(
+    func siteList() async -> SiteList {
+        let state = await stateStore.current()
+        let resolved = resolvedSites(state)
+        let installed = await installer.installedRuntimes()
+        let layout = Self.layout(state.siteLayout, sites: resolved.map(\.site), state: state)
+        var groups: [String: String] = [:]
+
+        for case .group(let name, let hosts) in layout {
+            for host in hosts {
+                groups[host] = name
+            }
+        }
+
+        var sites: [SiteInfo] = []
+
+        for (site, parked) in resolved {
+            sites.append(SiteInfo(
                 hosts: site.hosts,
-                folder: site.folder.path(percentEncoded: false),
-                documentRoot: site.documentRoot.path(percentEncoded: false),
+                folder: Self.displayPath(site.folder),
+                documentRoot: Self.displayPath(site.documentRoot),
                 php: site.php,
                 server: site.server,
                 parked: parked,
-                url: await url(for: site.host)
+                url: Self.url(for: site.host, in: state),
+                group: groups[site.host],
+                parkedFolder: Self.parkedFolder(of: site, in: state.parked).map { Self.displayPath($0.folder) },
+                problem: Self.problem(of: site, installed: installed)
             ))
         }
 
-        return all
+        return SiteList(sites: sites, layout: layout, parkedFolders: state.parked.map { Self.displayPath($0.folder) }, defaults: state.siteDefaults, tld: state.tld)
     }
 
-    func addSite(folder path: String, host: String?, aliases: [String], php: String?, server: WebServer?) async throws -> String {
+    // A site that the layout does not name yet comes at the end, in the order that the user added
+    // it. A site of a parked folder shows in that folder, so it is in the layout only in a group.
+    static func layout(_ stored: [SiteLayoutEntry], sites: [Site], state: EngineState) -> [SiteLayoutEntry] {
+        let outside = state.sites.filter { parkedFolder(of: $0, in: state.parked) == nil }.map(\.host)
+        return stored.normalized(hosts: Set(sites.map(\.host)), outside: outside)
+    }
+
+    static func parkedFolder(of site: Site, in parked: [ParkedFolder]) -> ParkedFolder? {
+        let parent = displayPath(site.folder.deletingLastPathComponent())
+        return parked.first { displayPath($0.folder) == parent }
+    }
+
+    // The path of a folder without the / at the end, so that two names of one folder compare as
+    // equal.
+    static func displayPath(_ folder: URL) -> String {
+        trimmedPath(folder.standardizedFileURL.path(percentEncoded: false))
+    }
+
+    static func trimmedPath(_ path: String) -> String {
+        path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
+    }
+
+    // The path without symbolic links, as FSEvents names it. /tmp is /private/tmp, for example.
+    static func realPath(_ folder: URL) -> String {
+        let path = folder.path(percentEncoded: false)
+
+        guard let resolved = realpath(path, nil) else {
+            return trimmedPath(path)
+        }
+
+        defer { free(resolved) }
+        return trimmedPath(String(cString: resolved))
+    }
+
+    // A group needs a name, and a host can be in one place only. The app sends the whole layout
+    // after each change, so nexusd only checks it.
+    func setSiteLayout(_ layout: [SiteLayoutEntry]) async throws -> String {
+        var groups: Set<String> = []
+        var hosts: Set<String> = []
+        var checked: [SiteLayoutEntry] = []
+
+        for entry in layout {
+            switch entry {
+            case .site(let host):
+                guard hosts.insert(host).inserted else {
+                    throw RuntimeError.unsupported("\(host) is in the order of the sites two times.")
+                }
+                checked.append(entry)
+            case .group(let rawName, let members):
+                let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                guard !name.isEmpty else {
+                    throw RuntimeError.unsupported("A group needs a name.")
+                }
+
+                guard groups.insert(name.lowercased()).inserted else {
+                    throw RuntimeError.unsupported("There is a group \(name) already.")
+                }
+
+                for host in members where !hosts.insert(host).inserted {
+                    throw RuntimeError.unsupported("\(host) is in the order of the sites two times.")
+                }
+
+                checked.append(.group(name: name, hosts: members))
+            }
+        }
+
+        try await stateStore.update { $0.siteLayout = checked }
+        return "Nexus keeps the new order of the sites."
+    }
+
+    // The defaults apply to the sites that come after the change (D59).
+    func setSiteDefaults(_ defaults: SiteDefaults) async throws -> String {
+        if let php = defaults.php {
+            guard await runtime(named: "php", line: php) != nil else {
+                throw RuntimeError.unsupported("PHP \(php) is not installed. Run: nexus install php \(php)")
+            }
+        }
+
+        try await stateStore.update { $0.siteDefaults = defaults }
+        return "\(defaults.summary) The sites that exist do not change."
+    }
+
+    func addSite(folder path: String, host: String?, aliases: [String], php: String?, server: WebServer?, group: String? = nil) async throws -> String {
         let folder = try Self.validatedFolder(path)
         let state = await stateStore.current()
         let host = try HostName.validated(host ?? "\(HostName.label(from: folder.lastPathComponent)).\(state.tld)")
+        let group = group?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if state.sites.contains(where: { $0.host == host }) {
             throw RuntimeError.unsupported("\(host) exists already. Change it with: nexus site edit \(host)")
         }
 
-        let site = Site(host: host, folder: folder, aliases: try aliases.map(HostName.validated), php: try await phpLine(php), server: server ?? .nginx)
+        let site = Site(host: host, folder: folder, aliases: try aliases.map(HostName.validated), php: try await phpLine(php), server: server ?? state.siteDefaults.server)
         try checkUnique(site, in: state)
 
-        return try await siteMessage(site, warnings: changeWeb { $0.sites.append(site) })
+        return try await siteMessage(site, warnings: changeWeb { state in
+            state.sites.append(site)
+
+            if let group, !group.isEmpty {
+                state.siteLayout = state.siteLayout.moving(host, toGroup: group)
+            }
+        })
     }
 
     // Changes the state and applies it to the web servers. When that fails, the sites and the
     // web settings go back to what they were, so a site that cannot run does not stay behind. A
-    // change of a setting starts and stops no service (see applyWeb).
-    func changeWeb(startsAndStops: Bool = true, _ change: @Sendable (inout EngineState) -> Void) async throws -> [String] {
+    // change of a setting starts and stops no service (see WebChange).
+    func changeWeb(_ kind: WebChange = .sites, _ change: @Sendable (inout EngineState) -> Void) async throws -> [String] {
         let previous = await stateStore.current()
         try await stateStore.update(change)
 
         do {
-            return try await applyWeb(startsAndStops: startsAndStops)
+            return try await applyWeb(kind)
         } catch {
             try? await stateStore.update { state in
                 state.sites = previous.sites
                 state.parked = previous.parked
+                state.siteLayout = previous.siteLayout
                 state.lanAccess = previous.lanAccess
                 state.apacheModules = previous.apacheModules
                 state.nginxModules = previous.nginxModules
                 state.ports = previous.ports
             }
-            _ = try? await applyWeb(startsAndStops: startsAndStops)
+            _ = try? await applyWeb(kind)
             throw error
         }
     }
@@ -435,11 +628,24 @@ extension NexusEngine {
             throw RuntimeError.unsupported("Nexus has no site \(host).")
         }
 
-        let warnings = try await changeWeb { $0.sites.removeAll { $0.host == host } }
+        // A project in a parked folder stays a site with the settings of the folder. So it keeps its
+        // place in a group.
+        var withoutSite = state
+        withoutSite.sites.removeAll { $0.host == host }
+        let staysParked = resolvedSites(withoutSite).contains { $0.site.host == host }
+
+        let warnings = try await changeWeb { state in
+            state.sites.removeAll { $0.host == host }
+
+            if !staysParked {
+                state.siteLayout = state.siteLayout.moving(host, toGroup: nil)
+            }
+        }
         return (["\(host) is removed."] + warnings).joined(separator: "\n")
     }
 
-    // A parked site gets an added site with the same host, so its new settings stay.
+    // A parked site gets an added site with the same host, so its new settings stay. An added
+    // site keeps its place in the list, so its place in the sidebar does not change.
     func editSite(_ host: String, change: SiteChange) async throws -> String {
         let state = await stateStore.current()
 
@@ -461,8 +667,11 @@ extension NexusEngine {
 
         let edited = site
         let warnings = try await changeWeb { state in
-            state.sites.removeAll { $0.host == host }
-            state.sites.append(edited)
+            if let index = state.sites.firstIndex(where: { $0.host == host }) {
+                state.sites[index] = edited
+            } else {
+                state.sites.append(edited)
+            }
         }
 
         return await siteMessage(edited, warnings: warnings)
@@ -476,10 +685,11 @@ extension NexusEngine {
             throw RuntimeError.unsupported("\(folder.path(percentEncoded: false)) is parked already.")
         }
 
-        let parked = ParkedFolder(folder: folder, php: try await phpLine(php), server: server ?? .nginx)
+        let parked = ParkedFolder(folder: folder, php: try await phpLine(php), server: server ?? state.siteDefaults.server)
         let warnings = try await changeWeb { $0.parked.append(parked) }
+        await watchParkedFolders()
         let hosts = parked.sites(tld: state.tld).map(\.host)
-        return (["\(folder.path(percentEncoded: false)) is parked. Its \(hosts.count) sites: \(hosts.joined(separator: ", "))"] + warnings).joined(separator: "\n")
+        return (["\(folder.path(percentEncoded: false)) is parked. Its \(hosts.count) sites: \(hosts.joined(separator: ", ")). A new folder in it becomes a site too."] + warnings).joined(separator: "\n")
     }
 
     func unpark(folder path: String) async throws -> String {
@@ -490,12 +700,61 @@ extension NexusEngine {
         }
 
         let warnings = try await changeWeb { $0.parked.removeAll { $0.folder.standardizedFileURL == folder } }
+        await watchParkedFolders()
         return (["\(folder.path(percentEncoded: false)) is not parked now."] + warnings).joined(separator: "\n")
+    }
+
+    // nexusd watches each parked folder, also without the app (D62). A new, removed or renamed
+    // project, or a new public folder in a project, changes the sites. A change deeper in a
+    // project, for example in vendor, does not.
+    func watchParkedFolders() async {
+        let folders = await stateStore.current().parked.map(\.folder)
+        let watched = Set(folders.map(Self.realPath))
+
+        parkedWatcher?.stop()
+        parkedWatcher = FolderWatcher(folders: folders) { [weak self] changed in
+            let matters = changed.contains { path in
+                let folder = Self.trimmedPath(path)
+                return watched.contains(folder) || watched.contains((folder as NSString).deletingLastPathComponent)
+            }
+
+            if matters {
+                Task { await self?.parkedFoldersChanged() }
+            }
+        }
+    }
+
+    // FSEvents also reports a change that gives the same sites, for example a new file in a
+    // project. Then nothing happens. A change that waits for its turn while nexusd shuts down or
+    // uninstalls starts nothing. Shutdown removes the watch first, and uninstall sets its flag
+    // first.
+    private func parkedFoldersChanged() async {
+        let changed = (try? await serialWeb { try await self.applyParkedSites() }) ?? true
+
+        if changed {
+            sitesChanged()
+        }
+    }
+
+    // Returns false when the sites stay the same.
+    private func applyParkedSites() async throws -> Bool {
+        guard parkedWatcher != nil, !uninstalling else {
+            return false
+        }
+
+        let sites = Self.signature(of: resolvedSites(await stateStore.current()).map(\.site))
+
+        guard sites != appliedSites else {
+            return false
+        }
+
+        try await applyWeb(.automatic)
+        return true
     }
 
     func lan(_ enabled: Bool?) async throws -> String {
         if let enabled {
-            _ = try await changeWeb(startsAndStops: false) { $0.lanAccess = enabled }
+            _ = try await changeWeb(.setting) { $0.lanAccess = enabled }
         }
 
         return await stateStore.current().lanAccess
@@ -504,10 +763,12 @@ extension NexusEngine {
     }
 
     private func siteMessage(_ site: Site, warnings: [String]) async -> String {
-        let server = site.server == .nginx ? "nginx" : "Apache"
-        return (["\(await url(for: site.host)) runs on \(server) with PHP \(site.php). Folder: \(site.documentRoot.path(percentEncoded: false))"] + warnings).joined(separator: "\n")
+        (["\(await url(for: site.host)) runs on \(site.server.displayName) with PHP \(site.php). Folder: \(site.documentRoot.path(percentEncoded: false))"] + warnings).joined(separator: "\n")
     }
 
+    // Without a request, a new site gets the PHP version of the defaults (D59). A default that is
+    // not installed anymore gives the newest version, so a new project in a parked folder still
+    // becomes a site.
     private func phpLine(_ requested: String?) async throws -> String {
         let installed = await installer.installedRuntimes().filter { $0.name == "php" }.map(\.line)
 
@@ -516,6 +777,10 @@ extension NexusEngine {
                 throw RuntimeError.unsupported("PHP \(requested) is not installed. Run: nexus install php \(requested)")
             }
             return requested
+        }
+
+        if let preferred = await stateStore.current().siteDefaults.php, installed.contains(preferred) {
+            return preferred
         }
 
         guard let newest = VersionLine.newest(installed) else {
@@ -683,7 +948,7 @@ extension NexusEngine {
             let current = Self.shownOn(await stateStore.current().apacheModules ?? ApacheConfig.defaultModules, dependencies: ApacheConfig.dependencies, available: available)
             let change = ApacheConfig.dependencies.set(name, on: enabled, in: current)
             changed = change.changed
-            _ = try await changeWeb(startsAndStops: false) { $0.apacheModules = change.enabled }
+            _ = try await changeWeb(.setting) { $0.apacheModules = change.enabled }
         case .nginx:
             guard !NginxConfig.builtInModules.contains(name) else {
                 throw RuntimeError.unsupported("\(name) is part of nginx. Every site needs it. So it is always on.")
@@ -706,7 +971,7 @@ extension NexusEngine {
         }
 
         let names = changed.sorted().joined(separator: " and ")
-        return "\(names) \(changed.count == 1 ? "is" : "are") \(enabled ? "on" : "off") for \(server == .nginx ? "nginx" : "Apache")."
+        return "\(names) \(changed.count == 1 ? "is" : "are") \(enabled ? "on" : "off") for \(server.displayName)."
     }
 
     private func webRuntime(_ server: WebServer) async throws -> InstalledRuntime {
@@ -733,7 +998,7 @@ extension NexusEngine {
 
         // A graceful restart moves Apache to the new port. nginx then reads the new port of Apache.
         if key == ServiceCatalog.apacheID {
-            _ = try await changeWeb(startsAndStops: false) { $0.ports[key] = port }
+            _ = try await changeWeb(.setting) { $0.ports[key] = port }
             return "Apache uses port \(port) on 127.0.0.1."
         }
 

@@ -7,6 +7,13 @@ public enum NexusServiceID {
     public static let dns = "dns"
 }
 
+// The messages between the app, the CLI and nexusd. A nexusd that did not start again after an
+// update of the app sends the old keys only. So each key that comes after step 6c is optional:
+// Codable then reads a message without it. NexusEventFeedTests reads a message of step 6c.
+
+// A site as the app and nexus site list show it. parked is true for a site that has no settings
+// of its own. parkedFolder is the parked folder that holds the folder of the site, also when the
+// site has its own settings. The problem says why the site does not run.
 public struct SiteInfo: Codable, Sendable, Equatable {
     public let hosts: [String]
     public let folder: String
@@ -15,8 +22,22 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let server: WebServer
     public let parked: Bool
     public let url: String
+    public let group: String?
+    public let parkedFolder: String?
+    public let problem: String?
 
-    public init(hosts: [String], folder: String, documentRoot: String, php: String, server: WebServer, parked: Bool, url: String) {
+    public init(
+        hosts: [String],
+        folder: String,
+        documentRoot: String,
+        php: String,
+        server: WebServer,
+        parked: Bool,
+        url: String,
+        group: String? = nil,
+        parkedFolder: String? = nil,
+        problem: String? = nil
+    ) {
         self.hosts = hosts
         self.folder = folder
         self.documentRoot = documentRoot
@@ -24,12 +45,29 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         self.server = server
         self.parked = parked
         self.url = url
+        self.group = group
+        self.parkedFolder = parkedFolder
+        self.problem = problem
     }
 }
 
-// The messages between the app, the CLI and nexusd. A nexusd that did not start again after an
-// update of the app sends the old keys only. So each key that comes after step 6c is optional:
-// Codable then reads a message without it. NexusEventFeedTests reads a message of step 6c.
+// The sites in the order of the sidebar. The layout holds every group and every site outside a
+// group and outside a parked folder.
+public struct SiteList: Codable, Sendable, Equatable {
+    public let sites: [SiteInfo]
+    public let layout: [SiteLayoutEntry]
+    public let parkedFolders: [String]
+    public let defaults: SiteDefaults
+    public let tld: String
+
+    public init(sites: [SiteInfo], layout: [SiteLayoutEntry], parkedFolders: [String], defaults: SiteDefaults, tld: String) {
+        self.sites = sites
+        self.layout = layout
+        self.parkedFolders = parkedFolders
+        self.defaults = defaults
+        self.tld = tld
+    }
+}
 
 // An extension or a module with a switch. The help says what it does.
 public struct Toggle: Codable, Sendable, Equatable {
@@ -117,13 +155,16 @@ extension DatabaseKind {
     }
 }
 
+// usedBy names the sites whose .env points to this database.
 public struct DatabaseSize: Codable, Sendable, Equatable {
     public let name: String
     public let bytes: Int64
+    public let usedBy: [String]?
 
-    public init(name: String, bytes: Int64) {
+    public init(name: String, bytes: Int64, usedBy: [String]? = nil) {
         self.name = name
         self.bytes = bytes
+        self.usedBy = usedBy
     }
 }
 
@@ -279,6 +320,7 @@ public struct ServiceList: Codable, Sendable, Equatable {
 // What nexusd sends to the app without a request, after each change.
 public enum NexusEvent: Codable, Sendable, Equatable {
     case services(ServiceList)
+    case sites(SiteList)
 }
 
 public enum NexusRequest: Codable, Sendable, Equatable {
@@ -300,11 +342,14 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case removeHost(String)
     case uninstall
     case sites
-    case addSite(folder: String, host: String?, aliases: [String], php: String?, server: WebServer?)
+    case addSite(folder: String, host: String?, aliases: [String], php: String?, server: WebServer?, group: String? = nil)
     case removeSite(host: String)
     case editSite(host: String, change: SiteChange)
     case park(folder: String, php: String?, server: WebServer?)
     case unpark(folder: String)
+    case setSiteLayout([SiteLayoutEntry])
+    case siteDefaults
+    case setSiteDefaults(SiteDefaults)
     case extensions(php: String)
     case setExtension(php: String, name: String, enabled: Bool)
     case modules(server: WebServer)
@@ -325,6 +370,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case installed([InstalledRuntime])
     case hosts([String])
     case sites([SiteInfo])
+    case siteDefaults(SiteDefaults)
     case toggles([Toggle])
     case lines([String])
     case databases([DatabaseInstance])

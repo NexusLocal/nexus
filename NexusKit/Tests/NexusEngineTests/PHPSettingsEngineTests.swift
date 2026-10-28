@@ -174,7 +174,8 @@ extension NexusEngineTests {
         _ = await engine.handle(.install(name: "php", line: "8.5"))
         let runtime = try #require(await engine.runtime(named: "php", line: "8.5"))
         let folder = runtime.folder.appending(path: "lib/php/extensions/no-debug-non-zts-20250925")
-        let date = try #require(try FileManager.default.attributesOfItem(atPath: folder.path(percentEncoded: false))[.modificationDate] as? Date)
+        let date = Date(timeIntervalSince1970: 1_800_000_000)
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: folder.path(percentEncoded: false))
 
         let first = await engine.toggleNames(of: runtime)
         try Data().write(to: folder.appending(path: "pcov.so"))
@@ -196,6 +197,7 @@ extension NexusEngineTests {
         _ = await engine.handle(.install(name: "php", line: "8.5"))
         let runtime = try #require(await engine.runtime(named: "php", line: "8.5"))
         var events = await engine.events().makeAsyncIterator()
+        _ = await events.next()
         _ = await events.next()
 
         try Data().write(to: runtime.folder.appending(path: "lib/php/extensions/no-debug-non-zts-20250925/pcov.so"))

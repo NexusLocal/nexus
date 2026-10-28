@@ -1,23 +1,32 @@
+import NexusCore
+import NexusIPC
 import SwiftUI
 
+// A picker keeps the new value while nexusd works. A refused change shows the old value again.
+// The event of nexusd then gives the new site, and the pickers follow it.
 struct SiteScreen: View {
     @Environment(AppModel.self) private var model
     let site: SiteItem
 
-    @State private var group: String
     @State private var server: String
     @State private var php: String
 
     init(site: SiteItem) {
         self.site = site
-        _group = State(initialValue: site.group ?? "")
         _server = State(initialValue: site.server)
         _php = State(initialValue: site.php)
     }
 
+    private var group: Binding<String> {
+        Binding(
+            get: { site.group ?? "" },
+            set: { model.move(site, toGroup: $0.isEmpty ? nil : $0) }
+        )
+    }
+
     var body: some View {
         Form {
-            Section("General") {
+            Section {
                 LabeledContent("Host") {
                     Text(site.host)
                 }
@@ -27,11 +36,13 @@ struct SiteScreen: View {
                         Text(site.aliases.isEmpty ? "None" : site.aliases.joined(separator: ", "))
                             .foregroundStyle(site.aliases.isEmpty ? .tertiary : .secondary)
                             .lineLimit(1)
-                        Button("Edit…") {}
+                        Button("Edit…") {
+                            model.sheet = .editAliases(host: site.host)
+                        }
                     }
                 }
 
-                Picker("Group", selection: $group) {
+                Picker("Group", selection: group) {
                     Text("None").tag("")
                     ForEach(model.groupNames, id: \.self) { Text($0).tag($0) }
                 }
@@ -39,7 +50,9 @@ struct SiteScreen: View {
                 LabeledContent("Folder") {
                     HStack {
                         PathText(site.folder)
-                        Button("Show in Finder") {}
+                        Button("Show in Finder") {
+                            model.showInFinder(site)
+                        }
                     }
                 }
 
@@ -61,16 +74,35 @@ struct SiteScreen: View {
                         }
                     }
                 }
+            } header: {
+                Text("General")
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let problem = site.problem {
+                        Text("\(site.host) does not run. \(problem)")
+                            .foregroundStyle(Color.orangeText)
+                    }
+
+                    if let parkedFolder = site.parkedFolder, site.hasOwnSettings {
+                        Text("This project is in the folder of projects \(parkedFolder), and it has settings of its own. \"Remove site\" removes them, and the project gets the settings of the folder again.")
+                    } else if let parkedFolder = site.parkedFolder {
+                        Text("This site comes from the folder of projects \(parkedFolder). Remove or rename its folder there to remove the site or to change its host.")
+                    }
+
+                    if let protectedFolder = site.protectedFolder {
+                        Text(ProtectedFolder.explanation(protectedFolder))
+                    }
+                }
             }
 
             Section {
                 Picker("Webserver", selection: $server) {
-                    Text("nginx").tag("nginx")
-                    Text("Apache").tag("apache")
+                    Text("nginx").tag(WebServer.nginx.rawValue)
+                    Text("Apache").tag(WebServer.apache.rawValue)
                 }
 
                 Picker("PHP", selection: $php) {
-                    ForEach(model.installedPHPVersions, id: \.self) { Text("PHP \($0)").tag($0) }
+                    ForEach(phpChoices, id: \.self) { Text("PHP \($0)").tag($0) }
                 }
             } header: {
                 Text("Server")
@@ -79,10 +111,11 @@ struct SiteScreen: View {
             }
         }
         .formStyle(.grouped)
-        .screenTitle(site.host, subtitle: "\(server == "apache" ? "Apache" : "nginx") · PHP \(php)")
+        .screenTitle(site.host, subtitle: "\((WebServer(rawValue: server) ?? .nginx).displayName) · PHP \(php)")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
+                    model.openInBrowser(site)
                 } label: {
                     Label("Open in browser", systemImage: "safari")
                 }
@@ -96,9 +129,123 @@ struct SiteScreen: View {
             }
         }
         .onChange(of: site) {
-            group = site.group ?? ""
             server = site.server
             php = site.php
         }
+        .onChange(of: server) {
+            guard server != site.server, let choice = WebServer(rawValue: server) else {
+                return
+            }
+
+            change(SiteChange(server: choice)) { server = site.server }
+        }
+        .onChange(of: php) {
+            guard php != site.php else {
+                return
+            }
+
+            change(SiteChange(php: php)) { php = site.php }
+        }
+    }
+
+    // A site keeps a PHP version that is not installed anymore, so the picker shows it.
+    private var phpChoices: [String] {
+        model.installedPHPVersions.contains(site.php) ? model.installedPHPVersions : [site.php] + model.installedPHPVersions
+    }
+
+    private func change(_ change: SiteChange, revert: @escaping () -> Void) {
+        Task {
+            if await !model.editSite(site, change) {
+                revert()
+            }
+        }
+    }
+}
+
+struct EditAliasesSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let site: SiteItem
+
+    @State private var aliases: String
+    @State private var saving = false
+    @State private var failure: String?
+
+    init(site: SiteItem) {
+        self.site = site
+        _aliases = State(initialValue: site.aliases.joined(separator: ", "))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Aliases of \(site.host)")
+                .font(.headline)
+
+            TextField("Aliases", text: $aliases, prompt: Text("None"))
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+                .plainTextInput()
+
+            Text("Separate the names with a comma or a space, for example www.\(site.host), \(site.host.split(separator: ".").first ?? "site").local. A name outside the dev domain gets a line in /etc/hosts.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let failure {
+                Label(failure, systemImage: "xmark.circle")
+                    .foregroundStyle(Color.redText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Spacer()
+
+                if saving {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                Button("Cancel", role: .cancel) {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button("Save") {
+                    save()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(saving)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+    }
+
+    private func save() {
+        let names = HostList.names(in: aliases)
+
+        // An edit of a site of a parked folder gives it settings of its own. So a save without a
+        // change sends nothing.
+        guard names != site.aliases else {
+            dismiss()
+            return
+        }
+
+        saving = true
+
+        Task {
+            failure = await model.failureOfEdit(site, SiteChange(aliases: names))
+            saving = false
+
+            if failure == nil {
+                dismiss()
+            }
+        }
+    }
+}
+
+enum HostList {
+    static func names(in text: String) -> [String] {
+        text.split { $0 == "," || $0.isWhitespace }.map { $0.lowercased() }
     }
 }
