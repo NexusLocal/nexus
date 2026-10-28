@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 import Testing
 @testable import NexusSupervisor
 
@@ -61,5 +62,73 @@ struct CommandRunnerTests {
         await #expect(throws: CommandError.failed(program: "sh", status: 4, output: "restore failed")) {
             try await CommandRunner.pipe(shell("seq 1 100000"), into: shell("echo 'restore failed' >&2; exit 4"))
         }
+    }
+
+    @Test func aPipeWithAnObserverSendsAllDataAndShowsEachPart() async throws {
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appending(path: "copy.txt")
+        let seen = ByteCounter()
+
+        try await CommandRunner.pipe(shell("seq 1 100000"), into: Command(executable: URL(filePath: "/usr/bin/tee"), arguments: [file.path(percentEncoded: false)]), observer: { seen.add($0.count) })
+
+        let copy = try Data(contentsOf: file)
+        #expect(String(decoding: copy, as: UTF8.self).split(separator: "\n").last == "100000")
+        #expect(seen.total == copy.count)
+    }
+
+    @Test func aPipeWithAnObserverGivesTheErrorOfTheSecondCommandWhenItStopsEarly() async {
+        await #expect(throws: CommandError.failed(program: "sh", status: 4, output: "restore failed")) {
+            try await CommandRunner.pipe(shell("seq 1 1000000"), into: shell("echo 'restore failed' >&2; exit 4"), observer: { _ in })
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func aStoppedPipeStopsBothCommands(observed: Bool) async throws {
+        let started = ContinuousClock.now
+        var observer: (@Sendable (Data) -> Void)?
+        if observed {
+            observer = { _ in }
+        }
+
+        let relay = observer
+        let pipe = Task {
+            try await CommandRunner.pipe(shell("yes"), into: shell("cat > /dev/null"), observer: relay)
+        }
+
+        try await Task.sleep(for: .milliseconds(300))
+        pipe.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await pipe.value
+        }
+        #expect(ContinuousClock.now - started < .seconds(5))
+    }
+
+    @Test func aStoppedCommandStops() async throws {
+        let started = ContinuousClock.now
+        let command = Task {
+            try await CommandRunner.run(shell("sleep 30"))
+        }
+
+        try await Task.sleep(for: .milliseconds(300))
+        command.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await command.value
+        }
+        #expect(ContinuousClock.now - started < .seconds(5))
+    }
+}
+
+private final class ByteCounter: Sendable {
+    private let count = Mutex(0)
+
+    var total: Int {
+        count.withLock { $0 }
+    }
+
+    func add(_ bytes: Int) {
+        count.withLock { $0 += bytes }
     }
 }

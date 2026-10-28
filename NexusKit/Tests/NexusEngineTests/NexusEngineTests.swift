@@ -20,10 +20,18 @@ struct FixedManifest: ManifestSource {
 }
 
 struct CopyDownloader: PackageDownloader {
-    func download(_ url: URL) async throws -> URL {
+    func download(_ url: URL, progress: @escaping @Sendable (DownloadProgress) -> Void) async throws -> URL {
         let copy = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.copyItem(at: url, to: copy)
         return copy
+    }
+}
+
+struct HalfDownloader: PackageDownloader {
+    func download(_ url: URL, progress: @escaping @Sendable (DownloadProgress) -> Void) async throws -> URL {
+        progress(DownloadProgress(received: 50, expected: 100))
+        try await Task.sleep(for: .seconds(60))
+        throw RuntimeError.unsupported("The test did not stop the download.")
     }
 }
 
@@ -46,21 +54,21 @@ struct NexusEngineTests {
         )
     }
 
-    private func makeFakeRedis() throws -> ManifestPackage {
-        let source = workspace.appending(path: "source/redis-1.0.0/bin", directoryHint: .isDirectory)
+    private func makeFakeRedis(version: String = "1.0.0") throws -> ManifestPackage {
+        let source = workspace.appending(path: "source/redis-\(version)/bin", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
         let server = source.appending(path: "redis-server")
         try Data("#!/bin/sh\nexec /usr/bin/nc -lk 127.0.0.1 \"$2\"\n".utf8).write(to: server)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: server.path(percentEncoded: false))
 
-        let archive = workspace.appending(path: "redis-1.0.0.tar.xz")
+        let archive = workspace.appending(path: "redis-\(version).tar.xz")
         let tar = Process()
         tar.executableURL = URL(filePath: "/usr/bin/tar")
-        tar.arguments = ["-cJf", archive.path(percentEncoded: false), "-C", workspace.appending(path: "source").path(percentEncoded: false), "redis-1.0.0"]
+        tar.arguments = ["-cJf", archive.path(percentEncoded: false), "-C", workspace.appending(path: "source").path(percentEncoded: false), "redis-\(version)"]
         try tar.run()
         tar.waitUntilExit()
 
-        return ManifestPackage(name: "redis", version: "1.0.0", line: "1.0", revision: 1, url: archive,
+        return ManifestPackage(name: "redis", version: version, line: "1.0", revision: 1, url: archive,
                                sha256: try FileChecksum.sha256(of: archive), format: .tarXZ)
     }
 
@@ -77,24 +85,36 @@ struct NexusEngineTests {
         return Int(UInt16(bigEndian: bound.sin_port))
     }
 
-    private func makeEngine(package: ManifestPackage, port: Int, dnsPort: Int? = nil, unregister: @escaping @Sendable () -> Void = {}) throws -> NexusEngine {
+    private func makeEngine(
+        package: ManifestPackage,
+        port: Int,
+        dnsPort: Int? = nil,
+        downloader: any PackageDownloader = CopyDownloader(),
+        manifestSource: (any ManifestSource)? = nil,
+        unregister: @escaping @Sendable () -> Void = {}
+    ) throws -> NexusEngine {
         try paths.createFolders()
         var state = EngineState()
         state.ports["redis-1.0"] = port
         state.ports[NexusEngine.dnsServiceID] = dnsPort ?? freeUDPPort()
         try JSONEncoder().encode(state).write(to: paths.config.appending(path: "state.json"))
 
-        return makeEngine(package: package, unregister: unregister)
+        return makeEngine(package: package, downloader: downloader, manifestSource: manifestSource, unregister: unregister)
     }
 
-    private func makeEngine(package: ManifestPackage, unregister: @escaping @Sendable () -> Void = {}) -> NexusEngine {
+    private func makeEngine(
+        package: ManifestPackage,
+        downloader: any PackageDownloader = CopyDownloader(),
+        manifestSource: (any ManifestSource)? = nil,
+        unregister: @escaping @Sendable () -> Void = {}
+    ) -> NexusEngine {
         let manifest = Manifest(schema: 1, generated: .now, repository: "test", packages: [package])
         return NexusEngine(
             paths: paths,
             helper: helper,
             certificateAuthority: CertificateAuthority(paths: paths, store: keyStore),
-            downloader: CopyDownloader(),
-            manifestSource: FixedManifest(manifest: manifest),
+            downloader: downloader,
+            manifestSource: manifestSource ?? FixedManifest(manifest: manifest),
             systemFiles: systemFiles,
             helperRetryDelay: .milliseconds(50),
             unregister: unregister
@@ -774,5 +794,155 @@ extension NexusEngineTests {
 
         #expect(response == .done(message: "No service to start. This starts only the services that \"Stop all services\" stopped."))
         #expect(services(await engine.handle(.status))["redis-1.0"]?.state == .stopped)
+    }
+}
+
+extension NexusEngineTests {
+    @Test func aDownloadShowsItsProgressAndStopsWithoutAnInstall() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort(), downloader: HalfDownloader())
+
+        try await whileRunning(engine) {
+            let tasks = TaskRecorder()
+            tasks.record(await engine.events())
+            let install = Task { await engine.handle(.install(name: "redis", line: "1.0")) }
+
+            let running = await tasks.next { $0.tasks.first?.completed == 50 }
+            let task = try #require(running?.tasks.first)
+            let stop = await engine.handle(.stopTask(id: task.id))
+            let answer = await install.value
+            let ended = await tasks.next { $0.tasks.isEmpty }
+
+            #expect(task.work == .install(name: "redis", line: "1.0", version: "1.0.0", update: false))
+            #expect(task.total == 100)
+            #expect(stop == .done(message: "The task stops."))
+            #expect(answer == .stopped(message: "The download of redis 1.0 stopped. Nexus installed nothing."))
+            #expect(ended != nil)
+            #expect(await engine.handle(.installed) == .installed([]))
+            #expect((try? FileManager.default.contentsOfDirectory(atPath: paths.runtimeStaging.path(percentEncoded: false)))?.isEmpty ?? true)
+        }
+    }
+
+    @Test func aStopAfterTheEndOfATaskIsNoError() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+
+        let response = await engine.handle(.stopTask(id: "ended"))
+
+        #expect(response == .done(message: "The task ended already."))
+    }
+
+    @Test func anUpdateOfARunningServiceStartsItAgainWithTheNewVersion() async throws {
+        let first = try makeFakeRedis(version: "1.0.0")
+        let manifest = ChangingManifest(first)
+        let engine = try makeEngine(package: first, port: freePort(), manifestSource: manifest)
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.install(name: "redis", line: "1.0"))
+            _ = await engine.handle(.start(service: "redis-1.0"))
+            let before = pid(services(await engine.handle(.status))["redis-1.0"]?.state)
+            manifest.change(to: try makeFakeRedis(version: "1.0.1"))
+
+            let update = await engine.handle(.install(name: "redis", line: "1.0"))
+            let after = pid(services(await engine.handle(.status))["redis-1.0"]?.state)
+
+            #expect(update == .done(message: "redis 1.0 is updated from 1.0.0 to 1.0.1 in \(paths.runtime("redis", line: "1.0").path(percentEncoded: false))"))
+            #expect(before != nil)
+            #expect(after != nil)
+            #expect(after != before)
+            guard case .installed(let runtimes) = await engine.handle(.installed) else {
+                Issue.record("no runtimes")
+                return
+            }
+            #expect(runtimes.map(\.version) == ["1.0.1"])
+        }
+    }
+
+    @Test func aSecondInstallOfAPackageThatDownloadsIsRefused() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort(), downloader: HalfDownloader())
+
+        try await whileRunning(engine) {
+            let tasks = TaskRecorder()
+            tasks.record(await engine.events())
+            let first = Task { await engine.handle(.install(name: "redis", line: "1.0")) }
+            let running = try #require(await tasks.next { !$0.tasks.isEmpty }?.tasks.first)
+
+            let second = await engine.handle(.install(name: "redis", line: "1.0"))
+            _ = await engine.handle(.stopTask(id: running.id))
+            _ = await first.value
+
+            #expect(second == .failure(message: "Nexus installs redis 1.0 already. Wait until it ends, or stop it."))
+        }
+    }
+
+    @Test func anUpdateIsRefusedWhileADatabaseCopyIntoTheServiceRuns() async throws {
+        let first = try makeFakeRedis(version: "1.0.0")
+        let manifest = ChangingManifest(first)
+        let engine = try makeEngine(package: first, port: freePort(), manifestSource: manifest)
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.install(name: "redis", line: "1.0"))
+            await engine.startCopy(into: "redis-1.0 shop")
+            manifest.change(to: try makeFakeRedis(version: "1.0.1"))
+
+            let update = await engine.handle(.install(name: "redis", line: "1.0"))
+
+            #expect(update == .failure(message: "Nexus did not update redis 1.0, because a database copy into redis-1.0 runs. Update it after the copy, or stop the copy first."))
+        }
+    }
+}
+
+private extension NexusEngine {
+    func startCopy(into target: String) {
+        copyTargets.insert(target)
+    }
+}
+
+final class TaskRecorder: Sendable {
+    private let lists = Mutex<[TaskList]>([])
+
+    func record(_ events: AsyncStream<NexusEvent>) {
+        Task {
+            for await case .tasks(let list) in events {
+                lists.withLock { $0.append(list) }
+            }
+        }
+    }
+
+    func next(where condition: (TaskList) -> Bool) async -> TaskList? {
+        let deadline = ContinuousClock.now + .seconds(5)
+
+        while ContinuousClock.now < deadline {
+            let match = lists.withLock { lists -> TaskList? in
+                guard let index = lists.firstIndex(where: condition) else {
+                    return nil
+                }
+
+                defer { lists.removeFirst(index + 1) }
+                return lists[index]
+            }
+
+            if let match {
+                return match
+            }
+
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+
+        return nil
+    }
+}
+
+private final class ChangingManifest: ManifestSource {
+    private let current: Mutex<Manifest>
+
+    init(_ package: ManifestPackage) {
+        current = Mutex(Manifest(schema: 1, generated: .now, repository: "test", packages: [package]))
+    }
+
+    func change(to package: ManifestPackage) {
+        current.withLock { $0 = Manifest(schema: 1, generated: .now, repository: "test", packages: [package]) }
+    }
+
+    func manifest(from url: URL) async throws -> Manifest {
+        current.withLock { $0 }
     }
 }

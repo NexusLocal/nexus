@@ -286,8 +286,12 @@ extension AppModel {
         ]
     }
 
+    // The name gives the package and the line, for example Apache 2.4 gives httpd and 2.4.
     private static func package(_ section: String, _ name: String, _ version: String, _ state: PackageState = .available, lts: Bool = false, securityEnd: String? = nil, securityEnded: Bool = false, required: Bool = false) -> PackageItem {
-        PackageItem(section: section, name: name, version: version, state: state, lts: lts, securityEnd: securityEnd, securityEnded: securityEnded, required: required)
+        let words = name.split(separator: " ", maxSplits: 1).map(String.init)
+        let package = words[0] == "Apache" ? "httpd" : words[0].lowercased()
+        let line = words.count > 1 ? words[1] : "2"
+        return PackageItem(section: section, package: package, line: line, name: name, version: version, state: state, lts: lts, securityEnd: securityEnd, securityEnded: securityEnded, required: required)
     }
 
     private static var samplePackages: [PackageItem] {

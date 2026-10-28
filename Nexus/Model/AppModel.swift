@@ -1,6 +1,7 @@
 import AppKit
 import NexusCore
 import NexusIPC
+import NexusRuntime
 import NexusSupervisor
 import Observation
 
@@ -46,11 +47,13 @@ enum GroupNaming: Identifiable {
 enum Removal: Identifiable {
     case site(SiteItem)
     case parkedFolder(ParkedFolder)
+    case package(PackageItem)
 
     var id: String {
         switch self {
         case .site(let site): "site \(site.host)"
         case .parkedFolder(let folder): folder.id
+        case .package(let package): "package \(package.id)"
         }
     }
 }
@@ -155,6 +158,20 @@ final class AppModel {
     var packages: [PackageItem] = []
     var activities: [ActivityItem] = []
     var packagesChecked = ""
+    // The manifest, the installed runtimes and the tasks of nexusd (part 6f). The packages and
+    // the activities come from them. A failed update check shows on the Packages screen.
+    var manifestPackages: [ManifestPackage] = []
+    var installedRuntimes: [InstalledRuntime] = []
+    var tasks: [TaskInfo] = []
+    var packagesProblem: String?
+    var checkingPackages = false
+    @ObservationIgnored var lastPackageCheck: Date?
+    // The packages that wait for the start of their download. The imports that run, by
+    // instance and name. The import sheet shows the end of the import that it started.
+    var startingDownloads: Set<String> = []
+    var runningImports: Set<String> = []
+    var importInSheet: String?
+    var importResults: [String: ImportResult] = [:]
     var commandSections: [CommandSection] = []
     var settings = AppSettings()
 
@@ -176,8 +193,12 @@ final class AppModel {
         model.siteEntries = []
         model.settingsDrafts = [:]
         model.settingsErrors = [:]
+        model.packages = []
+        model.activities = []
+        model.packagesChecked = ""
         model.findApps()
         model.watchNexusd()
+        model.watchPackageUpdates()
         return model
     }
 
@@ -626,6 +647,7 @@ final class AppModel {
         switch update {
         case .event(.services(let list)):
             nexusdProblem = nil
+            let versions = Set(services.map { "\($0.id) \($0.version)" })
             services = list.services.compactMap(ServiceVersion.init).sorted(by: ServiceVersion.showsBefore)
             stoppedByStopAll = list.stoppedByStopAll
             settings.lanAccess = list.lanAccess ?? false
@@ -634,12 +656,25 @@ final class AppModel {
                 switching[id] = nil
             }
             finishedSwitches = []
+
+            // The check at launch fails when nexusd does not answer yet. So an event of nexusd
+            // checks again until one check works. Without a network that is at most once a
+            // minute.
+            if packagesChecked.isEmpty, lastPackageCheck.map({ Date.now.timeIntervalSince($0) > 60 }) ?? true {
+                Task { await checkPackages() }
+            } else if versions != Set(services.map { "\($0.id) \($0.version)" }) {
+                // The command line can install, update or remove a package too.
+                Task { await loadInstalledRuntimes() }
+            }
         case .event(.sites(let list)):
             nexusdProblem = nil
             siteList = list
             show(list)
+        case .event(.tasks(let list)):
+            show(list)
         case .unreachable(let reason):
             nexusdProblem = .unreachable(reason)
+            show(TaskList(tasks: []))
         case .unreadable(let reason):
             nexusdProblem = .otherVersion(reason)
         }

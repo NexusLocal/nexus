@@ -4,6 +4,7 @@ import NexusCore
 import NexusIPC
 import NexusRuntime
 import NexusSupervisor
+import Synchronization
 
 struct DatabaseTools {
     let id: String
@@ -225,6 +226,20 @@ extension NexusEngine {
             throw RuntimeError.unsupported("\(database) cannot be copied onto itself. Give the copy another name with --as.")
         }
 
+        // The check and the insert have no wait between them. So two requests on the actor
+        // cannot both pass.
+        let copyTarget = "\(request.instance) \(name)"
+        guard !copyTargets.contains(copyTarget) else {
+            throw RuntimeError.unsupported("A copy into \(name) on \(request.instance) runs already. Wait until it ends, or stop it.")
+        }
+
+        guard !updatingServices.contains(request.instance) else {
+            throw RuntimeError.unsupported("Nexus updates \(request.instance) now. Start the copy after the update.")
+        }
+
+        copyTargets.insert(copyTarget)
+        defer { copyTargets.remove(copyTarget) }
+
         if await supervisor.state(of: request.instance)?.isActive != true {
             _ = try await serialWeb { try await self.start(request.instance) }
         }
@@ -239,15 +254,37 @@ extension NexusEngine {
         // The other server must answer before Nexus drops anything, so a wrong name or a
         // stopped server does not cost the old copy.
         let create = try await copier.createStatement(for: database, as: name)
+        let replaces = try await copier.exists(name)
 
-        if try await copier.exists(name) {
-            guard request.replace else {
-                throw RuntimeError.unsupported("\(request.instance) has a database \(name) already. Add --replace to drop it and copy it again, or give the copy another name with --as.")
-            }
+        if replaces, !request.replace {
+            throw RuntimeError.unsupported("\(request.instance) has a database \(name) already. Add --replace to drop it and copy it again, or give the copy another name with --as.")
+        }
+
+        if replaces {
             try await copier.drop(name)
         }
 
-        let copied = try await copier.copy(database, as: name, create: create)
+        let task = TaskWork.copyDatabase(database: database, instance: request.instance, name: name)
+        let stopped = replaces
+            ? "The copy of \(database) stopped. \(request.instance) has no database \(name) now, because the copy dropped the old one first."
+            : "The copy of \(database) stopped. \(request.instance) has no database \(name)."
+        // The estimate runs next to the copy. So the copy does not wait for it.
+        let copied = try await runTask(task, stopped: { stopped }) { progress in
+            let estimating = Task {
+                guard let estimate = try? await copier.estimate(database) else {
+                    return
+                }
+
+                progress.update { values in
+                    values.total = estimate.bytes
+                    values.tableCount = estimate.tables
+                }
+            }
+            defer { estimating.cancel() }
+
+            return try await copier.copy(database, as: name, create: create, progress: progress)
+        }
+
         let tables = Self.count(copied.tables, "table")
         let views = Self.count(copied.views, "view")
         let contents = copied.views > 0 ? "\(tables) and \(views)" : tables
@@ -310,19 +347,36 @@ struct DatabaseCopier {
         try await query(.target, sql)
     }
 
-    // Returns the number of tables and views in the copy. A copy that fails is dropped, so no
-    // half database stays behind.
-    func copy(_ database: String, as name: String, create: String) async throws -> (tables: Int, views: Int) {
-        try await query(.target, create)
+    // Returns the number of tables and views in the copy. A copy that fails or stops is dropped,
+    // so no half database stays behind. The drop runs in a task of its own, because a stopped
+    // task stops each program that it starts. A create that fails drops nothing, because the
+    // database with that name is then not the copy. A create that stops can be done already.
+    func copy(_ database: String, as name: String, create: String, progress: TaskProgress? = nil) async throws -> (tables: Int, views: Int) {
+        var created = false
 
         do {
-            try await CommandRunner.pipe(dumpCommand(database), into: restoreCommand(name))
+            try await query(.target, create)
+            created = true
+
+            var observer: (@Sendable (Data) -> Void)?
+            if let progress {
+                let watcher = DumpWatcher(progress: progress, namesTables: kind.usesMySQLProtocol)
+                observer = { watcher.read($0) }
+            }
+
+            try await CommandRunner.pipe(dumpCommand(database), into: restoreCommand(name), observer: observer)
         } catch {
-            try? await drop(name)
+            if created || error is CancellationError {
+                await Task { try? await drop(name) }.value
+            }
+
             throw error
         }
 
-        let counts = try await query(.target, countStatement, database: name).split(separator: "\t").compactMap { Int($0) }
+        // The copy is complete here. So a stop does not stop the count.
+        let counts = try await Task { try await query(.target, countStatement, database: name) }.value
+            .split(separator: "\t")
+            .compactMap { Int($0) }
         return (counts.first ?? 0, counts.dropFirst().first ?? 0)
     }
 
@@ -351,6 +405,21 @@ struct DatabaseCopier {
         }
     }
 
+    // The size of the data of the tables on the other server and their number, for the
+    // progress of the copy. The indexes are left out, because a dump has no index data.
+    func estimate(_ database: String) async throws -> (bytes: Int64, tables: Int) {
+        let answer = kind.usesMySQLProtocol
+            ? try await sourceClient.queryWithCurrentSizes("SELECT COALESCE(SUM(DATA_LENGTH), 0), COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '\(database)' AND TABLE_TYPE = 'BASE TABLE'")
+            : try await query(.source, "SELECT COALESCE(SUM(pg_table_size(c.oid)), 0), COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p') AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%'", database: database)
+
+        let values = answer.split(separator: "\t").map(String.init)
+        guard values.count == 2, let bytes = Int64(values[0]), let tables = Int(values[1]) else {
+            throw RuntimeError.unsupported("Nexus cannot read the size of \(database): \(answer)")
+        }
+
+        return (bytes, tables)
+    }
+
     private var countStatement: String {
         kind.usesMySQLProtocol
             ? "SELECT COUNT(TABLE_TYPE = 'BASE TABLE' OR NULL), COUNT(TABLE_TYPE = 'VIEW' OR NULL) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()"
@@ -361,7 +430,9 @@ struct DatabaseCopier {
         guard kind.usesMySQLProtocol else {
             return Command(
                 executable: tools.dump,
-                arguments: ["-h", source.host, "-p", String(source.port), "-U", source.account.user, "-d", database, "-Fc", "--no-owner", "--no-privileges"],
+                // Without compression, the bytes of the dump compare with the size of the tables.
+                // The dump goes only through a pipe on this Mac.
+                arguments: ["-h", source.host, "-p", String(source.port), "-U", source.account.user, "-d", database, "-Fc", "-Z", "0", "--no-owner", "--no-privileges"],
                 environment: ["PGPASSWORD": source.account.password]
             )
         }
@@ -406,5 +477,60 @@ struct DatabaseCopier {
     @discardableResult
     private func query(_ side: Side, _ sql: String, database: String? = nil) async throws -> String {
         try await (side == .source ? sourceClient : targetClient).query(sql, database: database)
+    }
+}
+
+// Counts the bytes of a dump for the progress of a copy. A dump of MySQL or MariaDB starts each
+// table with a comment line that names it. A part of the dump can end inside that line. So the
+// watcher keeps the end of each part for the next one.
+final class DumpWatcher: Sendable {
+    private static let marker = Data("\n-- Table structure for table `".utf8)
+    private static let kept = marker.count + 256
+
+    private let progress: TaskProgress
+    private let namesTables: Bool
+    private let rest = Mutex(Data())
+
+    init(progress: TaskProgress, namesTables: Bool) {
+        self.progress = progress
+        self.namesTables = namesTables
+    }
+
+    func read(_ part: Data) {
+        guard namesTables else {
+            progress.update { $0.completed += Int64(part.count) }
+            return
+        }
+
+        let tables = rest.withLock { rest in
+            let data = rest + part
+            var tables: [String] = []
+            var searchFrom = data.startIndex
+            var keepFrom = max(data.startIndex, data.endIndex - Self.kept)
+
+            while let marker = data.range(of: Self.marker, in: searchFrom..<data.endIndex) {
+                guard let end = data[marker.upperBound...].firstIndex(of: UInt8(ascii: "`")) else {
+                    keepFrom = min(keepFrom, marker.lowerBound)
+                    break
+                }
+
+                tables.append(String(decoding: data[marker.upperBound..<end], as: UTF8.self))
+                searchFrom = end
+            }
+
+            rest = Data(data[max(keepFrom, searchFrom)...])
+            return tables
+        }
+
+        progress.update { values in
+            values.completed += Int64(part.count)
+
+            guard let last = tables.last else {
+                return
+            }
+
+            values.table = last
+            values.tableNumber = (values.tableNumber ?? 0) + tables.count
+        }
     }
 }

@@ -468,6 +468,25 @@ Work:
 Done when: a download of MySQL 9.7 shows its progress and stops on a click without a half
 install. A copy of a large database shows its progress in the window and in the menu bar panel.
 
+Built: `support.lock` in nexus-binaries gives the LTS flag and the last day of security fixes of
+each version line, from endoflife.date. `scripts/support.sh` adds them to the manifest as `lts`
+and `security_end`. The workflow Manifest adds them to the published manifest without a new
+build. The weekly update check reports a date that endoflife.date changed. The Packages screen
+shows a note when the security fixes end within 6 months, and after they ended. nexusd sends the
+running tasks in their own event, four times each second while a task runs. A stopped task
+answers `.stopped` with a message that says what changed. A download can stop until its new
+folder goes into place. The change of the folder and the restart of an update do not stop. An
+update stops a running service only for the change of the folder. nexusd refuses a second
+install of the same package. It refuses a second copy into the same database. It refuses an
+update of an instance during a copy into it, and a copy into an instance during its update. The
+progress of a copy counts the bytes of the dump against the size of the tables on the other
+server. So the total is an estimate. A dump of MySQL or MariaDB names each table. PostgreSQL
+dumps without compression, so its bytes compare with the size of its tables. A copy that fails
+or stops drops its half database. Checked on 2026-10-28 on the owner's Mac: a download of MySQL
+9.7 stopped on a click and left nothing behind. A copy of fc_local_smartforms (2.8 GB) from MAMP
+PRO showed its progress in the sheet and in the menu bar panel, and stopped at 46 percent
+without a half database.
+
 ### 6g. Settings
 
 Work: connect 7 of the 8 tabs of the design. The Workspaces tab comes in step 8.

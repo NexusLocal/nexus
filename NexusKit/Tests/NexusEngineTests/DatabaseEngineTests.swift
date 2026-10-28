@@ -274,4 +274,32 @@ extension NexusEngineTests {
         #expect(catalog.portRequirements(for: runtime("postgresql", "17")) == [PortRequirement(key: "postgresql-17", standard: 5432)])
         #expect(catalog.portRequirements(for: runtime("mariadb", "11.4")) == [PortRequirement(key: "mariadb-11.4", standard: 3306)])
     }
+
+    @Test func aDumpWatcherCountsTheBytesAndNamesTheTablesAlsoAcrossParts() {
+        let progress = TaskProgress()
+        let watcher = DumpWatcher(progress: progress, namesTables: true)
+        let dump = "-- MySQL dump\n--\n-- Table structure for table `users`\n--\nCREATE TABLE ...;\n--\n-- Table structure for table `audit_logs`\n--\nINSERT ...;\n"
+        let bytes = Data(dump.utf8)
+        let cut = bytes.count - 40
+
+        watcher.read(bytes.prefix(cut))
+        let first = progress.current
+        watcher.read(bytes.suffix(from: cut))
+        let second = progress.current
+
+        #expect(first.table == "users")
+        #expect(first.tableNumber == 1)
+        #expect(second.table == "audit_logs")
+        #expect(second.tableNumber == 2)
+        #expect(second.completed == Int64(bytes.count))
+    }
+
+    @Test func aDumpWatcherOfPostgreSQLOnlyCountsTheBytes() {
+        let progress = TaskProgress()
+        let watcher = DumpWatcher(progress: progress, namesTables: false)
+
+        watcher.read(Data("\n-- Table structure for table `users`".utf8))
+
+        #expect(progress.current == TaskProgress.Values(completed: 37))
+    }
 }

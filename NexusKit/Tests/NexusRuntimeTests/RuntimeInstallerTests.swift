@@ -1,13 +1,24 @@
 import Foundation
 import NexusCore
+import Synchronization
 import Testing
 @testable import NexusRuntime
 
 struct LocalFileDownloader: PackageDownloader {
-    func download(_ url: URL) async throws -> URL {
+    func download(_ url: URL, progress: @escaping @Sendable (DownloadProgress) -> Void) async throws -> URL {
         let copy = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.copyItem(at: url, to: copy)
+        let size = Int64(try copy.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+        progress(DownloadProgress(received: size, expected: size))
         return copy
+    }
+}
+
+struct EndlessDownloader: PackageDownloader {
+    func download(_ url: URL, progress: @escaping @Sendable (DownloadProgress) -> Void) async throws -> URL {
+        progress(DownloadProgress(received: 10, expected: 100))
+        try await Task.sleep(for: .seconds(60))
+        throw RuntimeError.unsupported("The test did not cancel the download.")
     }
 }
 
@@ -90,6 +101,44 @@ struct RuntimeInstallerTests {
         #expect(await installer.installedRuntimes().map(\.version) == ["1.0.2"])
     }
 
+    @Test func installReportsTheBytesOfTheDownload() async throws {
+        let installer = RuntimeInstaller(paths: paths, downloader: LocalFileDownloader())
+        let package = try makePackage(version: "1.0.1")
+        let reports = DownloadReports()
+
+        try await installer.install(package) { reports.add($0) }
+
+        let size = Int64(try package.url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+        #expect(reports.all == [DownloadProgress(received: size, expected: size)])
+    }
+
+    @Test func aStoppedInstallLeavesNoRuntimeAndNoStagingFolder() async throws {
+        let installer = RuntimeInstaller(paths: paths, downloader: EndlessDownloader())
+        let package = try makePackage(version: "1.0.1")
+        let install = Task { try await installer.install(package) }
+
+        try await Task.sleep(for: .milliseconds(200))
+        install.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await install.value
+        }
+        #expect(await installer.installed(name: "demo", line: "1.0") == nil)
+        #expect((try? FileManager.default.contentsOfDirectory(atPath: paths.runtimeStaging.path(percentEncoded: false)))?.isEmpty ?? true)
+    }
+
+    @Test func aPreparedRuntimeIsInPlaceOnlyAfterItsCommit() async throws {
+        let installer = RuntimeInstaller(paths: paths, downloader: LocalFileDownloader())
+        let prepared = try await installer.prepare(try makePackage(version: "1.0.1"))
+
+        #expect(await installer.installed(name: "demo", line: "1.0") == nil)
+
+        try await installer.commit(prepared)
+
+        #expect(await installer.installed(name: "demo", line: "1.0")?.version == "1.0.1")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: paths.runtimeStaging.path(percentEncoded: false)).isEmpty)
+    }
+
     @Test func removeDeletesTheRuntime() async throws {
         let installer = RuntimeInstaller(paths: paths, downloader: LocalFileDownloader())
         try await installer.install(try makePackage(version: "1.0.1"))
@@ -97,5 +146,24 @@ struct RuntimeInstallerTests {
         try await installer.remove(name: "demo", line: "1.0")
 
         #expect(await installer.installedRuntimes().isEmpty)
+    }
+}
+
+private extension RuntimeInstaller {
+    @discardableResult
+    func install(_ package: ManifestPackage, progress: @escaping @Sendable (DownloadProgress) -> Void = { _ in }) async throws -> InstalledRuntime {
+        try commit(try await prepare(package, progress: progress))
+    }
+}
+
+private final class DownloadReports: Sendable {
+    private let reports = Mutex<[DownloadProgress]>([])
+
+    var all: [DownloadProgress] {
+        reports.withLock { $0 }
+    }
+
+    func add(_ report: DownloadProgress) {
+        reports.withLock { $0.append(report) }
     }
 }

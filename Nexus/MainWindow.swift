@@ -90,6 +90,8 @@ struct MainWindow: View {
                 }
             case .parkedFolder(let folder):
                 Text(parkedFolderRemoval(folder))
+            case .package(let package):
+                Text(packageRemoval(package))
             }
         }
         .onChange(of: model.groupNaming?.id) {
@@ -159,8 +161,19 @@ struct MainWindow: View {
         switch model.removal {
         case .site(let site): "Remove \(site.host)?"
         case .parkedFolder(let folder): "Remove the folder of projects \(folder.name)?"
+        case .package(let package): "Remove \(package.name)?"
         case nil: ""
         }
+    }
+
+    // nexusd keeps the data folder of a database. It refuses a removal while a service or a
+    // site uses the package, and says why.
+    private func packageRemoval(_ package: PackageItem) -> String {
+        if ServiceKind(package: package.package)?.isDatabase == true {
+            return "Nexus removes the program files of \(package.name). Its databases stay in its data folder. An install later uses them again."
+        }
+
+        return "Nexus removes the program files of \(package.name). You can install it again later."
     }
 
     // A project with settings of its own is an added site for nexusd. It stays when its folder of

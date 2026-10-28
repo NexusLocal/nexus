@@ -33,7 +33,7 @@ let package = Package(
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "SwiftASN1", package: "swift-asn1"),
         ]),
-        .target(name: "NexusRuntime", dependencies: ["NexusCore"]),
+        .target(name: "NexusRuntime", dependencies: ["NexusCore", "NexusSupervisor"]),
         .target(name: "NexusSupervisor", dependencies: ["NexusCore"]),
         .target(name: "NexusIPC", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor"]),
         .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig"]),

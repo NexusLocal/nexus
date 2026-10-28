@@ -317,10 +317,52 @@ public struct ServiceList: Codable, Sendable, Equatable {
     }
 }
 
+// The work of a task that runs in nexusd. An update is a download of a newer build of a version
+// line that is installed already.
+public enum TaskWork: Codable, Sendable, Equatable {
+    case install(name: String, line: String, version: String, update: Bool)
+    case copyDatabase(database: String, instance: String, name: String)
+}
+
+// A task that runs for a long time and can stop (part 6f). completed and total count bytes. The
+// total of a database copy is an estimate from the size of the tables on the other server, so
+// completed can pass it. A database copy of MySQL or MariaDB names the table that it copies.
+// PostgreSQL gives no table names in its dump.
+public struct TaskInfo: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let work: TaskWork
+    public let started: Date
+    public let completed: Int64
+    public let total: Int64?
+    public let table: String?
+    public let tableNumber: Int?
+    public let tableCount: Int?
+
+    public init(id: String, work: TaskWork, started: Date, completed: Int64 = 0, total: Int64? = nil, table: String? = nil, tableNumber: Int? = nil, tableCount: Int? = nil) {
+        self.id = id
+        self.work = work
+        self.started = started
+        self.completed = completed
+        self.total = total
+        self.table = table
+        self.tableNumber = tableNumber
+        self.tableCount = tableCount
+    }
+}
+
+public struct TaskList: Codable, Sendable, Equatable {
+    public let tasks: [TaskInfo]
+
+    public init(tasks: [TaskInfo]) {
+        self.tasks = tasks
+    }
+}
+
 // What nexusd sends to the app without a request, after each change.
 public enum NexusEvent: Codable, Sendable, Equatable {
     case services(ServiceList)
     case sites(SiteList)
+    case tasks(TaskList)
 }
 
 public enum NexusRequest: Codable, Sendable, Equatable {
@@ -361,6 +403,9 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case databaseSizes(instance: String)
     case setAccount(instance: String, account: DatabaseAccount)
     case copyDatabase(DatabaseCopy)
+    // The databases on another server, read with the client of the instance.
+    case sourceDatabases(source: DatabaseServer, instance: String)
+    case stopTask(id: String)
 }
 
 public enum NexusResponse: Codable, Sendable, Equatable {
@@ -377,6 +422,8 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case databaseSizes([DatabaseSize])
     case portInUse(PortConflict)
     case invalidSettings(PHPSettingsError)
+    // A task that stopped because the user asked for it. The message says what changed.
+    case stopped(message: String)
     case failure(message: String)
 }
 

@@ -48,8 +48,16 @@ public struct ManifestPackage: Codable, Sendable, Equatable, Identifiable {
     public let architecture: String
     public let license: String?
     public let upstream: Bool?
+    // The support data from support.lock in the build repository (D12). The last day of
+    // security fixes is a date such as 2026-12-31. A manifest from before part 6f has neither.
+    public let lts: Bool?
+    public let securityEnd: String?
 
     public var id: String { "\(name)-\(line)" }
+
+    public var securityEndDate: Date? {
+        securityEnd.flatMap { try? Date($0, strategy: .iso8601.year().month().day()) }
+    }
 
     public init(
         name: String,
@@ -63,7 +71,9 @@ public struct ManifestPackage: Codable, Sendable, Equatable, Identifiable {
         minimumMacOS: String = "27.0",
         architecture: String = "arm64",
         license: String? = nil,
-        upstream: Bool? = nil
+        upstream: Bool? = nil,
+        lts: Bool? = nil,
+        securityEnd: String? = nil
     ) {
         self.name = name
         self.version = version
@@ -77,10 +87,13 @@ public struct ManifestPackage: Codable, Sendable, Equatable, Identifiable {
         self.architecture = architecture
         self.license = license
         self.upstream = upstream
+        self.lts = lts
+        self.securityEnd = securityEnd
     }
 
     enum CodingKeys: String, CodingKey {
-        case name, version, line, revision, url, sha256, size, format, architecture, license, upstream
+        case name, version, line, revision, url, sha256, size, format, architecture, license, upstream, lts
         case minimumMacOS = "minimum_macos"
+        case securityEnd = "security_end"
     }
 }

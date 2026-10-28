@@ -1,21 +1,93 @@
 import Foundation
 import NexusCore
+import NexusSupervisor
+import Synchronization
 
-public protocol PackageDownloader: Sendable {
-    func download(_ url: URL) async throws -> URL
+// The bytes of a download so far. The size is nil when the server does not give it.
+public struct DownloadProgress: Sendable, Equatable {
+    public let received: Int64
+    public let expected: Int64?
+
+    public init(received: Int64, expected: Int64?) {
+        self.received = received
+        self.expected = expected
+    }
 }
 
+// A cancelled task stops its download and gets a CancellationError.
+public protocol PackageDownloader: Sendable {
+    func download(_ url: URL, progress: @escaping @Sendable (DownloadProgress) -> Void) async throws -> URL
+}
+
+// A download task of URLSession reports its bytes and stops at once on a cancel. The file of the
+// task goes away when the handler returns. So the handler moves it first.
 public struct URLSessionDownloader: PackageDownloader {
     public init() {}
 
-    public func download(_ url: URL) async throws -> URL {
-        let (file, response) = try await URLSession.shared.download(from: url)
+    public func download(_ url: URL, progress: @escaping @Sendable (DownloadProgress) -> Void) async throws -> URL {
+        let transfer = Transfer()
+
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = URLSession.shared.downloadTask(with: url) { file, response, error in
+                    continuation.resume(with: Result { try Self.keep(file, response: response, error: error, url: url) })
+                }
+
+                let observation = task.observe(\.countOfBytesReceived) { task, _ in
+                    let expected = task.countOfBytesExpectedToReceive
+                    progress(DownloadProgress(received: task.countOfBytesReceived, expected: expected > 0 ? expected : nil))
+                }
+
+                transfer.start(task, observation: observation)
+            }
+        } onCancel: {
+            transfer.cancel()
+        }
+    }
+
+    private static func keep(_ file: URL?, response: URLResponse?, error: (any Error)?, url: URL) throws -> URL {
+        if let error {
+            throw (error as? URLError)?.code == .cancelled ? CancellationError() : error
+        }
 
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw RuntimeError.httpStatus(http.statusCode, url)
         }
 
-        return file
+        guard let file else {
+            throw RuntimeError.unsupported("The download of \(url.absoluteString) gave no file.")
+        }
+
+        let kept = FileManager.default.temporaryDirectory.appending(path: "nexus-download-\(UUID().uuidString)")
+        try FileManager.default.moveItem(at: file, to: kept)
+        return kept
+    }
+
+    // A cancel can come before the task exists. The task then stops as soon as it starts.
+    private final class Transfer: Sendable {
+        private let state = Mutex<(task: URLSessionDownloadTask?, observation: NSKeyValueObservation?, cancelled: Bool)>((nil, nil, false))
+
+        func start(_ task: URLSessionDownloadTask, observation: NSKeyValueObservation) {
+            let cancelled = state.withLock { state in
+                state.task = task
+                state.observation = observation
+                return state.cancelled
+            }
+
+            task.resume()
+
+            if cancelled {
+                task.cancel()
+            }
+        }
+
+        func cancel() {
+            let task = state.withLock { state in
+                state.cancelled = true
+                return state.task
+            }
+            task?.cancel()
+        }
     }
 }
 
@@ -39,9 +111,16 @@ public enum RuntimeError: Error, Equatable, CustomStringConvertible {
     }
 }
 
+// A runtime that is checked and unpacked in its staging folder, but not in place yet.
+public struct PreparedRuntime: Sendable {
+    public let runtime: InstalledRuntime
+    let staging: URL
+}
+
 // Installs each runtime into runtimes/<name>/<line>, so a patch update replaces the folder that
-// the configuration files point to. The package is checked and unpacked in a staging folder
-// first, so a failed install never leaves a half-written runtime.
+// the configuration files point to. prepare(_:progress:) checks and unpacks the package in a
+// staging folder. So a failed or stopped install never leaves a half-written runtime. A stop can
+// come until commit(_:) starts. After that the install finishes.
 public actor RuntimeInstaller {
     private let paths: NexusPaths
     private let downloader: any PackageDownloader
@@ -52,14 +131,11 @@ public actor RuntimeInstaller {
         self.downloader = downloader
     }
 
-    @discardableResult
-    public func install(_ package: ManifestPackage) async throws -> InstalledRuntime {
-        if let current = installed(name: package.name, line: package.line), current.isSameBuild(as: package) {
-            return current
-        }
-
-        let download = try await downloader.download(package.url)
+    public func prepare(_ package: ManifestPackage, progress: @escaping @Sendable (DownloadProgress) -> Void = { _ in }) async throws -> PreparedRuntime {
+        let download = try await downloader.download(package.url, progress: progress)
         defer { try? fileManager.removeItem(at: download) }
+
+        try Task.checkCancellation()
 
         let actual = try FileChecksum.sha256(of: download)
         guard actual == package.sha256.lowercased() else {
@@ -68,23 +144,39 @@ public actor RuntimeInstaller {
 
         let staging = paths.runtimeStaging.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
-        defer { try? fileManager.removeItem(at: staging) }
 
-        try unpack(download, format: package.format, into: staging)
+        do {
+            try await unpack(download, format: package.format, into: staging)
 
-        let runtime = InstalledRuntime(
-            name: package.name,
-            line: package.line,
-            version: package.version,
-            revision: package.revision,
-            sha256: actual,
-            installedAt: .now,
-            folder: paths.runtime(package.name, line: package.line)
-        )
-        try writeMetadata(runtime, into: staging)
-        try replace(runtime.folder, with: staging)
+            let runtime = InstalledRuntime(
+                name: package.name,
+                line: package.line,
+                version: package.version,
+                revision: package.revision,
+                sha256: actual,
+                installedAt: .now,
+                folder: paths.runtime(package.name, line: package.line)
+            )
+            try writeMetadata(runtime, into: staging)
+            try Task.checkCancellation()
 
-        return runtime
+            return PreparedRuntime(runtime: runtime, staging: staging)
+        } catch {
+            try? fileManager.removeItem(at: staging)
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func commit(_ prepared: PreparedRuntime) throws -> InstalledRuntime {
+        defer { discard(prepared) }
+
+        try replace(prepared.runtime.folder, with: prepared.staging)
+        return prepared.runtime
+    }
+
+    public func discard(_ prepared: PreparedRuntime) {
+        try? fileManager.removeItem(at: prepared.staging)
     }
 
     public func installed(name: String, line: String) -> InstalledRuntime? {
@@ -111,10 +203,16 @@ public actor RuntimeInstaller {
         try fileManager.removeItem(at: folder)
     }
 
-    private func unpack(_ archive: URL, format: ManifestPackage.Format, into folder: URL) throws {
+    private func unpack(_ archive: URL, format: ManifestPackage.Format, into folder: URL) async throws {
         switch format {
         case .tarXZ:
-            try run("/usr/bin/tar", ["-xf", archive.path(percentEncoded: false), "-C", folder.path(percentEncoded: false), "--strip-components", "1"])
+            let tar = Command(executable: URL(filePath: "/usr/bin/tar"), arguments: ["-xf", archive.path(percentEncoded: false), "-C", folder.path(percentEncoded: false), "--strip-components", "1"])
+
+            do {
+                try await CommandRunner.run(tar)
+            } catch CommandError.failed(_, _, let output) {
+                throw RuntimeError.unpackFailed(output)
+            }
         case .phar:
             try fileManager.copyItem(at: archive, to: folder.appending(path: "composer.phar"))
         }
@@ -123,10 +221,19 @@ public actor RuntimeInstaller {
     private func replace(_ destination: URL, with staging: URL) throws {
         try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
 
+        // When the new folder cannot move into place, the old folder goes back. So the service
+        // that ran before the update can start again.
         if fileManager.fileExists(atPath: destination.path(percentEncoded: false)) {
             let old = paths.runtimeStaging.appending(path: "old-\(UUID().uuidString)", directoryHint: .isDirectory)
             try fileManager.moveItem(at: destination, to: old)
-            try fileManager.moveItem(at: staging, to: destination)
+
+            do {
+                try fileManager.moveItem(at: staging, to: destination)
+            } catch {
+                try? fileManager.moveItem(at: old, to: destination)
+                throw error
+            }
+
             try? fileManager.removeItem(at: old)
             return
         }
@@ -152,22 +259,5 @@ public actor RuntimeInstaller {
 
         runtime.folder = folder
         return runtime
-    }
-
-    private func run(_ executable: String, _ arguments: [String]) throws {
-        let process = Process()
-        process.executableURL = URL(filePath: executable)
-        process.arguments = arguments
-        let errors = Pipe()
-        process.standardError = errors
-        process.standardOutput = FileHandle.nullDevice
-
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            let output = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            throw RuntimeError.unpackFailed(output.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
     }
 }

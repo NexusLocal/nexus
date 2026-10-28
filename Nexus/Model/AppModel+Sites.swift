@@ -221,6 +221,8 @@ extension AppModel {
         case .parkedFolder(let folder):
             let path = (folder.path as NSString).expandingTildeInPath
             send(.unpark(folder: path), failure: "Nexus still uses \(folder.name)", place: .window)
+        case .package(let package):
+            remove(package)
         }
     }
 

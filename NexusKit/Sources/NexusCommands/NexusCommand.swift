@@ -654,6 +654,9 @@ private func finish(_ response: NexusResponse) throws {
     case .invalidSettings(let error):
         FileHandle.standardError.write(Data("\(error)\n".utf8))
         throw ExitCode.failure
+    case .stopped(let message):
+        FileHandle.standardError.write(Data("\(message)\n".utf8))
+        throw ExitCode.failure
     default:
         break
     }

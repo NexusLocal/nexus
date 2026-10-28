@@ -40,7 +40,7 @@ public enum CommandError: Error, Equatable, CustomStringConvertible {
 // Runs the programs that nexusd needs next to its services, such as a database initialization,
 // a dump and a restore. The output goes to a file and not to a pipe, so a program with much
 // output cannot block. A program runs on its own process, and the caller waits without a
-// blocked thread.
+// blocked thread. A cancelled task stops its programs and gets a CancellationError.
 public enum CommandRunner {
     @discardableResult
     public static func run(_ command: Command) async throws -> CommandOutput {
@@ -56,7 +56,14 @@ public enum CommandRunner {
         process.standardOutput = output.handle
         process.standardError = errors.handle
 
-        let end = await (try start(process)).wait()
+        let exit = try start(process)
+        let end = await withTaskCancellationHandler {
+            await exit.wait()
+        } onCancel: {
+            process.terminate()
+        }
+
+        try Task.checkCancellation()
         let result = CommandOutput(standardOutput: output.text(), standardError: errors.text())
 
         guard !end.failed else {
@@ -70,8 +77,10 @@ public enum CommandRunner {
     // Sends the output of the first program to the input of the second, as a shell pipe does.
     // Both must succeed. When the second stops early, the first stops on the closed pipe, so the
     // error of the second is the cause. When the first fails in another way, the second got a
-    // cut input, so the error of the first is the cause.
-    public static func pipe(_ first: Command, into second: Command) async throws {
+    // cut input, so the error of the first is the cause. With an observer, nexusd passes each
+    // part of the data on itself. The observer sees each part first, for example to count the
+    // bytes of a dump.
+    public static func pipe(_ first: Command, into second: Command, observer: (@Sendable (Data) -> Void)? = nil) async throws {
         let firstErrors = try OutputFile()
         let secondOutput = try OutputFile()
         defer {
@@ -79,14 +88,15 @@ public enum CommandRunner {
             secondOutput.remove()
         }
 
-        let pipe = Pipe()
+        let output = Pipe()
+        let input = observer == nil ? output : Pipe()
         let producer = try makeProcess(first)
         producer.standardInput = FileHandle.nullDevice
-        producer.standardOutput = pipe
+        producer.standardOutput = output
         producer.standardError = firstErrors.handle
 
         let consumer = try makeProcess(second)
-        consumer.standardInput = pipe
+        consumer.standardInput = input
         consumer.standardOutput = secondOutput.handle
         consumer.standardError = secondOutput.handle
 
@@ -101,8 +111,18 @@ public enum CommandRunner {
             throw error
         }
 
-        let consumerEnd = await consumerExit.wait()
-        let producerEnd = await producerExit.wait()
+        let relay = observer.map { relay(from: output.fileHandleForReading, to: input.fileHandleForWriting, observer: $0) }
+        let (consumerEnd, producerEnd) = await withTaskCancellationHandler {
+            let consumerEnd = await consumerExit.wait()
+            let producerEnd = await producerExit.wait()
+            await relay?.wait()
+            return (consumerEnd, producerEnd)
+        } onCancel: {
+            producer.terminate()
+            consumer.terminate()
+        }
+
+        try Task.checkCancellation()
         let producerErrors = firstErrors.text()
         let producerError = CommandError.failed(program: first.executable.lastPathComponent, status: producerEnd.status, output: tail(producerErrors))
         let producerStoppedOnClosedPipe = producerEnd == Termination(status: SIGPIPE, signaled: true) || producerErrors.contains("Broken pipe")
@@ -134,6 +154,53 @@ public enum CommandRunner {
         process.terminationHandler = { exit.finish(Termination(status: $0.terminationStatus, signaled: $0.terminationReason == .uncaughtSignal)) }
         try process.run()
         return exit
+    }
+
+    // Reads on its own thread, because a read waits until data comes. A write to a consumer that
+    // stopped fails with an error and not with a SIGPIPE for nexusd. The relay then closes its
+    // ends. So the producer stops on the closed pipe.
+    private static func relay(from source: FileHandle, to destination: FileHandle, observer: @escaping @Sendable (Data) -> Void) -> RelayEnd {
+        let end = RelayEnd()
+        let input = source.fileDescriptor
+        let output = destination.fileDescriptor
+        _ = fcntl(output, F_SETNOSIGPIPE, 1)
+
+        Thread.detachNewThread {
+            var buffer = [UInt8](repeating: 0, count: 1 << 16)
+
+            reading: while true {
+                let count = buffer.withUnsafeMutableBytes { read(input, $0.baseAddress, $0.count) }
+                if count < 0, errno == EINTR {
+                    continue
+                }
+
+                guard count > 0 else {
+                    break
+                }
+
+                observer(Data(buffer[0..<count]))
+
+                var written = 0
+                while written < count {
+                    let result = buffer.withUnsafeBytes { write(output, $0.baseAddress! + written, count - written) }
+                    if result < 0, errno == EINTR {
+                        continue
+                    }
+
+                    guard result > 0 else {
+                        break reading
+                    }
+
+                    written += result
+                }
+            }
+
+            try? destination.close()
+            try? source.close()
+            end.finish()
+        }
+
+        return end
     }
 
     private static func tail(_ text: String) -> String {
@@ -174,6 +241,33 @@ private final class ExitStatus: Sendable {
 
             if let end {
                 continuation.resume(returning: end)
+            }
+        }
+    }
+}
+
+private final class RelayEnd: Sendable {
+    private let state = Mutex<(finished: Bool, waiter: CheckedContinuation<Void, Never>?)>((false, nil))
+
+    func finish() {
+        let waiter = state.withLock { state in
+            state.finished = true
+            return state.waiter.take()
+        }
+        waiter?.resume()
+    }
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let finished = state.withLock { state in
+                if !state.finished {
+                    state.waiter = continuation
+                }
+                return state.finished
+            }
+
+            if finished {
+                continuation.resume()
             }
         }
     }

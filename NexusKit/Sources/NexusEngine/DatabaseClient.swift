@@ -64,7 +64,24 @@ struct DatabaseClient {
 
     // Each row of the answer, with its columns.
     func rows(_ sql: String, database: String? = nil) async throws -> [[String]] {
-        try await query(sql, database: database)
+        Self.rows(in: try await query(sql, database: database))
+    }
+
+    // MySQL 8.0 and later give table sizes of up to a day ago, unless the session asks for the
+    // current sizes. MariaDB and MySQL before 8.0 do not know that setting. Only for that error
+    // the query runs again without the setting. So a server that does not answer costs one wait.
+    func queryWithCurrentSizes(_ sql: String) async throws -> String {
+        let setting = "information_schema_stats_expiry"
+
+        do {
+            return try await query("SET SESSION \(setting) = 0;\n\(sql)")
+        } catch CommandError.failed(_, _, let output) where output.contains(setting) {
+            return try await query(sql)
+        }
+    }
+
+    static func rows(in answer: String) -> [[String]] {
+        answer
             .split(separator: "\n")
             .map { $0.split(separator: "\t", omittingEmptySubsequences: false).map(String.init) }
     }

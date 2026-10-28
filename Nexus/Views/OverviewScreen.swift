@@ -275,8 +275,13 @@ private struct ActivityList: View {
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                             .frame(width: 34, alignment: .trailing)
-                        Button("Cancel") {}
-                            .controlSize(.small)
+                        Button("Cancel") {
+                            if let id = activity.taskID {
+                                model.stopTask(id)
+                            }
+                        }
+                        .controlSize(.small)
+                        .disabled(activity.taskID == nil && model.isLive)
                     }
                 }
             }

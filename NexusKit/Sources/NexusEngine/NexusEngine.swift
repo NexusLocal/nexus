@@ -70,6 +70,16 @@ public actor NexusEngine {
     // Apache accepted (D62).
     var parkedWatcher: FolderWatcher?
     var appliedSites: [String]?
+    // The downloads and database copies that run now, and the last task list of the watchers.
+    private(set) var runningTasks: [String: RunningTask] = [:]
+    // The databases that a copy writes now, as "<instance> <name>". nexusd refuses a second copy
+    // into one of them. It also refuses a second install of a package that it installs now. And
+    // it refuses a copy into an instance that an update stops now.
+    var copyTargets: Set<String> = []
+    private var installTargets: Set<String> = []
+    var updatingServices: Set<String> = []
+    private var publishedTasks: TaskList?
+    private var tasksTicker: Task<Void, Never>?
 
     public init(
         paths: NexusPaths,
@@ -179,11 +189,17 @@ public actor NexusEngine {
             case .copyDatabase(let copy):
                 // A copy can take minutes, so it does not wait in the queue of the changes.
                 return .done(message: try await copyDatabase(copy))
+            case .sourceDatabases(let source, let instance):
+                return .databaseSizes(try await sourceDatabases(source, instance: instance))
+            case .stopTask(let id):
+                return .done(message: stopTask(id))
             }
         } catch let conflict as PortConflict {
             return .portInUse(conflict)
         } catch let settings as PHPSettingsError {
             return .invalidSettings(settings)
+        } catch let stopped as TaskStopped {
+            return .stopped(message: stopped.description)
         } catch {
             return .failure(message: String(describing: error))
         }
@@ -590,13 +606,110 @@ public actor NexusEngine {
         return Set(keys).union([Self.dnsServiceID])
     }
 
+    // The download is a task that the user can stop (part 6f). An update of a version line that
+    // runs stops its service only for the change of the folder, and starts it again. The task
+    // ends after that change. So the app shows the download until the new folder is in place.
     private func install(name: String, line: String) async throws -> String {
         guard let package = try await manifest().package(named: name, line: line) else {
             throw RuntimeError.unsupported("The manifest has no \(name) \(line).")
         }
 
-        let runtime = try await installer.install(package)
-        return "\(runtime.name) \(runtime.version) is installed in \(runtime.folder.path(percentEncoded: false))"
+        let current = await installer.installed(name: name, line: line)
+        if let current, current.isSameBuild(as: package) {
+            return "\(name) \(current.version) is installed already in \(current.folder.path(percentEncoded: false))"
+        }
+
+        // The check and the insert have no wait between them. So two requests on the actor
+        // cannot both pass.
+        let target = "\(name)-\(line)"
+        guard !installTargets.contains(target) else {
+            throw RuntimeError.unsupported("Nexus installs \(name) \(line) already. Wait until it ends, or stop it.")
+        }
+
+        if let current, let id = catalog.serviceID(for: current) {
+            try refuseUpdateDuringCopy(of: id, package: "\(name) \(line)")
+        }
+
+        installTargets.insert(target)
+        defer { installTargets.remove(target) }
+
+        let installer = installer
+        let work = TaskWork.install(name: name, line: line, version: package.version, update: current != nil)
+        let stopped = current.map { "The update of \(name) \(line) stopped. \(name) \($0.version) stays." } ?? "The download of \(name) \(line) stopped. Nexus installed nothing."
+        let runtime = try await runTask(work, stopped: { stopped }) { progress in
+            progress.update { $0.total = package.size.map(Int64.init) }
+
+            let prepared = try await installer.prepare(package) { download in
+                progress.update { values in
+                    values.completed = download.received
+                    values.total = download.expected ?? values.total
+                }
+            }
+
+            // The change of the folder runs in a task of its own. A stop that comes now does
+            // not stop it. So a service never stays stopped halfway through an update.
+            return try await Task { try await self.serialWeb { try await self.replaceRuntime(with: prepared) } }.value
+        }
+
+        let folder = runtime.folder.path(percentEncoded: false)
+
+        guard let current else {
+            return "\(runtime.name) \(runtime.version) is installed in \(folder)"
+        }
+
+        return "\(runtime.name) \(runtime.line) is updated from \(current.version) to \(runtime.version) in \(folder)"
+    }
+
+    private func replaceRuntime(with prepared: PreparedRuntime) async throws -> InstalledRuntime {
+        let id = catalog.serviceID(for: prepared.runtime)
+        let running = if let id { await supervisor.state(of: id)?.isActive == true } else { false }
+
+        guard let id, running else {
+            return try await installer.commit(prepared)
+        }
+
+        do {
+            try refuseUpdateDuringCopy(of: id, package: "\(prepared.runtime.name) \(prepared.runtime.line)")
+        } catch {
+            await installer.discard(prepared)
+            throw error
+        }
+
+        updatingServices.insert(id)
+        defer { updatingServices.remove(id) }
+
+        do {
+            _ = try await stop(id, disable: false)
+        } catch {
+            await installer.discard(prepared)
+            throw RuntimeError.unsupported("Nexus did not update \(prepared.runtime.name) \(prepared.runtime.line), because \(id) did not stop. \(error)")
+        }
+
+        let runtime: InstalledRuntime
+        do {
+            runtime = try await installer.commit(prepared)
+        } catch {
+            _ = try? await start(id, enable: false)
+            throw error
+        }
+
+        do {
+            _ = try await start(id, enable: false)
+        } catch {
+            throw RuntimeError.unsupported("\(runtime.name) \(runtime.line) is updated to \(runtime.version), but \(id) did not start again. \(error)")
+        }
+
+        return runtime
+    }
+
+    // An update stops the instance. A copy into that instance would then fail with an error
+    // that does not say why.
+    private func refuseUpdateDuringCopy(of id: String, package: String) throws {
+        guard copyTargets.contains(where: { $0.hasPrefix("\(id) ") }) else {
+            return
+        }
+
+        throw RuntimeError.unsupported("Nexus did not update \(package), because a database copy into \(id) runs. Update it after the copy, or stop the copy first.")
     }
 
     private func remove(name: String, line: String) async throws -> String {
@@ -666,10 +779,59 @@ extension NexusEngine {
             Task { await self?.removeWatcher(id) }
         }
 
+        // A new watcher gets the task list only while a task runs. An app that connects again
+        // forgets its old tasks itself.
         publishedServices = nil
         publishedSites = nil
+        publishedTasks = TaskList(tasks: [])
         sitesChanged()
+        publishTasks()
         return stream
+    }
+
+    // A task shows at once when it starts and when it ends. While tasks run, a ticker sends
+    // their progress four times each second.
+    func addTask(_ task: RunningTask) {
+        runningTasks[task.id] = task
+        publishTasks()
+
+        guard tasksTicker == nil else {
+            return
+        }
+
+        tasksTicker = Task {
+            while self.hasRunningTasks() {
+                try? await Task.sleep(for: .milliseconds(250))
+                self.publishTasks()
+            }
+        }
+    }
+
+    func removeTask(_ id: String) {
+        runningTasks[id] = nil
+        publishTasks()
+    }
+
+    private func hasRunningTasks() -> Bool {
+        guard runningTasks.isEmpty else {
+            return true
+        }
+
+        tasksTicker = nil
+        return false
+    }
+
+    private func publishTasks() {
+        let list = TaskList(tasks: runningTasks.values.map(\.info).sorted { ($0.started, $0.id) < ($1.started, $1.id) })
+
+        guard list != publishedTasks, !watchers.isEmpty else {
+            return
+        }
+
+        publishedTasks = list
+        for watcher in watchers.values {
+            watcher.yield(.tasks(list))
+        }
     }
 
     private func removeWatcher(_ id: UUID) {
@@ -728,7 +890,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .databases, .databaseSizes: true
+        case .status, .available, .installed, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .databases, .databaseSizes, .sourceDatabases, .stopTask: true
         default: false
         }
     }

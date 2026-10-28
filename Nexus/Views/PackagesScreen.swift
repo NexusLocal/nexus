@@ -20,12 +20,19 @@ struct PackagesScreen: View {
         }
 
         return Dictionary(grouping: visible, by: \.section)
-            .map { (title: $0.key, packages: $0.value) }
+            .map { (title: $0.key, packages: $0.value.sorted(by: Self.showsBefore)) }
             .sorted { sectionOrder($0.title) < sectionOrder($1.title) }
     }
 
     var body: some View {
         Form {
+            if let problem = model.packagesProblem {
+                Section {
+                    Text(problem)
+                        .foregroundStyle(Color.orangeText)
+                }
+            }
+
             ForEach(sections, id: \.title) { section in
                 Section(section.title) {
                     ForEach(section.packages) { package in
@@ -36,6 +43,9 @@ struct PackagesScreen: View {
         }
         .formStyle(.grouped)
         .screenTitle("Packages", subtitle: subtitle)
+        .task {
+            await model.loadInstalledRuntimes()
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Picker("Show", selection: $filter) {
@@ -47,15 +57,19 @@ struct PackagesScreen: View {
 
             ToolbarItem(placement: .primaryAction) {
                 Button {
+                    Task { await model.checkPackages() }
                 } label: {
                     Label("Check for updates", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .labelStyle(.titleAndIcon)
+                .disabled(model.checkingPackages)
             }
 
             ToolbarItem(placement: .primaryAction) {
                 MoreMenu {
-                    Button("Show packages folder", systemImage: "folder") {}
+                    Button("Show packages folder", systemImage: "folder") {
+                        model.showPackagesFolder()
+                    }
                 }
             }
         }
@@ -63,16 +77,30 @@ struct PackagesScreen: View {
 
     private var subtitle: String {
         let installed = model.packages.filter(\.isInstalled).count
-        return "\(installed) installed · \(model.updateCount) updates · checked \(model.packagesChecked)"
+        let checked = model.packagesChecked.isEmpty ? "not checked yet" : "checked \(model.packagesChecked)"
+        let updates = model.updateCount == 1 ? "1 update" : "\(model.updateCount) updates"
+        return "\(installed) installed · \(updates) · \(checked)"
     }
 
     private func sectionOrder(_ title: String) -> Int {
         let order = ["Webservers", "PHP", "MySQL", "MariaDB", "PostgreSQL", "Redis", "Node and Composer"]
         return order.firstIndex(of: title) ?? order.count
     }
+
+    // nginx before Apache and Node before Composer, as in the design. The other rows go from old
+    // to new by their names. So Redis 8.10 comes after Redis 8.2.
+    private static func showsBefore(_ first: PackageItem, _ second: PackageItem) -> Bool {
+        let order = ["nginx", "httpd", "node", "composer"]
+        if first.package != second.package, let firstIndex = order.firstIndex(of: first.package), let secondIndex = order.firstIndex(of: second.package) {
+            return firstIndex < secondIndex
+        }
+
+        return first.name.compare(second.name, options: .numeric) == .orderedAscending
+    }
 }
 
 private struct PackageRow: View {
+    @Environment(AppModel.self) private var model
     let package: PackageItem
 
     var body: some View {
@@ -99,7 +127,7 @@ private struct PackageRow: View {
             Text(package.securityEnded ? "No security fixes since \(end)." : "Security fixes end on \(end).")
                 .foregroundStyle(Color.orangeText)
         } else if case .update(let version) = package.state {
-            Text("\(version) is available.")
+            Text(version == package.version ? "A new build of \(version) is available." : "\(version) is available.")
                 .foregroundStyle(.secondary)
         }
     }
@@ -108,25 +136,36 @@ private struct PackageRow: View {
     private var stateView: some View {
         switch package.state {
         case .available:
-            Button("Install") {}
+            Button("Install") {
+                model.install(package)
+            }
         case .installed:
             Label("Installed", systemImage: "checkmark.circle")
                 .foregroundStyle(.secondary)
                 .labelStyle(InstalledLabelStyle())
-            Button("Remove…") {}
-                .disabled(package.required)
+            Button("Remove…") {
+                model.removal = .package(package)
+            }
+            .disabled(package.required)
+            .help(package.required ? "Nexus needs \(package.name)." : "")
         case .update(let version):
-            Button("Update to \(version)") {}
+            Button(version == package.version ? "Update" : "Update to \(version)") {
+                model.install(package)
+            }
         case .downloading(let progress):
             Text("Downloading")
                 .foregroundStyle(.secondary)
             ProgressView(value: progress)
                 .frame(width: 80)
             Button {
+                if let id = package.taskID {
+                    model.stopTask(id)
+                }
             } label: {
                 Image(systemName: "xmark.circle")
             }
             .buttonStyle(.borderless)
+            .disabled(package.taskID == nil)
             .help("Stop the download")
         }
     }

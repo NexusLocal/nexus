@@ -257,8 +257,12 @@ enum PackageState: Equatable {
     case downloading(Double)
 }
 
+// The package is the name in the manifest, for example httpd or mysql. The name is the name
+// that the screens show, for example Apache 2.4. A download that runs has the id of its task.
 struct PackageItem: Identifiable {
     let section: String
+    let package: String
+    let line: String
     let name: String
     let version: String
     var state: PackageState
@@ -266,8 +270,9 @@ struct PackageItem: Identifiable {
     var securityEnd: String?
     var securityEnded = false
     var required = false
+    var taskID: String?
 
-    var id: String { name }
+    var id: String { "\(package)-\(line)" }
 
     var isInstalled: Bool {
         switch state {
@@ -277,11 +282,22 @@ struct PackageItem: Identifiable {
     }
 }
 
+// A task of nexusd that the Overview and the menu bar panel show. An activity of the sample data
+// has no task.
 struct ActivityItem: Identifiable {
-    let id = UUID()
+    let id: String
     let title: String
     let shortTitle: String
     var progress: Double
+    var taskID: String?
+
+    init(id: String = UUID().uuidString, title: String, shortTitle: String, progress: Double, taskID: String? = nil) {
+        self.id = id
+        self.title = title
+        self.shortTitle = shortTitle
+        self.progress = progress
+        self.taskID = taskID
+    }
 }
 
 struct CommandItem: Identifiable {

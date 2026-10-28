@@ -48,27 +48,56 @@ extension NexusEngine {
         let (tools, client, work) = try await runningClient(id)
         defer { try? FileManager.default.removeItem(at: work) }
 
-        let mysqlSizes = """
-            SELECT s.SCHEMA_NAME, COALESCE(SUM(t.DATA_LENGTH + t.INDEX_LENGTH), 0)
-            FROM information_schema.SCHEMATA s LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = s.SCHEMA_NAME
-            WHERE s.SCHEMA_NAME NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')
-            GROUP BY s.SCHEMA_NAME ORDER BY s.SCHEMA_NAME
-            """
-
-        let sql = switch tools.kind {
-        case .mysql: "SET SESSION information_schema_stats_expiry = 0;\n\(mysqlSizes)"
-        case .mariadb: mysqlSizes
-        case .postgresql: "SELECT datname, pg_database_size(datname) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres' ORDER BY datname"
-        }
-
+        let answer = tools.kind.usesMySQLProtocol
+            ? try await client.queryWithCurrentSizes(Self.mysqlSizes)
+            : try await client.query(Self.postgresqlSizes)
         let users = await databaseUsers(kind: tools.kind, port: client.endpoint.port)
 
-        return try await client.rows(sql).compactMap { row in
+        return Self.sizes(in: DatabaseClient.rows(in: answer)).map { DatabaseSize(name: $0.name, bytes: $0.bytes, usedBy: users[$0.name]) }
+    }
+
+    // The databases on the server that a copy reads from, with the client of the instance that
+    // gets the copy. The other server can be a MySQL of another version or a MariaDB.
+    func sourceDatabases(_ server: DatabaseServer, instance: String) async throws -> [DatabaseSize] {
+        guard let tools = await databaseRuntime(instance) else {
+            throw RuntimeError.unsupported("Nexus has no database instance \(instance). See: nexus db list")
+        }
+
+        let work = paths.run.appending(path: ".source-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: work) }
+
+        let endpoint = DatabaseEndpoint(host: server.host, port: server.port ?? tools.kind.standardPort, account: server.account)
+        let client = DatabaseClient(tools: tools, endpoint: endpoint, options: work.appending(path: "source.cnf"))
+        try client.prepare()
+
+        do {
+            guard tools.kind.usesMySQLProtocol else {
+                return Self.sizes(in: try await client.rows(Self.postgresqlSizes))
+            }
+
+            return Self.sizes(in: DatabaseClient.rows(in: try await client.queryWithCurrentSizes(Self.mysqlSizes)))
+        } catch let error as CommandError {
+            throw RuntimeError.unsupported("Nexus cannot read the databases on \(endpoint.host):\(endpoint.port). \(error)")
+        }
+    }
+
+    private static let mysqlSizes = """
+        SELECT s.SCHEMA_NAME, COALESCE(SUM(t.DATA_LENGTH + t.INDEX_LENGTH), 0)
+        FROM information_schema.SCHEMATA s LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = s.SCHEMA_NAME
+        WHERE s.SCHEMA_NAME NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')
+        GROUP BY s.SCHEMA_NAME ORDER BY s.SCHEMA_NAME
+        """
+
+    private static let postgresqlSizes = "SELECT datname, pg_database_size(datname) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres' ORDER BY datname"
+
+    private static func sizes(in rows: [[String]]) -> [DatabaseSize] {
+        rows.compactMap { row in
             guard row.count == 2, let bytes = Int64(row[1]) else {
                 return nil
             }
 
-            return DatabaseSize(name: row[0], bytes: bytes, usedBy: users[row[0]])
+            return DatabaseSize(name: row[0], bytes: bytes)
         }
     }
 

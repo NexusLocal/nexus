@@ -80,6 +80,10 @@ struct ServiceScreen: View {
             return "\(versions.first?.name ?? "nginx") handles all sites"
         }
 
+        if kind == .dns {
+            return "Sends every .\(model.settings.tld) name to this Mac"
+        }
+
         let count = versions.count == 1 ? "1 version" : "\(versions.count) versions"
 
         if let problem = model.problemVersion(of: kind) {
