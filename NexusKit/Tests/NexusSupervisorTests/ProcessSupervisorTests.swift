@@ -57,6 +57,27 @@ struct ProcessSupervisorTests {
         await supervisor.stopAll()
     }
 
+    @Test func aServiceThatWaitsForARestartStartsWithTheReloadedDefinition() async throws {
+        let slowRestarts = RestartPolicy(firstDelay: .milliseconds(500), maximumDelay: .seconds(1), stableAfter: .seconds(60), maximumQuickRestarts: 3, stopTimeout: .seconds(2))
+        let supervisor = ProcessSupervisor(policy: slowRestarts)
+        try await supervisor.start(definition("quitter", executable: "/usr/bin/false"))
+        let waiting = await waitFor {
+            guard case .restarting = await supervisor.state(of: "quitter") else {
+                return false
+            }
+            return true
+        }
+
+        let reloaded = await supervisor.reload(definition("quitter", executable: "/bin/sleep", arguments: ["30"], ports: [18092]), signal: SIGHUP)
+        let restarted = await waitFor { pid(await supervisor.state(of: "quitter")) != nil }
+
+        #expect(waiting)
+        #expect(!reloaded)
+        #expect(restarted)
+        #expect(await supervisor.status().first?.ports == [18092])
+        await supervisor.stopAll()
+    }
+
     @Test func aKilledServiceComesBackWithANewProcess() async throws {
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition("sleeper", executable: "/bin/sleep", arguments: ["30"]))

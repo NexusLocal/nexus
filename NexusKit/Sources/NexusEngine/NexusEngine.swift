@@ -58,9 +58,9 @@ public actor NexusEngine {
     private var observesSupervisor = false
     // The last start of each service that failed on a port in use (D31).
     private var portConflicts: [String: PortConflict] = [:]
-    // The extensions and modules of each runtime. Its .so files change only at an install or a
-    // removal, and the service list needs them after each change of a service.
-    var toggleNameCache: [String: Set<String>] = [:]
+    // The extensions and modules of each runtime, with the modification dates of their folders.
+    // The service list needs them after each change of a service.
+    var toggleNameCache: [String: (stamp: [String], names: Set<String>)] = [:]
 
     public init(
         paths: NexusPaths,
@@ -358,8 +358,7 @@ public actor NexusEngine {
     }
 
     func startService(_ id: String) async throws -> String {
-        guard let runtime = await serviceRuntimes().first(where: { catalog.serviceID(for: $0) == id }),
-              let definition = catalog.definition(for: runtime, ports: try await ports(for: runtime)) else {
+        guard let definition = try await serviceDefinition(id) else {
             throw SupervisorError.unknownService(id)
         }
 
@@ -377,20 +376,36 @@ public actor NexusEngine {
             return "\(definition.displayName) runs."
         }
 
-        // The answer goes back only when the service accepts connections, so a request right
-        // after the command does not fail.
+        try await waitForConnections(definition)
+        return "\(definition.displayName) runs on port \(definition.ports.map(String.init).joined(separator: " and "))."
+    }
+
+    // The definition for the next start of a service, with the ports of the state.
+    func serviceDefinition(_ id: String) async throws -> ServiceDefinition? {
+        guard let runtime = await serviceRuntimes().first(where: { catalog.serviceID(for: $0) == id }) else {
+            return nil
+        }
+
+        return catalog.definition(for: runtime, ports: try await ports(for: runtime))
+    }
+
+    // The answer goes back only when the service accepts connections. So a request right after
+    // the command does not fail.
+    func waitForConnections(_ definition: ServiceDefinition) async throws {
+        guard let port = definition.ports.first else {
+            return
+        }
+
         let deadline = ContinuousClock.now + definition.startTimeout
-        var accepting = PortInspector.acceptsConnections(definition.ports[0])
+        var accepting = PortInspector.acceptsConnections(port)
         while !accepting, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
-            accepting = PortInspector.acceptsConnections(definition.ports[0])
+            accepting = PortInspector.acceptsConnections(port)
         }
 
-        guard accepting, case .running = await supervisor.state(of: id) else {
-            throw SupervisorError.launchFailed("\(definition.displayName) does not accept connections on port \(definition.ports[0]). See \(definition.logFile.path(percentEncoded: false)).")
+        guard accepting, case .running = await supervisor.state(of: definition.id) else {
+            throw SupervisorError.launchFailed("\(definition.displayName) does not accept connections on port \(port). See \(definition.logFile.path(percentEncoded: false)).")
         }
-
-        return "\(definition.displayName) runs on port \(definition.ports.map(String.init).joined(separator: " and "))."
     }
 
     private func stop(_ id: String, disable: Bool = true) async throws -> String {
@@ -562,7 +577,6 @@ public actor NexusEngine {
         }
 
         let runtime = try await installer.install(package)
-        toggleNameCache = [:]
         return "\(runtime.name) \(runtime.version) is installed in \(runtime.folder.path(percentEncoded: false))"
     }
 
@@ -591,7 +605,6 @@ public actor NexusEngine {
         }
 
         try await installer.remove(name: name, line: line)
-        toggleNameCache = [:]
 
         if ServiceCatalog.databaseKind(of: runtime) != nil {
             return "\(name) \(line) is removed. Its data folder stays: \(catalog.dataFolder(for: runtime).path(percentEncoded: false))"

@@ -74,7 +74,7 @@ public final class NexusEventFeed: NSObject, NexusEventReceiver, @unchecked Send
 
     public func receive(_ event: Data) {
         guard let decoded = try? NexusMessageCoding.decode(NexusEvent.self, from: event) else {
-            continuation.yield(.unreadable("Nexus cannot read the state that nexusd sends. nexusd has probably another version than the app. Start nexusd again: launchctl kickstart -k gui/\(getuid())/\(NexusIdentifiers.daemon)"))
+            continuation.yield(.unreadable("nexusd sends data that this version of Nexus cannot read. nexusd has probably another version than the app. Start nexusd again. In Terminal: launchctl kickstart -k gui/\(getuid())/\(NexusIdentifiers.daemon)"))
             return
         }
 
