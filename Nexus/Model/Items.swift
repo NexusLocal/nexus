@@ -76,8 +76,9 @@ struct ToggleItem: Identifiable {
     var id: String { name }
 }
 
+// The line is nil when PHP refused the lines together but not one line alone.
 struct SettingsError {
-    let line: Int
+    let line: Int?
     let message: String
 }
 
@@ -106,11 +107,12 @@ struct ServiceVersion: Identifiable {
     var databases: [DatabaseItem] = []
     var toggles: [ToggleItem] = []
     var customSettings: [String] = []
-    var settingsError: SettingsError?
     var usedBy: [String] = []
     var note: String?
     var log: [String] = []
     var logFile: String?
+    // The version line in nexusd, for example 8.4. DNS has none.
+    var line = ""
 
     var isRunning: Bool {
         health == .running

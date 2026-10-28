@@ -13,6 +13,13 @@ extension AppModel {
         model.packagesChecked = "08:55"
         model.commandSections = sampleCommands
         model.settings = sampleSettings
+        model.settingsDrafts["php-8.4"] = [
+            "memory_limit = 512M",
+            "upload_max_filesize = 64M",
+            "post_max_size == 64M",
+            "max_execution_time = 120",
+        ]
+        model.settingsErrors["php-8.4"] = SettingsError(line: 3, message: "syntax error, unexpected '='")
         return model
     }
 
@@ -55,9 +62,9 @@ extension AppModel {
                 ports: [ServicePort(name: "HTTP", number: 8080), ServicePort(name: "HTTPS", number: 8443)],
                 toggles: [
                     ToggleItem(name: "ssl", enabled: true, required: true, help: "HTTPS for every site."),
-                    ToggleItem(name: "http2", enabled: true, required: true, help: "HTTP/2, so a browser loads many files over one connection."),
+                    ToggleItem(name: "http2", enabled: true, required: true, help: "HTTP/2. A browser loads many files over one connection."),
                     ToggleItem(name: "proxy", enabled: true, required: true, help: "Sends the requests of Apache sites on to Apache."),
-                    ToggleItem(name: "gzip_static", enabled: true, help: "Sends a ready .gz file that sits next to a file, so nginx does not compress that file again for each request."),
+                    ToggleItem(name: "gzip_static", enabled: true, help: "Sends a ready .gz file that sits next to a file. So nginx does not compress that file again for each request."),
                     ToggleItem(name: "image_filter", enabled: false, help: "Resizes and crops JPEG, GIF, PNG and WebP images on request."),
                     ToggleItem(name: "njs", enabled: false, help: "Runs JavaScript in nginx to change requests and responses."),
                     ToggleItem(name: "stream", enabled: false, help: "Sends TCP and UDP traffic on to another server."),
@@ -109,10 +116,7 @@ extension AppModel {
                 customSettings: [
                     "memory_limit = 512M",
                     "upload_max_filesize = 64M",
-                    "post_max_size == 64M",
-                    "max_execution_time = 120",
                 ],
-                settingsError: SettingsError(line: 3, message: "syntax error, unexpected '='"),
                 usedBy: ["shop.test", "blog.test", "blinqx.test", "roodfruit.test", "docs.roodfruit.test", "status.roodfruit.test", "acme.test", "demo.test"],
                 log: [
                     "[27-Oct-2026 09:02:10] NOTICE: fpm is running, pid 4790",
@@ -258,13 +262,13 @@ extension AppModel {
 
     private static var phpExtensions: [ToggleItem] {
         [
-            ToggleItem(name: "opcache", enabled: true, help: "Keeps compiled PHP code in memory, so each request runs faster."),
+            ToggleItem(name: "opcache", enabled: true, help: "Keeps compiled PHP code in memory. So each request runs faster."),
             ToggleItem(name: "redis", enabled: true, help: "Connects to Redis. Laravel uses it for the cache, sessions and queues."),
             ToggleItem(name: "igbinary", enabled: true, help: "A faster and smaller format to store PHP values, for example in Redis."),
             ToggleItem(name: "apcu", enabled: false, help: "A cache in the memory of PHP-FPM."),
             ToggleItem(name: "imagick", enabled: true, help: "Changes images with ImageMagick."),
             ToggleItem(name: "yaml", enabled: false, help: "Reads and writes YAML."),
-            ToggleItem(name: "xdebug", enabled: false, help: "Step debugger and profiler. It makes every request slower, so turn it on only while you debug."),
+            ToggleItem(name: "xdebug", enabled: false, help: "Step debugger and profiler. It makes every request slower. So turn it on only while you debug."),
             ToggleItem(name: "pcov", enabled: false, help: "Measures code coverage for tests. It is faster than Xdebug for coverage."),
         ]
     }
@@ -335,6 +339,7 @@ extension AppModel {
             ]),
             CommandSection(title: "PHP and webservers", commands: [
                 CommandItem(command: "nexus ext 8.4 xdebug on", help: "Turns a PHP extension on or off."),
+                CommandItem(command: "nexus ini 8.4 \"memory_limit = 512M\"", help: "Replaces the custom php.ini lines of a PHP version."),
                 CommandItem(command: "nexus module apache rewrite off", help: "Turns a webserver module on or off."),
             ]),
             CommandSection(title: "Domains and certificates", commands: [

@@ -141,8 +141,8 @@ extension NexusEngine {
         // Apache gets its file also without Apache sites, so nexus start apache always works.
         if let apache {
             apachePort = try await ports(for: apache)[ServiceCatalog.apacheID] ?? 0
-            let modules = (state.apacheModules ?? ApacheConfig.defaultModules).intersection(Self.apacheModules(of: apache))
-            let settings = ApacheSettings(port: apachePort, runtime: apache.folder, runFolder: paths.run, modules: modules.sorted())
+            let modules = ApacheConfig.dependencies.loadOrder(state.apacheModules ?? ApacheConfig.defaultModules, available: Self.apacheModules(of: apache))
+            let settings = ApacheSettings(port: apachePort, runtime: apache.folder, runFolder: paths.run, modules: modules)
             try FileManager.default.createDirectory(at: paths.run.appending(path: "apache"), withIntermediateDirectories: true)
             try writeChecked(try ApacheConfig.render(sites: plan.sites, settings: settings), to: paths.apacheConfig) {
                 try Self.check(apache.folder.appending(path: "bin/httpd"), ["-t", "-f", paths.apacheConfig.path(percentEncoded: false)])
@@ -156,7 +156,7 @@ extension NexusEngine {
             lanAccess: state.lanAccess,
             runtime: nginx.folder,
             runFolder: paths.run,
-            modules: state.nginxModules.intersection(Self.nginxModules(of: nginx)).sorted()
+            modules: NginxConfig.dependencies.loadOrder(state.nginxModules, available: Self.nginxModules(of: nginx))
         )
 
         for folder in ["client_body", "proxy", "fastcgi", "uwsgi", "scgi"] {
@@ -192,9 +192,12 @@ extension NexusEngine {
         let (directory, available) = Self.phpExtensions(of: runtime)
         let nexusIni = try PHPConfig.nexusIni(extensionDirectory: directory, extensions: PHPConfig.extensionsToLoad(enabled: enabled, available: available))
 
+        let customIni = PHPConfig.customIni(lines: state.phpCustomSettings[line] ?? [])
+
         let fpmChanged = try Self.writeIfChanged(fpm, to: folder.appending(path: "php-fpm.conf"))
-        let iniChanged = try Self.writeIfChanged(nexusIni, to: confD.appending(path: "00-nexus.ini"))
-        return fpmChanged || iniChanged
+        let iniChanged = try Self.writeIfChanged(nexusIni, to: confD.appending(path: PHPConfig.nexusIniName))
+        let customChanged = try Self.writeIfChanged(customIni, to: confD.appending(path: PHPConfig.customIniName))
+        return fpmChanged || iniChanged || customChanged
     }
 
     // The extension folder has a name with the API version, for example
@@ -216,6 +219,7 @@ extension NexusEngine {
 
     static func apacheModules(of runtime: InstalledRuntime) -> Set<String> {
         Set(files(in: runtime.folder.appending(path: "modules"), suffix: ".so").filter { $0.hasPrefix("mod_") }.map { String($0.dropFirst(4).dropLast(3)) })
+            .subtracting(ApacheConfig.otherMPMs)
     }
 
     static func nginxModules(of runtime: InstalledRuntime) -> Set<String> {
@@ -505,9 +509,14 @@ extension NexusEngine {
             throw RuntimeError.unsupported("PHP \(line) is not installed.")
         }
 
-        let enabled = await stateStore.current().phpExtensions[line] ?? PHPConfig.defaultExtensions
-        return Self.phpExtensions(of: runtime).available.sorted().map {
-            Toggle(name: $0, enabled: enabled.contains($0), required: false)
+        return Self.extensionToggles(of: runtime, state: await stateStore.current())
+    }
+
+    static func extensionToggles(of runtime: InstalledRuntime, state: EngineState) -> [Toggle] {
+        let enabled = state.phpExtensions[runtime.line] ?? PHPConfig.defaultExtensions
+
+        return phpExtensions(of: runtime).available.sorted().map {
+            Toggle(name: $0, enabled: enabled.contains($0), required: false, help: ToggleHelp.phpExtension($0))
         }
     }
 
@@ -516,24 +525,18 @@ extension NexusEngine {
             throw RuntimeError.unsupported("PHP \(line) is not installed.")
         }
 
-        guard Self.phpExtensions(of: runtime).available.contains(name) else {
+        let available = Self.phpExtensions(of: runtime).available
+
+        guard available.contains(name) else {
             throw RuntimeError.unsupported("PHP \(line) has no shared extension \(name). See: nexus ext \(line)")
         }
 
-        var current = await stateStore.current().phpExtensions[line] ?? PHPConfig.defaultExtensions
-        var changed = [name]
-
-        if enabled {
-            let required = PHPConfig.dependencies[name] ?? []
-            changed += required.filter { !current.contains($0) }
-            current.formUnion([name] + required)
-        } else {
-            let dependents = PHPConfig.dependencies.filter { $0.value.contains(name) }.map(\.key).filter(current.contains)
-            changed += dependents
-            current.subtract([name] + dependents)
+        if enabled, let missing = PHPConfig.dependencies.missing(for: name, available: available).first {
+            throw RuntimeError.unsupported("\(name) needs \(missing). PHP \(line) has no shared extension \(missing).")
         }
 
-        let updated = current
+        let current = await stateStore.current().phpExtensions[line] ?? PHPConfig.defaultExtensions
+        let (updated, changed) = PHPConfig.dependencies.set(name, on: enabled, in: current)
         try await stateStore.update { $0.phpExtensions[line] = updated }
 
         if try await writePHPConfig(line: line, state: await stateStore.current()) {
@@ -544,56 +547,91 @@ extension NexusEngine {
     }
 
     func moduleToggles(_ server: WebServer) async throws -> [Toggle] {
-        let state = await stateStore.current()
+        Self.moduleToggles(server, runtime: try await webRuntime(server), state: await stateStore.current())
+    }
 
+    // nginx shows its built-in modules first. They are always on.
+    static func moduleToggles(_ server: WebServer, runtime: InstalledRuntime, state: EngineState) -> [Toggle] {
         switch server {
         case .apache:
             let enabled = state.apacheModules ?? ApacheConfig.defaultModules
-            return try await installedModules(.apache).map {
+            return apacheModules(of: runtime).sorted().map {
                 let required = ApacheConfig.requiredModules.contains($0)
-                return Toggle(name: $0, enabled: required || enabled.contains($0), required: required)
+                return Toggle(name: $0, enabled: required || enabled.contains($0), required: required, help: ToggleHelp.apacheModule($0))
             }
         case .nginx:
-            return try await installedModules(.nginx).map { Toggle(name: $0, enabled: state.nginxModules.contains($0), required: false) }
+            let builtIn = NginxConfig.builtInModules.map { Toggle(name: $0, enabled: true, required: true, help: ToggleHelp.nginxModule($0)) }
+            return builtIn + nginxModules(of: runtime).sorted().map {
+                Toggle(name: $0, enabled: state.nginxModules.contains($0), required: false, help: ToggleHelp.nginxModule($0))
+            }
         }
     }
 
+    // A module that another module needs changes with it. So the answer can name more modules.
     func setModule(_ server: WebServer, name: String, enabled: Bool) async throws -> String {
-        guard try await installedModules(server).contains(name) else {
-            throw RuntimeError.unsupported("\(server == .nginx ? "nginx" : "Apache") has no module \(name). See: nexus module \(server.rawValue)")
-        }
+        let runtime = try await webRuntime(server)
+        let changed: [String]
 
         switch server {
         case .apache:
-            guard !ApacheConfig.requiredModules.contains(name) else {
-                throw RuntimeError.unsupported("Apache needs \(name) behind nginx, so it cannot be turned off.")
+            guard !ApacheConfig.otherMPMs.contains(name) else {
+                throw RuntimeError.unsupported("Apache loads only one MPM. Nexus uses mpm_event. So \(name) stays off.")
             }
 
-            var modules = await stateStore.current().apacheModules ?? ApacheConfig.defaultModules
-            if enabled { modules.insert(name) } else { modules.remove(name) }
-            let updated = modules
-            _ = try await changeWeb { $0.apacheModules = updated }
-        case .nginx:
-            try await changeAndRestartNginx { state in
-                if enabled { state.nginxModules.insert(name) } else { state.nginxModules.remove(name) }
+            let available = Self.apacheModules(of: runtime)
+
+            guard available.contains(name) else {
+                throw RuntimeError.unsupported("Apache has no module \(name). See: nexus module apache")
             }
+
+            guard !ApacheConfig.requiredModules.contains(name) else {
+                throw RuntimeError.unsupported("Apache needs \(name) behind nginx. So it cannot be turned off.")
+            }
+
+            if enabled, let missing = ApacheConfig.dependencies.missing(for: name, available: available).first {
+                throw RuntimeError.unsupported("\(name) needs \(missing). Apache has no module \(missing).")
+            }
+
+            let current = await stateStore.current().apacheModules ?? ApacheConfig.defaultModules
+            let change = ApacheConfig.dependencies.set(name, on: enabled, in: current)
+            changed = change.changed
+            _ = try await changeWeb { $0.apacheModules = change.enabled }
+        case .nginx:
+            guard !NginxConfig.builtInModules.contains(name) else {
+                throw RuntimeError.unsupported("\(name) is part of nginx. Every site needs it. So it is always on.")
+            }
+
+            let available = Self.nginxModules(of: runtime)
+
+            guard available.contains(name) else {
+                throw RuntimeError.unsupported("nginx has no module \(name). See: nexus module nginx")
+            }
+
+            if enabled, let missing = NginxConfig.dependencies.missing(for: name, available: available).first {
+                throw RuntimeError.unsupported("\(name) needs \(missing). nginx has no module \(missing).")
+            }
+
+            let change = NginxConfig.dependencies.set(name, on: enabled, in: await stateStore.current().nginxModules)
+            changed = change.changed
+            try await changeAndRestart(ServiceCatalog.nginxID) { $0.nginxModules = change.enabled }
         }
 
-        return "\(name) is \(enabled ? "on" : "off") for \(server == .nginx ? "nginx" : "Apache")."
+        let names = changed.sorted().joined(separator: " and ")
+        return "\(names) \(changed.count == 1 ? "is" : "are") \(enabled ? "on" : "off") for \(server == .nginx ? "nginx" : "Apache")."
     }
 
-    private func installedModules(_ server: WebServer) async throws -> [String] {
+    private func webRuntime(_ server: WebServer) async throws -> InstalledRuntime {
         switch server {
         case .apache:
             guard let apache = await newestRuntime(named: "httpd") else {
                 throw RuntimeError.unsupported("Apache is not installed. Run: nexus install httpd 2.4")
             }
-            return Self.apacheModules(of: apache).sorted()
+            return apache
         case .nginx:
             guard let nginx = await newestRuntime(named: "nginx") else {
                 throw RuntimeError.unsupported("nginx is not installed. Run: nexus install nginx 1.30")
             }
-            return Self.nginxModules(of: nginx).sorted()
+            return nginx
         }
     }
 
@@ -605,41 +643,48 @@ extension NexusEngine {
         }
 
         if key == ServiceCatalog.apacheID {
-            _ = try await changeWeb { $0.ports[key] = port }
+            try await changeAndRestart(ServiceCatalog.apacheID) { $0.ports[key] = port }
             return "Apache uses port \(port) on 127.0.0.1."
         }
 
-        try await changeAndRestartNginx { $0.ports[key] = port }
+        try await changeAndRestart(ServiceCatalog.nginxID) { $0.ports[key] = port }
         return "nginx uses port \(port) for \(key.uppercased())."
     }
 
     // nginx opens a new port and loads a dynamic module only at a start, not when it reads its
-    // configuration again. When the change fails, the old ports and modules come back and nginx
-    // starts again with them.
-    private func changeAndRestartNginx(_ change: @Sendable (inout EngineState) -> Void) async throws {
+    // configuration again. Apache moves to a new port with a graceful restart. But the supervisor
+    // then keeps the port of the start. The app then shows the old port. So both servers start
+    // again. When the change fails, the old ports and modules come back. A server that ran before
+    // the change then starts again with them. This is also true when the failed start stopped it.
+    private func changeAndRestart(_ id: String, _ change: @Sendable (inout EngineState) -> Void) async throws {
         let previous = await stateStore.current()
+        let running = await supervisor.state(of: id)?.isActive == true
         try await stateStore.update(change)
 
         do {
-            try await restartNginx()
+            try await restartWebServer(id, running: running)
         } catch {
             try? await stateStore.update { state in
                 state.ports = previous.ports
                 state.nginxModules = previous.nginxModules
             }
-            try? await restartNginx()
+            try? await restartWebServer(id, running: running)
             throw error
         }
     }
 
-    private func restartNginx() async throws {
+    // nginx sends the Apache sites to the port of Apache. So it reads its configuration again
+    // after a new start of Apache.
+    private func restartWebServer(_ id: String, running: Bool) async throws {
         _ = try await writeWebConfig()
 
-        guard await supervisor.state(of: ServiceCatalog.nginxID)?.isActive == true else {
-            return
+        if running {
+            try await supervisor.stop(id)
+            _ = try await startService(id)
         }
 
-        try await supervisor.stop(ServiceCatalog.nginxID)
-        _ = try await startService(ServiceCatalog.nginxID)
+        if id == ServiceCatalog.apacheID, await supervisor.state(of: ServiceCatalog.nginxID)?.isActive == true {
+            await supervisor.signal(ServiceCatalog.nginxID, SIGHUP)
+        }
     }
 }

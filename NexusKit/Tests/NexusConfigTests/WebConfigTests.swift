@@ -123,4 +123,63 @@ struct WebConfigTests {
         #expect(config.contains("listen.mode = 0600"))
         #expect(config.contains("daemonize = no"))
     }
+
+    @Test func aModuleThatAnotherModuleNeedsLoadsFirst() {
+        let apache = ApacheConfig.dependencies.loadOrder(["heartbeat", "rewrite"], available: ["heartbeat", "watchdog", "rewrite"])
+        let nginx = NginxConfig.dependencies.loadOrder(["ngx_stream_js_module", "ngx_http_js_module"], available: ["ngx_stream_js_module", "ngx_stream_module", "ngx_http_js_module"])
+
+        #expect(apache == ["watchdog", "heartbeat", "rewrite"])
+        #expect(nginx == ["ngx_stream_module", "ngx_http_js_module", "ngx_stream_js_module"])
+    }
+
+    @Test func onTurnsOnWhatANameNeedsAndOffTurnsOffWhatNeedsIt() {
+        let on = ApacheConfig.dependencies.set("dav_fs", on: true, in: ["rewrite"])
+        let off = ApacheConfig.dependencies.set("dav", on: false, in: ["rewrite", "dav", "dav_fs", "dav_lock"])
+
+        #expect(on.enabled == ["rewrite", "dav", "dav_fs"])
+        #expect(on.changed == ["dav_fs", "dav"])
+        #expect(off.enabled == ["rewrite"])
+        #expect(off.changed == ["dav", "dav_fs", "dav_lock"])
+    }
+
+    @Test func theModulesThatApacheChecksOnlyAtItsStartNeedTheirProviders() {
+        let balancer = ApacheConfig.dependencies.set("proxy_balancer", on: true, in: [])
+        let monitor = ApacheConfig.dependencies.loadOrder(["heartmonitor"], available: ["heartmonitor", "slotmem_shm", "watchdog"])
+
+        #expect(balancer.enabled == ["proxy_balancer", "slotmem_shm"])
+        #expect(monitor == ["slotmem_shm", "watchdog", "heartmonitor"])
+        #expect(ApacheConfig.dependencies.missing(for: "auth_form", available: ["auth_form", "session"]) == ["request"])
+        #expect(ApacheConfig.dependencies.missing(for: "rewrite", available: ["rewrite"]).isEmpty)
+    }
+
+    @Test func theCustomFileStartsWithOneCommentLine() {
+        let ini = PHPConfig.customIni(lines: ["memory_limit = 512M", "max_execution_time = 120"])
+
+        #expect(ini.split(separator: "\n").count == PHPConfig.customIniHeaderLines + 2)
+        #expect(ini.hasPrefix(";"))
+        #expect(ini.hasSuffix("max_execution_time = 120\n"))
+    }
+
+    @Test func aSyntaxErrorNamesItsFileAndLine() {
+        let message = PHPStartupMessage("PHP:  syntax error, unexpected '=' in /Nexus/run/php-8.4-check/99-custom.ini on line 4")
+
+        #expect(message == PHPStartupMessage(text: "syntax error, unexpected '='", file: "/Nexus/run/php-8.4-check/99-custom.ini", line: 4))
+    }
+
+    @Test func aWarningAtTheStartHasNoFileAndNoLine() {
+        let quantity = PHPStartupMessage(#"Warning: Invalid "memory_limit" setting. Invalid quantity "abc": no valid leading digits in Unknown on line 0"#)
+        let library = PHPStartupMessage("PHP Warning:  PHP Startup: Unable to load dynamic library 'nothere' (tried: /a/nothere (no such file)) in Unknown on line 0")
+
+        #expect(quantity == PHPStartupMessage(text: #"Invalid "memory_limit" setting. Invalid quantity "abc": no valid leading digits"#, file: nil, line: nil))
+        #expect(library == PHPStartupMessage(text: "Unable to load dynamic library 'nothere'", file: nil, line: nil))
+    }
+
+    @Test func onlyTheMessagesThatTheBaselineDoesNotHaveAreNew() {
+        let baseline = "Warning: Module \"redis\" is already loaded in Unknown on line 0\n"
+        let output = "\nWarning: Module \"redis\" is already loaded in Unknown on line 0\nWarning: Module \"redis\" is already loaded in Unknown on line 0\n"
+
+        let messages = PHPConfig.newStartupMessages(in: output, baseline: baseline)
+
+        #expect(messages.map(\.text) == [#"Module "redis" is already loaded"#])
+    }
 }

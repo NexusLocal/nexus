@@ -169,13 +169,14 @@ extension InfoBanner where Actions == EmptyView {
 }
 
 struct ToggleCell: View {
-    @Binding var toggle: ToggleItem
+    let toggle: ToggleItem
+    @Binding var isOn: Bool
 
     var body: some View {
         HStack(spacing: 6) {
             HelpName(name: toggle.name, help: toggle.help)
             Spacer()
-            Toggle(toggle.name, isOn: $toggle.enabled)
+            Toggle(toggle.name, isOn: $isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)
@@ -212,23 +213,34 @@ struct HelpName: View {
     }
 }
 
-// Extensions and modules in two columns. Two columns keep a long list short.
+// Extensions and modules in two columns. Two columns keep a long list short. A switch sends its
+// change to nexusd and shows the asked state while nexusd works.
 struct ToggleGrid: View {
-    @Binding var toggles: [ToggleItem]
+    @Environment(AppModel.self) private var model
+    let service: ServiceVersion
 
     var body: some View {
+        let toggles = service.toggles
+
         ForEach(Array(stride(from: 0, to: toggles.count, by: 2)), id: \.self) { index in
             HStack(spacing: 24) {
-                ToggleCell(toggle: $toggles[index])
+                cell(toggles[index])
 
                 if index + 1 < toggles.count {
-                    ToggleCell(toggle: $toggles[index + 1])
+                    cell(toggles[index + 1])
                 } else {
                     Spacer()
                         .frame(maxWidth: .infinity)
                 }
             }
         }
+    }
+
+    private func cell(_ toggle: ToggleItem) -> some View {
+        ToggleCell(toggle: toggle, isOn: Binding(
+            get: { model.isToggleOn(toggle, of: service) },
+            set: { model.setToggle(toggle, of: service, to: $0) }
+        ))
     }
 }
 

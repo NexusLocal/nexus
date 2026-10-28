@@ -19,7 +19,7 @@ struct NexusCommand: AsyncParsableCommand {
         subcommands: [
             Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Runtimes.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
-            SiteCommand.self, Park.self, Unpark.self, Ext.self, Module.self, Lan.self,
+            SiteCommand.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self,
             Database.self,
         ]
     )
@@ -383,6 +383,39 @@ struct Ext: AsyncParsableCommand {
     }
 }
 
+struct Ini: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Shows or replaces the custom php.ini lines of one PHP version.",
+        discussion: "For example: nexus ini 8.4 \"memory_limit = 512M\" \"max_execution_time = 120\". PHP checks the lines first. When it refuses a line, the old lines stay."
+    )
+
+    @Argument(help: "The PHP version line.") var php: String
+    @Argument(help: "The new lines. They replace all custom lines.") var lines: [String] = []
+    @Flag(help: "Removes all custom lines.") var clear = false
+
+    func validate() throws {
+        if clear, !lines.isEmpty {
+            throw ValidationError("Give new lines or --clear, not both.")
+        }
+    }
+
+    func run() async throws {
+        guard lines.isEmpty, !clear else {
+            try finish(try await send(.setCustomSettings(php: php, lines: clear ? [] : lines)))
+            return
+        }
+
+        let response = try await send(.customSettings(php: php))
+
+        guard case .lines(let lines) = response else {
+            try finish(response)
+            return
+        }
+
+        print(lines.isEmpty ? "PHP \(php) has no custom lines." : lines.joined(separator: "\n"))
+    }
+}
+
 struct Module: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Lists or turns on and off the modules of Apache or nginx, for example: nexus module apache rewrite off")
 
@@ -577,6 +610,9 @@ private func finish(_ response: NexusResponse) throws {
         throw ExitCode.failure
     case .portInUse(let conflict):
         FileHandle.standardError.write(Data("\(conflict)\n".utf8))
+        throw ExitCode.failure
+    case .invalidSettings(let error):
+        FileHandle.standardError.write(Data("\(error)\n".utf8))
         throw ExitCode.failure
     default:
         break
