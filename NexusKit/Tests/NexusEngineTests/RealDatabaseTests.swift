@@ -44,41 +44,42 @@ extension NexusEngineTests {
                 hostsFile: root.appending(path: "etc/hosts", directoryHint: .notDirectory)
             )
         )
-        let tools = try #require(await engine.databaseRuntime(id))
-        let port = try await engine.port(of: tools)
-        let work = paths.run.appending(path: "test", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
-        let started = await engine.handle(.start(service: id))
+        try await whileRunning(engine) {
+            let tools = try #require(await engine.databaseRuntime(id))
+            let port = try await engine.port(of: tools)
+            let work = paths.run.appending(path: "test", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+            let started = await engine.handle(.start(service: id))
 
-        func client(_ account: DatabaseAccount) throws -> DatabaseClient {
-            let client = DatabaseClient(tools: tools, endpoint: DatabaseEndpoint(host: "127.0.0.1", port: port, account: account), options: work.appending(path: "\(UUID().uuidString).cnf"))
-            try client.prepare()
-            return client
+            func client(_ account: DatabaseAccount) throws -> DatabaseClient {
+                let client = DatabaseClient(tools: tools, endpoint: DatabaseEndpoint(host: "127.0.0.1", port: port, account: account), options: work.appending(path: "\(UUID().uuidString).cnf"))
+                try client.prepare()
+                return client
+            }
+
+            let before = await engine.handle(.databaseSizes(instance: id))
+            _ = try? await client(.newInstance).query("CREATE DATABASE nexus_test")
+            let after = await engine.handle(.databaseSizes(instance: id))
+            let changed = await engine.handle(.setAccount(instance: id, account: DatabaseAccount(user: "nexus", password: "s3cret'pw")))
+            let newAccountWorks = try? await client(DatabaseAccount(user: "nexus", password: "s3cret'pw")).query("SELECT 1")
+            let oldAccountFails = (try? await client(.newInstance).query("SELECT 1")) == nil
+            let changedBack = await engine.handle(.setAccount(instance: id, account: .newInstance))
+            let noPasswordWorks = try? await client(.newInstance).query("SELECT 1")
+
+            if case .done = started {} else { Issue.record("the start failed: \(started)") }
+            #expect(before == .databaseSizes([]))
+            guard case .databaseSizes(let sizes) = after else {
+                Issue.record("no sizes: \(after)")
+                return
+            }
+            #expect(sizes.map(\.name) == ["nexus_test"])
+            #expect(sizes.allSatisfy { $0.bytes >= 0 })
+            if case .done = changed {} else { Issue.record("the account did not change: \(changed)") }
+            #expect(newAccountWorks == "1")
+            #expect(oldAccountFails)
+            if case .done = changedBack {} else { Issue.record("the account did not change back: \(changedBack)") }
+            #expect(noPasswordWorks == "1")
+            #expect(await engine.stateStore.current().databaseAccounts[id] == .newInstance)
         }
-
-        let before = await engine.handle(.databaseSizes(instance: id))
-        _ = try? await client(.newInstance).query("CREATE DATABASE nexus_test")
-        let after = await engine.handle(.databaseSizes(instance: id))
-        let changed = await engine.handle(.setAccount(instance: id, account: DatabaseAccount(user: "nexus", password: "s3cret'pw")))
-        let newAccountWorks = try? await client(DatabaseAccount(user: "nexus", password: "s3cret'pw")).query("SELECT 1")
-        let oldAccountFails = (try? await client(.newInstance).query("SELECT 1")) == nil
-        let changedBack = await engine.handle(.setAccount(instance: id, account: .newInstance))
-        let noPasswordWorks = try? await client(.newInstance).query("SELECT 1")
-        await engine.shutdown()
-
-        if case .done = started {} else { Issue.record("the start failed: \(started)") }
-        #expect(before == .databaseSizes([]))
-        guard case .databaseSizes(let sizes) = after else {
-            Issue.record("no sizes: \(after)")
-            return
-        }
-        #expect(sizes.map(\.name) == ["nexus_test"])
-        #expect(sizes.allSatisfy { $0.bytes >= 0 })
-        if case .done = changed {} else { Issue.record("the account did not change: \(changed)") }
-        #expect(newAccountWorks == "1")
-        #expect(oldAccountFails)
-        if case .done = changedBack {} else { Issue.record("the account did not change back: \(changedBack)") }
-        #expect(noPasswordWorks == "1")
-        #expect(await engine.stateStore.current().databaseAccounts[id] == .newInstance)
     }
 }
