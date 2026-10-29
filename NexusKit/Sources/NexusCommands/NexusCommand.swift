@@ -17,7 +17,7 @@ struct NexusCommand: AsyncParsableCommand {
         abstract: "Controls the Nexus services from the terminal.",
         version: NexusVersion.current(),
         subcommands: [
-            Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Runtimes.self, Install.self, Remove.self,
+            Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Installed.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
             SiteCommand.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
             Database.self,
@@ -142,8 +142,8 @@ struct Available: AsyncParsableCommand {
     }
 }
 
-struct Runtimes: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Lists the installed packages.")
+struct Installed: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Lists the installed packages.", aliases: ["runtimes"])
 
     func run() async throws {
         let response = try await send(.installed)

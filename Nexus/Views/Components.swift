@@ -462,6 +462,39 @@ struct MoreMenu<Content: View>: View {
     }
 }
 
+// macOS blocks the notifications of Nexus when the user said no, or did not see the question.
+// The note checks again when Nexus becomes the active app. So the note disappears when the user
+// comes back from System Settings.
+struct NotificationsBlockedNote: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            if model.notificationsBlocked {
+                HStack {
+                    Text("macOS blocks the notifications of Nexus. Allow them in System Settings > Notifications > Nexus.")
+                        .foregroundStyle(Color.orangeText)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Spacer()
+
+                    Button("Open Notifications") {
+                        if let link = Notifier.settingsLink {
+                            NSWorkspace.shared.open(link)
+                        }
+                    }
+                }
+            }
+        }
+        .task {
+            await model.checkNotificationPermission()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.checkNotificationPermission() }
+        }
+    }
+}
+
 func copyToPasteboard(_ text: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)

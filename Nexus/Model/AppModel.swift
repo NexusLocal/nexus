@@ -85,6 +85,7 @@ enum AppPreference {
     static let addedDatabaseApps = "addedDatabaseApps"
     static let mysqlApp = "mysqlApp"
     static let postgresqlApp = "postgresqlApp"
+    static let firstRunDone = "firstRunDone"
 
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
@@ -113,6 +114,7 @@ enum ActionPlace {
     case window
     case menuBar
     case settings
+    case firstRun
 }
 
 enum RequestOutcome {
@@ -122,7 +124,7 @@ enum RequestOutcome {
 }
 
 // A request to nexusd that failed. The place decides where the app shows it: an alert in the
-// window or in the settings, or a row in the menu bar panel.
+// window, in the settings or in the first run, or a row in the menu bar panel.
 struct ActionFailure: Identifiable {
     let id = UUID()
     let title: String
@@ -134,7 +136,6 @@ struct AppSettings {
     // The only endings that are safe for the dev domain (D28).
     static let devDomains = ["test", "internal", "localhost"]
 
-    var startAtLogin = true
     var terminals: [AppChoice] = []
     var terminal = ""
     var editors: [AppChoice] = []
@@ -170,6 +171,9 @@ final class AppModel {
     var stoppedByStopAll: [String] = []
     var nexusdProblem: NexusdProblem?
     var failure: ActionFailure?
+    // A download of the first run can fail after the user clicked "Done". The window then shows
+    // its failure.
+    var firstRunIsOpen = false
     // The state that a switch shows while nexusd works: the id of a service, a toggle key or the
     // LAN key.
     var switching: [String: Bool] = [:]
@@ -182,11 +186,15 @@ final class AppModel {
     var activities: [ActivityItem] = []
     var packagesChecked = ""
     // The manifest, the installed runtimes and the tasks of nexusd (part 6f). The packages and
-    // the activities come from them. A failed update check shows on the Packages screen.
+    // the activities come from them. The reason of a failed update check shows on the Packages
+    // screen and in the first run. The reason of a failed read of the installed packages shows
+    // there too. The first run waits until one read of the installed packages worked.
     var manifestPackages: [ManifestPackage] = []
     var installedRuntimes: [InstalledRuntime] = []
+    var installedLoaded = false
     var tasks: [TaskInfo] = []
     var packagesProblem: String?
+    var installedProblem: String?
     var checkingPackages = false
     @ObservationIgnored var lastPackageCheck: Date?
     // The packages that wait for the start of their download. The imports that run, by
@@ -195,13 +203,13 @@ final class AppModel {
     var runningImports: Set<String> = []
     var importInSheet: String?
     var importResults: [String: ImportResult] = [:]
-    var commandSections: [CommandSection] = []
     var settings = AppSettings()
     // Settings (part 6g). The dev TLD that nexusd changes to now, the root CA that nexusd
     // reported last, and the answer of a finished uninstall.
     var changingTLD: String?
     var rootCertificate: RootCertificateInfo?
     var uninstalled: String?
+    var notificationsBlocked = false
 
     @ObservationIgnored private(set) var client: NexusClient?
     @ObservationIgnored private var feed: NexusEventFeed?
@@ -591,8 +599,8 @@ final class AppModel {
     }
 
     // Returns the answer, or nil when the request failed. A port in use opens its sheet in the
-    // window. The menu bar panel shows it from the next event. The settings show the program
-    // that holds the port in an alert, because a new port in the settings starts no service.
+    // window. The menu bar panel shows it from the next event. The settings and the first run
+    // show the program that holds the port in an alert, because they have no sheet for it.
     @discardableResult
     func perform(_ request: NexusRequest, failure title: String, place: ActionPlace) async -> NexusResponse? {
         switch await outcome(of: request) {
@@ -605,7 +613,7 @@ final class AppModel {
             switch place {
             case .window:
                 sheet = .portInUse(service: conflict.service, holder: PortHolder(conflict))
-            case .settings:
+            case .settings, .firstRun:
                 failure = ActionFailure(title: title, message: conflict.description, place: place)
             case .menuBar:
                 break

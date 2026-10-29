@@ -13,7 +13,6 @@ extension AppModel {
             ActivityItem(title: "Downloading PostgreSQL 18", shortTitle: "Downloading PostgreSQL 18", progress: 0.48),
         ]
         model.packagesChecked = "08:55"
-        model.commandSections = sampleCommands
         model.settings = sampleSettings
         model.rootCertificate = sampleRootCertificate
         model.settingsDrafts["php-8.4"] = [
@@ -324,51 +323,6 @@ extension AppModel {
             package("Node and Composer", "Node 24", "24.11.0", .update("24.11.1"), lts: true),
             package("Node and Composer", "Node 26", "26.1.0"),
             package("Node and Composer", "Composer", "2.9.2", .installed, required: true),
-        ]
-    }
-
-    private static var sampleCommands: [CommandSection] {
-        [
-            CommandSection(title: "Sites", commands: [
-                CommandItem(command: "nexus site list", help: "Lists the sites."),
-                CommandItem(command: "nexus site add . --php 8.4", help: "Adds the current folder as a site."),
-                CommandItem(command: "nexus site edit shop.test --server apache", help: "Changes the PHP version, the webserver or the aliases."),
-                CommandItem(command: "nexus site remove shop.test", help: "Removes a site. The folder stays."),
-                CommandItem(command: "nexus park ~/Sites", help: "Makes each folder in ~/Sites a site."),
-                CommandItem(command: "nexus unpark ~/Sites", help: "Stops a folder of projects. Its folders stay."),
-            ]),
-            CommandSection(title: "Services", commands: [
-                CommandItem(command: "nexus status", help: "Lists the services and their state."),
-                CommandItem(command: "nexus start mysql-8.4", help: "Starts a service."),
-                CommandItem(command: "nexus stop mysql-8.4", help: "Stops a service."),
-                CommandItem(command: "nexus restart mysql-8.4", help: "Stops a service and starts it again."),
-                CommandItem(command: "nexus stop --all", help: "Stops every service."),
-                CommandItem(command: "nexus start --stopped", help: "Starts the services that nexus stop --all stopped."),
-                CommandItem(command: "nexus port mysql-8.4 13307", help: "Gives a service another port."),
-            ]),
-            CommandSection(title: "Packages", commands: [
-                CommandItem(command: "nexus available", help: "Lists the packages that Nexus can install."),
-                CommandItem(command: "nexus installed", help: "Lists the installed packages."),
-                CommandItem(command: "nexus install redis 8.2", help: "Installs a package."),
-                CommandItem(command: "nexus remove redis 8.2", help: "Removes a package."),
-            ]),
-            CommandSection(title: "Databases", commands: [
-                CommandItem(command: "nexus db list", help: "Lists the database instances."),
-                CommandItem(command: "nexus db copy shop --to mysql-8.4", help: "Imports a database from another server."),
-                CommandItem(command: "nexus db open mysql-8.4 shop", help: "Opens a database in your database app."),
-            ]),
-            CommandSection(title: "PHP and webservers", commands: [
-                CommandItem(command: "nexus ext 8.4 xdebug on", help: "Turns a PHP extension on or off."),
-                CommandItem(command: "nexus ini 8.4 \"memory_limit = 512M\"", help: "Replaces the custom php.ini lines of a PHP version."),
-                CommandItem(command: "nexus module apache rewrite off", help: "Turns a webserver module on or off."),
-            ]),
-            CommandSection(title: "Domains and certificates", commands: [
-                CommandItem(command: "nexus trust", help: "Trusts the Nexus root certificate."),
-                CommandItem(command: "nexus cert shop.test", help: "Makes a certificate for one or more names."),
-                CommandItem(command: "nexus hosts add blog.local", help: "Sends a name to this Mac through /etc/hosts."),
-                CommandItem(command: "nexus lan on", help: "Lets other devices on the network open the sites."),
-                CommandItem(command: "nexus uninstall", help: "Removes everything that Nexus changed in macOS."),
-            ]),
         ]
     }
 

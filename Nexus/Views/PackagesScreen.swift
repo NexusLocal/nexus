@@ -26,10 +26,17 @@ struct PackagesScreen: View {
 
     var body: some View {
         Form {
-            if let problem = model.packagesProblem {
+            if model.packagesProblem != nil || model.installedProblem != nil {
                 Section {
-                    Text(problem)
-                        .foregroundStyle(Color.orangeText)
+                    if let reason = model.packagesProblem {
+                        Text("Nexus cannot check for updates. \(reason)")
+                            .foregroundStyle(Color.orangeText)
+                    }
+
+                    if let problem = model.installedProblemText {
+                        Text(problem)
+                            .foregroundStyle(Color.orangeText)
+                    }
                 }
             }
 

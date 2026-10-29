@@ -49,6 +49,11 @@ let package = Package(
         .testTarget(name: "NexusDNSTests", dependencies: ["NexusDNS", "NexusTestSupport"]),
         .testTarget(name: "NexusConfigTests", dependencies: ["NexusConfig"]),
         .testTarget(name: "NexusIPCTests", dependencies: ["NexusIPC", "NexusSupervisor"]),
+        .testTarget(name: "NexusCommandsTests", dependencies: [
+            "NexusCommands",
+            "NexusCore",
+            .product(name: "ArgumentParser", package: "swift-argument-parser"),
+        ]),
         .testTarget(name: "NexusTLSTests", dependencies: [
             "NexusTLS",
             "NexusTestSupport",

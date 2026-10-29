@@ -759,11 +759,19 @@ public actor NexusEngine {
 
         try await installer.remove(name: name, line: line)
 
-        if ServiceCatalog.databaseKind(of: runtime) != nil {
-            return "\(name) \(line) is removed. Its data folder stays: \(catalog.dataFolder(for: runtime).path(percentEncoded: false))"
+        let data = catalog.dataFolder(for: runtime)
+        let dataPath = data.path(percentEncoded: false)
+
+        // A Redis gets an empty data folder before its first start. That folder holds no data.
+        if (try? FileManager.default.contentsOfDirectory(atPath: dataPath))?.isEmpty == true {
+            try? FileManager.default.removeItem(at: data)
         }
 
-        return "\(name) \(line) is removed."
+        guard FileManager.default.fileExists(atPath: dataPath) else {
+            return "\(name) \(line) is removed."
+        }
+
+        return "\(name) \(line) is removed. Its data folder stays: \(dataPath)"
     }
 
     private func manifest() async throws -> Manifest {

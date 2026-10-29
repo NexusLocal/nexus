@@ -31,7 +31,7 @@ public enum SystemDNSFilesError: Error, Equatable, CustomStringConvertible {
 // /etc/hosts. Both belong to root, so only the privileged helper uses this. Every other line of
 // /etc/hosts stays as it is, because MAMP PRO and the user write lines there too.
 public struct SystemDNSFiles: Sendable {
-    public static let resolverMarker = "# Written by Nexus. Nexus removes this file when you remove Nexus."
+    public static let resolverMarker = ResolverFile.marker
     public static let hostsBegin = "# Nexus begin"
     public static let hostsEnd = "# Nexus end"
     public static let maximumHosts = 10_000
@@ -40,7 +40,7 @@ public struct SystemDNSFiles: Sendable {
     public let hostsFile: URL
 
     public init(
-        resolverFolder: URL = URL(filePath: "/etc/resolver", directoryHint: .isDirectory),
+        resolverFolder: URL = ResolverFile.folder,
         hostsFile: URL = URL(filePath: "/etc/hosts", directoryHint: .notDirectory)
     ) {
         self.resolverFolder = resolverFolder
@@ -49,8 +49,7 @@ public struct SystemDNSFiles: Sendable {
 
     // Both files are readable by every user, so nexusd can check them without the helper.
     public func hasNexusResolver(tld: String) -> Bool {
-        let resolver = try? String(contentsOf: resolverFile(for: tld.lowercased()), encoding: .utf8)
-        return resolver?.hasPrefix(Self.resolverMarker) == true
+        ResolverFile.owner(of: resolverFile(for: tld.lowercased())) == .nexus
     }
 
     public var hasNexusHosts: Bool {

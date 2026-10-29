@@ -5,6 +5,11 @@ import AppKit
 // without clicks: --screen service:mysql --sheet port --appearance light --settings network
 // The services of the sample data, such as the port problem of --sheet port, need --sample.
 enum DebugLaunch {
+    // A check of the look does not get the first run on top of the screen that it checks.
+    static var checksTheLook: Bool {
+        ["--sample", "--screen", "--sheet", "--settings", "--appearance", "--version"].contains(where: CommandLine.arguments.contains)
+    }
+
     static func apply(to model: AppModel, openSettings: () -> Void) {
         HangWatchdog.shared.start()
         NSApplication.shared.activate()

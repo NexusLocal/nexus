@@ -1,6 +1,7 @@
 import AppKit
 import NexusCore
 import NexusIPC
+import NexusRuntime
 import ServiceManagement
 import UserNotifications
 
@@ -55,10 +56,16 @@ enum AppPresence {
 // macOS asks the user one time if Nexus may show notifications (D61). macOS shows no
 // notification while Nexus is the active app. The window shows the same news then.
 enum Notifier {
-    static func requestPermission() {
-        Task {
-            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
-        }
+    static let settingsLink = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(NexusIdentifiers.app)")
+
+    static func requestPermission() async {
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+    }
+
+    // A user who missed the question of macOS or said no turns the notifications on in System
+    // Settings.
+    static func isBlocked() async -> Bool {
+        await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .denied
     }
 
     static func post(_ title: String, _ body: String, setting key: String) {
@@ -220,7 +227,7 @@ extension AppModel {
 
     // Every site gets a name in the new dev TLD (D28). The picker shows the new TLD while
     // nexusd works.
-    func changeTLD(to tld: String) {
+    func changeTLD(to tld: String, from place: ActionPlace = .settings) {
         guard isLive else {
             useTLD(tld)
             return
@@ -229,7 +236,7 @@ extension AppModel {
         changingTLD = tld
 
         Task {
-            let response = await perform(.tld(tld), failure: "The sites did not get the domain .\(tld)", place: .settings)
+            let response = await perform(.tld(tld), failure: "The sites did not get the domain .\(tld)", place: place)
 
             guard case .done(let message) = response else {
                 changingTLD = nil
@@ -241,9 +248,26 @@ extension AppModel {
             let warnings = message.split(separator: "\n").dropFirst()
 
             if !warnings.isEmpty {
-                failure = ActionFailure(title: "The domain is .\(tld) now, but not every part works yet", message: warnings.joined(separator: "\n"), place: .settings)
+                failure = ActionFailure(title: "The domain is .\(tld) now, but not every part works yet", message: warnings.joined(separator: "\n"), place: place)
             }
         }
+    }
+
+    func tldChangeMessage(to tld: String) -> String {
+        let example = allSites.map(\.host).first { $0.hasSuffix(".\(settings.tld)") }
+            .map { "\($0) becomes \(HostName.movingTLD($0, from: settings.tld, to: tld))" }
+            ?? "shop.\(settings.tld) becomes shop.\(tld)"
+
+        return "Every site gets a new name: \(example). The old names stop working. Change APP_URL in the .env file of each site yourself."
+    }
+
+    func checkNotificationPermission() async {
+        notificationsBlocked = await Notifier.isBlocked()
+    }
+
+    func requestNotificationPermission() async {
+        await Notifier.requestPermission()
+        await checkNotificationPermission()
     }
 
     func setNewInstanceAccount(_ account: DatabaseAccount) {
@@ -259,6 +283,19 @@ extension AppModel {
         }
     }
 
+    // A request that fails counts as not set up. So the first run then shows.
+    func isSetUp(helperAllowed: Bool) async -> Bool {
+        guard helperAllowed else {
+            return false
+        }
+
+        await loadRootCertificate()
+        await loadInstalledRuntimes()
+
+        let installed = Set(installedRuntimes.map(\.name))
+        return rootCertificate?.trusted == true && installedLoaded && installed.isSuperset(of: FirstRunPackages.required)
+    }
+
     func loadRootCertificate() async {
         guard case .answer(.rootCertificate(let info)) = await outcome(of: .rootCertificate) else {
             return
@@ -268,11 +305,9 @@ extension AppModel {
     }
 
     // macOS asks for the password of the user.
-    func trustRootCertificate() {
-        Task {
-            await perform(.trust, failure: "macOS does not trust the Nexus root CA", place: .settings)
-            await loadRootCertificate()
-        }
+    func trustRootCertificate(from place: ActionPlace = .settings) async {
+        await perform(.trust, failure: "macOS does not trust the Nexus root CA", place: place)
+        await loadRootCertificate()
     }
 
     func openKeychainAccess() {

@@ -196,6 +196,32 @@ struct NexusEngineTests {
         }
     }
 
+    @Test func aRemovedRuntimeWithoutDataLeavesNoDataFolder() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        let data = paths.dataFolder(service: "redis", line: "1.0")
+        _ = await engine.handle(.install(name: "redis", line: "1.0"))
+        _ = await engine.handle(.status)
+        try #require(FileManager.default.fileExists(atPath: data.path(percentEncoded: false)))
+
+        let response = await engine.handle(.remove(name: "redis", line: "1.0"))
+
+        #expect(response == .done(message: "redis 1.0 is removed."))
+        #expect(!FileManager.default.fileExists(atPath: data.path(percentEncoded: false)))
+    }
+
+    @Test func aRemovedRuntimeKeepsItsData() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        let data = paths.dataFolder(service: "redis", line: "1.0")
+        _ = await engine.handle(.install(name: "redis", line: "1.0"))
+        try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
+        try Data("data".utf8).write(to: data.appending(path: "dump.rdb"))
+
+        let response = await engine.handle(.remove(name: "redis", line: "1.0"))
+
+        #expect(response == .done(message: "redis 1.0 is removed. Its data folder stays: \(data.path(percentEncoded: false))"))
+        #expect(FileManager.default.fileExists(atPath: data.appending(path: "dump.rdb").path(percentEncoded: false)))
+    }
+
     @Test func aPortThatAnotherServiceHasIsRefused() async throws {
         let engine = try makeEngine(package: try makeFakeRedis(), port: 23456)
         _ = await engine.handle(.install(name: "redis", line: "1.0"))

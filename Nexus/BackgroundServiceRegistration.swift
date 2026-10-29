@@ -99,7 +99,11 @@ final class BackgroundServiceRegistration {
     }
 
     func refresh() {
-        status = service.status
+        let current = service.status
+
+        if current != status {
+            status = current
+        }
     }
 
     // An item that waits for approval counts as on. The user then turns it on in System

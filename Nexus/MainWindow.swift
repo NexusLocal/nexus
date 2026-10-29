@@ -32,13 +32,11 @@ struct MainWindow: View {
 
             Self.launchArgumentsApplied = true
 
-            if CommandLine.arguments.contains("--first-run") {
-                openWindow(id: FirstRunWindow.id)
-            }
-
             #if DEBUG
             DebugLaunch.apply(to: model) { openSettings() }
             #endif
+
+            await openFirstRunIfNeeded()
         }
         .sheet(item: $model.sheet) { sheet in
             switch sheet {
@@ -106,8 +104,40 @@ struct MainWindow: View {
         }
     }
 
+    // A Mac that has the required packages, the helper and a trusted root CA needs no first run.
+    // That is an install from before the first run, or one whose app settings were removed.
+    private func openFirstRunIfNeeded() async {
+        if CommandLine.arguments.contains("--first-run") {
+            openWindow(id: FirstRunWindow.id)
+            return
+        }
+
+        guard !AppPreference.isOn(AppPreference.firstRunDone), model.isLive else {
+            return
+        }
+
+        #if DEBUG
+        guard !DebugLaunch.checksTheLook else {
+            return
+        }
+        #endif
+
+        guard await model.isSetUp(helperAllowed: background.helper.isEnabled) else {
+            openWindow(id: FirstRunWindow.id)
+            return
+        }
+
+        UserDefaults.standard.set(true, forKey: AppPreference.firstRunDone)
+    }
+
     private var windowFailure: ActionFailure? {
-        model.failure.flatMap { $0.place == .window ? $0 : nil }
+        model.failure.flatMap { failure in
+            switch failure.place {
+            case .window: failure
+            case .firstRun: model.firstRunIsOpen ? nil : failure
+            case .menuBar, .settings: nil
+            }
+        }
     }
 
     private var groupNamingTitle: String {

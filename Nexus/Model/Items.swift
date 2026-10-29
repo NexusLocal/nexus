@@ -269,6 +269,7 @@ struct PackageItem: Identifiable {
     var securityEnded = false
     var required = false
     var taskID: String?
+    var downloadSize: Int?
 
     var id: String { "\(package)-\(line)" }
 
@@ -277,6 +278,14 @@ struct PackageItem: Identifiable {
         case .installed, .update: true
         case .available, .downloading: false
         }
+    }
+
+    var isDownloading: Bool {
+        if case .downloading = state {
+            return true
+        }
+
+        return false
     }
 }
 
@@ -296,20 +305,6 @@ struct ActivityItem: Identifiable {
         self.progress = progress
         self.taskID = taskID
     }
-}
-
-struct CommandItem: Identifiable {
-    let command: String
-    let help: String
-
-    var id: String { command }
-}
-
-struct CommandSection: Identifiable {
-    let title: String
-    let commands: [CommandItem]
-
-    var id: String { title }
 }
 
 // The location is nil for an app of the sample data. An added app is one that the user added,

@@ -115,9 +115,13 @@ private struct GeneralSettings: View {
                 Text("Nexus finds the terminal apps and code editors on this Mac. \"Choose another app\" adds an app that Nexus did not find.")
             }
 
-            Section("Notifications") {
+            Section {
                 Toggle("When a service stops or fails", isOn: $notifyServiceStops)
                 Toggle("When an import is done", isOn: $notifyImportDone)
+            } header: {
+                Text("Notifications")
+            } footer: {
+                NotificationsBlockedNote()
             }
         }
         .formStyle(.grouped)
@@ -125,7 +129,7 @@ private struct GeneralSettings: View {
         .fixedSize(horizontal: false, vertical: true)
         .onChange(of: notifyServiceStops || notifyImportDone) {
             if notifyServiceStops || notifyImportDone {
-                Notifier.requestPermission()
+                Task { await model.requestNotificationPermission() }
             }
         }
         .onAppear {
@@ -448,16 +452,8 @@ private struct NetworkSettings: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { tld in
-            Text(tldChange(to: tld))
+            Text(model.tldChangeMessage(to: tld))
         }
-    }
-
-    private func tldChange(to tld: String) -> String {
-        let example = model.allSites.map(\.host).first { $0.hasSuffix(".\(model.settings.tld)") }
-            .map { "\($0) becomes \(HostName.movingTLD($0, from: model.settings.tld, to: tld))" }
-            ?? "shop.\(model.settings.tld) becomes shop.\(tld)"
-
-        return "Every site gets a new name: \(example). The old names stop working. Change APP_URL in the .env file of each site yourself."
     }
 
     private func portTitle(service: ServiceVersion, port: ServicePort) -> String {
@@ -487,7 +483,7 @@ private struct CertificatesSettings: View {
                             .foregroundStyle(.secondary)
                     } else {
                         Button("Trust…") {
-                            model.trustRootCertificate()
+                            Task { await model.trustRootCertificate() }
                         }
                     }
                 }

@@ -37,7 +37,7 @@ extension AppModel {
             packagesProblem = nil
             packagesChecked = Date.now.formatted(date: .omitted, time: .shortened)
         case .failure(let message):
-            packagesProblem = "Nexus cannot check for updates. \(message)"
+            packagesProblem = message
         default:
             break
         }
@@ -58,13 +58,22 @@ extension AppModel {
         }
     }
 
-    func loadInstalledRuntimes() async {
-        guard case .answer(.installed(let runtimes)) = await outcome(of: .installed) else {
-            return
-        }
+    var installedProblemText: String? {
+        installedProblem.map { "Nexus cannot read the installed packages. \($0)" }
+    }
 
-        installedRuntimes = runtimes
-        rebuildPackages()
+    func loadInstalledRuntimes() async {
+        switch await outcome(of: .installed) {
+        case .answer(.installed(let runtimes)):
+            installedRuntimes = runtimes
+            installedLoaded = true
+            installedProblem = nil
+            rebuildPackages()
+        case .failure(let message):
+            installedProblem = message
+        default:
+            break
+        }
     }
 
     // One row for each version line of the manifest, and one for each installed line that the
@@ -121,7 +130,8 @@ extension AppModel {
             state: state,
             lts: offered?.lts ?? false,
             required: name == "nginx" || name == "composer" || name == "php" && installed != nil && installedPHP == 1,
-            taskID: task?.id
+            taskID: task?.id,
+            downloadSize: offered?.size
         )
 
         if let end = offered?.securityEndDate, let soon = Calendar.current.date(byAdding: .month, value: Self.securityNoteMonths, to: .now), end <= soon {
@@ -145,29 +155,36 @@ extension AppModel {
         }
     }
 
+    static func packageTitle(_ name: String) -> String {
+        switch name {
+        case "nginx": "nginx"
+        case "httpd": "Apache"
+        case "composer": "Composer"
+        case "node": "Node"
+        default: ServiceKind(package: name)?.title ?? name
+        }
+    }
+
     // Redis 8 is the newest Redis 8. So its row shows the version line of its build, for
     // example Redis 8.10.
     static func packageName(_ name: String, line: String, version: String = "") -> String {
         switch name {
-        case "nginx": "nginx \(line)"
-        case "httpd": "Apache \(line)"
         case "redis" where line == "8" && !version.isEmpty: "Redis \(version.split(separator: ".").prefix(2).joined(separator: "."))"
         case "composer": "Composer"
-        case "node": "Node \(line)"
-        default: ServiceKind(package: name).map { "\($0.title) \(line)" } ?? "\(name) \(line)"
+        default: "\(packageTitle(name)) \(line)"
         }
     }
 
     // An update is an install of the newest build of an installed version line. nexusd starts
     // a service that runs again after the update.
-    func install(_ package: PackageItem) {
+    func install(_ package: PackageItem, from place: ActionPlace = .window) {
         let key = package.id
         let failure = package.isInstalled ? "\(package.name) did not update" : "\(package.name) did not install"
         startingDownloads.insert(key)
         rebuildPackages()
 
         Task {
-            await perform(.install(name: package.package, line: package.line), failure: failure, place: .window)
+            await perform(.install(name: package.package, line: package.line), failure: failure, place: place)
             startingDownloads.remove(key)
             await loadInstalledRuntimes()
         }

@@ -541,6 +541,29 @@ Done when: a new user can go from the first launch to a working site without the
 this on the owner's Mac with the launch argument. The Mac already has MAMP PRO and Nexus
 packages, as most users have other tools. Do not make a new macOS user account. (owner)
 
+Built: the first run shows at each launch until the user clicks "Done". A Mac that has nginx, PHP,
+Composer, the helper and a trusted root CA skips it. That is an install from before the first run.
+The launch argument `--first-run` shows it again in every build. The Packages step reads the
+manifest and the installed packages. An installed version stays picked and shows "Installed". A
+required package can only go when another version of it stays picked. The newest nginx, PHP and
+Composer are preselected only when no version of them is installed. "Continue" starts the
+downloads. The Settings step shows their progress. The Domains step waits until the helper is
+allowed and nexusd wrote /etc/resolver/<tld>. A resolver file of another app such as Herd does
+not count. The domain picker waits for the helper, because nexusd writes the new resolver file
+first. "Continue" waits for the trusted root CA too. The Settings step asks macOS for the
+notification permission while it shows. Settings > General and the first run show a note when
+macOS blocks the notifications. "Start at login" starts at its current value when the first run
+was done before. A failure in the first run shows in its own alert. After the first run closed it
+shows in the main window. The Command line page lists every nexus command with an example. A test
+parses each example with the nexus command and fails when a command is missing from the list.
+`nexus runtimes` is `nexus installed` now, as in the design. The old name still works. Until the
+PATH setting of step 7, the page has a button that copies the path of the nexus command in the
+app. A removed package without data leaves no data folder. Checked on 2026-10-29 on the owner's
+Mac with `--first-run`: the first run showed the installed packages, downloaded Redis 8.10 and
+MariaDB 12.3 with their progress, and kept "Start at login" off. A folder added in the main window
+then opened as https://firstrun-shop.test:8443 with a trusted certificate. The test packages and
+the test site are removed.
+
 ## Step 7 - CLI and the PATH setting
 
 Work:
