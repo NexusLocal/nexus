@@ -112,7 +112,11 @@ extension NexusEngine {
     }
 
     func newestRuntime(named name: String) async -> InstalledRuntime? {
-        await installer.installedRuntimes().filter { $0.name == name }.max { VersionLine.isOlder($0.line, than: $1.line) }
+        Self.newest(name, in: await installer.installedRuntimes())
+    }
+
+    static func newest(_ name: String, in installed: [InstalledRuntime]) -> InstalledRuntime? {
+        installed.filter { $0.name == name }.max { VersionLine.isOlder($0.line, than: $1.line) }
     }
 
     func url(for host: String) async -> String {
@@ -460,6 +464,7 @@ extension NexusEngine {
         let state = await stateStore.current()
         let resolved = resolvedSites(state)
         let installed = await installer.installedRuntimes()
+        let nodeLines = installed.filter { $0.name == "node" }.map(\.line)
         let layout = Self.layout(state.siteLayout, sites: resolved.map(\.site), state: state)
         var groups: [String: String] = [:]
 
@@ -482,7 +487,9 @@ extension NexusEngine {
                 url: Self.url(for: site.host, in: state),
                 group: groups[site.host],
                 parkedFolder: Self.parkedFolder(of: site, in: state.parked).map { Self.displayPath($0.folder) },
-                problem: Self.problem(of: site, installed: installed)
+                problem: Self.problem(of: site, installed: installed),
+                projectNode: site.node == nil ? NodeLines.choose(hint: nodeHint(of: site.folder), installed: nodeLines) : nil,
+                nodeSetting: site.node
             ))
         }
 
@@ -504,23 +511,7 @@ extension NexusEngine {
     // The path of a folder without the / at the end, so that two names of one folder compare as
     // equal.
     static func displayPath(_ folder: URL) -> String {
-        trimmedPath(folder.standardizedFileURL.path(percentEncoded: false))
-    }
-
-    static func trimmedPath(_ path: String) -> String {
-        path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
-    }
-
-    // The path without symbolic links, as FSEvents names it. /tmp is /private/tmp, for example.
-    static func realPath(_ folder: URL) -> String {
-        let path = folder.path(percentEncoded: false)
-
-        guard let resolved = realpath(path, nil) else {
-            return trimmedPath(path)
-        }
-
-        defer { free(resolved) }
-        return trimmedPath(String(cString: resolved))
+        RealPath.trimmed(folder.standardizedFileURL.path(percentEncoded: false))
     }
 
     // A group needs a name, and a host can be in one place only. The app sends the whole layout
@@ -560,12 +551,21 @@ extension NexusEngine {
         return "Nexus keeps the new order of the sites."
     }
 
-    // The defaults apply to the sites that come after the change (D59).
-    func setSiteDefaults(_ defaults: SiteDefaults) async throws -> String {
-        if let php = defaults.php {
+    // The defaults apply to the sites that come after the change (D59). Only a changed version
+    // must be installed. The app and nexus site defaults send the stored versions back with each
+    // change. A stored version can be removed later.
+    func setSiteDefaults(_ requested: SiteDefaults) async throws -> String {
+        let current = await stateStore.current().siteDefaults
+        var defaults = requested
+
+        if let php = defaults.php, php != current.php {
             guard await runtime(named: "php", line: php) != nil else {
                 throw RuntimeError.unsupported("PHP \(php) is not installed. Run: nexus install php \(php)")
             }
+        }
+
+        if let node = defaults.node, node != current.node {
+            defaults.node = try await nodeLine(node)
         }
 
         try await stateStore.update { $0.siteDefaults = defaults }
@@ -582,7 +582,7 @@ extension NexusEngine {
             throw RuntimeError.unsupported("\(host) exists already. Change it with: nexus site edit \(host)")
         }
 
-        let site = Site(host: host, folder: folder, aliases: try aliases.map(HostName.validated), php: try await phpLine(php), server: server ?? state.siteDefaults.server)
+        let site = Site(host: host, folder: folder, aliases: try aliases.map(HostName.validated), php: try await phpLine(php), server: server ?? state.siteDefaults.server, node: await defaultNodeLine())
         try checkUnique(site, in: state)
 
         return try await siteMessage(site, warnings: changeWeb { state in
@@ -663,11 +663,14 @@ extension NexusEngine {
         if let aliases = change.aliases {
             site.aliases = try aliases.map(HostName.validated)
         }
+        if let node = change.node {
+            site.node = try await nodeLine(node)
+        }
 
         try checkUnique(site, in: state)
 
         let edited = site
-        let warnings = try await changeWeb { state in
+        let store: @Sendable (inout EngineState) -> Void = { state in
             if let index = state.sites.firstIndex(where: { $0.host == host }) {
                 state.sites[index] = edited
             } else {
@@ -675,7 +678,21 @@ extension NexusEngine {
             }
         }
 
-        return await siteMessage(edited, warnings: warnings)
+        // The Node line changes no server. So a change of only the Node line needs no new web
+        // configuration.
+        let onlyNode = change.node != nil && change.php == nil && change.server == nil && change.aliases == nil
+        let warnings = onlyNode ? [] : try await changeWeb(.sites, store)
+
+        if onlyNode {
+            try await stateStore.update(store)
+        }
+
+        guard let node = change.node else {
+            return await siteMessage(edited, warnings: warnings)
+        }
+
+        let used = node == NodeLines.fromProject ? "the Node version of the project" : "Node \(node)"
+        return await siteMessage(edited, warnings: ["nexus node and nexus npm use \(used) in its folder."] + warnings)
     }
 
     func park(folder path: String, php: String?, server: WebServer?) async throws -> String {
@@ -686,7 +703,7 @@ extension NexusEngine {
             throw RuntimeError.unsupported("\(folder.path(percentEncoded: false)) is parked already.")
         }
 
-        let parked = ParkedFolder(folder: folder, php: try await phpLine(php), server: server ?? state.siteDefaults.server)
+        let parked = ParkedFolder(folder: folder, php: try await phpLine(php), server: server ?? state.siteDefaults.server, node: await defaultNodeLine())
         let warnings = try await changeWeb { $0.parked.append(parked) }
         await watchParkedFolders()
         let hosts = parked.sites(tld: state.tld).map(\.host)
@@ -710,12 +727,12 @@ extension NexusEngine {
     // project, for example in vendor, does not.
     func watchParkedFolders() async {
         let folders = await stateStore.current().parked.map(\.folder)
-        let watched = Set(folders.map(Self.realPath))
+        let watched = Set(folders.map(RealPath.of))
 
         parkedWatcher?.stop()
         parkedWatcher = FolderWatcher(folders: folders) { [weak self] changed in
             let matters = changed.contains { path in
-                let folder = Self.trimmedPath(path)
+                let folder = RealPath.trimmed(path)
                 return watched.contains(folder) || watched.contains((folder as NSString).deletingLastPathComponent)
             }
 
@@ -770,8 +787,12 @@ extension NexusEngine {
     // Without a request, a new site gets the PHP version of the defaults (D59). A default that is
     // not installed anymore gives the newest version, so a new project in a parked folder still
     // becomes a site.
-    private func phpLine(_ requested: String?) async throws -> String {
-        let installed = await installer.installedRuntimes().filter { $0.name == "php" }.map(\.line)
+    func phpLine(_ requested: String?) async throws -> String {
+        try Self.phpLine(requested, installed: await installer.installedRuntimes(), defaults: await stateStore.current().siteDefaults)
+    }
+
+    static func phpLine(_ requested: String?, installed runtimes: [InstalledRuntime], defaults: SiteDefaults) throws -> String {
+        let installed = runtimes.filter { $0.name == "php" }.map(\.line)
 
         if let requested {
             guard installed.contains(requested) else {
@@ -780,7 +801,7 @@ extension NexusEngine {
             return requested
         }
 
-        if let preferred = await stateStore.current().siteDefaults.php, installed.contains(preferred) {
+        if let preferred = defaults.php, installed.contains(preferred) {
             return preferred
         }
 
@@ -832,6 +853,24 @@ extension NexusEngine {
         return available.sorted().map {
             Toggle(name: $0, enabled: loaded.contains($0), required: false, help: ToggleHelp.phpExtension($0))
         }
+    }
+
+    // A change of a version file changes its modification date. So nexusd reads the files of a
+    // site again only after such a change. A missing file has the date 0.
+    func nodeHint(of folder: URL) -> NodeVersionHint? {
+        let key = folder.path(percentEncoded: false)
+        let stamp = NodeVersionFiles.names.map { name in
+            let date = (try? FileManager.default.attributesOfItem(atPath: folder.appending(path: name).path(percentEncoded: false)))?[.modificationDate] as? Date
+            return date?.timeIntervalSince1970 ?? 0
+        }
+
+        if let cached = nodeHintCache[key], cached.stamp == stamp {
+            return cached.hint
+        }
+
+        let hint = NodeVersionFiles.hint(from: folder, upTo: folder)
+        nodeHintCache[key] = (stamp, hint)
+        return hint
     }
 
     // An install, a removal and a manual copy of a .so file all change the modification date of

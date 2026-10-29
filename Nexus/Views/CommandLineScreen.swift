@@ -2,9 +2,11 @@ import NexusCore
 import SwiftUI
 
 struct CommandLineScreen: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.openSettings) private var openSettings
     @State private var search = ""
 
-    // The app contains the nexus command. The PATH setting comes in step 7.
+    // Without the PATH setting, a user can still run the nexus command in the app by its path.
     private static let commandPath = Bundle.main.bundleURL.appending(path: "Contents/Helpers/nexus").path(percentEncoded: false)
 
     private var sections: [CommandSection] {
@@ -31,13 +33,23 @@ struct CommandLineScreen: View {
                 HStack(spacing: 10) {
                     Image(systemName: "info.circle")
                         .foregroundStyle(Color.accentText)
-                    Text("nexus --help shows the same list. The nexus command is in the app. Copy its path to run it in your terminal.")
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                    Button("Copy path") {
-                        copyToPasteboard(Self.shellWord(Self.commandPath))
+
+                    if model.pathSetting == .off {
+                        Text("Turn on \"Add Nexus to PATH\" in Settings > General to use nexus in your terminal. nexus --help shows the same list.")
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                        Button("Copy path") {
+                            copyToPasteboard(Self.shellWord(Self.commandPath))
+                        }
+                        .help("Copies the path of the nexus command in the app: \(Self.commandPath)")
+                        Button("Open settings") {
+                            UserDefaults.standard.set("general", forKey: SettingsWindow.tabKey)
+                            openSettings()
+                        }
+                    } else {
+                        Text("nexus --help shows the same list.")
+                        Spacer()
                     }
-                    .help(Self.commandPath)
                 }
             }
 
@@ -66,6 +78,9 @@ struct CommandLineScreen: View {
         .formStyle(.grouped)
         .screenTitle("Command line", subtitle: "The nexus command does everything that the app does")
         .searchable(text: $search, placement: .toolbar, prompt: "Search commands")
+        .onAppear {
+            model.readPathSetting()
+        }
     }
 
     // A path with a space or another special character works in a terminal only in quotes.

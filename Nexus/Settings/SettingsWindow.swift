@@ -116,6 +116,26 @@ private struct GeneralSettings: View {
             }
 
             Section {
+                Toggle("Add Nexus to PATH", isOn: Binding(get: { model.pathSetting != .off }, set: { model.setAddToPath($0) }))
+            } header: {
+                Text("Shell")
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Nexus adds one line at the end of ~/.zshrc. php, composer, node and npm in your terminal then use the versions of the site in the current folder. Turn it off to remove the line.")
+
+                    if model.pathSetting == .notLast {
+                        Text("Another line comes after the line of Nexus in ~/.zshrc. That line can put another PHP first on the PATH. Turn the setting off and on to move the line of Nexus to the end.")
+                            .foregroundStyle(Color.orangeText)
+                    }
+
+                    if let problem = model.pathSettingProblem {
+                        Text(problem)
+                            .foregroundStyle(Color.orangeText)
+                    }
+                }
+            }
+
+            Section {
                 Toggle("When a service stops or fails", isOn: $notifyServiceStops)
                 Toggle("When an import is done", isOn: $notifyImportDone)
             } header: {
@@ -134,6 +154,7 @@ private struct GeneralSettings: View {
         }
         .onAppear {
             background.refresh()
+            model.readPathSetting()
 
             if model.isLive {
                 model.findApps()
@@ -228,6 +249,18 @@ private struct SitesSettings: View {
         )
     }
 
+    // A Node line of nil comes from the files of each project (D21).
+    private var node: Binding<String> {
+        Binding(
+            get: { model.siteDefaults.node.flatMap { model.installedNodeVersions.contains($0) ? $0 : nil } ?? NodeLines.fromProject },
+            set: { value in
+                var defaults = model.siteDefaults
+                defaults.node = value == NodeLines.fromProject ? nil : value
+                model.setSiteDefaults(defaults)
+            }
+        )
+    }
+
     var body: some View {
         Form {
             Section {
@@ -239,6 +272,11 @@ private struct SitesSettings: View {
                 Picker("PHP", selection: php) {
                     Text("Newest installed").tag("newest")
                     ForEach(model.installedPHPVersions, id: \.self) { Text("PHP \($0)").tag($0) }
+                }
+
+                Picker("Node", selection: node) {
+                    Text("From the project").tag(NodeLines.fromProject)
+                    ForEach(model.installedNodeVersions, id: \.self) { Text("Node \($0)").tag($0) }
                 }
             } header: {
                 Text("Defaults for new sites")

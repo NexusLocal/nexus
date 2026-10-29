@@ -30,9 +30,9 @@ extension CommandSection {
         CommandSection(title: "Sites", commands: [
             CommandItem(command: "nexus site list", help: "Lists the sites."),
             CommandItem(command: "nexus site add . --php 8.4", help: "Adds the current folder as a site."),
-            CommandItem(command: "nexus site edit shop.test --server apache", help: "Changes the PHP version, the webserver or the aliases."),
+            CommandItem(command: "nexus site edit shop.test --server apache", help: "Changes the PHP version, the Node version, the webserver or the aliases."),
             CommandItem(command: "nexus site remove shop.test", help: "Removes a site. The folder stays."),
-            CommandItem(command: "nexus site defaults --php 8.4", help: "Changes the PHP version or the webserver of a new site."),
+            CommandItem(command: "nexus site defaults --php 8.4", help: "Changes the PHP version, the Node version or the webserver of a new site."),
             CommandItem(command: "nexus park ~/Sites", help: "Makes each folder in ~/Sites a site."),
             CommandItem(command: "nexus unpark ~/Sites", help: "Stops a folder of projects. Its folders stay."),
         ]),
@@ -57,7 +57,11 @@ extension CommandSection {
             CommandItem(command: "nexus db open mysql-8.4 shop", help: "Opens a database in your database app."),
             CommandItem(command: "nexus db account mysql-8.4 root", help: "Changes the user of an instance. --password gives it a password."),
         ]),
-        CommandSection(title: "PHP and webservers", commands: [
+        CommandSection(title: "PHP and tools", commands: [
+            CommandItem(command: "nexus php -v", help: "Runs the PHP of the site in the current folder."),
+            CommandItem(command: "nexus composer install", help: "Runs Composer with that PHP."),
+            CommandItem(command: "nexus node -v", help: "Runs the Node of the site in the current folder."),
+            CommandItem(command: "nexus npm ci", help: "Runs npm with the Node of the site."),
             CommandItem(command: "nexus ext 8.4 xdebug on", help: "Turns a PHP extension on or off."),
             CommandItem(command: "nexus ini 8.4 \"memory_limit = 512M\"", help: "Replaces the custom php.ini lines of a PHP version."),
             CommandItem(command: "nexus module apache rewrite off", help: "Turns a webserver module on or off."),

@@ -38,7 +38,8 @@ extension AppModel {
             php: php,
             url: "https://\(host):8443",
             parkedFolder: parked ? parent : nil,
-            hasOwnSettings: !parked
+            hasOwnSettings: !parked,
+            projectNode: NodeChoice(line: "22", reason: "from .nvmrc")
         )
     }
 

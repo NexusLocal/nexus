@@ -13,7 +13,10 @@ public enum NexusServiceID {
 
 // A site as the app and nexus site list show it. parked is true for a site that has no settings
 // of its own. parkedFolder is the parked folder that holds the folder of the site, also when the
-// site has its own settings. The problem says why the site does not run.
+// site has its own settings. The problem says why the site does not run. projectNode is the Node
+// line that the files of the project give (D21). nodeSetting is the line that the user chose for
+// the site, or nil when the line of the project applies. nexusd reads the files of the project
+// only for a site without a chosen line.
 public struct SiteInfo: Codable, Sendable, Equatable {
     public let hosts: [String]
     public let folder: String
@@ -25,6 +28,8 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let group: String?
     public let parkedFolder: String?
     public let problem: String?
+    public let projectNode: NodeChoice?
+    public let nodeSetting: String?
 
     public init(
         hosts: [String],
@@ -36,7 +41,9 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         url: String,
         group: String? = nil,
         parkedFolder: String? = nil,
-        problem: String? = nil
+        problem: String? = nil,
+        projectNode: NodeChoice? = nil,
+        nodeSetting: String? = nil
     ) {
         self.hosts = hosts
         self.folder = folder
@@ -48,6 +55,29 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         self.group = group
         self.parkedFolder = parkedFolder
         self.problem = problem
+        self.projectNode = projectNode
+        self.nodeSetting = nodeSetting
+    }
+
+    public var node: String? {
+        nodeSetting ?? projectNode?.line
+    }
+}
+
+// What nexus php, composer, node or npm runs (D38). The arguments come before the arguments of
+// the user. The environment replaces these keys. The folders of path go first on the PATH. So a
+// program that the tool starts gets the same version. An example is php in a Composer script.
+public struct ToolCommand: Codable, Sendable, Equatable {
+    public let executable: String
+    public let arguments: [String]
+    public let environment: [String: String]
+    public let path: [String]
+
+    public init(executable: String, arguments: [String] = [], environment: [String: String] = [:], path: [String] = []) {
+        self.executable = executable
+        self.arguments = arguments
+        self.environment = environment
+        self.path = path
     }
 }
 
@@ -103,15 +133,18 @@ public struct PHPSettingsError: Error, Codable, Sendable, Equatable, CustomStrin
     }
 }
 
+// A Node line of NodeLines.fromProject gives the site the line of its project again.
 public struct SiteChange: Codable, Sendable, Equatable {
     public var php: String?
     public var server: WebServer?
     public var aliases: [String]?
+    public var node: String?
 
-    public init(php: String? = nil, server: WebServer? = nil, aliases: [String]? = nil) {
+    public init(php: String? = nil, server: WebServer? = nil, aliases: [String]? = nil, node: String? = nil) {
         self.php = php
         self.server = server
         self.aliases = aliases
+        self.node = node
     }
 }
 
@@ -427,6 +460,8 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     // The databases on another server, read with the client of the instance.
     case sourceDatabases(source: DatabaseServer, instance: String)
     case stopTask(id: String)
+    // The command that a tool runs in this folder, with the versions of its site (D38).
+    case tool(ProjectTool, folder: String)
 }
 
 public enum NexusResponse: Codable, Sendable, Equatable {
@@ -447,6 +482,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     // A task that stopped because the user asked for it. The message says what changed.
     case stopped(message: String)
     case failure(message: String)
+    case tool(ToolCommand)
 }
 
 public enum NexusMessageCoding {

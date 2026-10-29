@@ -10,11 +10,13 @@ struct SiteScreen: View {
 
     @State private var server: String
     @State private var php: String
+    @State private var node: String
 
     init(site: SiteItem) {
         self.site = site
         _server = State(initialValue: site.server)
         _php = State(initialValue: site.php)
+        _node = State(initialValue: site.nodeSetting ?? NodeLines.fromProject)
     }
 
     private var group: Binding<String> {
@@ -104,10 +106,23 @@ struct SiteScreen: View {
                 Picker("PHP", selection: $php) {
                     ForEach(phpChoices, id: \.self) { Text("PHP \($0)").tag($0) }
                 }
+
+                Picker("Node", selection: $node) {
+                    Text(site.projectNode.map { "\($0.line) (\($0.reason))" } ?? "From the project")
+                        .tag(NodeLines.fromProject)
+                    ForEach(nodeChoices, id: \.self) { Text("Node \($0)").tag($0) }
+                }
             } header: {
                 Text("Server")
             } footer: {
-                Text("nginx handles HTTPS for every site. For an Apache site, nginx sends each request on to Apache.")
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("nginx handles HTTPS for every site. For an Apache site, nginx sends each request on to Apache.")
+
+                    if let line = site.node, !model.installedNodeVersions.contains(line) {
+                        Text("nexus node and nexus npm need Node \(line) for this site. Install it on the Packages screen.")
+                            .foregroundStyle(Color.orangeText)
+                    }
+                }
             }
         }
         .formStyle(.grouped)
@@ -131,6 +146,7 @@ struct SiteScreen: View {
         .onChange(of: site) {
             server = site.server
             php = site.php
+            node = site.nodeSetting ?? NodeLines.fromProject
         }
         .onChange(of: server) {
             guard server != site.server, let choice = WebServer(rawValue: server) else {
@@ -146,11 +162,31 @@ struct SiteScreen: View {
 
             change(SiteChange(php: php)) { php = site.php }
         }
+        .onChange(of: node) {
+            let current = site.nodeSetting ?? NodeLines.fromProject
+
+            guard node != current else {
+                return
+            }
+
+            change(SiteChange(node: node)) { node = current }
+        }
     }
 
     // A site keeps a PHP version that is not installed anymore, so the picker shows it.
     private var phpChoices: [String] {
         model.installedPHPVersions.contains(site.php) ? model.installedPHPVersions : [site.php] + model.installedPHPVersions
+    }
+
+    // A chosen Node line that is not installed anymore stays in the picker too.
+    private var nodeChoices: [String] {
+        let installed = model.installedNodeVersions
+
+        guard let chosen = site.nodeSetting, !installed.contains(chosen) else {
+            return installed
+        }
+
+        return [chosen] + installed
     }
 
     private func change(_ change: SiteChange, revert: @escaping () -> Void) {

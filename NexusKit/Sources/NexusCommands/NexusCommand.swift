@@ -7,7 +7,62 @@ import NexusSupervisor
 
 public enum NexusCLI {
     public static func main() async {
+        if let invocation = toolInvocation(CommandLine.arguments) {
+            do {
+                try await runTool(invocation.tool, invocation.arguments, throughLink: invocation.throughLink)
+            } catch {
+                NexusCommand.exit(withError: error)
+            }
+        }
+
         await NexusCommand.main()
+    }
+
+    struct ToolInvocation: Equatable {
+        let tool: ProjectTool
+        let arguments: [String]
+        let throughLink: Bool
+    }
+
+    // A link in bin/ with the name php runs as nexus php (D39). The arguments of a tool go to the
+    // tool as they are, also --help and -v. So they do not go through the parser.
+    static func toolInvocation(_ arguments: [String]) -> ToolInvocation? {
+        if let name = arguments.first.map({ URL(filePath: $0).lastPathComponent }), let tool = ProjectTool(rawValue: name) {
+            return ToolInvocation(tool: tool, arguments: Array(arguments.dropFirst()), throughLink: true)
+        }
+
+        if arguments.count > 1, let tool = ProjectTool(rawValue: arguments[1]) {
+            return ToolInvocation(tool: tool, arguments: Array(arguments.dropFirst(2)), throughLink: false)
+        }
+
+        return nil
+    }
+
+    // The first program with this name on the PATH that is not the nexus command. Each link in
+    // bin/ is the nexus command.
+    static func nextProgram(named name: String, path: String, nexus: String) -> String? {
+        for folder in path.split(separator: ":") where !folder.isEmpty {
+            let candidate = URL(filePath: String(folder), directoryHint: .isDirectory).appending(path: name)
+            let file = candidate.path(percentEncoded: false)
+
+            if FileManager.default.isExecutableFile(atPath: file), RealPath.of(candidate) != nexus {
+                return file
+            }
+        }
+
+        return nil
+    }
+
+    // The PATH without the folders that hold a link to the nexus command. A script of the next
+    // program then runs the next php or node too, and nexus does not try nexusd again for it.
+    static func path(_ path: String, without nexus: String) -> String {
+        path.split(separator: ":", omittingEmptySubsequences: false)
+            .filter { folder in
+                folder.isEmpty || CommandLinks.names.allSatisfy { name in
+                    RealPath.of(URL(filePath: String(folder), directoryHint: .isDirectory).appending(path: name)) != nexus
+                }
+            }
+            .joined(separator: ":")
     }
 }
 
@@ -20,9 +75,106 @@ struct NexusCommand: AsyncParsableCommand {
             Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Installed.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
             SiteCommand.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
-            Database.self,
+            Database.self, PHP.self, Composer.self, Node.self, NPM.self,
         ]
     )
+}
+
+// nexus php, composer, node and npm (D38). NexusCLI.main runs them before the parser. These
+// commands put them in nexus --help.
+struct PHP: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "php",
+        abstract: "Runs the PHP of the site in the current folder, for example: nexus php -v",
+        discussion: "Outside a site, nexus php uses the PHP version of a new site. A folder in a git worktree of a site uses the versions of that site."
+    )
+
+    @Argument(parsing: .captureForPassthrough, help: "The arguments for PHP.") var arguments: [String] = []
+
+    func run() async throws {
+        try await runTool(.php, arguments)
+    }
+}
+
+struct Composer: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Runs Composer with the PHP of the site in the current folder, for example: nexus composer install")
+
+    @Argument(parsing: .captureForPassthrough, help: "The arguments for Composer.") var arguments: [String] = []
+
+    func run() async throws {
+        try await runTool(.composer, arguments)
+    }
+}
+
+struct Node: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Runs the Node of the site in the current folder, for example: nexus node -v",
+        discussion: "The Node version comes from .nvmrc, .node-version, .tool-versions or \"engines\" in package.json. Without these files, Nexus uses the newest LTS version. Choose a version for a site with: nexus site edit shop.test --node 24"
+    )
+
+    @Argument(parsing: .captureForPassthrough, help: "The arguments for Node.") var arguments: [String] = []
+
+    func run() async throws {
+        try await runTool(.node, arguments)
+    }
+}
+
+struct NPM: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "npm", abstract: "Runs npm with the Node of the site in the current folder, for example: nexus npm ci")
+
+    @Argument(parsing: .captureForPassthrough, help: "The arguments for npm.") var arguments: [String] = []
+
+    func run() async throws {
+        try await runTool(.npm, arguments)
+    }
+}
+
+// nexusd says what to run. The nexus command then becomes that program. So the program gets the
+// terminal, the signals and the exit code. The current folder is the real path, as getcwd gives
+// it. When nexusd does not answer, a link in bin/ runs the next program with its name on the
+// PATH. A terminal with the PATH setting then keeps a working php.
+private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bool = false) async throws {
+    let response: NexusResponse
+    let environment = ProcessInfo.processInfo.environment
+    let path = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+
+    do {
+        response = try await NexusClient().send(.tool(tool, folder: FileManager.default.currentDirectoryPath))
+    } catch let error as NexusClientError where throughLink {
+        guard let nexus = Bundle.main.executableURL.map(RealPath.of),
+              let other = NexusCLI.nextProgram(named: tool.rawValue, path: path, nexus: nexus) else {
+            FileHandle.standardError.write(Data("\(error)\n".utf8))
+            throw ExitCode.failure
+        }
+
+        var otherEnvironment = environment
+        otherEnvironment["PATH"] = NexusCLI.path(path, without: nexus)
+
+        FileHandle.standardError.write(Data("nexusd does not answer. This \(tool.rawValue) is \(other), the next one on the PATH. Open the Nexus app to use the versions of the site.\n".utf8))
+        try execute(other, [other] + arguments, environment: otherEnvironment)
+    } catch {
+        FileHandle.standardError.write(Data("\(error)\n".utf8))
+        throw ExitCode.failure
+    }
+
+    guard case .tool(let command) = response else {
+        try finish(response)
+        throw ExitCode.failure
+    }
+
+    var toolEnvironment = environment.merging(command.environment) { _, new in new }
+    toolEnvironment["PATH"] = (command.path + [path]).joined(separator: ":")
+    try execute(command.executable, [command.executable] + command.arguments + arguments, environment: toolEnvironment)
+}
+
+// The nexus command becomes the program. This throws when the program cannot start.
+private func execute(_ executable: String, _ arguments: [String], environment: [String: String]) throws -> Never {
+    let argv = arguments.map { strdup($0) } + [nil]
+    let envp = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+    execve(executable, argv, envp)
+
+    FileHandle.standardError.write(Data("Nexus cannot start \(executable): \(String(cString: strerror(errno)))\n".utf8))
+    throw ExitCode.failure
 }
 
 struct Status: AsyncParsableCommand {
@@ -328,10 +480,11 @@ struct SiteCommand: AsyncParsableCommand {
     }
 
     struct Defaults: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Shows or changes the webserver and the PHP version of a new site, for example: nexus site defaults --php 8.4")
+        static let configuration = CommandConfiguration(abstract: "Shows or changes the webserver, the PHP version and the Node version of a new site, for example: nexus site defaults --php 8.4")
 
         @Option(help: "The PHP version line of a new site, or newest for the newest installed one.") var php: String?
         @Option(help: "nginx or apache.") var server: WebServer?
+        @Option(help: "The Node version line of a new site, or project for the version that the files of the project name.") var node: String?
 
         func run() async throws {
             let response = try await send(.siteDefaults)
@@ -341,7 +494,7 @@ struct SiteCommand: AsyncParsableCommand {
                 return
             }
 
-            guard php != nil || server != nil else {
+            guard php != nil || server != nil || node != nil else {
                 print(defaults.summary)
                 return
             }
@@ -354,22 +507,27 @@ struct SiteCommand: AsyncParsableCommand {
                 defaults.server = server
             }
 
+            if let node {
+                defaults.node = node == NodeLines.fromProject ? nil : node
+            }
+
             try finish(try await send(.setSiteDefaults(defaults)))
         }
     }
 
     struct Edit: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Changes the PHP version, the web server or the aliases of a site.")
+        static let configuration = CommandConfiguration(abstract: "Changes the PHP version, the Node version, the web server or the aliases of a site.")
 
         @Argument(help: "The host of the site.") var host: String
         @Option(help: "The PHP version line, for example 8.4.") var php: String?
+        @Option(help: "The Node version line, for example 24, or project for the version that the files of the project name.") var node: String?
         @Option(help: "nginx or apache.") var server: WebServer?
         @Option(name: .customLong("alias"), help: "The aliases. They replace the current aliases.") var aliases: [String] = []
         @Flag(help: "Remove every alias.") var noAliases = false
 
         func run() async throws {
             let aliasChange: [String]? = noAliases ? [] : (aliases.isEmpty ? nil : aliases)
-            try finish(try await send(.editSite(host: host, change: SiteChange(php: php, server: server, aliases: aliasChange))))
+            try finish(try await send(.editSite(host: host, change: SiteChange(php: php, server: server, aliases: aliasChange, node: node))))
         }
     }
 

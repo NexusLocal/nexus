@@ -16,7 +16,9 @@ extension SiteItem {
             url: info.url,
             parkedFolder: info.parkedFolder.map { ($0 as NSString).abbreviatingWithTildeInPath },
             problem: info.problem,
-            hasOwnSettings: !info.parked
+            hasOwnSettings: !info.parked,
+            nodeSetting: info.nodeSetting,
+            projectNode: info.projectNode
         )
     }
 }
@@ -64,7 +66,8 @@ extension AppModel {
     var siteDefaults: SiteDefaults {
         siteList?.defaults ?? SiteDefaults(
             server: WebServer(rawValue: settings.defaultServer) ?? .nginx,
-            php: settings.defaultPHP == "newest" ? nil : settings.defaultPHP
+            php: settings.defaultPHP == "newest" ? nil : settings.defaultPHP,
+            node: settings.defaultNode
         )
     }
 
@@ -73,6 +76,7 @@ extension AppModel {
         guard isLive else {
             settings.defaultServer = defaults.server.rawValue
             settings.defaultPHP = defaults.php ?? "newest"
+            settings.defaultNode = defaults.node
             return
         }
 

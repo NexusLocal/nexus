@@ -34,6 +34,7 @@ struct FirstRunWindow: View {
     @State private var started: [String] = []
     @State private var resolverOwner = ResolverFileOwner.missing
     @State private var startAtLogin = true
+    @State private var addToPath = false
 
     // The rows need the manifest and the installed packages. Without the installed packages, an
     // installed version shows as a download.
@@ -81,7 +82,7 @@ struct FirstRunWindow: View {
                 case .domains:
                     DomainsStep(resolverOwner: $resolverOwner, helperReady: helperReady)
                 case .settings:
-                    SettingsStep(startAtLogin: $startAtLogin, started: started)
+                    SettingsStep(startAtLogin: $startAtLogin, addToPath: $addToPath, started: started)
                 }
 
                 Spacer(minLength: 16)
@@ -94,6 +95,8 @@ struct FirstRunWindow: View {
         .onAppear {
             model.firstRunIsOpen = true
             background.refresh()
+            model.readPathSetting()
+            addToPath = model.pathSetting != .off
 
             if AppPreference.isOn(AppPreference.firstRunDone) {
                 startAtLogin = background.login.isOn
@@ -197,13 +200,20 @@ struct FirstRunWindow: View {
         }
     }
 
-    // "Start Nexus at login" is on by default (D5). A login item that macOS refuses keeps the
-    // window open. So the user sees why.
+    // "Start Nexus at login" is on by default (D5). "Add Nexus to PATH" is off by default (D39).
+    // A login item that macOS refuses keeps the window open. A ~/.zshrc that Nexus cannot change
+    // does the same. So the user sees why.
     private func finish() {
         if startAtLogin != background.login.isOn {
             background.login.setOn(startAtLogin)
 
             guard background.login.lastError == nil else {
+                return
+            }
+        }
+
+        if addToPath != (model.pathSetting != .off) {
+            guard model.setAddToPath(addToPath) else {
                 return
             }
         }
@@ -711,6 +721,7 @@ private struct SettingsStep: View {
     @AppStorage(AppPreference.notifyServiceStops) private var notifyServiceStops = true
     @AppStorage(AppPreference.notifyImportDone) private var notifyImportDone = true
     @Binding var startAtLogin: Bool
+    @Binding var addToPath: Bool
     let started: [String]
 
     private var notifies: Bool {
@@ -732,9 +743,15 @@ private struct SettingsStep: View {
             RowGroup {
                 Toggle("Start Nexus at login", isOn: $startAtLogin)
                     .toggleStyle(SwitchAtTrailingStyle())
+                Toggle("Add Nexus to PATH", isOn: $addToPath)
+                    .toggleStyle(SwitchAtTrailingStyle())
             }
 
-            if let error = background.login.lastError {
+            Text("\"Add Nexus to PATH\" adds one line to the end of ~/.zshrc. Then php, composer, node and npm in your terminal use the Nexus versions. Turn it off to remove the line.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            ForEach([background.login.lastError, model.pathSettingProblem].compactMap { $0 }, id: \.self) { error in
                 Text(error)
                     .font(.callout)
                     .foregroundStyle(Color.orangeText)

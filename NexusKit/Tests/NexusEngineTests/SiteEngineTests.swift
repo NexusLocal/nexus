@@ -121,7 +121,7 @@ extension NexusEngineTests {
         let read = await engine.handle(.siteDefaults)
 
         #expect(missing == .failure(message: "PHP 8.3 is not installed. Run: nexus install php 8.3"))
-        #expect(set == .done(message: "A new site gets Apache and PHP 8.4. The sites that exist do not change."))
+        #expect(set == .done(message: "A new site gets Apache and PHP 8.4. Its Node version comes from the project. The sites that exist do not change."))
         #expect(read == .siteDefaults(SiteDefaults(server: .apache, php: "8.4")))
     }
 

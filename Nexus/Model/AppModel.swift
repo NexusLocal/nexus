@@ -142,6 +142,7 @@ struct AppSettings {
     var editor = ""
     var defaultServer = "nginx"
     var defaultPHP = "newest"
+    var defaultNode: String?
     var newInstanceAccount = DatabaseAccount.newInstance
     var databaseApps: [AppChoice] = []
     var mysqlApp = ""
@@ -210,6 +211,10 @@ final class AppModel {
     var rootCertificate: RootCertificateInfo?
     var uninstalled: String?
     var notificationsBlocked = false
+    // The PATH setting is the line in ~/.zshrc (D39). The app reads the file again before it
+    // shows the setting. So a change by hand shows too.
+    var pathSetting = ShellPathLine.State.off
+    var pathSettingProblem: String?
 
     @ObservationIgnored private(set) var client: NexusClient?
     @ObservationIgnored private var feed: NexusEventFeed?
@@ -281,6 +286,15 @@ final class AppModel {
 
     var installedPHPVersions: [String] {
         services.filter { $0.kind == .php }.map { $0.name.replacingOccurrences(of: "PHP ", with: "") }
+    }
+
+    // Node is no service. So the lines come from the installed packages, from old to new.
+    var installedNodeVersions: [String] {
+        let lines = isLive
+            ? installedRuntimes.filter { $0.name == "node" }.map(\.line)
+            : packages.filter { $0.package == "node" && $0.isInstalled }.map(\.line)
+
+        return lines.sorted { VersionLine.isOlder($0, than: $1) }
     }
 
     var databaseInstances: [ServiceVersion] {

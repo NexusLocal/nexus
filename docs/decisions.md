@@ -73,8 +73,12 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
     server for all sites.
 19. Apache: 2.4 (now 2.4.69).
 20. Node: 22, 24, 26.
-21. A site gets its Node version from .nvmrc, .node-version or "engines" in package.json, else
-    the newest LTS. A setting can override it.
+21. A site gets its Node version from .nvmrc, .node-version, .tool-versions or "engines" in
+    package.json, else the newest LTS. A setting can override it. A project that asks for a
+    version that Nexus does not have gets the oldest newer line: .nvmrc 16 and 20 give Node 22.
+    The app shows it as "22 (.nvmrc asks for 20)". (owner, step 7)
+    Evidence: on the owner's Mac, one project has .nvmrc 16, one has .nvmrc 20.10.0 and one has
+    only .tool-versions.
 
 ### Web servers, PHP, DNS and SSL
 

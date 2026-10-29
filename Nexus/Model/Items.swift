@@ -160,8 +160,15 @@ struct SiteItem: Identifiable, Hashable {
     var parkedFolder: String?
     var problem: String?
     var hasOwnSettings = true
+    // The Node line that the user chose, and the line that the files of the project give (D21).
+    var nodeSetting: String?
+    var projectNode: NodeChoice?
 
     var id: String { host }
+
+    var node: String? {
+        nodeSetting ?? projectNode?.line
+    }
 
     var folderURL: URL {
         URL(filePath: (folder as NSString).expandingTildeInPath, directoryHint: .isDirectory)

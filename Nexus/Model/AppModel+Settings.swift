@@ -88,6 +88,41 @@ enum Notifier {
     }
 }
 
+// The PATH setting (D39). The sample data never touches ~/.zshrc.
+extension AppModel {
+    func readPathSetting() {
+        guard isLive else {
+            return
+        }
+
+        pathSetting = ShellPathLine.standard.state()
+        pathSettingProblem = nil
+    }
+
+    // Returns false when ~/.zshrc did not change. The reason shows below the setting.
+    @discardableResult
+    func setAddToPath(_ on: Bool) -> Bool {
+        guard isLive else {
+            pathSetting = on ? .on : .off
+            pathSettingProblem = nil
+            return true
+        }
+
+        var problem: String?
+
+        do {
+            let line = ShellPathLine.standard
+            try on ? line.turnOn() : line.turnOff()
+        } catch {
+            problem = "Nexus could not change ~/.zshrc. \(error.localizedDescription)"
+        }
+
+        readPathSetting()
+        pathSettingProblem = problem
+        return problem == nil
+    }
+}
+
 // Settings (step 6, part 6g).
 extension AppModel {
     // The found apps come first, then the added apps that still exist. A name shows once. A

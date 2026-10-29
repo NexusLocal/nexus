@@ -577,6 +577,27 @@ Done when:
 - `nexus composer install` and `nexus npm ci` work in a worktree.
 - With the PATH setting on, `./vendor/bin/pest` uses Nexus PHP.
 
+Built: nexus php, composer, node and npm ask nexusd what to run. The nexus command then becomes
+that program. So the program gets the terminal and the exit code. A folder in a git worktree
+uses its site, also when the worktree is outside the folder of the site. Outside a site the
+defaults for a new site apply. PHP gets the settings of its version through PHPRC and
+PHP_INI_SCAN_DIR. These replace the values of MAMP PRO in the shell of the owner. The folder of
+the runtime and bin/ come first on the PATH of the program. So php and node in a Composer or npm
+script get the same versions. The Node version comes from .nvmrc, .node-version, .tool-versions
+or "engines" in package.json, from the current folder up to the folder of the site (D21). The
+Site screen and Settings > Sites have a Node picker. nexus site edit and nexus site defaults
+have --node. nexusd makes the links nexus, php, composer, node and npm in bin/ at each start.
+When nexusd does not answer, a link runs the next program with its name on the PATH and says
+so. The PATH setting is the line in ~/.zshrc itself. So a change by hand shows in the app. A
+line of Nexus that is not at the end shows a note. The Command line page shows the banner of
+the design while the setting is off, with a button that copies the path of the nexus command.
+An alias wins over the PATH (D39). On the owner's Mac, ~/.profile of MAMP PRO has aliases for
+php and composer. Checked on 2026-10-29 on the owner's Mac: in a test site with PHP 8.4, nexus
+php -v gave 8.4 and 8.5 outside it. nexus composer install and nexus npm ci worked in a worktree
+outside the site. Their scripts got PHP 8.4 and Node 24. With the setting on in Settings >
+General, ./vendor/bin/pest ran on Nexus PHP 8.4 in a new zsh. Without it, Pest ran on the PHP of
+MAMP PRO. Turning the setting off left ~/.zshrc as it was before. The test site is removed.
+
 ## Step 8 - Workspaces
 
 This is the main feature. It has the most risk, so it has the most checks.

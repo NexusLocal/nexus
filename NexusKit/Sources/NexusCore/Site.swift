@@ -9,20 +9,23 @@ public enum WebServer: String, Codable, Sendable, CaseIterable {
     }
 }
 
-// A site that the user added. The host is the first name of the site and its identity.
+// A site that the user added. The host is the first name of the site and its identity. A Node
+// line of nil comes from the files of the project (D21).
 public struct Site: Codable, Sendable, Equatable {
     public var host: String
     public var folder: URL
     public var aliases: [String]
     public var php: String
     public var server: WebServer
+    public var node: String?
 
-    public init(host: String, folder: URL, aliases: [String] = [], php: String, server: WebServer = .nginx) {
+    public init(host: String, folder: URL, aliases: [String] = [], php: String, server: WebServer = .nginx, node: String? = nil) {
         self.host = host
         self.folder = folder
         self.aliases = aliases
         self.php = php
         self.server = server
+        self.node = node
     }
 
     public var hosts: [String] {
@@ -49,19 +52,22 @@ public struct Site: Codable, Sendable, Equatable {
     }
 }
 
-// The webserver and the PHP version of a new site (D59). A PHP version of nil is the newest
-// installed one.
+// The webserver, the PHP version and the Node version of a new site (D59). A PHP version of nil
+// is the newest installed one. A Node version of nil comes from the files of the project.
 public struct SiteDefaults: Codable, Sendable, Equatable {
     public var server: WebServer
     public var php: String?
+    public var node: String?
 
-    public init(server: WebServer = .nginx, php: String? = nil) {
+    public init(server: WebServer = .nginx, php: String? = nil, node: String? = nil) {
         self.server = server
         self.php = php
+        self.node = node
     }
 
     public var summary: String {
-        "A new site gets \(server.displayName) and \(php.map { "PHP \($0)" } ?? "the newest installed PHP version")."
+        let node = node.map { "It gets Node \($0)." } ?? "Its Node version comes from the project."
+        return "A new site gets \(server.displayName) and \(php.map { "PHP \($0)" } ?? "the newest installed PHP version"). \(node)"
     }
 }
 
@@ -153,11 +159,13 @@ public struct ParkedFolder: Codable, Sendable, Equatable {
     public var folder: URL
     public var php: String
     public var server: WebServer
+    public var node: String?
 
-    public init(folder: URL, php: String, server: WebServer = .nginx) {
+    public init(folder: URL, php: String, server: WebServer = .nginx, node: String? = nil) {
         self.folder = folder
         self.php = php
         self.server = server
+        self.node = node
     }
 
     public func sites(tld: String, using fileManager: FileManager = .default) -> [Site] {
@@ -169,7 +177,7 @@ public struct ParkedFolder: Codable, Sendable, Equatable {
                 guard let host = try? HostName.validated("\(HostName.label(from: child.lastPathComponent)).\(tld)") else {
                     return nil
                 }
-                return Site(host: host, folder: child, php: php, server: server)
+                return Site(host: host, folder: child, php: php, server: server, node: node)
             }
             .sorted { $0.host < $1.host }
     }

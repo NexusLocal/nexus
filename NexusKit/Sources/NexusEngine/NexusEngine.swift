@@ -69,6 +69,9 @@ public actor NexusEngine {
     // The extensions and modules of each runtime, with the modification dates of their folders.
     // The service list needs them after each change of a service.
     var toggleNameCache: [String: (stamp: [String], names: Set<String>)] = [:]
+    // The Node hint of each site folder, with the modification dates of its version files. The
+    // site list needs the hints after each change.
+    var nodeHintCache: [String: (stamp: [Double], hint: NodeVersionHint?)] = [:]
     // The watch of the parked folders, and the sites of the last configuration that nginx and
     // Apache accepted (D62).
     var parkedWatcher: FolderWatcher?
@@ -204,6 +207,8 @@ public actor NexusEngine {
                 return .databaseSizes(try await sourceDatabases(source, instance: instance))
             case .stopTask(let id):
                 return .done(message: stopTask(id))
+            case .tool(let tool, let folder):
+                return .tool(try await toolCommand(tool, folder: folder))
             }
         } catch let conflict as PortConflict {
             return .portInUse(conflict)
@@ -909,7 +914,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask: true
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool: true
         default: false
         }
     }
