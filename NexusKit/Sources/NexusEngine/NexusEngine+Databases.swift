@@ -254,7 +254,7 @@ extension NexusEngine {
         let replaces = try await copier.exists(name)
 
         if replaces, !request.replace {
-            throw RuntimeError.unsupported("\(request.instance) has a database \(name) already. Add --replace to drop it and copy it again, or give the copy another name with --as.")
+            throw DatabaseTargetExists(description: "\(request.instance) has a database \(name) already. Add --replace to drop it and copy it again, or give the copy another name with --as.")
         }
 
         if replaces {
@@ -298,6 +298,11 @@ extension NexusEngine {
 
         return try await client.exists(try DatabaseName.validated(name))
     }
+}
+
+// The copy stopped before it wrote anything, because a database has its name already.
+struct DatabaseTargetExists: Error, CustomStringConvertible {
+    let description: String
 }
 
 struct DatabaseEndpoint {

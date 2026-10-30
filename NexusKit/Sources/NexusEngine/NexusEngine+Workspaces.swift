@@ -194,7 +194,9 @@ extension NexusEngine {
                 url: problem == nil ? site.map { Self.url(for: $0.host, in: state) } : nil,
                 problem: problem,
                 state: workspace.state,
-                startedCopies: workspace.startedCopies
+                startedCopies: workspace.startedCopies,
+                finishedCopies: workspace.databases.count,
+                plannedCopies: workspace.plannedCopies
             )
         }
     }

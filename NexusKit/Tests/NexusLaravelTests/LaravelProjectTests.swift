@@ -16,6 +16,19 @@ struct LaravelProjectTests {
         try Data(text.utf8).write(to: file)
     }
 
+    @Test func theConfigurationGivesItsFixedIndexesAndItsDefaults() {
+        let source = #"""
+        'default' => ['database' => env('REDIS_DB', '0')],
+        'cache' => ['database' => (int) env('REDIS_CACHE_DB', 20)],
+        'reports' => ["database" => 21],
+        'queue' => ['database' => '22'],
+        'mysql' => ['database' => env('DB_DATABASE', 'forge')],
+        'sessions' => ['database' => env('REDIS_SESSIONS_DATABASE')],
+        """#
+
+        #expect(LaravelProject.redisIndexes(inConfiguration: source) == [0, 20, 21, 22])
+    }
+
     @Test func theRootIsTheFolderWithArtisanAndBootstrapApp() throws {
         let root = try temporaryFolder()
         defer { try? FileManager.default.removeItem(at: root) }

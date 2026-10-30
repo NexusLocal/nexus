@@ -73,6 +73,16 @@ struct WorkspaceEnvPlanTests {
         #expect(result.sqliteFiles == [WorkspaceFile(from: "/work/shop/database/database.sqlite", to: "/work/ticket-1/database/database.sqlite")])
     }
 
+    @Test func aSQLiteFileIsNoCloneWhenTheDefaultConnectionGivesItsKeyAnotherValue() {
+        let settings = connection("main", database: keyed(.text("shop"), "DB_DATABASE"))
+            .merging(connection("sqlite", database: keyed(.text("/work/shop/database/database.sqlite"), "DB_DATABASE"), driver: "sqlite")) { own, _ in own }
+
+        let result = plan(settings, connections: ["sqlite", "main"])
+
+        #expect(result.keys["DB_DATABASE"] == "shop_ticket_1")
+        #expect(result.sqliteFiles.isEmpty)
+    }
+
     @Test func aPostgreSQLDatabaseUsesThePortOfPostgreSQL() {
         let result = plan(connection("main", database: keyed(.text("shop"), "DB_DATABASE"), driver: "pgsql", port: 15432))
 

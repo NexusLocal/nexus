@@ -4,6 +4,7 @@ import NexusIPC
 import NexusLaravel
 import NexusRuntime
 import NexusSupervisor
+import NexusWorkspaces
 import Testing
 @testable import NexusEngine
 
@@ -62,7 +63,7 @@ extension NexusEngineTests {
         try await settle(engine)
 
         let path = RealPath.of(worktree)
-        #expect(await workspaces(engine) == [WorkspaceInfo(name: "ticket-123", worktree: path, folder: path, branch: "ticket", hosts: ["shop-ticket-123.test"], problem: "Every site needs nginx, and nginx is not installed. Run: nexus install nginx 1.30", state: .ready, startedCopies: [])])
+        #expect(await workspaces(engine) == [WorkspaceInfo(name: "ticket-123", worktree: path, folder: path, branch: "ticket", hosts: ["shop-ticket-123.test"], problem: "Every site needs nginx, and nginx is not installed. Run: nexus install nginx 1.30", state: .ready, startedCopies: [], finishedCopies: 0, plannedCopies: 0)])
 
         try await git("worktree", "remove", worktree.path(percentEncoded: false), in: shop)
         try await settle(engine)
@@ -363,6 +364,191 @@ extension NexusEngineTests {
             "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200000) INSERT INTO orders SELECT i FROM n;",
             ".shell kill -9 $PPID"
         )
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceStaysOffAFixedIndexInTheConfigurationOfAnotherSite() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
+        let blog = root.appending(path: "blog", directoryHint: .isDirectory)
+        try writeFile("", to: "artisan", in: blog)
+        try writeFile("", to: "bootstrap/app.php", in: blog)
+        try writeFile("<?php return ['redis' => ['cache' => ['database' => 16]]];", to: "config/database.php", in: blog)
+        try await engine.stateStore.update { $0.sites.append(Site(host: "blog.test", folder: blog, php: "8.5")) }
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(try await record(engine, of: shop).redisIndexes == ["REDIS_CACHE_DB": 17, "REDIS_DB": 18])
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealSetupDoesNotChooseAnIndexThatNexusEmptiesNow() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await settle(engine)
+            await engine.markAsEmptying([WorkspaceRedisIndex(instance: "redis-8.2", index: 16)])
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(try await record(engine, of: shop).redisIndexes == ["REDIS_CACHE_DB": 17, "REDIS_DB": 18])
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealRemovalChangesTheServerBlocksBeforeRedisAnswers() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
+        let httpPort = freePort()
+        let httpsPort = freePort()
+        try await engine.stateStore.update { state in
+            state.ports[ServiceCatalog.httpPortKey] = httpPort
+            state.ports[ServiceCatalog.httpsPortKey] = httpsPort
+        }
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            let hasServerBlock = { await engine.appliedSites?.contains { $0.contains("shop-fix.test") } == true }
+            #expect(await hasServerBlock())
+
+            try await git("worktree", "remove", "--force", worktree.path(percentEncoded: false), in: shop)
+            try await redis(engine, index: 0, "CLIENT", "PAUSE", "5000", "ALL")
+            let removal = Task { await engine.reconcileWorkspaces() }
+
+            while await hasServerBlock() {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+
+            #expect(await !engine.emptyingRedisIndexes.isEmpty)
+            await removal.value
+            try await settle(engine)
+            #expect(await engine.emptyingRedisIndexes.isEmpty)
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealSetupDuringAnUpdateOfItsInstanceIsNotIsolated() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await settle(engine)
+            await engine.markAsUpdating("redis-8.2")
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(try await record(engine, of: shop).state == .notIsolated("Nexus updates redis-8.2 now. Retry after the update."))
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealStopOfNexusdDuringASetupKeepsTheWorkspaceInPreparing() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try Data("APP_NAME=Caf".utf8 + [0xE9]).write(to: worktree.appending(path: ".env"))
+
+            let setup = Task { await engine.reconcileWorkspaces() }
+
+            while await engine.runningSetupKey == nil {
+                try await Task.sleep(for: .milliseconds(1))
+            }
+
+            await engine.stopWatchingWorktrees()
+            await setup.value
+
+            while await engine.workspaceWorkRuns {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+
+            #expect(try await record(engine, of: shop).state == .preparing)
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealPostgreSQLThatTakesNoQueriesEndsTheWaitWithAnError() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try makeSiteEngine(root: root)
+        try await link(("postgresql", "17"), in: engine)
+        let definition = ServiceDefinition(
+            id: "postgresql-17",
+            displayName: "PostgreSQL 17",
+            executable: URL(filePath: "/usr/bin/true"),
+            ports: [freePort()],
+            logFile: await engine.paths.log("postgresql-17"),
+            startTimeout: .milliseconds(200)
+        )
+
+        await #expect(throws: SupervisorError.self) {
+            try await engine.waitForQueries("postgresql-17", definition)
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)))
+    func aRealCopyReadsFromThePortOfTheRunningInstanceAfterAChangeOfThePort() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
+        let runningPort = freePort()
+        let nextPort = freePort()
+        try writeFile("DB_PORT=\(nextPort)\nDB_DATABASE=shop\n", to: ".env", in: shop)
+        let engine = try await engineWithDatabase(root: root, shop: shop, runtime: ("mysql", "8.4"), port: runningPort)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "mysql-8.4"))
+            let client = try await databaseClient(engine, id: "mysql-8.4", port: runningPort)
+            try await client.query("CREATE DATABASE shop")
+            _ = await engine.handle(.setPort(service: "mysql-8.4", port: nextPort))
+            try await settle(engine)
+
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(try await record(engine, of: shop).state == .ready)
+            #expect(try await client.exists("shop_fix"))
+        }
+    }
+
+    @Test func aChangeOfTheWorktreesKeepsWhatASetupWroteDuringTheRunOfGit() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = EngineStateStore(paths: NexusPaths(root: root))
+        let copy = WorkspaceDatabaseCopy(instance: "mysql-8.4", name: "shop_fix")
+        let workspace = Workspace(name: "fix", worktree: "/w/fix", folder: "/w/fix")
+        _ = try await store.updateWorktrees { _ in ["/w": SiteWorktrees(listed: ["/w/fix"], workspaces: [workspace])] }
+        let listed = [Worktree(path: "/w/fix", branch: "fix")]
+
+        try await store.update { $0.worktrees["/w"]?.workspaces[0].databases = [copy] }
+        _ = try await store.updateWorktrees { known in
+            ["/w": WorkspacePlanner.update(known["/w"], listed: listed, automatic: true, subfolder: "", excluded: [])]
+        }
+
+        let stored = await store.current().worktrees["/w"]?.workspaces.first
+
+        #expect(stored?.databases == [copy])
+        #expect(stored?.branch == "fix")
     }
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
@@ -767,6 +953,131 @@ extension NexusEngineTests {
         #expect(record?.state == .ready)
         #expect(record?.databases == [copy])
         #expect(record?.startedCopies.isEmpty == true)
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealInstanceOfAnotherConnectionThatCannotStartIsSkipped() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
+        try writeFile(#"""
+        <?php
+        return [
+            'default' => 'main',
+            'connections' => [
+                'main' => ['driver' => 'sqlite', 'database' => env('DB_DATABASE')],
+                'reports' => ['driver' => 'mysql', 'host' => '127.0.0.1', 'port' => env('REPORTS_PORT'), 'database' => env('REPORTS_DATABASE', 'reports')],
+            ],
+        ];
+        """#, to: "config/database.php", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "reports", in: shop)
+        let port = freePort()
+        try writeFile("REPORTS_PORT=\(port)\n", to: ".env", in: shop)
+        let engine = try await engineWithDatabase(root: root, shop: shop, runtime: ("mysql", "8.4"), port: port)
+        let listener = try listen(on: port)
+        defer { close(listener) }
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", root.appending(path: "fix").path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(try await record(engine, of: shop).state == .ready)
+            #expect(await engine.supervisor.state(of: "mysql-8.4")?.isActive != true)
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealCopyOntoADatabaseThatExistsGivesAnErrorThatTheSetupCanRecognize() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
+        let port = freePort()
+        let engine = try await engineWithDatabase(root: root, shop: shop, runtime: ("mysql", "8.4"), port: port)
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "mysql-8.4"))
+            let client = try await databaseClient(engine, id: "mysql-8.4", port: port)
+            try await client.query("CREATE DATABASE shop")
+            try await client.query("CREATE DATABASE shop_fix")
+            let source = DatabaseServer(host: "127.0.0.1", port: port, account: .newInstance)
+
+            await #expect(throws: DatabaseTargetExists.self) {
+                try await engine.copyDatabase(DatabaseCopy(source: source, database: "shop", instance: "mysql-8.4", name: "shop_fix", replace: false))
+            }
+        }
+    }
+
+    @Test func aCloneDoesNotMakeTheFolderOfAWorktreeThatWentAway() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try makeSiteEngine(root: root)
+        let source = root.appending(path: "main.sqlite")
+        try Data("the data".utf8).write(to: source)
+        let gone = root.appending(path: "gone").path(percentEncoded: false)
+        var workspace = Workspace(name: "fix", worktree: gone, folder: gone)
+
+        try await engine.clone(
+            WorkspaceFile(from: source.path(percentEncoded: false), to: "\(gone)/database/main.sqlite"),
+            in: gone,
+            git: URL(filePath: "/usr/bin/git"),
+            into: &workspace
+        )
+
+        #expect(!FileManager.default.fileExists(atPath: gone))
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealStartForASetupDuringAStopOfNexusdStartsNothing() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (_, engine, _) = try await redisApplication(in: root, port: freePort())
+
+        await engine.stopWatchingWorktrees()
+
+        await #expect(throws: RuntimeError.self) {
+            try await engine.startForSetup("redis-8.2")
+        }
+
+        #expect(await engine.supervisor.state(of: "redis-8.2")?.isActive != true)
+        await engine.shutdown()
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)))
+    func aRealHalfCopyOfADatabaseThatWentAwayIsNotReady() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
+        try writeFile(databaseConfig(driver: "mysql"), to: "config/database.php", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "connections", in: shop)
+        let port = freePort()
+        try writeFile("DB_PORT=\(port)\nDB_DATABASE=shop\nDB_DATABASE_CMS=shop_cms\nDB_DATABASE_OLD=not_here\n", to: ".env", in: shop)
+        let engine = try await engineWithDatabase(root: root, shop: shop, runtime: ("mysql", "8.4"), port: port)
+        let key = RealPath.of(shop)
+        var state: WorkspaceState?
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "mysql-8.4"))
+            let client = try await databaseClient(engine, id: "mysql-8.4", port: port)
+            try await client.query("CREATE DATABASE shop")
+            try await client.query("CREATE DATABASE shop_cms")
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", root.appending(path: "fix").path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            try await client.query("DROP DATABASE shop_cms")
+            try await engine.stateStore.update { state in
+                state.worktrees[key]?.workspaces[0].databases = [WorkspaceDatabaseCopy(instance: "mysql-8.4", name: "shop_fix")]
+                state.worktrees[key]?.workspaces[0].startedCopies = [WorkspaceDatabaseCopy(instance: "mysql-8.4", name: "shop_cms_fix")]
+            }
+            _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+            try await settle(engine)
+            state = await engine.stateStore.current().worktrees[key]?.workspaces.first?.state
+        }
+
+        #expect(state == .notIsolated("mysql-8.4 has no database shop_cms. Import it, and then retry."))
     }
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)))
@@ -1797,5 +2108,13 @@ extension NexusEngine {
 extension NexusEngine {
     var workspaceWorkRuns: Bool {
         reconcilingWorkspaces || settingUpWorkspaces
+    }
+
+    func markAsEmptying(_ indexes: Set<WorkspaceRedisIndex>) {
+        emptyingRedisIndexes.formUnion(indexes)
+    }
+
+    func markAsUpdating(_ id: String) {
+        updatingServices.insert(id)
     }
 }

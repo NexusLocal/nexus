@@ -216,8 +216,8 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
     index in each workspace, from 16 up, because the main sites use the indexes below 16.
     Connections that share one env key share one index in a workspace. Nexus can set only that
     key. Nexus starts Redis with 256 databases, so 240 indexes are for workspaces. An index with
-    keys, an index of the main site and an index in the .env of another site are not free. A
-    workspace without a free index is "not isolated".
+    keys, an index of the main site and an index in the .env or config/database.php of another
+    site are not free. A workspace without a free index is "not isolated".
 48. Safety: when a database name or a Redis index comes from a hardcoded value and not from an
     env key, Nexus cannot isolate it. The same applies to a default connection or a used Redis
     connection that is not on a Nexus instance, to a name in a URL, to a cached configuration

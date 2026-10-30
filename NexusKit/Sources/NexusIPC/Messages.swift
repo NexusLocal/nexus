@@ -89,6 +89,8 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
     public let problem: String?
     public let state: WorkspaceState?
     public let startedCopies: [WorkspaceDatabaseCopy]?
+    public let finishedCopies: Int?
+    public let plannedCopies: Int?
 
     public var id: String { name }
 
@@ -101,7 +103,9 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         url: String? = nil,
         problem: String? = nil,
         state: WorkspaceState? = nil,
-        startedCopies: [WorkspaceDatabaseCopy]? = nil
+        startedCopies: [WorkspaceDatabaseCopy]? = nil,
+        finishedCopies: Int? = nil,
+        plannedCopies: Int? = nil
     ) {
         self.name = name
         self.worktree = worktree
@@ -112,6 +116,26 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         self.problem = problem
         self.state = state
         self.startedCopies = startedCopies
+        self.finishedCopies = finishedCopies
+        self.plannedCopies = plannedCopies
+    }
+
+    // The percentage over all copies. Each database counts the same, because Nexus knows the size
+    // of a database only when its copy starts. Between two copies, no task runs and the percentage
+    // stays. runningPercent is the percentage of the copy that runs now.
+    public func copyPercent(runningPercent: Int?) -> Int? {
+        let planned = plannedCopies ?? 0
+        let finished = finishedCopies ?? 0
+
+        guard runningPercent != nil || (finished > 0 && finished < planned) else {
+            return nil
+        }
+
+        guard planned > 0 else {
+            return runningPercent
+        }
+
+        return min((finished * 100 + (runningPercent ?? 0)) / planned, 100)
     }
 
     public var isolationProblem: String? {

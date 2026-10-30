@@ -460,22 +460,29 @@ public actor NexusEngine {
     }
 
     // PostgreSQL accepts a connection while it starts up, and it then refuses each query.
-    // pg_isready exits with 0 when the server takes queries.
-    private func waitForQueries(_ id: String, _ definition: ServiceDefinition) async throws {
+    func waitForQueries(_ id: String, _ definition: ServiceDefinition) async throws {
         guard let tools = await databaseRuntime(id), tools.kind == .postgresql, let port = definition.ports.first else {
             return
         }
 
+        guard try await takesQueries(tools, port: port, until: .now + definition.startTimeout) else {
+            throw SupervisorError.launchFailed("\(definition.displayName) does not take queries on port \(port). See \(definition.logFile.path(percentEncoded: false)).")
+        }
+    }
+
+    // pg_isready exits with 0 when the server takes queries.
+    func takesQueries(_ tools: DatabaseTools, port: Int, until deadline: ContinuousClock.Instant) async throws -> Bool {
         let ready = Command(executable: tools.bin("pg_isready"), arguments: ["-q", "-h", "127.0.0.1", "-p", String(port)])
-        let deadline = ContinuousClock.now + definition.startTimeout
 
         while (try? await CommandRunner.run(ready)) == nil {
             guard ContinuousClock.now < deadline else {
-                throw SupervisorError.launchFailed("\(definition.displayName) does not take queries on port \(port). See \(definition.logFile.path(percentEncoded: false)).")
+                return false
             }
 
             try await Task.sleep(for: .milliseconds(50))
         }
+
+        return true
     }
 
     // The definition for the next start of a service, with the ports of the state.

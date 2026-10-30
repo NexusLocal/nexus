@@ -154,7 +154,9 @@ extension NexusEngine {
     }
 
     // The supervisor marks an instance as running when its process starts. The server accepts
-    // connections some seconds later. So a request right after a start waits for the port.
+    // connections some seconds later. So a request right after a start waits for the port. A
+    // PostgreSQL that restarts after a crash counts as active too, and it refuses each query until
+    // its recovery ends.
     func runningClient(_ id: String) async throws -> (DatabaseTools, DatabaseClient, URL) {
         guard let tools = await databaseRuntime(id) else {
             throw RuntimeError.unsupported("Nexus has no database instance \(id). See: nexus db list")
@@ -168,6 +170,10 @@ extension NexusEngine {
         let deadline = ContinuousClock.now + ServiceCatalog.databaseStartTimeout
         while !PortInspector.acceptsConnections(port), ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(100))
+        }
+
+        if tools.kind == .postgresql {
+            _ = try await takesQueries(tools, port: port, until: deadline)
         }
 
         let work = paths.run.appending(path: ".account-\(UUID().uuidString)", directoryHint: .isDirectory)

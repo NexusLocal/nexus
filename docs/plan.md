@@ -765,14 +765,17 @@ its write-ahead file. A file in write-ahead mode gets a backup with /usr/bin/sql
 clones are not one moment while the main site writes. The backup reads one moment, and it does not
 change the database of the main site. A file with a rollback journal also gets a backup, with a
 normal connection. It waits for a write that runs, and it rolls back a write that a crash ended,
-as the next connection of the application does. The record of the workspace names each copy before it starts and after it
+as the next connection of the application does. The record of the workspace names each copy before
+it starts and after it
 ends. Part 8k drops only those copies. A second setup keeps a finished copy that still exists. It
 makes a copy again that went away, and it replaces a copy that started and did not end. A setup
 makes no copy for a key that the site replaces. It starts a stopped instance, but that does not
 enable the instance. A database with the name of the copy that this workspace did not make stays,
 and the workspace is Not isolated with that reason. A missing database of the default connection
 gives the same state, and a missing database of another connection is skipped, because the main
-site does not have it either. The row shows Copying databases with the percentage.
+site does not have it either. A half copy whose source went away gives Not isolated. An instance of
+another connection that cannot start because of a port conflict is skipped too. The row shows
+Copying databases with one percentage over all databases.
 
 Checked on 2026-10-30 on the owner's Mac with a clone of finconnect and its three databases of 6.6
 GB, copied from MAMP PRO to mysql-8.0. finconnect has four connections and three databases, because
@@ -798,10 +801,9 @@ Built: nexusd starts Redis with 256 databases since step 2, so 240 indexes are f
 setup starts a stopped instance and does not enable it, as part 8e does for a database. It then
 reads the keyspace and takes the lowest free index from 16 up. An index is not free when a
 workspace has it, when it has keys, when the main site of the project uses it, or when the .env
-of another site names it. A setup probes only its own project, because a probe of each site takes
-too long. So a fixed index from 16 up in config/database.php of another project stays unknown
-while that index has no keys. D47 says that main sites use the indexes below 16. A workspace
-without a free index is Not isolated. The record names the indexes and their instances before the
+or config/database.php of another site names it. A setup probes only its own project, because a
+probe of each site takes too long. So Nexus reads these two files of the other sites as text. A
+workspace without a free index is Not isolated. The record names the indexes and their instances before the
 .env names them, because a database copy can take minutes and nexusd can stop in that time. A
 record from before this part has indexes without instances, so it gets a new setup.
 
@@ -825,8 +827,12 @@ that data.
 Checked on 2026-10-30 on the owner's Mac with the clone of finconnect on redis-8.2 and phpredis.
 The vendor folder of the worktree was a temporary link, because part 8g adds that folder.
 cache()->put in the workspace wrote to index 16, and cache()->get in the main site gave null. A
-write in the main site went to index 1, and the workspace gave null. The real-runtime tests check
-the removal, because a new worktree of this clone needs a database copy of 6.6 GB.
+write in the main site went to index 1, and the workspace gave null.
+
+The removal is checked on a second copy of the clone with DB_PORT on no Nexus instance, so the
+setup made no database copy of 6.6 GB. The workspace got the indexes 20 to 23 and wrote to index
+20. After `git worktree remove`, nexusd removed the record and emptied index 20. Index 1 of the
+main site kept its key. The test site is removed.
 
 ### 8g. Files
 
@@ -862,6 +868,10 @@ Done when: a test application with a hardcoded database name gets the state "not
 Work: write a compressed dump of each workspace database to trash/ first. Then drop the
 database. Part 8f already empties the Redis indexes. Remove the server blocks and the certificate.
 Delete dumps older than 7 days (D53).
+
+Handle a removal during a database copy. The setup then finishes the copy, but no record names it
+now. So no later step drops that copy, and a new worktree with the same name refuses it (review
+finding, 8f).
 
 Done when: a removed workspace leaves only its dump in trash/. A restore of that dump works.
 

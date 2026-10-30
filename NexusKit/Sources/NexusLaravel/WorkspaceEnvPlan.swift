@@ -174,7 +174,9 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
             database = file
         }
 
-        if !sqliteFiles.contains(where: { $0.to == file }) {
+        // Connections can share one key. When another connection gave that key its value, the
+        // application does not use this file.
+        if setting.keys.first.map({ keys[$0] == file }) ?? true, !sqliteFiles.contains(where: { $0.to == file }) {
             sqliteFiles.append(WorkspaceFile(from: path, to: file))
         }
     }

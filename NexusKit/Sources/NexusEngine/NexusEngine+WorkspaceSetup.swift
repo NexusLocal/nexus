@@ -162,6 +162,10 @@ extension NexusEngine {
     // must keep the data of the workspace. A database with the name of the copy that this
     // workspace did not make is not the property of Nexus. So Nexus does not replace it.
     private func copyData(of written: WrittenEnv, into workspace: inout Workspace, key: String) async throws {
+        try await updateRecord(of: workspace.name, key: key) { [plannedCopies = written.databases.count] record in
+            record.plannedCopies = plannedCopies
+        }
+
         for database in written.databases {
             try await copy(database, for: workspace, key: key)
         }
@@ -176,6 +180,7 @@ extension NexusEngine {
 
         for candidate in await databaseRuntimes() where try await port(of: candidate) == database.port {
             tools = candidate
+            break
         }
 
         guard let tools else {
@@ -184,7 +189,13 @@ extension NexusEngine {
 
         let copy = WorkspaceDatabaseCopy(instance: tools.id, name: database.copy)
 
-        try await startForSetup(tools.id)
+        // A config file can name another connection that the application does not use. When its
+        // instance cannot start, the main site cannot use that connection either.
+        do {
+            try await startForSetup(tools.id)
+        } catch is PortConflict where !database.isDefault {
+            return
+        }
 
         let exists = try await databaseExists(database.copy, on: tools)
 
@@ -200,8 +211,9 @@ extension NexusEngine {
             throw RuntimeError.unsupported("\(tools.id) has a database \(database.copy) already, and this workspace did not make it. Remove that database, and then retry.")
         }
 
+        // Without its source, a half copy cannot get a new run. The workspace must not use it.
         guard try await databaseExists(database.name, on: tools) else {
-            if database.isDefault {
+            if database.isDefault || exists {
                 throw RuntimeError.unsupported("\(tools.id) has no database \(database.name). Import it, and then retry.")
             }
 
@@ -220,8 +232,13 @@ extension NexusEngine {
             _ = try await copyDatabase(DatabaseCopy(source: source, database: database.name, instance: tools.id, name: database.copy, replace: isOwn))
         } catch {
             // A copy that failed leaves no database. A later database with this name is then not
-            // from this workspace, and a retry must not drop it.
-            if (try? await databaseExists(database.copy, on: tools)) == false {
+            // from this workspace, and a retry must not drop it. The same applies to a database
+            // that another program made after the check above.
+            if error is DatabaseTargetExists, !isOwn {
+                try? await updateRecord(of: workspace.name, key: key) { record in
+                    record.startedCopies.removeAll { $0 == copy }
+                }
+            } else if (try? await databaseExists(database.copy, on: tools)) == false {
                 try? await updateRecord(of: workspace.name, key: key) { record in
                     record.startedCopies.removeAll { $0 == copy }
                 }
@@ -251,11 +268,12 @@ extension NexusEngine {
     // then holds a part of that write. The application in the worktree makes its own write-ahead
     // file later, so git must ignore that name too. A write-ahead file that stays there does not
     // belong to the new file. copyfile copies a symbolic link as a link, and the workspace would
-    // then write into the file of the main site.
-    private func clone(_ file: WorkspaceFile, in folder: String, git: URL, into workspace: inout Workspace) async throws {
+    // then write into the file of the main site. A database copy before this step can take minutes,
+    // and git can remove or move the worktree in that time. A clone would make that folder again.
+    func clone(_ file: WorkspaceFile, in folder: String, git: URL, into workspace: inout Workspace) async throws {
         let manager = FileManager.default
 
-        guard manager.fileExists(atPath: file.from), !manager.fileExists(atPath: file.to) else {
+        guard manager.fileExists(atPath: folder), manager.fileExists(atPath: file.from), !manager.fileExists(atPath: file.to) else {
             return
         }
 

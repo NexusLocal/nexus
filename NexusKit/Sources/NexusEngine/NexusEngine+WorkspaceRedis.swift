@@ -45,7 +45,8 @@ extension NexusEngine {
 
     // The start does not change which services nexusd starts at its own start. So a service that
     // "Stop all services" stopped stays in that list. The check runs in the queue, because a
-    // removal can run a stopped instance for a moment and stop it again.
+    // removal can run a stopped instance for a moment and stop it again. A stop of nexusd stops only
+    // the services that run at that moment, so a start after it would leave a process behind.
     func startForSetup(_ id: String) async throws {
         guard !updatingServices.contains(id) else {
             throw RuntimeError.unsupported("Nexus updates \(id) now. Retry after the update.")
@@ -54,6 +55,10 @@ extension NexusEngine {
         try await serialWeb {
             guard await self.supervisor.state(of: id)?.isActive != true else {
                 return
+            }
+
+            guard await !self.watchingStopped else {
+                throw RuntimeError.unsupported("nexusd stops now, so \(id) does not start.")
             }
 
             let stoppedByStopAll = await self.stateStore.current().stoppedByStopAll.contains(id)
@@ -93,9 +98,9 @@ extension NexusEngine {
         })
     }
 
-    // The indexes in the .env of each main site. A setup probes only its own project, because a
-    // probe of each site takes too long. A main site can have an index from 16 up without keys at
-    // this moment, so the keyspace does not show that index.
+    // The indexes in the .env and in config/database.php of each main site. A setup probes only its
+    // own project, because a probe of each site takes too long. A main site can have an index from
+    // 16 up without keys at this moment, so the keyspace does not show that index.
     func redisIndexesOfMainSites() async -> Set<Int> {
         let sites = resolvedSites(await stateStore.current()).map(\.site)
         let roots = Set(sites.compactMap { LaravelProject.root(containing: URL(filePath: ProjectFolder.projectFolder(of: $0), directoryHint: .isDirectory)) })
@@ -103,6 +108,10 @@ extension NexusEngine {
         return roots.reduce(into: []) { indexes, root in
             if let text = try? String(contentsOf: root.appending(path: ".env"), encoding: .utf8) {
                 indexes.formUnion(EnvRewrite.redisIndexes(in: text))
+            }
+
+            if let text = try? String(contentsOf: root.appending(path: "config/database.php"), encoding: .utf8) {
+                indexes.formUnion(LaravelProject.redisIndexes(inConfiguration: text))
             }
         }
     }

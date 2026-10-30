@@ -37,6 +37,13 @@ public enum LaravelProject {
         source.matches(of: #/(?:\benv|\bgetenv|Env::get(?:OrFail)?)\(\s*['"]([A-Za-z_][A-Za-z0-9_.]*)['"]/#).map { String($0.output.1) }
     }
 
+    // The numbers that config/database.php gives to a key "database": a fixed value, or the default
+    // of an env key. The search does not know the block of a line, so a number outside the Redis
+    // connections only keeps one index out of the choice.
+    public static func redisIndexes(inConfiguration source: String) -> Set<Int> {
+        Set(source.matches(of: #/['"]database['"]\s*=>\s*(?:\(int\)\s*)?(?:env\(\s*['"][^'"]*['"]\s*,\s*)?['"]?(\d+)/#).compactMap { Int($0.output.1) })
+    }
+
     private static func isApplication(_ folder: URL) -> Bool {
         ["artisan", "bootstrap/app.php"].allSatisfy { file in
             FileManager.default.fileExists(atPath: folder.appending(path: file).path(percentEncoded: false))
