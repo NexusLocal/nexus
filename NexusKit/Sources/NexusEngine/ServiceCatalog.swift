@@ -13,6 +13,9 @@ public struct PortRequirement: Sendable, Equatable {
 // its own port and data folder (D34).
 public struct ServiceCatalog: Sendable {
     public static let redisStandardPort = 6379
+    // A workspace uses the indexes from 16 up, below this number (D47). Do not make it lower. Redis
+    // does not start with a data file that holds a higher index.
+    public static let redisDatabaseCount = 256
     public static let nginxID = "nginx"
     public static let apacheID = "apache"
     public static let httpPortKey = "http"
@@ -94,7 +97,7 @@ public struct ServiceCatalog: Sendable {
                     "--port", String(requiredPorts[0]),
                     "--bind", "127.0.0.1",
                     "--dir", data.path(percentEncoded: false),
-                    "--databases", "256",
+                    "--databases", String(Self.redisDatabaseCount),
                     "--daemonize", "no",
                     "--logfile", "",
                 ],

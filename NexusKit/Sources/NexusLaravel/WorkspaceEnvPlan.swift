@@ -46,10 +46,14 @@ public struct WorkspaceEnvRequest: Sendable {
 
 // The env keys of a workspace that feed a database name or a Redis index (D46, D47). problems holds
 // what Nexus cannot isolate (D48). keys holds a value for each key. A Redis key gets its index from
-// nexusd, because that depends on the other workspaces. database is the name for {database}.
+// nexusd, because that depends on the other workspaces. redisPorts holds the instances of these
+// keys. mainRedisIndexes holds the indexes of the main site, which a workspace must not get.
+// database is the name for {database}.
 public struct WorkspaceEnvPlan: Sendable, Equatable {
     public var keys: [String: String] = [:]
     public var redisKeys: [String] = []
+    public var redisPorts: Set<Int> = []
+    public var mainRedisIndexes: Set<Int> = []
     public var database: String?
     public var problems: [String] = []
     // What the setup copies. An isDefault database must exist. Another connection can name a
@@ -70,6 +74,11 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
         for name in ordered {
             add(connection: name, isDefault: name == defaultConnection, configuration: configuration, request: request)
         }
+
+        // Code can use a Redis connection without the cache, the sessions or the queue.
+        mainRedisIndexes = Set(configuration.redisConnections.compactMap { name in
+            configuration.settings["database.redis.\(name).database"].flatMap { Int($0.value.description) }
+        })
 
         if Self.usesRedis(configuration) {
             for name in configuration.redisConnections {
@@ -189,6 +198,8 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
             problems.append("The Redis connection \(name) has a fixed index in config/database.php.")
             return
         }
+
+        redisPorts.insert(port)
 
         if !redisKeys.contains(key) {
             redisKeys.append(key)

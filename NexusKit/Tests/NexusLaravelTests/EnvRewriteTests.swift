@@ -11,6 +11,24 @@ struct EnvRewriteTests {
         EnvRewrite.apply(to: text, hosts: hosts, keys: keys)
     }
 
+    @Test func theKeysThatLookLikeARedisIndexGiveTheirNumbers() {
+        let text = """
+        REDIS_DB=2
+        REDIS_CACHE_DB="20"
+        export REDIS_SESSIONS_DATABASE=21
+        HORIZON_DB='22'
+        REDIS_PORT=16379
+        DB_DATABASE=shop
+        APP_DEBUG=1
+        # REDIS_QUEUE_DB=23
+        REDIS_REPORTS_DB=24
+        REDIS_LOCK_DB=25 # the locks
+
+        """
+
+        #expect(EnvRewrite.redisIndexes(in: text) == [2, 20, 21, 22, 24, 25])
+    }
+
     @Test(arguments: [
         ("APP_URL=https://my.shop.test", "APP_URL=https://my.shop-fix.test"),
         ("APP_URL=\"https://my.shop.test/\"", "APP_URL=\"https://my.shop-fix.test/\""),

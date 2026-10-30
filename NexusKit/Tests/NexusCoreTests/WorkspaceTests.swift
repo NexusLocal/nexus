@@ -100,6 +100,35 @@ struct WorkspaceTests {
 
         #expect(workspace.state == .preparing)
         #expect(workspace.redisIndexes.isEmpty)
+        #expect(workspace.redisInstances.isEmpty)
+    }
+
+    @Test func aRecordWithRedisIndexesWithoutInstancesNeedsItsSetup() throws {
+        let stored = #"{"name":"fix","worktree":"/w/fix","folder":"/w/fix","state":{"ready":{}},"redisIndexes":{"REDIS_DB":16}}"#
+
+        let workspace = try JSONDecoder().decode(Workspace.self, from: Data(stored.utf8))
+
+        #expect(workspace.state == .preparing)
+        #expect(workspace.redisIndexes == ["REDIS_DB": 16])
+    }
+
+    @Test func aRecordWithRedisIndexesAndInstancesKeepsItsState() throws {
+        let stored = #"{"name":"fix","worktree":"/w/fix","folder":"/w/fix","state":{"ready":{}},"redisIndexes":{"REDIS_DB":16},"redisInstances":["redis-8.2"]}"#
+
+        let workspace = try JSONDecoder().decode(Workspace.self, from: Data(stored.utf8))
+
+        #expect(workspace.state == .ready)
+    }
+
+    @Test func eachRedisIndexIsOnEachInstanceOfTheWorkspace() {
+        let workspace = Workspace(name: "fix", worktree: "/w/fix", folder: "/w/fix", redisIndexes: ["REDIS_DB": 16, "REDIS_CACHE_DB": 17], redisInstances: ["redis-8.2", "redis-7.2"])
+
+        #expect(workspace.redisIndexesOnInstances == [
+            WorkspaceRedisIndex(instance: "redis-8.2", index: 16),
+            WorkspaceRedisIndex(instance: "redis-8.2", index: 17),
+            WorkspaceRedisIndex(instance: "redis-7.2", index: 16),
+            WorkspaceRedisIndex(instance: "redis-7.2", index: 17),
+        ])
     }
 
     @Test(arguments: ["SCOUT_PORT", "_KEY", "app.name"])

@@ -733,8 +733,7 @@ It probes the main checkout with the PHP of the site, checks `.env` with `git ch
 writes the `.env` of the worktree. The state then becomes Ready or Not isolated, with the reason
 (D48). A site that is no Laravel application is Ready at once (D54). Redis indexes come from 16 up
 and the {port:<name>} ports from 20000 up. Both stay in the record of the workspace. The database
-copy of 8e and the "databases" setting of 8f are not there yet, so a workspace cannot use its
-keys before those parts.
+copy of 8e is not there yet, so a workspace cannot use its database keys before that part.
 
 `nexus workspace env <host>` shows the keys. `nexus site edit --workspace-key KEY=VALUE` sets your
 own keys. The Site screen has the section Environment keys of the design, and each workspace row
@@ -762,7 +761,11 @@ before and after the copy proves it.
 
 Built: the setup copies each database after it writes the .env, with the copy code of step 5 and
 the same instance as source and target. A SQLite file gets an APFS clone when git ignores it and
-its write-ahead file. The record of the workspace names each copy before it starts and after it
+its write-ahead file. A file in write-ahead mode gets a backup with /usr/bin/sqlite3 instead. Two
+clones are not one moment while the main site writes. The backup reads one moment, and it does not
+change the database of the main site. A file with a rollback journal also gets a backup, with a
+normal connection. It waits for a write that runs, and it rolls back a write that a crash ended,
+as the next connection of the application does. The record of the workspace names each copy before it starts and after it
 ends. Part 8k drops only those copies. A second setup keeps a finished copy that still exists. It
 makes a copy again that went away, and it replaces a copy that started and did not end. A setup
 makes no copy for a key that the site replaces. It starts a stopped instance, but that does not
@@ -777,9 +780,6 @@ the connection sessions uses the main database. The workspace got three copies i
 CHECKSUM TABLE gave the same result for the 93 tables of the main databases before and after the
 copy, and for the 93 tables of the copies.
 
-Open: the clone of a SQLite file and its write-ahead file is not one snapshot while the main site
-writes. Use the backup command of sqlite3 for a file in write-ahead mode (review finding, 8e).
-
 ### 8f. Redis
 
 Work: give each Redis connection of each workspace its own index (D47). Empty the indexes at
@@ -793,6 +793,40 @@ Facts from the probe (8a):
   isolated".
 
 Done when: a cache write in a workspace is not visible in the main site.
+
+Built: nexusd starts Redis with 256 databases since step 2, so 240 indexes are for workspaces. The
+setup starts a stopped instance and does not enable it, as part 8e does for a database. It then
+reads the keyspace and takes the lowest free index from 16 up. An index is not free when a
+workspace has it, when it has keys, when the main site of the project uses it, or when the .env
+of another site names it. A setup probes only its own project, because a probe of each site takes
+too long. So a fixed index from 16 up in config/database.php of another project stays unknown
+while that index has no keys. D47 says that main sites use the indexes below 16. A workspace
+without a free index is Not isolated. The record names the indexes and their instances before the
+.env names them, because a database copy can take minutes and nexusd can stop in that time. A
+record from before this part has indexes without instances, so it gets a new setup.
+
+Only a Redis that is installed counts as a Nexus instance. The state keeps the port of a removed
+Redis, and on the owner's Mac MAMP PRO uses that port (6379). Before this part, a workspace of an
+application on that port was Ready with an index that Redis of MAMP PRO does not have.
+
+Nexus empties the indexes of a workspace that went away, and an index that a setup no longer uses.
+A stopped instance runs only for this step and stops again, and no choice of the user changes.
+Each Redis command uses the port from the supervisor. A running instance keeps its port until a
+restart, while `nexus port` changes the state at once. Another Redis can listen on the new port.
+A removal probes the main site first, because only a probe shows a fixed index in its
+config/database.php. Without a result of the probe, the indexes stay as they are, and the reason
+goes to the log of the instance.
+`redis-cli -n` is not safe for this step. When the index does not exist, it runs FLUSHDB on index
+0 and it reports success. So SELECT and FLUSHDB run in one Lua script, and only the answer OK
+counts. An index that Nexus cannot empty keeps its data, and the reason goes to the log of the
+instance. Its keys keep that index out of the choice of a later workspace, so no workspace reads
+that data.
+
+Checked on 2026-10-30 on the owner's Mac with the clone of finconnect on redis-8.2 and phpredis.
+The vendor folder of the worktree was a temporary link, because part 8g adds that folder.
+cache()->put in the workspace wrote to index 16, and cache()->get in the main site gave null. A
+write in the main site went to index 1, and the workspace gave null. The real-runtime tests check
+the removal, because a new worktree of this clone needs a database copy of 6.6 GB.
 
 ### 8g. Files
 
@@ -826,8 +860,8 @@ Done when: a test application with a hardcoded database name gets the state "not
 ### 8k. Removal
 
 Work: write a compressed dump of each workspace database to trash/ first. Then drop the
-database. Empty the Redis indexes. Remove the server blocks and the certificate. Delete dumps
-older than 7 days (D53).
+database. Part 8f already empties the Redis indexes. Remove the server blocks and the certificate.
+Delete dumps older than 7 days (D53).
 
 Done when: a removed workspace leaves only its dump in trash/. A restore of that dump works.
 

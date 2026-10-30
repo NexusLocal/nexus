@@ -209,11 +209,15 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
 46. Databases: Nexus copies every database of the site that is on a Nexus MySQL, MariaDB or
     PostgreSQL instance. The copy is called <database>_<workspace>. A - of the workspace name
     becomes _ in the copy, because a - needs quotes in each query. Nexus changes each env key
-    that feeds the name of such a database. A SQLite file gets an APFS clone.
+    that feeds the name of such a database. A SQLite file gets an APFS clone. A file in
+    write-ahead mode or with a rollback journal gets a backup with sqlite3, because a clone can
+    then hold a part of a write.
 47. Redis: one instance for each Redis version. Each env key of a Redis index gets its own
     index in each workspace, from 16 up, because the main sites use the indexes below 16.
     Connections that share one env key share one index in a workspace. Nexus can set only that
-    key. Nexus sets "databases" in redis.conf high enough for all of them.
+    key. Nexus starts Redis with 256 databases, so 240 indexes are for workspaces. An index with
+    keys, an index of the main site and an index in the .env of another site are not free. A
+    workspace without a free index is "not isolated".
 48. Safety: when a database name or a Redis index comes from a hardcoded value and not from an
     env key, Nexus cannot isolate it. The same applies to a default connection or a used Redis
     connection that is not on a Nexus instance, to a name in a URL, to a cached configuration

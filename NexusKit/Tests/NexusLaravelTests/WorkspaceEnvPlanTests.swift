@@ -252,6 +252,35 @@ struct WorkspaceEnvPlanTests {
         #expect(plan(settings, connections: [], redis: ["default", "cache"]).redisKeys == ["REDIS_CACHE_DB", "REDIS_DB"])
     }
 
+    @Test func aRedisKeyNamesItsInstanceAndTheIndexOfTheMainSite() {
+        let settings = redisConnection("default", database: keyed(.number(2), "REDIS_DB"))
+            .merging(redisConnection("cache", database: keyed(.text("20"), "REDIS_CACHE_DB"))) { own, _ in own }
+            .merging(sessionOnRedis) { own, _ in own }
+
+        let result = plan(settings, connections: [], redis: ["default", "cache"])
+
+        #expect(result.redisPorts == [16379])
+        #expect(result.mainRedisIndexes == [2, 20])
+    }
+
+    @Test func aRedisIndexCountsAlsoWhenTheCacheTheSessionsAndTheQueueDoNotUseRedis() {
+        let settings = redisConnection("reports", database: ConfigSetting(value: .number(20)))
+
+        let result = plan(settings, connections: [], redis: ["reports"])
+
+        #expect(result.redisKeys.isEmpty)
+        #expect(result.mainRedisIndexes == [20])
+    }
+
+    @Test func aFixedRedisIndexIsAnIndexOfTheMainSiteAndNamesNoInstance() {
+        let settings = redisConnection("cache", database: ConfigSetting(value: .number(20))).merging(sessionOnRedis) { own, _ in own }
+
+        let result = plan(settings, connections: [], redis: ["cache"])
+
+        #expect(result.redisPorts.isEmpty)
+        #expect(result.mainRedisIndexes == [20])
+    }
+
     @Test func oneKeyForFourConnectionsCountsOnce() {
         let settings = ["default", "cache", "session", "queue"]
             .reduce(sessionOnRedis) { all, name in all.merging(redisConnection(name, database: keyed(.number(0), "REDIS_DB"))) { own, _ in own } }

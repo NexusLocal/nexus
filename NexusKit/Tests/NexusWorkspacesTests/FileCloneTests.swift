@@ -1,4 +1,5 @@
 import Foundation
+import NexusSupervisor
 import Testing
 @testable import NexusWorkspaces
 
@@ -21,6 +22,42 @@ struct FileCloneTests {
 
         #expect(try String(contentsOf: source, encoding: .utf8) == "the data")
         #expect(try String(contentsOf: target, encoding: .utf8) == "changed")
+    }
+
+    private func sqlite(_ file: String, _ commands: String...) async throws -> String {
+        try await CommandRunner.run(Command(executable: URL(filePath: "/usr/bin/sqlite3"), arguments: [file] + commands)).trimmed
+    }
+
+    @Test func aBackupHoldsTheLastChangesAndKeepsTheWriteAheadFileOfTheSource() async throws {
+        let root = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appending(path: "main.sqlite").path(percentEncoded: false)
+        let target = root.appending(path: #"it's "a" \ folder/main.sqlite"#).path(percentEncoded: false)
+        _ = try await sqlite(source, ".dbconfig no_ckpt_on_close on", "PRAGMA journal_mode=WAL;", "CREATE TABLE orders(id);", "INSERT INTO orders VALUES (1);")
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: source)
+        let writeAheadFile = try Data(contentsOf: URL(filePath: "\(source)-wal"))
+
+        try await FileClone.backUpSQLiteFile(source, to: target, readOnly: true)
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: target)
+
+        #expect(try await sqlite(target, "SELECT COUNT(*) FROM orders;") == "1")
+        #expect(try Data(contentsOf: URL(filePath: "\(source)-wal")) == writeAheadFile)
+        #expect(attributes[.posixPermissions] as? Int == 0o600)
+    }
+
+    @Test func aBackupThatFailsLeavesNoFile() async throws {
+        let root = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appending(path: "main.sqlite")
+        let target = root.appending(path: "new/main.sqlite")
+        try Data("no database".utf8).write(to: source)
+
+        await #expect(throws: FileCloneError.self) {
+            try await FileClone.backUpSQLiteFile(source.path(percentEncoded: false), to: target.path(percentEncoded: false), readOnly: true)
+        }
+
+        #expect(try FileManager.default.contentsOfDirectory(atPath: target.deletingLastPathComponent().path(percentEncoded: false)).isEmpty)
     }
 
     @Test func aFolderCloneHoldsItsFiles() throws {

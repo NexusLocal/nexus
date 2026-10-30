@@ -65,7 +65,7 @@ public actor NexusEngine {
     private var publishAgain = false
     private var observesSupervisor = false
     // The last start of each service that failed on a port in use (D31).
-    private var portConflicts: [String: PortConflict] = [:]
+    var portConflicts: [String: PortConflict] = [:]
     // The extensions and modules of each runtime, with the modification dates of their folders.
     // The service list needs them after each change of a service.
     var toggleNameCache: [String: (stamp: [String], names: Set<String>)] = [:]
@@ -92,6 +92,8 @@ public actor NexusEngine {
     var setupAgain = false
     var runningSetupKey: String?
     var setupIsOutdated = false
+    // The Redis indexes that nexusd empties now.
+    var emptyingRedisIndexes: Set<WorkspaceRedisIndex> = []
     // The downloads and database copies that run now, and the last task list of the watchers.
     private(set) var runningTasks: [String: RunningTask] = [:]
     // The databases that a copy writes now, as "<instance> <name>". nexusd refuses a second copy

@@ -108,10 +108,25 @@ extension NexusEngine {
         repeat {
             reconcileAgain = false
 
-            if await reconcileWorktrees() {
+            let change = await reconcileWorktrees()
+            let removed = change?.removed ?? [:]
+            let removedIndexes = Set(removed.values.joined().flatMap(\.redisIndexesOnInstances))
+
+            // No record names these indexes now. A setup that runs must not choose them before they
+            // are empty. The server blocks do not wait for Redis, because a stopped Redis must start
+            // first for this step.
+            emptyingRedisIndexes.formUnion(removedIndexes)
+
+            if change?.changed ?? true {
                 await applyWorkspaceSites()
                 publishSites()
             }
+
+            for (key, workspaces) in removed {
+                await emptyRedisIndexes(of: workspaces, key: key)
+            }
+
+            emptyingRedisIndexes.subtract(removedIndexes)
 
             // A workspace can wait for its setup without a change here: a record of part 8b, or a
             // setup that a stop of nexusd ended.
@@ -189,15 +204,16 @@ extension NexusEngine {
     // exist now keeps its record, because a disk that is not connected also removes the site. Two
     // sites can share a project and so one record. A worktree of that project gets a workspace
     // when the setting of one of these sites is on. A site without a repository gets an empty
-    // record. So a worktree after a later git init counts as new.
-    private func reconcileWorktrees() async -> Bool {
+    // record. So a worktree after a later git init counts as new. Returns nil when nexusd cannot
+    // store the change.
+    private func reconcileWorktrees() async -> WorktreeChange? {
         let sites = resolvedSites(await stateStore.current()).map(\.site)
         let sitesOfRecord = Dictionary(grouping: sites, by: ProjectFolder.workspaceKey(of:))
         let projects = Set(sites.map(ProjectFolder.projectFolder(of:)))
         let repositories = sitesOfRecord.compactMapValues { $0.lazy.compactMap(ProjectFolder.repository(of:)).first }
         let lists = await Self.worktreeLists(of: Set(repositories.values.map(\.root)))
 
-        let changed = try? await stateStore.updateWorktrees { known in
+        return try? await stateStore.updateWorktrees { known in
             var worktrees = known.filter { key, _ in
                 sitesOfRecord[key] != nil || !FileManager.default.fileExists(atPath: key)
             }
@@ -224,8 +240,6 @@ extension NexusEngine {
 
             return worktrees
         }
-
-        return changed ?? true
     }
 
     // A repository that git cannot read has no entry.

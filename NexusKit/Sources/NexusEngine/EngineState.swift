@@ -74,6 +74,13 @@ public struct EngineState: Codable, Sendable, Equatable {
     }
 }
 
+// What a change of the worktrees did. removed holds the workspaces that went away, with the key of
+// their record.
+public struct WorktreeChange: Sendable, Equatable {
+    public var changed = false
+    public var removed: [String: [Workspace]] = [:]
+}
+
 // Keeps the state of nexusd in config/state.json: the port of each service and the services that
 // start again when nexusd starts.
 public actor EngineStateStore {
@@ -95,17 +102,29 @@ public actor EngineStateStore {
     }
 
     // The change starts from the current worktrees. A run of git before this call takes time, and
-    // a setup can change a record in that time. Returns false when nothing changes.
-    public func updateWorktrees(_ change: ([String: SiteWorktrees]) -> [String: SiteWorktrees]) throws -> Bool {
+    // a setup can change a record in that time.
+    public func updateWorktrees(_ change: ([String: SiteWorktrees]) -> [String: SiteWorktrees]) throws -> WorktreeChange {
         let updated = change(state.worktrees)
 
         guard updated != state.worktrees else {
-            return false
+            return WorktreeChange()
+        }
+
+        var removed: [String: [Workspace]] = [:]
+
+        for (key, record) in state.worktrees {
+            let gone = record.workspaces.filter { workspace in
+                updated[key]?.workspaces.contains { $0.name == workspace.name } != true
+            }
+
+            if !gone.isEmpty {
+                removed[key] = gone
+            }
         }
 
         state.worktrees = updated
         try save()
-        return true
+        return WorktreeChange(changed: true, removed: removed)
     }
 
     // A service keeps its port once it has one. A new service gets the default port of the

@@ -49,6 +49,20 @@ public enum EnvRewrite {
         return result + missing.map { "\($0.key)=\(quoted($0.value))\n" }.joined()
     }
 
+    // The Redis indexes that a .env names. A config file can read any key, so the name of the key
+    // only has to look like an index. A number that is no index keeps one index out of the choice.
+    public static func redisIndexes(in text: String) -> Set<Int> {
+        Set(EnvFile.values(in: text).compactMap { name, value -> Int? in
+            let key = name.uppercased()
+
+            guard key.contains("REDIS") || key.hasSuffix("_DB") || key.hasSuffix("_DATABASE"), !key.hasSuffix("PORT") else {
+                return nil
+            }
+
+            return Int(value)
+        })
+    }
+
     // The keys whose line changes through a host, with their new value.
     public static func hostChanges(in text: String, hosts: [HostRewrite]) -> [(key: String, value: String)] {
         var changes: [(key: String, value: String)] = []

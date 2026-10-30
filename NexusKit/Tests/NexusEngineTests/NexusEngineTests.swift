@@ -783,7 +783,7 @@ extension NexusEngineTests {
         }
     }
 
-    private func listen(on port: Int) throws -> Int32 {
+    func listen(on port: Int) throws -> Int32 {
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)
         var address = sockaddr_in()
         address.sin_family = sa_family_t(AF_INET)

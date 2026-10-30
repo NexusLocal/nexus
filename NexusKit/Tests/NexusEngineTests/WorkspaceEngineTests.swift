@@ -129,11 +129,529 @@ extension NexusEngineTests {
         state.ports["redis-8.2"] = redisPort
         let engine = try makeSiteEngine(root: root, state: state)
         try await linkRealRuntimes(in: engine.paths)
+        try await link(runtime, in: engine)
 
+        if redisPort != nil {
+            try await link(("redis", "8.2"), in: engine)
+        }
+
+        return engine
+    }
+
+    private func link(_ runtime: (name: String, line: String), in engine: NexusEngine) async throws {
         let link = await engine.paths.runtime(runtime.name, line: runtime.line)
         try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: URL(filePath: Self.realRuntimes!).appending(path: "\(runtime.name)/\(runtime.line)"))
-        return engine
+    }
+
+    private func redisApplication(in root: URL, port: Int, env: String = "", installed: Bool = true) async throws -> (shop: URL, engine: NexusEngine, worktree: URL) {
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
+        try writeFile(#"""
+        <?php
+        return [
+            'default' => 'main',
+            'connections' => ['main' => ['driver' => 'sqlite', 'database' => env('DB_DATABASE')]],
+            'redis' => [
+                'default' => ['port' => (int) env('REDIS_PORT', 6379), 'database' => (int) env('REDIS_DB', 0)],
+                'cache' => ['port' => (int) env('REDIS_PORT', 6379), 'database' => (int) env('REDIS_CACHE_DB', 1)],
+            ],
+        ];
+        """#, to: "config/database.php", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "redis", in: shop)
+        try writeFile("SESSION_DRIVER=redis\nREDIS_PORT=\(port)\n\(env)", to: ".env", in: shop)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.5")]
+        state.ports[installed ? "redis-8.2" : "redis-8"] = port
+        let engine = try makeSiteEngine(root: root, state: state)
+        try await linkRealRuntimes(in: engine.paths)
+
+        if installed {
+            try await link(("redis", "8.2"), in: engine)
+        }
+
+        return (shop, engine, root.appending(path: "fix", directoryHint: .isDirectory))
+    }
+
+    @discardableResult
+    private func redis(_ engine: NexusEngine, index: Int, _ arguments: String...) async throws -> String {
+        let instance = try #require(await engine.redisInstances().first)
+        let command = Command(executable: instance.client, arguments: ["-p", String(instance.port), "-n", String(index)] + arguments)
+        return try await CommandRunner.run(command).trimmed
+    }
+
+    private func record(_ engine: NexusEngine, of shop: URL) async throws -> Workspace {
+        try #require(await engine.stateStore.current().worktrees[RealPath.of(shop)]?.workspaces.first)
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealCacheWriteInAWorkspaceIsNotInTheMainSiteAndTheRemovalEmptiesItsIndexes() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await redis(engine, index: 1, "SET", "price", "main")
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let workspace = try await record(engine, of: shop)
+            let cache = try #require(workspace.redisIndexes["REDIS_CACHE_DB"])
+            let env = try String(contentsOf: worktree.appending(path: ".env"), encoding: .utf8)
+
+            #expect(workspace.state == .ready)
+            #expect(workspace.redisInstances == ["redis-8.2"])
+            #expect(workspace.redisIndexes == ["REDIS_CACHE_DB": 16, "REDIS_DB": 17])
+            #expect(env.contains("REDIS_CACHE_DB=16\n"))
+
+            try await redis(engine, index: cache, "SET", "price", "workspace")
+
+            #expect(try await redis(engine, index: 1, "GET", "price") == "main")
+            #expect(try await redis(engine, index: cache, "GET", "price") == "workspace")
+
+            try await git("worktree", "remove", "--force", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(try await redis(engine, index: cache, "DBSIZE") == "0")
+            #expect(try await redis(engine, index: 1, "GET", "price") == "main")
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceSkipsAnIndexWithKeysAndTheIndexesOfTheMainSite() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort(), env: "REDIS_DB=16\n")
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await redis(engine, index: 17, "SET", "owner", "someone else")
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(try await record(engine, of: shop).redisIndexes == ["REDIS_CACHE_DB": 18, "REDIS_DB": 19])
+            #expect(try await redis(engine, index: 17, "GET", "owner") == "someone else")
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceStaysOffAnIndexInTheEnvFileOfAnotherSiteAndItsRemovalKeepsThatIndex() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
+        let blog = root.appending(path: "blog", directoryHint: .isDirectory)
+        try writeFile("", to: "artisan", in: blog)
+        try writeFile("", to: "bootstrap/app.php", in: blog)
+        try writeFile("REDIS_CACHE_DB=16\n", to: ".env", in: blog)
+        try await engine.stateStore.update { $0.sites.append(Site(host: "blog.test", folder: blog, php: "8.5")) }
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(try await record(engine, of: shop).redisIndexes == ["REDIS_CACHE_DB": 17, "REDIS_DB": 18])
+
+            try await redis(engine, index: 17, "SET", "price", "blog")
+            try writeFile("REDIS_CACHE_DB=16\nREDIS_DB=17\n", to: ".env", in: blog)
+            try await git("worktree", "remove", "--force", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(try await redis(engine, index: 17, "GET", "price") == "blog")
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealRemovalKeepsAnIndexThatTheConfigurationOfTheMainSiteFixesNow() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            try await redis(engine, index: 16, "SET", "price", "main")
+            try await redis(engine, index: 17, "SET", "price", "workspace")
+            try writeFile(#"""
+            <?php
+            return [
+                'default' => 'main',
+                'connections' => ['main' => ['driver' => 'sqlite', 'database' => env('DB_DATABASE')]],
+                'redis' => [
+                    'default' => ['port' => (int) env('REDIS_PORT', 6379), 'database' => (int) env('REDIS_DB', 0)],
+                    'cache' => ['port' => (int) env('REDIS_PORT', 6379), 'database' => 16],
+                ],
+            ];
+            """#, to: "config/database.php", in: shop)
+
+            try await git("worktree", "remove", "--force", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(try await redis(engine, index: 16, "GET", "price") == "main")
+            #expect(try await redis(engine, index: 17, "DBSIZE") == "0")
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealRemovalWithoutAProbeKeepsTheIndexesAndSaysWhy() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            try await redis(engine, index: 16, "SET", "price", "workspace")
+            try writeFile("<?php return [];", to: "bootstrap/cache/config.php", in: shop)
+
+            try await git("worktree", "remove", "--force", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let log = try String(contentsOf: await engine.paths.log("redis-8.2"), encoding: .utf8)
+
+            #expect(try await redis(engine, index: 16, "GET", "price") == "workspace")
+            #expect(log.contains("because it cannot read the configuration of the main site"))
+            #expect(await engine.emptyingRedisIndexes.isEmpty)
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceDoesNotGetAWriteThatACrashEnded() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n*.sqlite-wal\n*.sqlite-shm\n")
+        let main = shop.appending(path: "database/database.sqlite").path(percentEncoded: false)
+        try await sqlite(main, "CREATE TABLE orders(id);", "INSERT INTO orders VALUES (1);")
+        let sizeBeforeTheCrash = fileSize(main)
+        await crashDuringAWrite(to: main)
+        #expect(fileSize(main) > sizeBeforeTheCrash)
+        #expect(FileManager.default.fileExists(atPath: "\(main)-journal"))
+        try await settle(engine)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let clone = worktree.appending(path: "database/database.sqlite").path(percentEncoded: false)
+
+        #expect(await workspaces(engine).map(\.state) == [.ready])
+        #expect(try await sqlite(clone, "SELECT COUNT(*) FROM orders;") == "1")
+        #expect(try await sqlite(clone, "PRAGMA integrity_check;") == "ok")
+        #expect(fileSize(clone) == sizeBeforeTheCrash)
+        await engine.shutdown()
+    }
+
+    private func fileSize(_ file: String) -> Int {
+        (try? FileManager.default.attributesOfItem(atPath: file)[.size] as? Int) ?? 0
+    }
+
+    // A small page cache with cache_spill makes sqlite3 write to the main file before the commit.
+    // The last command kills sqlite3, so the commit does not come.
+    private func crashDuringAWrite(to file: String) async {
+        _ = try? await sqlite(
+            file,
+            "PRAGMA cache_spill=1;",
+            "PRAGMA cache_size=1;",
+            "BEGIN;",
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200000) INSERT INTO orders SELECT i FROM n;",
+            ".shell kill -9 $PPID"
+        )
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealRemovalRunsAStoppedRedisOnlyForTheEmptyStep() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            try await redis(engine, index: 16, "SET", "price", "workspace")
+            _ = await engine.handle(.stop(service: "redis-8.2"))
+            let before = await engine.stateStore.current()
+
+            try await git("worktree", "remove", "--force", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let after = await engine.stateStore.current()
+
+            #expect(await engine.supervisor.state(of: "redis-8.2")?.isActive != true)
+            #expect(after.enabledServices == before.enabledServices)
+            #expect(after.stoppedByStopAll == before.stoppedByStopAll)
+
+            _ = await engine.handle(.start(service: "redis-8.2"))
+
+            #expect(try await redis(engine, index: 16, "DBSIZE") == "0")
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealRemovalWithABusyPortKeepsTheIndexAndShowsNoPortConflict() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let port = freePort()
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: port)
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            _ = await engine.handle(.stop(service: "redis-8.2"))
+            let listener = try listen(on: port)
+            defer { close(listener) }
+
+            try await git("worktree", "remove", "--force", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(await engine.portConflicts["redis-8.2"] == nil)
+            #expect(await engine.supervisor.state(of: "redis-8.2")?.isActive != true)
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealSetupAfterStopAllKeepsTheServiceInTheStopAllList() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            _ = await engine.handle(.stopAll)
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(try await record(engine, of: shop).state == .ready)
+            #expect(await engine.supervisor.state(of: "redis-8.2")?.isActive == true)
+            #expect(await engine.stateStore.current().stoppedByStopAll.contains("redis-8.2"))
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceWithoutAFreeRedisIndexIsNotIsolatedAndHasNoEnvFile() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
+        let indexes = Dictionary(uniqueKeysWithValues: (16..<ServiceCatalog.redisDatabaseCount).map { ("KEY_\($0)", $0) })
+        let other = Workspace(name: "other", worktree: "/nexus-missing/other", folder: "/nexus-missing/other", state: .ready, redisIndexes: indexes)
+        try await engine.stateStore.update { $0.worktrees["/nexus-missing"] = SiteWorktrees(workspaces: [other]) }
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let workspace = try await record(engine, of: shop)
+
+            #expect(workspace.state == .notIsolated("Redis has no free index for this workspace. Remove a workspace, and then retry."))
+            #expect(workspace.redisIndexes.isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: ".env").path(percentEncoded: false)))
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealRedisThatNexusCannotStartGivesAWorkspaceThatIsNotIsolated() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let port = freePort()
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: port)
+        let listener = try listen(on: port)
+        defer { close(listener) }
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let workspace = try await record(engine, of: shop)
+
+            guard case .notIsolated = workspace.state else {
+                Issue.record("The workspace is \(workspace.state).")
+                return
+            }
+
+            #expect(workspace.redisIndexes.isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: ".env").path(percentEncoded: false)))
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealPortOfARemovedRedisIsNoNexusInstance() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort(), installed: false)
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(try await record(engine, of: shop).state == .notIsolated("The Redis connection default does not use a Nexus Redis instance. The Redis connection cache does not use a Nexus Redis instance."))
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealRetryEmptiesAnIndexThatTheWorkspaceNoLongerUses() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            try await redis(engine, index: 16, "SET", "price", "workspace")
+            try await redis(engine, index: 30, "SET", "price", "old")
+            try await engine.stateStore.update { state in
+                state.worktrees[RealPath.of(shop)]?.workspaces[0].redisIndexes["OLD_KEY"] = 30
+            }
+
+            _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+            try await settle(engine)
+
+            #expect(try await record(engine, of: shop).redisIndexes == ["REDIS_CACHE_DB": 16, "REDIS_DB": 17])
+            #expect(try await redis(engine, index: 30, "DBSIZE") == "0")
+            #expect(try await redis(engine, index: 16, "GET", "price") == "workspace")
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealRetryGivesUpAnIndexThatTheMainSiteUsesNowAndKeepsItsKeys() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let port = freePort()
+        let (shop, engine, worktree) = try await redisApplication(in: root, port: port)
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            try writeFile("SESSION_DRIVER=redis\nREDIS_PORT=\(port)\nREDIS_CACHE_DB=16\n", to: ".env", in: shop)
+            try await redis(engine, index: 16, "SET", "price", "main")
+
+            _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+            try await settle(engine)
+
+            #expect(try await record(engine, of: shop).redisIndexes == ["REDIS_CACHE_DB": 18, "REDIS_DB": 17])
+            #expect(try await redis(engine, index: 16, "GET", "price") == "main")
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealRunningRedisKeepsItsPortUntilARestart() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let port = freePort()
+        let (_, engine, _) = try await redisApplication(in: root, port: port)
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await engine.stateStore.update { $0.ports["redis-8.2"] = port + 1 }
+
+            #expect(try await engine.redisInstances().map(\.port) == [port])
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealCloneOfASQLiteFileRemovesAnOldWriteAheadFile() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n*.sqlite-wal\n*.sqlite-shm\n")
+        try await sqlite(shop.appending(path: "database/database.sqlite").path(percentEncoded: false), "CREATE TABLE orders(id);")
+        try await settle(engine)
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let clone = worktree.appending(path: "database/database.sqlite")
+        let oldWriteAheadFile = worktree.appending(path: "database/database.sqlite-wal")
+        try FileManager.default.removeItem(at: clone)
+        try Data("old".utf8).write(to: oldWriteAheadFile)
+
+        _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+        try await settle(engine)
+
+        #expect(FileManager.default.fileExists(atPath: clone.path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: oldWriteAheadFile.path(percentEncoded: false)))
+        await engine.shutdown()
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealIndexThatDoesNotExistLeavesTheIndexOfTheMainSite() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (_, engine, _) = try await redisApplication(in: root, port: freePort())
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            try await redis(engine, index: 0, "SET", "price", "main")
+
+            await engine.emptyRedisIndexes([WorkspaceRedisIndex(instance: "redis-8.2", index: ServiceCatalog.redisDatabaseCount)])
+
+            let log = try String(contentsOf: await engine.paths.log("redis-8.2"), encoding: .utf8)
+
+            #expect(try await redis(engine, index: 0, "GET", "price") == "main")
+            #expect(log.contains("Nexus could not empty the Redis indexes [256]."))
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceGetsTheLastChangesOfASQLiteFileInWriteAheadMode() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n*.sqlite-wal\n*.sqlite-shm\n")
+        let main = shop.appending(path: "database/database.sqlite").path(percentEncoded: false)
+        try await sqlite(main, ".dbconfig no_ckpt_on_close on", "PRAGMA journal_mode=WAL;", "CREATE TABLE orders(id);", "INSERT INTO orders VALUES (1);")
+        let writeAheadFile = try Data(contentsOf: URL(filePath: "\(main)-wal"))
+        try await settle(engine)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let clone = worktree.appending(path: "database/database.sqlite").path(percentEncoded: false)
+
+        #expect(await workspaces(engine).map(\.state) == [.ready])
+        #expect(try await sqlite(clone, "SELECT COUNT(*) FROM orders;") == "1")
+        #expect(try Data(contentsOf: URL(filePath: "\(main)-wal")) == writeAheadFile)
+        await engine.shutdown()
+    }
+
+    @discardableResult
+    private func sqlite(_ file: String, _ commands: String...) async throws -> String {
+        try await CommandRunner.run(Command(executable: URL(filePath: "/usr/bin/sqlite3"), arguments: [file] + commands)).trimmed
+    }
+
+    @Test func theKeyspaceOfRedisGivesTheIndexesWithKeys() {
+        let text = "# Keyspace\r\ndb0:keys=4,expires=0,avg_ttl=0,subexpiry=0\r\ndb17:keys=1,expires=1,avg_ttl=9,subexpiry=0\r\n"
+
+        #expect(NexusEngine.indexes(inKeyspace: text) == [0, 17])
+    }
+
+    @Test func aChangeOfTheWorktreesNamesTheWorkspacesThatWentAway() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = EngineStateStore(paths: NexusPaths(root: root))
+        let staying = Workspace(name: "staying", worktree: "/w/staying", folder: "/w/staying")
+        let leaving = Workspace(name: "leaving", worktree: "/w/leaving", folder: "/w/leaving")
+        let otherSite = Workspace(name: "other", worktree: "/o/other", folder: "/o/other")
+        _ = try await store.updateWorktrees { _ in ["/w": SiteWorktrees(workspaces: [staying, leaving]), "/o": SiteWorktrees(workspaces: [otherSite])] }
+
+        let change = try await store.updateWorktrees { _ in ["/w": SiteWorktrees(workspaces: [staying])] }
+
+        #expect(change.changed)
+        #expect(change.removed == ["/w": [leaving], "/o": [otherSite]])
     }
 
     private func databaseClient(_ engine: NexusEngine, id: String, port: Int) async throws -> DatabaseClient {
@@ -406,6 +924,7 @@ extension NexusEngineTests {
 
         #expect(type == .typeRegular)
         #expect(try String(contentsOfFile: clone, encoding: .utf8) == "the data")
+        await engine.shutdown()
     }
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
@@ -425,6 +944,7 @@ extension NexusEngineTests {
         #expect(!FileManager.default.fileExists(atPath: clone))
         #expect(!FileManager.default.fileExists(atPath: "\(clone)-wal"))
         #expect(await workspaces(engine).map(\.state) == [.notIsolated("git does not ignore database/database.sqlite-wal, so Nexus does not clone that file.")])
+        await engine.shutdown()
     }
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)), arguments: [true, false])
@@ -450,6 +970,8 @@ extension NexusEngineTests {
             #expect(!FileManager.default.fileExists(atPath: clone.path(percentEncoded: false)))
             #expect(await workspaces(engine).map(\.state) == [.notIsolated("git does not ignore database/database.sqlite, so Nexus does not clone that file.")])
         }
+
+        await engine.shutdown()
     }
 
     @Test func aSiteThatIsNoLaravelApplicationIsReadyWithoutAnEnvFile() async throws {
@@ -515,6 +1037,7 @@ extension NexusEngineTests {
         try await settle(engine)
 
         #expect(await workspaces(engine).first?.isolationProblem?.contains("The worktree has bootstrap/cache/config.php") == true)
+        await engine.shutdown()
     }
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
@@ -534,6 +1057,7 @@ extension NexusEngineTests {
         try await settle(engine)
 
         #expect(await workspaces(engine).map(\.state) == [.notIsolated("The key DB_DATABASE of the site replaces the value that isolates this workspace.")])
+        await engine.shutdown()
     }
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
@@ -562,6 +1086,7 @@ extension NexusEngineTests {
 
         #expect(text.contains("SCOUT_PORT=\(port)\n"))
         #expect(text.contains("SECOND=fix\n"))
+        await engine.shutdown()
     }
 
     @Test func aWrongEnvKeyNameGivesAnErrorAndChangesNothing() async throws {
@@ -598,6 +1123,7 @@ extension NexusEngineTests {
 
         #expect(try Data(contentsOf: worktree.appending(path: ".env")) == unreadable)
         #expect(await workspaces(engine).map(\.state) == [.notIsolated("Nexus cannot read \(RealPath.of(worktree))/.env as UTF-8 text, so it does not write the .env of this workspace.")])
+        await engine.shutdown()
     }
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
@@ -624,6 +1150,7 @@ extension NexusEngineTests {
         let text = try String(contentsOf: worktree.appending(path: ".env"), encoding: .utf8)
 
         #expect(text.contains("SECOND=fix\n"))
+        await engine.shutdown()
     }
 
     @Test func aRetryAfterTheFixOfTheCauseClearsNotIsolated() async throws {
@@ -736,6 +1263,7 @@ extension NexusEngineTests {
 
         #expect(await workspaces(engine).map(\.state) == [.notIsolated("git does not ignore .env, so Nexus does not write that file.")])
         #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: ".env").path(percentEncoded: false)))
+        await engine.shutdown()
     }
 
     @Test func aFailedAutomaticChangeShowsAtTheWorkspaceThatItLeftOut() async throws {

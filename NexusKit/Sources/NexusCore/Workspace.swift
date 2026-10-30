@@ -35,10 +35,22 @@ public struct WorkspaceDatabaseCopy: Codable, Sendable, Hashable {
     }
 }
 
+// One Redis index on one instance.
+public struct WorkspaceRedisIndex: Sendable, Hashable {
+    public let instance: String
+    public let index: Int
+
+    public init(instance: String, index: Int) {
+        self.instance = instance
+        self.index = index
+    }
+}
+
 // One git worktree of a site (D40). worktree is the root of the worktree. folder is the project
 // folder of the site in that worktree. For a site in a subfolder of the repository, these differ.
-// redisIndexes has the index of each env key (D47). ports has the port of each {port:<name>}.
-// databases holds the finished copies, and startedCopies the copies that run or that did not end.
+// redisIndexes has the index of each env key (D47), and redisInstances the instances that hold
+// them. ports has the port of each {port:<name>}. databases holds the finished copies, and
+// startedCopies the copies that run or that did not end.
 public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     public let name: String
     public var worktree: String
@@ -46,6 +58,7 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     public var branch: String?
     public var state: WorkspaceState
     public var redisIndexes: [String: Int]
+    public var redisInstances: [String]
     public var ports: [String: Int]
     public var databases: [WorkspaceDatabaseCopy]
     public var startedCopies: [WorkspaceDatabaseCopy]
@@ -65,6 +78,7 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         branch: String? = nil,
         state: WorkspaceState = .preparing,
         redisIndexes: [String: Int] = [:],
+        redisInstances: [String] = [],
         ports: [String: Int] = [:],
         databases: [WorkspaceDatabaseCopy] = [],
         startedCopies: [WorkspaceDatabaseCopy] = []
@@ -75,16 +89,18 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         self.branch = branch
         self.state = state
         self.redisIndexes = redisIndexes
+        self.redisInstances = redisInstances
         self.ports = ports
         self.databases = databases
         self.startedCopies = startedCopies
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, worktree, folder, branch, state, redisIndexes, ports, databases, startedCopies
+        case name, worktree, folder, branch, state, redisIndexes, redisInstances, ports, databases, startedCopies
     }
 
-    // A record of part 8b has no state. Such a workspace needs its setup.
+    // A record of part 8b has no state. A record from before part 8f has Redis indexes without their
+    // instances, and only a setup can add these. Such a workspace needs its setup.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
@@ -92,8 +108,11 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         worktree = try container.decode(String.self, forKey: .worktree)
         folder = try container.decode(String.self, forKey: .folder)
         branch = try container.decodeIfPresent(String.self, forKey: .branch)
-        state = try container.decodeIfPresent(WorkspaceState.self, forKey: .state) ?? .preparing
         redisIndexes = try container.decodeIfPresent([String: Int].self, forKey: .redisIndexes) ?? [:]
+        redisInstances = try container.decodeIfPresent([String].self, forKey: .redisInstances) ?? []
+        state = !redisIndexes.isEmpty && redisInstances.isEmpty
+            ? .preparing
+            : try container.decodeIfPresent(WorkspaceState.self, forKey: .state) ?? .preparing
         ports = try container.decodeIfPresent([String: Int].self, forKey: .ports) ?? [:]
         databases = try container.decodeIfPresent([WorkspaceDatabaseCopy].self, forKey: .databases) ?? []
         startedCopies = try container.decodeIfPresent([WorkspaceDatabaseCopy].self, forKey: .startedCopies) ?? []
@@ -138,6 +157,13 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
 }
 
 extension Workspace {
+    // Each index of this workspace on each of its instances.
+    public var redisIndexesOnInstances: Set<WorkspaceRedisIndex> {
+        Set(redisInstances.flatMap { instance in
+            redisIndexes.values.map { WorkspaceRedisIndex(instance: instance, index: $0) }
+        })
+    }
+
     // sites holds the sites that share the project of this workspace.
     public func hosts(of sites: [Site], tld: String) -> [String] {
         var seen: Set<String> = []

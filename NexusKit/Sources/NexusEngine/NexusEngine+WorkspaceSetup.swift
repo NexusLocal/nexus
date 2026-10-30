@@ -82,6 +82,7 @@ extension NexusEngine {
 
                 state.worktrees[key]?.workspaces[index].state = needsNewRun ? .preparing : finished.state
                 state.worktrees[key]?.workspaces[index].redisIndexes = finished.redisIndexes
+                state.worktrees[key]?.workspaces[index].redisInstances = finished.redisInstances
                 state.worktrees[key]?.workspaces[index].ports = finished.ports
             }
             return true
@@ -183,13 +184,7 @@ extension NexusEngine {
 
         let copy = WorkspaceDatabaseCopy(instance: tools.id, name: database.copy)
 
-        guard !updatingServices.contains(tools.id) else {
-            throw RuntimeError.unsupported("Nexus updates \(tools.id) now. Retry after the update.")
-        }
-
-        if await supervisor.state(of: tools.id)?.isActive != true {
-            _ = try await serialWeb { try await self.start(tools.id, enable: false) }
-        }
+        try await startForSetup(tools.id)
 
         let exists = try await databaseExists(database.copy, on: tools)
 
@@ -251,9 +246,12 @@ extension NexusEngine {
         }
     }
 
-    // A SQLite file in write-ahead mode has its last changes in a second file. The main file goes
-    // last, because a later setup skips a workspace that has it. copyfile copies a symbolic link
-    // as a link, and the workspace would then write into the file of the main site.
+    // A SQLite file in write-ahead mode has its last changes in a second file. The backup puts them
+    // in one file. A rollback journal shows a write that runs now or that a crash ended. A clone
+    // then holds a part of that write. The application in the worktree makes its own write-ahead
+    // file later, so git must ignore that name too. A write-ahead file that stays there does not
+    // belong to the new file. copyfile copies a symbolic link as a link, and the workspace would
+    // then write into the file of the main site.
     private func clone(_ file: WorkspaceFile, in folder: String, git: URL, into workspace: inout Workspace) async throws {
         let manager = FileManager.default
 
@@ -263,6 +261,7 @@ extension NexusEngine {
 
         let source = RealPath.of(URL(filePath: file.from))
         let hasWriteAheadFile = manager.fileExists(atPath: "\(source)-wal")
+        let hasJournal = manager.fileExists(atPath: "\(source)-journal")
         let targets = hasWriteAheadFile ? [file.to, "\(file.to)-wal"] : [file.to]
 
         for target in targets {
@@ -274,12 +273,15 @@ extension NexusEngine {
             }
         }
 
-        if hasWriteAheadFile {
-            try? manager.removeItem(atPath: "\(file.to)-wal")
-            try await Self.cloneOutsideTheActor("\(source)-wal", to: "\(file.to)-wal")
+        try? manager.removeItem(atPath: "\(file.to)-wal")
+        try? manager.removeItem(atPath: "\(file.to)-shm")
+
+        guard hasWriteAheadFile || hasJournal else {
+            try await Self.cloneOutsideTheActor(source, to: file.to)
+            return
         }
 
-        try await Self.cloneOutsideTheActor(source, to: file.to)
+        try await FileClone.backUpSQLiteFile(source, to: file.to, readOnly: hasWriteAheadFile)
     }
 
     // Between two disks or on a disk without APFS, a clone is a normal copy that can take long.
@@ -316,14 +318,18 @@ extension NexusEngine {
             return nil
         }
 
+        let ownKeys = sites.flatMap { $0.workspaceKeys ?? [] }
+        let earlierRedisIndexes = workspace.redisIndexesOnInstances
+
+        (workspace.redisIndexes, workspace.redisInstances) = try await redisIndexes(for: plan, of: workspace, state: state)
+        workspace.ports = workspacePorts(for: ownKeys, of: workspace, state: state)
+        try await recordAssignments(of: workspace, key: key)
+
+        // The file is read after the waits above, because a start of Redis can take long and the
+        // user can change the .env of the worktree in that time.
         let target = "\(folder)/.env"
         let source = FileManager.default.fileExists(atPath: target) ? target : "\(mainFolder)/.env"
         let text = try Self.envText(of: source)
-        let ownKeys = sites.flatMap { $0.workspaceKeys ?? [] }
-
-        workspace.redisIndexes = redisIndexes(for: plan.redisKeys, of: workspace, state: state)
-        workspace.ports = workspacePorts(for: ownKeys, of: workspace, state: state)
-
         let host = workspace.hosts(of: sites, tld: state.tld).first ?? ""
         let own = WorkspaceKeys.expanded(ownKeys, workspace: workspace.name, host: host, database: plan.database, ports: workspace.ports)
         let pairs = Workspace.hostPairs(of: sites, workspace: workspace.name, tld: state.tld)
@@ -333,6 +339,8 @@ extension NexusEngine {
 
         try Data(EnvRewrite.apply(to: text, hosts: hosts, keys: keys).utf8).write(to: URL(filePath: target), options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: Self.permissions(of: source)], ofItemAtPath: target)
+
+        await emptyRedisIndexes(earlierRedisIndexes.subtracting(workspace.redisIndexesOnInstances).filter { !plan.mainRedisIndexes.contains($0.index) })
 
         let replaced = isolating.keys.filter { keys[$0] != isolating[$0] }.sorted()
         let problems = plan.problems
@@ -365,6 +373,17 @@ extension NexusEngine {
         return ["The worktree has bootstrap/cache/config.php, so the application ignores the .env of the workspace. Run php artisan config:clear in the worktree."]
     }
 
+    // The .env names these values from now on, and a database copy can take minutes. A stop of
+    // nexusd in that time must not lose them. A later setup would then take a new index for a
+    // workspace that wrote to the first one, and no record would name that first index.
+    private func recordAssignments(of workspace: Workspace, key: String) async throws {
+        try await updateRecord(of: workspace.name, key: key) { record in
+            record.redisIndexes = workspace.redisIndexes
+            record.redisInstances = workspace.redisInstances
+            record.ports = workspace.ports
+        }
+    }
+
     // The application has the same path in the worktree as in the repository. A repository in the
     // public folder holds no application, so the folder of the workspace is the nearest place.
     private static func applicationFolder(_ mainFolder: String, of site: Site, in workspace: Workspace) -> String {
@@ -392,13 +411,13 @@ extension NexusEngine {
         (try? FileManager.default.attributesOfItem(atPath: file))?[.posixPermissions] as? Int ?? 0o600
     }
 
-    private func envPlan(workspace: String, site: Site, mainFolder: String, workspaceFolder: String) async throws -> WorkspaceEnvPlan {
+    func envPlan(workspace: String, site: Site, mainFolder: String, workspaceFolder: String) async throws -> WorkspaceEnvPlan {
         let installed = await installer.installedRuntimes()
         let php = try await phpCommand(installedPHP(site.php, in: installed))
         let configuration = try await ConfigurationProbe(php: URL(filePath: php.executable), environment: php.environment)
             .run(root: URL(filePath: mainFolder, directoryHint: .isDirectory))
         let instances = try await databaseInstances()
-        let ports = await stateStore.current().ports
+        let redisPorts = Set(try await redisInstances().map(\.port))
 
         return WorkspaceEnvPlan(configuration: configuration, request: WorkspaceEnvRequest(
             workspace: workspace,
@@ -406,15 +425,40 @@ extension NexusEngine {
             workspaceFolder: workspaceFolder,
             mysqlPorts: Set(instances.filter(\.kind.usesMySQLProtocol).map(\.port)),
             postgresqlPorts: Set(instances.filter { !$0.kind.usesMySQLProtocol }.map(\.port)),
-            redisPorts: Set(ports.filter { $0.key.hasPrefix("redis-") }.values)
+            redisPorts: redisPorts
         ))
     }
 
-    // The main sites use the indexes below 16, the number that Redis has by default.
-    private func redisIndexes(for keys: [String], of workspace: Workspace, state: EngineState) -> [String: Int] {
-        let taken = Set(state.worktrees.values.flatMap(\.workspaces).flatMap(\.redisIndexes.values))
+    // The main sites use the indexes below 16, the number that Redis has by default. An index with
+    // keys is not free. A main site can use it, or a removal could not empty it. A workspace does
+    // not keep an index that its main site uses now, or an index with keys on an instance that is
+    // new for this workspace. A record without instances comes from before part 8f, so its keys
+    // are the keys of the workspace.
+    private func redisIndexes(for plan: WorkspaceEnvPlan, of workspace: Workspace, state: EngineState) async throws -> (indexes: [String: Int], instances: [String]) {
+        let instances = try await redisInstances().filter { plan.redisPorts.contains($0.port) }
+        let mainIndexes = await redisIndexesOfMainSites().union(plan.mainRedisIndexes)
+        var taken = Set(state.worktrees.values.flatMap(\.workspaces).flatMap(\.redisIndexes.values)).union(mainIndexes)
+        var kept = workspace.redisIndexes.filter { !mainIndexes.contains($0.value) }
 
-        return Self.numbers(for: keys, keeping: workspace.redisIndexes, from: Self.firstRedisIndex) { !taken.contains($0) }
+        for instance in instances {
+            try await startForSetup(instance.id)
+            let withKeys = try await indexesWithKeys(on: instance)
+            taken.formUnion(withKeys)
+
+            if !workspace.redisInstances.isEmpty, !workspace.redisInstances.contains(instance.id) {
+                kept = kept.filter { !withKeys.contains($0.value) }
+            }
+        }
+
+        taken.formUnion(emptyingRedisIndexes.map(\.index))
+
+        let indexes = Self.numbers(for: plan.redisKeys, keeping: kept, from: Self.firstRedisIndex) { !taken.contains($0) }
+
+        guard indexes.values.allSatisfy({ $0 < ServiceCatalog.redisDatabaseCount }) else {
+            throw RuntimeError.unsupported("Redis has no free index for this workspace. Remove a workspace, and then retry.")
+        }
+
+        return (indexes, instances.map(\.id).sorted())
     }
 
     private func workspacePorts(for keys: [WorkspaceEnvKey], of workspace: Workspace, state: EngineState) -> [String: Int] {

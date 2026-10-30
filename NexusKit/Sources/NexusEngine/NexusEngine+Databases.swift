@@ -127,10 +127,7 @@ extension NexusEngine {
         try FileManager.default.moveItem(at: staging, to: data)
         try await stateStore.update { $0.databaseAccounts[tools.id] = account }
 
-        if let log = try? LogFile.openForAppending(paths.log(tools.id)) {
-            try? log.write(contentsOf: Data((output.standardOutput + output.standardError).utf8))
-            try? log.close()
-        }
+        writeToLog(of: tools.id, output.standardOutput + output.standardError)
     }
 
     static func holdsDatabase(_ folder: URL, kind: DatabaseKind) -> Bool {
