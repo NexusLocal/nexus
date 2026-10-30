@@ -94,6 +94,20 @@ public actor EngineStateStore {
         try save()
     }
 
+    // The change starts from the current worktrees. A run of git before this call takes time, and
+    // a setup can change a record in that time. Returns false when nothing changes.
+    public func updateWorktrees(_ change: ([String: SiteWorktrees]) -> [String: SiteWorktrees]) throws -> Bool {
+        let updated = change(state.worktrees)
+
+        guard updated != state.worktrees else {
+            return false
+        }
+
+        state.worktrees = updated
+        try save()
+        return true
+    }
+
     // A service keeps its port once it has one. A new service gets the default port of the
     // profile, or the next port that no other Nexus service uses.
     public func port(for service: String, standard: Int) throws -> Int {

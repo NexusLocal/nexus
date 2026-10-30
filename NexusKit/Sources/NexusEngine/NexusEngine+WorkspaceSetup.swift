@@ -37,7 +37,9 @@ extension NexusEngine {
                 let finished = await setUp(next.workspace, key: next.key)
                 runningSetupKey = nil
 
-                guard await store(finished, key: next.key) else {
+                // A stop of nexusd also stops the database of a running copy. That failure says
+                // nothing about the workspace. So the workspace stays in Preparing for the next start.
+                guard !watchingStopped, await store(finished, key: next.key) else {
                     return
                 }
 
@@ -133,24 +135,172 @@ extension NexusEngine {
         var workspace = workspace
 
         do {
-            try await writeEnvFile(of: &workspace, key: key)
+            if let written = try await writeEnvFile(of: &workspace, key: key) {
+                try await copyData(of: written, into: &workspace, key: key)
+            }
 
             if workspace.state == .preparing {
                 workspace.state = .ready
             }
         } catch {
-            workspace.state = .notIsolated(String(describing: error))
+            workspace.state = Self.adding(String(describing: error), to: workspace.state)
         }
 
         return workspace
     }
 
-    private func writeEnvFile(of workspace: inout Workspace, key: String) async throws {
+    private static func adding(_ problem: String, to state: WorkspaceState) -> WorkspaceState {
+        guard case .notIsolated(let reason) = state else {
+            return .notIsolated(problem)
+        }
+
+        return .notIsolated("\(reason) \(problem)")
+    }
+
+    // A database stays as it is when the workspace has its copy already, because a second setup
+    // must keep the data of the workspace. A database with the name of the copy that this
+    // workspace did not make is not the property of Nexus. So Nexus does not replace it.
+    private func copyData(of written: WrittenEnv, into workspace: inout Workspace, key: String) async throws {
+        for database in written.databases {
+            try await copy(database, for: workspace, key: key)
+        }
+
+        for file in written.sqliteFiles {
+            try await clone(file, in: written.folder, git: written.git, into: &workspace)
+        }
+    }
+
+    private func copy(_ database: WorkspaceDatabase, for workspace: Workspace, key: String) async throws {
+        var tools: DatabaseTools?
+
+        for candidate in await databaseRuntimes() where try await port(of: candidate) == database.port {
+            tools = candidate
+        }
+
+        guard let tools else {
+            throw RuntimeError.unsupported("Nexus has no database instance on port \(database.port).")
+        }
+
+        let copy = WorkspaceDatabaseCopy(instance: tools.id, name: database.copy)
+
+        guard !updatingServices.contains(tools.id) else {
+            throw RuntimeError.unsupported("Nexus updates \(tools.id) now. Retry after the update.")
+        }
+
+        if await supervisor.state(of: tools.id)?.isActive != true {
+            _ = try await serialWeb { try await self.start(tools.id, enable: false) }
+        }
+
+        let exists = try await databaseExists(database.copy, on: tools)
+
+        if workspace.databases.contains(copy), exists {
+            return
+        }
+
+        // A copy that started and did not end is a half database of this workspace. So it goes.
+        // A copy that the record names and that is gone gets a new run.
+        let isOwn = workspace.startedCopies.contains(copy)
+
+        guard !exists || isOwn else {
+            throw RuntimeError.unsupported("\(tools.id) has a database \(database.copy) already, and this workspace did not make it. Remove that database, and then retry.")
+        }
+
+        guard try await databaseExists(database.name, on: tools) else {
+            if database.isDefault {
+                throw RuntimeError.unsupported("\(tools.id) has no database \(database.name). Import it, and then retry.")
+            }
+
+            return
+        }
+
+        try await updateRecord(of: workspace.name, key: key) { record in
+            record.databases.removeAll { $0 == copy }
+            record.startedCopies = record.startedCopies.filter { $0 != copy } + [copy]
+        }
+        publishSites()
+
+        let source = DatabaseServer(host: "127.0.0.1", port: try await connectionPort(of: tools), account: try await account(of: tools))
+
+        do {
+            _ = try await copyDatabase(DatabaseCopy(source: source, database: database.name, instance: tools.id, name: database.copy, replace: isOwn))
+        } catch {
+            // A copy that failed leaves no database. A later database with this name is then not
+            // from this workspace, and a retry must not drop it.
+            if (try? await databaseExists(database.copy, on: tools)) == false {
+                try? await updateRecord(of: workspace.name, key: key) { record in
+                    record.startedCopies.removeAll { $0 == copy }
+                }
+            }
+
+            throw error
+        }
+
+        try await updateRecord(of: workspace.name, key: key) { record in
+            record.startedCopies.removeAll { $0 == copy }
+            record.databases.append(copy)
+        }
+    }
+
+    // The record goes to the state at once, and it finds the workspace by name. A stop of nexusd
+    // or a moved worktree must not lose it, because the next setup then refuses this copy.
+    private func updateRecord(of workspace: String, key: String, _ change: @escaping @Sendable (inout Workspace) -> Void) async throws {
+        try await stateStore.update { state in
+            if let index = state.worktrees[key]?.workspaces.firstIndex(where: { $0.name == workspace }) {
+                change(&state.worktrees[key]!.workspaces[index])
+            }
+        }
+    }
+
+    // A SQLite file in write-ahead mode has its last changes in a second file. The main file goes
+    // last, because a later setup skips a workspace that has it. copyfile copies a symbolic link
+    // as a link, and the workspace would then write into the file of the main site.
+    private func clone(_ file: WorkspaceFile, in folder: String, git: URL, into workspace: inout Workspace) async throws {
+        let manager = FileManager.default
+
+        guard manager.fileExists(atPath: file.from), !manager.fileExists(atPath: file.to) else {
+            return
+        }
+
+        let source = RealPath.of(URL(filePath: file.from))
+        let hasWriteAheadFile = manager.fileExists(atPath: "\(source)-wal")
+        let targets = hasWriteAheadFile ? [file.to, "\(file.to)-wal"] : [file.to]
+
+        for target in targets {
+            let path = String(target.dropFirst(folder.count + 1))
+
+            guard try await GitTool.ignores(path, in: folder, git: git) else {
+                workspace.state = Self.adding("git does not ignore \(path), so Nexus does not clone that file.", to: workspace.state)
+                return
+            }
+        }
+
+        if hasWriteAheadFile {
+            try? manager.removeItem(atPath: "\(file.to)-wal")
+            try await Self.cloneOutsideTheActor("\(source)-wal", to: "\(file.to)-wal")
+        }
+
+        try await Self.cloneOutsideTheActor(source, to: file.to)
+    }
+
+    // Between two disks or on a disk without APFS, a clone is a normal copy that can take long.
+    private static func cloneOutsideTheActor(_ source: String, to target: String) async throws {
+        try await Task.detached { try FileClone.clone(source, to: target) }.value
+    }
+
+    private struct WrittenEnv {
+        let databases: [WorkspaceDatabase]
+        let sqliteFiles: [WorkspaceFile]
+        let folder: String
+        let git: URL
+    }
+
+    // Returns nil when the workspace has no .env, so nothing after this step applies to it.
+    private func writeEnvFile(of workspace: inout Workspace, key: String) async throws -> WrittenEnv? {
         let state = await stateStore.current()
         let sites = resolvedSites(state).map(\.site).filter { ProjectFolder.workspaceKey(of: $0) == key }
 
         guard let site = sites.first, let main = LaravelProject.root(containing: URL(filePath: ProjectFolder.projectFolder(of: site), directoryHint: .isDirectory)) else {
-            return
+            return nil
         }
 
         let mainFolder = RealPath.of(main)
@@ -163,7 +313,7 @@ extension NexusEngine {
 
         guard try await GitTool.ignores(".env", in: folder, git: git) else {
             workspace.state = .notIsolated("git does not ignore .env, so Nexus does not write that file.")
-            return
+            return nil
         }
 
         let target = "\(folder)/.env"
@@ -192,6 +342,17 @@ extension NexusEngine {
         if !problems.isEmpty {
             workspace.state = .notIsolated(problems.joined(separator: " "))
         }
+
+        // The application does not use a copy when a key of the site replaces its name. Another key
+        // can still have that name.
+        let unused = Set(replaced.compactMap { isolating[$0] }).subtracting(keys.values)
+
+        return WrittenEnv(
+            databases: plan.databases.filter { !unused.contains($0.copy) },
+            sqliteFiles: plan.sqliteFiles.filter { !unused.contains($0.to) },
+            folder: folder,
+            git: git
+        )
     }
 
     // The probe checks the main checkout. A worktree can have its own cached configuration, and the

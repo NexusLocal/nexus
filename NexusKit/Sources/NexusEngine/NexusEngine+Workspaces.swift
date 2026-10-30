@@ -178,7 +178,8 @@ extension NexusEngine {
                 hosts: site?.hosts ?? [],
                 url: problem == nil ? site.map { Self.url(for: $0.host, in: state) } : nil,
                 problem: problem,
-                state: workspace.state
+                state: workspace.state,
+                startedCopies: workspace.startedCopies
             )
         }
     }
@@ -190,43 +191,41 @@ extension NexusEngine {
     // when the setting of one of these sites is on. A site without a repository gets an empty
     // record. So a worktree after a later git init counts as new.
     private func reconcileWorktrees() async -> Bool {
-        let state = await stateStore.current()
-        let sites = resolvedSites(state).map(\.site)
+        let sites = resolvedSites(await stateStore.current()).map(\.site)
         let sitesOfRecord = Dictionary(grouping: sites, by: ProjectFolder.workspaceKey(of:))
         let projects = Set(sites.map(ProjectFolder.projectFolder(of:)))
-        var worktrees = state.worktrees.filter { key, _ in
-            sitesOfRecord[key] != nil || !FileManager.default.fileExists(atPath: key)
-        }
         let repositories = sitesOfRecord.compactMapValues { $0.lazy.compactMap(ProjectFolder.repository(of:)).first }
         let lists = await Self.worktreeLists(of: Set(repositories.values.map(\.root)))
 
-        for (key, sites) in sitesOfRecord {
-            guard let repository = repositories[key] else {
-                worktrees[key] = worktrees[key] ?? SiteWorktrees()
-                continue
+        let changed = try? await stateStore.updateWorktrees { known in
+            var worktrees = known.filter { key, _ in
+                sitesOfRecord[key] != nil || !FileManager.default.fileExists(atPath: key)
             }
 
-            guard let listed = lists[repository.root] else {
-                continue
+            for (key, sites) in sitesOfRecord {
+                guard let repository = repositories[key] else {
+                    worktrees[key] = worktrees[key] ?? SiteWorktrees()
+                    continue
+                }
+
+                guard let listed = lists[repository.root] else {
+                    continue
+                }
+
+                worktrees[key] = WorkspacePlanner.update(
+                    known[key],
+                    listed: listed,
+                    automatic: sites.contains(where: \.createsWorkspaces),
+                    subfolder: repository.subfolder,
+                    excluded: projects.subtracting(sites.map(ProjectFolder.projectFolder(of:))),
+                    folderExists: { FileManager.default.fileExists(atPath: $0) }
+                )
             }
 
-            worktrees[key] = WorkspacePlanner.update(
-                state.worktrees[key],
-                listed: listed,
-                automatic: sites.contains(where: \.createsWorkspaces),
-                subfolder: repository.subfolder,
-                excluded: projects.subtracting(sites.map(ProjectFolder.projectFolder(of:))),
-                folderExists: { FileManager.default.fileExists(atPath: $0) }
-            )
+            return worktrees
         }
 
-        guard worktrees != state.worktrees else {
-            return false
-        }
-
-        let updated = worktrees
-        try? await stateStore.update { $0.worktrees = updated }
-        return true
+        return changed ?? true
     }
 
     // A repository that git cannot read has no entry.

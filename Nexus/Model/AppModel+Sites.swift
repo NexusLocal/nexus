@@ -203,6 +203,25 @@ extension AppModel {
         await failureMessage(of: .park(folder: folder.path(percentEncoded: false), php: php, server: server))
     }
 
+    // The record of a workspace names its running copies. A name rule would also match the copy of
+    // another site with the same workspace name.
+    func copyProgress(of workspace: WorkspaceInfo) -> Int? {
+        let started = workspace.startedCopies ?? []
+        let copies = tasks.filter { task in
+            guard case .copyDatabase(_, let instance, let name) = task.work else {
+                return false
+            }
+
+            return started.contains(WorkspaceDatabaseCopy(instance: instance, name: name))
+        }
+
+        guard let copy = copies.first, let total = copy.total, total > 0 else {
+            return copies.isEmpty ? nil : 0
+        }
+
+        return min(Int(copy.completed * 100 / total), 100)
+    }
+
     func retry(_ workspace: WorkspaceInfo, of site: SiteItem) async {
         _ = await perform(.retryWorkspace(host: site.host, name: workspace.name), failure: "\(workspace.name) did not start again", place: .window)
     }

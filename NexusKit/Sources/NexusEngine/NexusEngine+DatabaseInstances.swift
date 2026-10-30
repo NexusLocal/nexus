@@ -155,7 +155,7 @@ extension NexusEngine {
 
     // The supervisor marks an instance as running when its process starts. The server accepts
     // connections some seconds later. So a request right after a start waits for the port.
-    private func runningClient(_ id: String) async throws -> (DatabaseTools, DatabaseClient, URL) {
+    func runningClient(_ id: String) async throws -> (DatabaseTools, DatabaseClient, URL) {
         guard let tools = await databaseRuntime(id) else {
             throw RuntimeError.unsupported("Nexus has no database instance \(id). See: nexus db list")
         }

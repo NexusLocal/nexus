@@ -46,7 +46,7 @@ extension NexusEngine {
         return await databaseRuntimes().first { $0.id == id }
     }
 
-    private func databaseRuntimes() async -> [DatabaseTools] {
+    func databaseRuntimes() async -> [DatabaseTools] {
         await serviceRuntimes().compactMap { runtime in
             guard let kind = ServiceCatalog.databaseKind(of: runtime), let id = catalog.serviceID(for: runtime) else {
                 return nil
@@ -294,6 +294,13 @@ extension NexusEngine {
             Connect to port \(port) on 127.0.0.1 with the user \(target.account.user) and \(target.account.password.isEmpty ? "no password" : "the password \(target.account.password)").
             """
     }
+
+    func databaseExists(_ name: String, on tools: DatabaseTools) async throws -> Bool {
+        let (_, client, work) = try await runningClient(tools.id)
+        defer { try? FileManager.default.removeItem(at: work) }
+
+        return try await client.exists(try DatabaseName.validated(name))
+    }
 }
 
 struct DatabaseEndpoint {
@@ -330,13 +337,8 @@ struct DatabaseCopier {
         try targetClient.prepare()
     }
 
-    // Names are checked with DatabaseName.validated, so they have no quotes.
     func exists(_ name: String) async throws -> Bool {
-        let sql = kind.usesMySQLProtocol
-            ? "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '\(name)'"
-            : "SELECT COUNT(*) FROM pg_database WHERE datname = '\(name)'"
-
-        return try await query(.target, sql) == "1"
+        try await targetClient.exists(name)
     }
 
     func drop(_ name: String) async throws {

@@ -760,6 +760,26 @@ so it is not the default. SQLite gets an APFS clone.
 Done when: the application with four MySQL connections gets four database copies. The main databases do not change. A checksum
 before and after the copy proves it.
 
+Built: the setup copies each database after it writes the .env, with the copy code of step 5 and
+the same instance as source and target. A SQLite file gets an APFS clone when git ignores it and
+its write-ahead file. The record of the workspace names each copy before it starts and after it
+ends. Part 8k drops only those copies. A second setup keeps a finished copy that still exists. It
+makes a copy again that went away, and it replaces a copy that started and did not end. A setup
+makes no copy for a key that the site replaces. It starts a stopped instance, but that does not
+enable the instance. A database with the name of the copy that this workspace did not make stays,
+and the workspace is Not isolated with that reason. A missing database of the default connection
+gives the same state, and a missing database of another connection is skipped, because the main
+site does not have it either. The row shows Copying databases with the percentage.
+
+Checked on 2026-10-30 on the owner's Mac with a clone of finconnect and its three databases of 6.6
+GB, copied from MAMP PRO to mysql-8.0. finconnect has four connections and three databases, because
+the connection sessions uses the main database. The workspace got three copies in 9.5 minutes.
+CHECKSUM TABLE gave the same result for the 93 tables of the main databases before and after the
+copy, and for the 93 tables of the copies.
+
+Open: the clone of a SQLite file and its write-ahead file is not one snapshot while the main site
+writes. Use the backup command of sqlite3 for a file in write-ahead mode (review finding, 8e).
+
 ### 8f. Redis
 
 Work: give each Redis connection of each workspace its own index (D47). Empty the indexes at

@@ -23,6 +23,15 @@ struct DatabaseClient {
         try Data(DatabaseConfig.clientOptions(host: endpoint.host, port: endpoint.port, account: endpoint.account, pluginFolder: plugins).utf8).write(to: options)
     }
 
+    // Names are checked with DatabaseName.validated, so they have no quotes.
+    func exists(_ name: String) async throws -> Bool {
+        let sql = kind.usesMySQLProtocol
+            ? "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '\(name)'"
+            : "SELECT COUNT(*) FROM pg_database WHERE datname = '\(name)'"
+
+        return try await query(sql) == "1"
+    }
+
     @discardableResult
     func query(_ sql: String, database: String? = nil) async throws -> String {
         guard kind.usesMySQLProtocol else {

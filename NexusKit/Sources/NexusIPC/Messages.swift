@@ -88,10 +88,21 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
     public let url: String?
     public let problem: String?
     public let state: WorkspaceState?
+    public let startedCopies: [WorkspaceDatabaseCopy]?
 
     public var id: String { name }
 
-    public init(name: String, worktree: String, folder: String, branch: String? = nil, hosts: [String]? = nil, url: String? = nil, problem: String? = nil, state: WorkspaceState? = nil) {
+    public init(
+        name: String,
+        worktree: String,
+        folder: String,
+        branch: String? = nil,
+        hosts: [String]? = nil,
+        url: String? = nil,
+        problem: String? = nil,
+        state: WorkspaceState? = nil,
+        startedCopies: [WorkspaceDatabaseCopy]? = nil
+    ) {
         self.name = name
         self.worktree = worktree
         self.folder = folder
@@ -100,6 +111,7 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         self.url = url
         self.problem = problem
         self.state = state
+        self.startedCopies = startedCopies
     }
 
     public var isolationProblem: String? {

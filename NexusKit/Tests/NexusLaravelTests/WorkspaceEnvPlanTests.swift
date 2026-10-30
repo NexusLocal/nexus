@@ -50,6 +50,29 @@ struct WorkspaceEnvPlanTests {
         #expect(result.problems.isEmpty)
     }
 
+    @Test func thePlanNamesEachDatabaseThatTheSetupCopiesOnce() {
+        let settings = connection("main", database: keyed(.text("shop"), "DB_DATABASE"))
+            .merging(connection("sessions", database: keyed(.text("shop"), "DB_DATABASE"))) { own, _ in own }
+            .merging(connection("cms", database: keyed(.text("shop_cms"), "DB_CMS"))) { own, _ in own }
+
+        let result = plan(settings, connections: ["sessions", "cms", "main"])
+
+        #expect(result.databases == [
+            WorkspaceDatabase(name: "shop", copy: "shop_ticket_1", port: 13306, isDefault: true),
+            WorkspaceDatabase(name: "shop_cms", copy: "shop_cms_ticket_1", port: 13306, isDefault: false),
+        ])
+    }
+
+    @Test func aFixedDatabaseNameIsNoCopy() {
+        #expect(plan(connection("cms", database: ConfigSetting(value: .text("shop_cms"))), connections: ["cms"]).databases.isEmpty)
+    }
+
+    @Test func aSQLiteFileIsAFileToClone() {
+        let result = plan(connection("main", database: keyed(.text("/work/shop/database/database.sqlite"), "DB_DATABASE"), driver: "sqlite"))
+
+        #expect(result.sqliteFiles == [WorkspaceFile(from: "/work/shop/database/database.sqlite", to: "/work/ticket-1/database/database.sqlite")])
+    }
+
     @Test func aPostgreSQLDatabaseUsesThePortOfPostgreSQL() {
         let result = plan(connection("main", database: keyed(.text("shop"), "DB_DATABASE"), driver: "pgsql", port: 15432))
 

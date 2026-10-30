@@ -1,6 +1,30 @@
 import Foundation
 import NexusCore
 
+public struct WorkspaceDatabase: Sendable, Equatable {
+    public let name: String
+    public let copy: String
+    public let port: Int
+    public let isDefault: Bool
+
+    public init(name: String, copy: String, port: Int, isDefault: Bool) {
+        self.name = name
+        self.copy = copy
+        self.port = port
+        self.isDefault = isDefault
+    }
+}
+
+public struct WorkspaceFile: Sendable, Equatable {
+    public let from: String
+    public let to: String
+
+    public init(from: String, to: String) {
+        self.from = from
+        self.to = to
+    }
+}
+
 // What the plan of a workspace needs to know besides the configuration of the application.
 public struct WorkspaceEnvRequest: Sendable {
     public let workspace: String
@@ -28,6 +52,10 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
     public var redisKeys: [String] = []
     public var database: String?
     public var problems: [String] = []
+    // What the setup copies. An isDefault database must exist. Another connection can name a
+    // database that the main site does not have either.
+    public var databases: [WorkspaceDatabase] = []
+    public var sqliteFiles: [WorkspaceFile] = []
 
     private static let localHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
 
@@ -95,6 +123,10 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
         if isDefault {
             self.database = database
         }
+
+        if keys[key] == database, let port = Self.port(path, settings: settings), !databases.contains(where: { $0.copy == database && $0.port == port }) {
+            databases.append(WorkspaceDatabase(name: setting.value.description, copy: database, port: port, isDefault: isDefault))
+        }
     }
 
     // A file in the main checkout gets the same path in the worktree, because the worktree gets a
@@ -131,6 +163,10 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
 
         if isDefault {
             database = file
+        }
+
+        if !sqliteFiles.contains(where: { $0.to == file }) {
+            sqliteFiles.append(WorkspaceFile(from: path, to: file))
         }
     }
 

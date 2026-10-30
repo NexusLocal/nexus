@@ -316,7 +316,7 @@ struct SiteScreen: View {
         case .notIsolated:
             "Not isolated"
         case .preparing, nil:
-            "Preparing"
+            model.copyProgress(of: workspace).map { "Copying databases \($0)%" } ?? "Preparing"
         }
     }
 
