@@ -3,6 +3,8 @@ import NexusTestSupport
 import Testing
 @testable import NexusDNS
 
+// A test that frees a port and binds it again fails when another test takes that port in between.
+@Suite(.serialized)
 struct DNSServerTests {
     private func dig(_ name: String, port: Int) throws -> String {
         let process = Process()
