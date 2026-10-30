@@ -178,7 +178,7 @@ extension NexusEngine {
         let own = WorkspaceKeys.expanded(ownKeys, workspace: workspace.name, host: host, database: plan.database, ports: workspace.ports)
         let pairs = Workspace.hostPairs(of: sites, workspace: workspace.name, tld: state.tld)
         let hosts = (pairs + Workspace.pairsFromOtherTLDs(pairs, tld: state.tld)).map { HostRewrite(from: $0.from, to: $0.to) }
-        let isolating =plan.keys.merging(workspace.redisIndexes.mapValues(String.init)) { _, redis in redis }
+        let isolating = plan.keys.merging(workspace.redisIndexes.mapValues(String.init)) { _, redis in redis }
         let keys = isolating.merging(own) { _, own in own }
 
         try Data(EnvRewrite.apply(to: text, hosts: hosts, keys: keys).utf8).write(to: URL(filePath: target), options: .atomic)
