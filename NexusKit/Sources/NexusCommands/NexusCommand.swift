@@ -639,6 +639,12 @@ struct SiteCommand: AsyncParsableCommand {
         @Option(help: "on or off. With on, a new git worktree gets a workspace.") var workspaces: OnOff?
         @Option(name: .customLong("workspace-key"), help: "A key for the .env of each workspace, for example SCOUT_PORT={port:scout}. Repeat it for more keys. These replace the current keys.") var workspaceKeys: [WorkspaceEnvKey] = []
         @Flag(help: "Remove every key of the workspaces.") var noWorkspaceKeys = false
+        @Option(name: .customLong("workspace-command"), help: "A command for a new workspace, after the database copy. It can use {workspace}, {host}, {database} and {port:<name>}. Repeat it for more commands. These replace the current commands.") var workspaceCommands: [String] = []
+        @Flag(help: "Remove every command of new workspaces.") var noWorkspaceCommands = false
+
+        private var commandChange: [String]? {
+            noWorkspaceCommands ? [] : (workspaceCommands.isEmpty ? nil : workspaceCommands)
+        }
 
         private var keyChange: [WorkspaceEnvKey]? {
             noWorkspaceKeys ? [] : (workspaceKeys.isEmpty ? nil : workspaceKeys)
@@ -646,7 +652,7 @@ struct SiteCommand: AsyncParsableCommand {
 
         func run() async throws {
             let aliasChange: [String]? = noAliases ? [] : (aliases.isEmpty ? nil : aliases)
-            try finish(try await send(.editSite(host: host, change: SiteChange(php: php, server: server, aliases: aliasChange, node: node, automaticWorkspaces: workspaces.map { $0 == .on }, workspaceKeys: keyChange))))
+            try finish(try await send(.editSite(host: host, change: SiteChange(php: php, server: server, aliases: aliasChange, node: node, automaticWorkspaces: workspaces.map { $0 == .on }, workspaceKeys: keyChange, workspaceCommands: commandChange))))
         }
     }
 

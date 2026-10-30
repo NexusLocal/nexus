@@ -63,7 +63,7 @@ extension NexusEngine {
 
     // The links of CommandLinks come after the folder of the runtime. So a Composer script that
     // runs node or npm gets them too, also without the PATH setting.
-    private var commandLinks: String {
+    var commandLinks: String {
         RealPath.trimmed(paths.bin.path(percentEncoded: false))
     }
 

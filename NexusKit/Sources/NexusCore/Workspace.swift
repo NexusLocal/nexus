@@ -53,6 +53,8 @@ public struct WorkspaceRedisIndex: Sendable, Hashable {
 // startedCopies the copies that run or that did not end. plannedCopies counts the copies of the
 // last setup. installedLockFiles has the digest of each lock file that an install followed.
 // warnings holds what the last setup could not do, when the isolation does not depend on it.
+// finishedCommands holds each command of the site that ended well. commandsEnded is true after the
+// last command, so a command that the site gets later does not run in this workspace.
 public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     public let name: String
     public var worktree: String
@@ -67,6 +69,8 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     public var plannedCopies: Int
     public var installedLockFiles: [String: String]
     public var warnings: [String]
+    public var finishedCommands: [String]
+    public var commandsEnded: Bool
 
     public var id: String { name }
 
@@ -89,7 +93,9 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         startedCopies: [WorkspaceDatabaseCopy] = [],
         plannedCopies: Int = 0,
         installedLockFiles: [String: String] = [:],
-        warnings: [String] = []
+        warnings: [String] = [],
+        finishedCommands: [String] = [],
+        commandsEnded: Bool = false
     ) {
         self.name = name
         self.worktree = worktree
@@ -104,14 +110,17 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         self.plannedCopies = plannedCopies
         self.installedLockFiles = installedLockFiles
         self.warnings = warnings
+        self.finishedCommands = finishedCommands
+        self.commandsEnded = commandsEnded
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, worktree, folder, branch, state, redisIndexes, redisInstances, ports, databases, startedCopies, plannedCopies, installedLockFiles, warnings
+        case name, worktree, folder, branch, state, redisIndexes, redisInstances, ports, databases, startedCopies, plannedCopies, installedLockFiles, warnings, finishedCommands, commandsEnded
     }
 
     // A record of part 8b has no state. A record from before part 8f has Redis indexes without their
-    // instances, and only a setup can add these. Such a workspace needs its setup.
+    // instances, and only a setup can add these. Such a workspace needs its setup. A Ready record
+    // without commands comes from before part 8h, so that workspace exists and gets no commands.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
@@ -121,15 +130,16 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         branch = try container.decodeIfPresent(String.self, forKey: .branch)
         redisIndexes = try container.decodeIfPresent([String: Int].self, forKey: .redisIndexes) ?? [:]
         redisInstances = try container.decodeIfPresent([String].self, forKey: .redisInstances) ?? []
-        state = !redisIndexes.isEmpty && redisInstances.isEmpty
-            ? .preparing
-            : try container.decodeIfPresent(WorkspaceState.self, forKey: .state) ?? .preparing
+        let storedState = try container.decodeIfPresent(WorkspaceState.self, forKey: .state) ?? .preparing
+        state = !redisIndexes.isEmpty && redisInstances.isEmpty ? .preparing : storedState
         ports = try container.decodeIfPresent([String: Int].self, forKey: .ports) ?? [:]
         databases = try container.decodeIfPresent([WorkspaceDatabaseCopy].self, forKey: .databases) ?? []
         startedCopies = try container.decodeIfPresent([WorkspaceDatabaseCopy].self, forKey: .startedCopies) ?? []
         plannedCopies = try container.decodeIfPresent(Int.self, forKey: .plannedCopies) ?? 0
         installedLockFiles = try container.decodeIfPresent([String: String].self, forKey: .installedLockFiles) ?? [:]
         warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
+        finishedCommands = try container.decodeIfPresent([String].self, forKey: .finishedCommands) ?? []
+        commandsEnded = try container.decodeIfPresent(Bool.self, forKey: .commandsEnded) ?? (storedState == .ready)
     }
 
     // D46: <database>_<workspace>. A - in a database name needs quotes in each query of an

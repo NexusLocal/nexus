@@ -20,6 +20,7 @@ public struct Site: Codable, Sendable, Equatable {
     public var node: String?
     public var automaticWorkspaces: Bool?
     public var workspaceKeys: [WorkspaceEnvKey]?
+    public var workspaceCommands: [String]?
 
     public init(
         host: String,
@@ -29,7 +30,8 @@ public struct Site: Codable, Sendable, Equatable {
         server: WebServer = .nginx,
         node: String? = nil,
         automaticWorkspaces: Bool? = nil,
-        workspaceKeys: [WorkspaceEnvKey]? = nil
+        workspaceKeys: [WorkspaceEnvKey]? = nil,
+        workspaceCommands: [String]? = nil
     ) {
         self.host = host
         self.folder = folder
@@ -39,6 +41,7 @@ public struct Site: Codable, Sendable, Equatable {
         self.node = node
         self.automaticWorkspaces = automaticWorkspaces
         self.workspaceKeys = workspaceKeys
+        self.workspaceCommands = workspaceCommands
     }
 
     public var createsWorkspaces: Bool {

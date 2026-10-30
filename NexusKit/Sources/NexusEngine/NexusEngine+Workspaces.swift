@@ -12,7 +12,7 @@ extension NexusEngine {
         worktreeWatcher?.stop()
         worktreeWatcher = nil
         watchingStopped = true
-        runningInstall?.task.cancel()
+        runningCommand?.task.cancel()
     }
 
     func workspaceSitesChanged() async {
@@ -118,8 +118,8 @@ extension NexusEngine {
             // first for this step.
             emptyingRedisIndexes.formUnion(removedIndexes)
 
-            if removed.values.joined().contains(where: { $0.worktree == runningInstall?.worktree }) {
-                runningInstall?.task.cancel()
+            if removed.values.joined().contains(where: { $0.worktree == runningCommand?.worktree }) {
+                runningCommand?.task.cancel()
             }
 
             if change?.changed ?? true {

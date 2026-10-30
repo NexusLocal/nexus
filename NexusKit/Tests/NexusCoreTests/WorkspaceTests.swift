@@ -120,6 +120,31 @@ struct WorkspaceTests {
         #expect(workspace.state == .ready)
     }
 
+    @Test func aReadyRecordFromBeforeTheCommandsHasNoPendingCommands() throws {
+        let stored = #"{"name":"fix","worktree":"/w/fix","folder":"/w/fix","state":{"ready":{}}}"#
+
+        let workspace = try JSONDecoder().decode(Workspace.self, from: Data(stored.utf8))
+
+        #expect(workspace.commandsEnded)
+    }
+
+    @Test func aReadyRecordThatNeedsItsRedisInstancesHasNoPendingCommands() throws {
+        let stored = #"{"name":"fix","worktree":"/w/fix","folder":"/w/fix","state":{"ready":{}},"redisIndexes":{"REDIS_DB":16}}"#
+
+        let workspace = try JSONDecoder().decode(Workspace.self, from: Data(stored.utf8))
+
+        #expect(workspace.state == .preparing)
+        #expect(workspace.commandsEnded)
+    }
+
+    @Test func aRecordInItsSetupStillGetsTheCommandsOfItsSite() throws {
+        let stored = #"{"name":"fix","worktree":"/w/fix","folder":"/w/fix","state":{"preparing":{}}}"#
+
+        let workspace = try JSONDecoder().decode(Workspace.self, from: Data(stored.utf8))
+
+        #expect(!workspace.commandsEnded)
+    }
+
     @Test func eachRedisIndexIsOnEachInstanceOfTheWorkspace() {
         let workspace = Workspace(name: "fix", worktree: "/w/fix", folder: "/w/fix", redisIndexes: ["REDIS_DB": 16, "REDIS_CACHE_DB": 17], redisInstances: ["redis-8.2", "redis-7.2"])
 

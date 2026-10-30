@@ -885,6 +885,23 @@ worked without --force. The test site and the clone are removed.
 
 Work: run the list of the site after the database copy (D51). Show the output in the log.
 
+Built: a site has a list of commands, set on the Site screen in the section of the design or with
+`nexus site edit --workspace-command`. A setup runs them after the database copies and the clones,
+because a command needs vendor. Each command runs with /bin/sh in the folder of the application in
+the worktree, with the PHP of the site and the links of nexus for composer, node and npm. A command
+can use {workspace}, {host}, {database} and {port:<name>}. Nexus adds the quotes that {database}
+needs, so a command does not put quotes around it.
+
+The record names each command that ended well, so a command runs one time. A command that fails
+stops the list and gives a warning, and the workspace stays Ready. A retry goes on with the list of
+the site, so a correction of that command reaches the workspace. After the last command, the record
+says that the list ended. So a command that a site gets later does not run in a workspace that
+exists, as the design says. A workspace that is not isolated runs no commands (D48). A time limit of
+30 minutes keeps a command from stopping the other setups. A stop of nexusd or a removal of the
+worktree ends a running command, as for an install. The output goes to logs/workspace-<host>.log
+while the command runs, so a command that fails keeps all its output. Part 8k must remove that log.
+The Site screen saves the keys and the commands when the user leaves it.
+
 ### 8i. Background processes
 
 Work: the preset from the probe (D52). Free ports for each {port:<name>}. Start the processes
@@ -909,6 +926,10 @@ Delete dumps older than 7 days (D53).
 Handle a removal during a database copy. The setup then finishes the copy, but no record names it
 now. So no later step drops that copy, and a new worktree with the same name refuses it (review
 finding, 8f).
+
+A command of 8h that git removes the worktree from stops. A file that it wrote after that removal
+can bring the folder back, and that folder blocks a new worktree on this path. Nexus does not delete
+that folder, because a user can also have files there (review finding, 8h). Decide this in 8k.
 
 Done when: a removed workspace leaves only its dump in trash/. A restore of that dump works.
 

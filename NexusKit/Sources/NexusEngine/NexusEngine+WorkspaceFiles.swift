@@ -10,7 +10,7 @@ import NexusWorkspaces
 // that fails or a path that git sees in the worktree gives a warning, because the isolation of the
 // workspace does not depend on it (D50).
 extension NexusEngine {
-    private typealias FileFolders = (main: String, worktree: String, repository: String)
+    typealias FileFolders = (main: String, worktree: String, repository: String)
 
     private struct Installer {
         let lockFile: String
@@ -110,7 +110,7 @@ extension NexusEngine {
 
     // A repository in the public folder does not hold the application above it. git can only list
     // the files of the repository, and the worktree holds only these files.
-    private func fileFolders(of workspace: Workspace, key: String) async -> FileFolders? {
+    func fileFolders(of workspace: Workspace, key: String) async -> FileFolders? {
         let sites = resolvedSites(await stateStore.current()).map(\.site)
 
         guard let site = sites.first(where: { ProjectFolder.workspaceKey(of: $0) == key }) else {
@@ -218,11 +218,10 @@ extension NexusEngine {
             }
 
             let tool = try await toolCommand(installer.tool, folder: folders.worktree)
-            let path = (tool.path + [ChildEnvironment.path]).joined(separator: ":")
             let command = Command(
                 executable: URL(filePath: tool.executable),
                 arguments: tool.arguments + installer.arguments,
-                environment: tool.environment.merging(["PATH": path]) { _, new in new },
+                environment: environment(of: tool),
                 workingDirectory: URL(filePath: folders.worktree, directoryHint: .isDirectory)
             )
 
@@ -230,7 +229,7 @@ extension NexusEngine {
                 return nil
             }
 
-            try await run(command, in: workspace.worktree)
+            _ = try await run(command, in: workspace.worktree)
             try await updateRecord(of: workspace.name, key: key) { record in
                 record.installedLockFiles[lockFile] = digest
             }
@@ -255,16 +254,5 @@ extension NexusEngine {
         while RealPath.contains(worktree, path), rmdir(path) == 0 {
             path = (path as NSString).deletingLastPathComponent
         }
-    }
-
-    // An install is its own process group, so it stays after nexusd stops. The next start would
-    // then run a second install in the same folder. So a stop of nexusd ends the install. The same
-    // applies to a worktree that git removes, because the install would make that folder again.
-    private func run(_ install: Command, in worktree: String) async throws {
-        let task = Task { try await CommandRunner.run(install) }
-        runningInstall = (worktree, task)
-        defer { runningInstall = nil }
-
-        _ = try await task.value
     }
 }

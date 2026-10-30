@@ -34,6 +34,7 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let workspaces: [WorkspaceInfo]?
     public let workspaceProblem: String?
     public let workspaceKeys: [WorkspaceEnvKey]?
+    public let workspaceCommands: [String]?
 
     public init(
         hosts: [String],
@@ -51,7 +52,8 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         automaticWorkspaces: Bool? = nil,
         workspaces: [WorkspaceInfo]? = nil,
         workspaceProblem: String? = nil,
-        workspaceKeys: [WorkspaceEnvKey]? = nil
+        workspaceKeys: [WorkspaceEnvKey]? = nil,
+        workspaceCommands: [String]? = nil
     ) {
         self.hosts = hosts
         self.folder = folder
@@ -69,6 +71,7 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         self.workspaces = workspaces
         self.workspaceProblem = workspaceProblem
         self.workspaceKeys = workspaceKeys
+        self.workspaceCommands = workspaceCommands
     }
 
     public var node: String? {
@@ -227,14 +230,16 @@ public struct SiteChange: Codable, Sendable, Equatable {
     public var node: String?
     public var automaticWorkspaces: Bool?
     public var workspaceKeys: [WorkspaceEnvKey]?
+    public var workspaceCommands: [String]?
 
-    public init(php: String? = nil, server: WebServer? = nil, aliases: [String]? = nil, node: String? = nil, automaticWorkspaces: Bool? = nil, workspaceKeys: [WorkspaceEnvKey]? = nil) {
+    public init(php: String? = nil, server: WebServer? = nil, aliases: [String]? = nil, node: String? = nil, automaticWorkspaces: Bool? = nil, workspaceKeys: [WorkspaceEnvKey]? = nil, workspaceCommands: [String]? = nil) {
         self.php = php
         self.server = server
         self.aliases = aliases
         self.node = node
         self.automaticWorkspaces = automaticWorkspaces
         self.workspaceKeys = workspaceKeys
+        self.workspaceCommands = workspaceCommands
     }
 }
 

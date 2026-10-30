@@ -14,6 +14,7 @@ struct SiteScreen: View {
     @State private var automaticWorkspaces: Bool
     @State private var nexusKeys: [WorkspaceEnvKey] = []
     @State private var ownKeys: [WorkspaceEnvKey]
+    @State private var commands: [String]
 
     init(site: SiteItem) {
         self.site = site
@@ -22,6 +23,7 @@ struct SiteScreen: View {
         _node = State(initialValue: site.nodeSetting ?? NodeLines.fromProject)
         _automaticWorkspaces = State(initialValue: site.automaticWorkspaces)
         _ownKeys = State(initialValue: site.workspaceKeys)
+        _commands = State(initialValue: site.workspaceCommands)
     }
 
     private var group: Binding<String> {
@@ -145,7 +147,7 @@ struct SiteScreen: View {
                             Text(stateText(of: workspace))
                                 .foregroundStyle(workspace.isolationProblem == nil ? Color.secondary : Color.orangeText)
 
-                            if workspace.isolationProblem != nil {
+                            if workspace.isolationProblem != nil || !(workspace.warnings ?? []).isEmpty {
                                 Button("Retry") {
                                     Task { await model.retry(workspace, of: site) }
                                 }
@@ -193,6 +195,35 @@ struct SiteScreen: View {
             }
 
             Section {
+                ForEach(commands.indices, id: \.self) { index in
+                    HStack {
+                        Image(systemName: "terminal")
+                            .foregroundStyle(.secondary)
+
+                        TextField("Command", text: command(at: index), prompt: Text("php artisan tenant:domain shop-{workspace}.test"))
+                            .labelsHidden()
+                            .plainTextInput()
+                            .onSubmit { saveCommands() }
+
+                        Button("Remove", systemImage: "minus") {
+                            commands.remove(at: index)
+                            saveCommands()
+                        }
+                        .labelStyle(.iconOnly)
+                    }
+                    .font(.system(.body, design: .monospaced))
+                }
+
+                Button("Add a command") {
+                    commands.append("")
+                }
+            } header: {
+                Text("Commands after database copy")
+            } footer: {
+                Text("Nexus runs these commands in a new workspace after it copies the databases. The commands can use {workspace}, {host}, {database} and {port:<name>}. Nexus adds the quotes that {database} needs.")
+            }
+
+            Section {
                 ForEach(nexusKeys.filter { entry in !ownKeys.contains { $0.key == entry.key } }, id: \.key) { entry in
                     LabeledContent {
                         Text(entry.value)
@@ -237,6 +268,14 @@ struct SiteScreen: View {
             }
         }
         .formStyle(.grouped)
+        .onDisappear {
+            guard model.site(site.host) != nil else {
+                return
+            }
+
+            saveOwnKeys()
+            saveCommands()
+        }
         .task(id: site.workspaceKeys) {
             nexusKeys = await model.workspaceEnv(of: site)
         }
@@ -266,6 +305,11 @@ struct SiteScreen: View {
         .onChange(of: site.workspaceKeys) {
             if site.workspaceKeys != completeKeys {
                 ownKeys = site.workspaceKeys
+            }
+        }
+        .onChange(of: site.workspaceCommands) {
+            if site.workspaceCommands != completeCommands {
+                commands = site.workspaceCommands
             }
         }
         .onChange(of: automaticWorkspaces) {
@@ -341,6 +385,29 @@ struct SiteScreen: View {
     // A new row without a key stays on the screen, and it is no key for nexusd yet.
     private var completeKeys: [WorkspaceEnvKey] {
         ownKeys.filter { !$0.key.isEmpty }
+    }
+
+    private func command(at index: Int) -> Binding<String> {
+        Binding {
+            commands.indices.contains(index) ? commands[index] : ""
+        } set: { text in
+            if commands.indices.contains(index) {
+                commands[index] = text
+            }
+        }
+    }
+
+    // A new row without text stays on the screen, and it is no command for nexusd yet.
+    private var completeCommands: [String] {
+        commands.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private func saveCommands() {
+        guard completeCommands != site.workspaceCommands else {
+            return
+        }
+
+        change(SiteChange(workspaceCommands: completeCommands)) { commands = site.workspaceCommands }
     }
 
     private func saveOwnKeys() {

@@ -218,7 +218,7 @@ extension NexusEngineTests {
 
             let setup = Task { await engine.reconcileWorkspaces() }
 
-            while await engine.runningInstall == nil {
+            while await engine.runningCommand == nil {
                 try await Task.sleep(for: .milliseconds(10))
             }
 
@@ -250,7 +250,7 @@ extension NexusEngineTests {
 
             let setup = Task { await engine.reconcileWorkspaces() }
 
-            while await engine.runningInstall == nil {
+            while await engine.runningCommand == nil {
                 try await Task.sleep(for: .milliseconds(10))
             }
 
@@ -260,6 +260,295 @@ extension NexusEngineTests {
             try await settle(engine)
 
             #expect(!FileManager.default.fileExists(atPath: worktree.path(percentEncoded: false)))
+        }
+    }
+
+    private func engineWithCommands(_ commands: [String], root: URL, shop: URL) async throws -> NexusEngine {
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.4", workspaceCommands: commands)]
+        let engine = try makeSiteEngine(root: root, state: state)
+        try await settle(engine)
+        return engine
+    }
+
+    @Test func aNewWorkspaceRunsTheCommandsOfItsSiteOneTimeInItsWorktree() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithCommands(["echo {workspace} {host} >> ran.txt", "pwd"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+        _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+        try await settle(engine)
+
+        let log = try String(contentsOf: await engine.paths.log("workspace-shop-fix.test"), encoding: .utf8)
+        let workspace = try await record(engine, of: shop)
+
+        #expect(try String(contentsOf: worktree.appending(path: "ran.txt"), encoding: .utf8) == "fix shop-fix.test\n")
+        #expect(log.contains("$ pwd\n\(RealPath.of(worktree))\n"))
+        #expect(workspace.commandsEnded)
+        #expect(workspace.state == .ready)
+    }
+
+    @Test func aCorrectionOfACommandThatFailedReachesTheNextSetup() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithCommands(["echo first >> ran.txt", "wrong-program"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+        _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(workspaceCommands: ["echo first >> ran.txt", "echo right >> ran.txt"])))
+        _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+        try await settle(engine)
+
+        let workspace = try await record(engine, of: shop)
+
+        #expect(try String(contentsOf: worktree.appending(path: "ran.txt"), encoding: .utf8) == "first\nright\n")
+        #expect(workspace.warnings.isEmpty)
+        #expect(workspace.commandsEnded)
+    }
+
+    @Test func theLogHoldsTheWholeOutputOfACommandThatFails() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithCommands(["echo progress; echo problem >&2; exit 3"], root: root, shop: shop)
+
+        try await git("worktree", "add", "-q", "-b", "fix", root.appending(path: "fix").path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let log = try String(contentsOf: await engine.paths.log("workspace-shop-fix.test"), encoding: .utf8)
+
+        #expect(log.contains("progress\nproblem\n"))
+        #expect(log.contains("exit status 3"))
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealStartDuringAStopOfNexusdRunsNoCommand() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithCommands(["touch ran.txt"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        var workspace = Workspace(name: "fix", worktree: RealPath.of(worktree), folder: RealPath.of(worktree))
+
+        await engine.stopWatchingWorktrees()
+        await engine.runCommands(of: &workspace, database: nil, key: RealPath.of(shop))
+
+        #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: "ran.txt").path(percentEncoded: false)))
+        #expect(!workspace.commandsEnded)
+    }
+
+    @Test func aCommandThatFailsStopsTheListAndARetryGoesOnFromThere() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithCommands(["echo first >> ran.txt", "test -f allowed", "echo last >> ran.txt"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let failed = try await record(engine, of: shop)
+
+        #expect(failed.state == .ready)
+        #expect(failed.finishedCommands == ["echo first >> ran.txt"])
+        #expect(!failed.commandsEnded)
+        #expect(failed.warnings.first?.hasPrefix("The command test -f allowed failed.") == true)
+
+        try writeFile("", to: "allowed", in: worktree)
+        _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+        try await settle(engine)
+
+        let retried = try await record(engine, of: shop)
+
+        #expect(try String(contentsOf: worktree.appending(path: "ran.txt"), encoding: .utf8) == "first\nlast\n")
+        #expect(retried.warnings.isEmpty)
+    }
+
+    @Test func aCommandThatASiteGetsLaterDoesNotRunInAWorkspaceThatExists() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithCommands([], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+        _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(workspaceCommands: ["touch ran.txt"])))
+        _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+        try await settle(engine)
+
+        #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: "ran.txt").path(percentEncoded: false)))
+    }
+
+    @Test func aSiteThatIsNoLaravelApplicationGetsThePortsOfItsCommands() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithCommands(["echo {port:scout} > ran.txt"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let port = try #require(try await record(engine, of: shop).ports["scout"])
+
+        #expect(try String(contentsOf: worktree.appending(path: "ran.txt"), encoding: .utf8) == "\(port)\n")
+    }
+
+    @Test func aCommandThatChangedDuringTheSetupGetsItsPort() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.4", automaticWorkspaces: false, workspaceCommands: ["echo {port:scout} > ran.txt"])]
+        let engine = try makeSiteEngine(root: root, state: state)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        try await settle(engine)
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+        var workspace = Workspace(name: "fix", worktree: RealPath.of(worktree), folder: RealPath.of(worktree))
+
+        await engine.runCommands(of: &workspace, database: nil, key: RealPath.of(shop))
+
+        let port = try #require(workspace.ports["scout"])
+
+        #expect(try String(contentsOf: worktree.appending(path: "ran.txt"), encoding: .utf8) == "\(port)\n")
+    }
+
+    @Test func aCommandThatNeedsADatabaseDoesNotRunWithoutOne() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithCommands(["echo {database} > ran.txt"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let workspace = try await record(engine, of: shop)
+
+        #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: "ran.txt").path(percentEncoded: false)))
+        #expect(workspace.warnings.first?.hasPrefix("The command echo {database} > ran.txt needs a database") == true)
+        #expect(!workspace.commandsEnded)
+    }
+
+    @Test func aCommandWithoutThePHPOfItsSiteStillGetsTheLinksOfNexus() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithCommands(["echo $PATH > ran.txt"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let path = try String(contentsOf: worktree.appending(path: "ran.txt"), encoding: .utf8)
+        let log = try String(contentsOf: await engine.paths.log("workspace-shop-fix.test"), encoding: .utf8)
+
+        #expect(path.hasPrefix(RealPath.trimmed(await engine.paths.bin.path(percentEncoded: false))))
+        #expect(log.contains("PHP 8.4 is not installed"))
+    }
+
+    @Test func aFolderThatIsGoneGivesAWarningAndRunsNoCommand() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithCommands(["touch ran.txt"], root: root, shop: shop)
+        let gone = root.appending(path: "gone").path(percentEncoded: false)
+        var workspace = Workspace(name: "gone", worktree: gone, folder: gone)
+
+        await engine.runCommands(of: &workspace, database: nil, key: RealPath.of(shop))
+
+        #expect(workspace.warnings.first?.hasPrefix("Nexus did not run the command touch ran.txt") == true)
+        #expect(!workspace.commandsEnded)
+    }
+
+    @Test func twoSitesWithTheSameCommandRunItOneTime() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        var state = EngineState()
+        state.sites = [
+            Site(host: "shop.test", folder: shop, php: "8.4", workspaceCommands: ["echo once >> ran.txt"]),
+            Site(host: "store.test", folder: shop, php: "8.4", workspaceCommands: ["echo once >> ran.txt"]),
+        ]
+        let engine = try makeSiteEngine(root: root, state: state)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await settle(engine)
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        #expect(try String(contentsOf: worktree.appending(path: "ran.txt"), encoding: .utf8) == "once\n")
+    }
+
+    @Test func anEmptyCommandIsNoCommandOfTheSite() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithCommands([], root: root, shop: shop)
+
+        _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(workspaceCommands: ["  ", "php artisan cache:clear", "php artisan cache:clear"])))
+
+        guard case .sites(let sites) = await engine.handle(.sites) else {
+            Issue.record("No sites")
+            return
+        }
+
+        #expect(sites.first?.workspaceCommands == ["php artisan cache:clear"])
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealCommandUsesThePHPOfTheSiteAndThePlaceholdersOfTheWorkspace() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n*.txt\n")
+        let scout = #"php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION."\n";' > version.txt; echo {database} {port:scout} > values.txt"#
+        try await engine.stateStore.update { $0.sites[0].workspaceCommands = [scout] }
+        try writeFile("", to: "database/database.sqlite", in: shop)
+        try await settle(engine)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let workspace = try await record(engine, of: shop)
+        let port = try #require(workspace.ports["scout"])
+        let values = try String(contentsOf: worktree.appending(path: "values.txt"), encoding: .utf8)
+
+        #expect(try String(contentsOf: worktree.appending(path: "version.txt"), encoding: .utf8) == "8.5\n")
+        #expect(values == "\(RealPath.of(worktree))/database/database.sqlite \(port)\n")
+        await engine.shutdown()
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceThatIsNotIsolatedRunsNoCommands() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
+        try writeFile("DB_PORT=1\nDB_DATABASE=shop\n", to: ".env", in: shop)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.5", workspaceCommands: ["touch ran.txt"])]
+        let engine = try makeSiteEngine(root: root, state: state)
+        try await linkRealRuntimes(in: engine.paths)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let workspace = try await record(engine, of: shop)
+
+            #expect(workspace.warnings == ["Nexus runs no commands in a workspace that is not isolated."])
+            #expect(!workspace.commandsEnded)
+            #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: "ran.txt").path(percentEncoded: false)))
         }
     }
 

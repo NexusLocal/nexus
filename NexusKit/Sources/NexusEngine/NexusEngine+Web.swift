@@ -506,7 +506,8 @@ extension NexusEngine {
                 automaticWorkspaces: site.createsWorkspaces,
                 workspaces: workspaceInfo(key: ProjectFolder.workspaceKey(of: site), sitesOfRecord: workspaces.sitesOfRecord, conflicts: workspaces.conflicts, installed: installed, state: state),
                 workspaceProblem: ProjectFolder.repository(of: site) != nil && git == nil ? GitTool.missing : nil,
-                workspaceKeys: site.workspaceKeys
+                workspaceKeys: site.workspaceKeys,
+                workspaceCommands: site.workspaceCommands
             ))
         }
 
@@ -693,6 +694,13 @@ extension NexusEngine {
 
             site.workspaceKeys = workspaceKeys
         }
+        if let workspaceCommands = change.workspaceCommands {
+            // A command runs one time in a workspace, so a second row with that text would do nothing.
+            var seen: Set<String> = []
+            site.workspaceCommands = workspaceCommands.filter { command in
+                !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && seen.insert(command).inserted
+            }
+        }
 
         try checkUnique(site, in: state)
 
@@ -707,7 +715,7 @@ extension NexusEngine {
 
         // The Node line and the workspace settings change no server. So they need no new web
         // configuration.
-        let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil
+        let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil || change.workspaceCommands != nil
         let onlySettings = hasSetting && change.php == nil && change.server == nil && change.aliases == nil
         var notes = onlySettings ? [] : try await changeWeb(.sites, store)
 

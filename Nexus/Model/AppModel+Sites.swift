@@ -22,7 +22,8 @@ extension SiteItem {
             automaticWorkspaces: info.automaticWorkspaces ?? true,
             workspaces: info.workspaces ?? [],
             workspaceProblem: info.workspaceProblem,
-            workspaceKeys: info.workspaceKeys ?? []
+            workspaceKeys: info.workspaceKeys ?? [],
+            workspaceCommands: info.workspaceCommands ?? []
         )
     }
 }

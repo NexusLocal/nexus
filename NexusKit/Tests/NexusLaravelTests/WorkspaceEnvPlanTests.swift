@@ -357,6 +357,13 @@ struct WorkspaceKeysTests {
     @Test func eachPortNameCountsOnce() {
         let keys = [WorkspaceEnvKey(key: "A", value: "{port:vite}:{port:scout}"), WorkspaceEnvKey(key: "B", value: "{port:vite}")]
 
-        #expect(WorkspaceKeys.portNames(in: keys) == ["scout", "vite"])
+        #expect(WorkspaceKeys.portNames(in: keys.map(\.value)) == ["scout", "vite"])
+    }
+
+    @Test func aValueForTheShellGetsQuotesOnlyWhenItNeedsThem() {
+        #expect(WorkspaceKeys.shellWord("shop_fix") == "shop_fix")
+        #expect(WorkspaceKeys.shellWord("/Users/tim/shop/database.sqlite") == "/Users/tim/shop/database.sqlite")
+        #expect(WorkspaceKeys.shellWord("/Users/Tim Klaversma/db.sqlite") == "'/Users/Tim Klaversma/db.sqlite'")
+        #expect(WorkspaceKeys.shellWord("/Users/tim's/db.sqlite") == #"'/Users/tim'\''s/db.sqlite'"#)
     }
 }

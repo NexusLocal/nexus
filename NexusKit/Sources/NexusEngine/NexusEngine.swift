@@ -92,7 +92,7 @@ public actor NexusEngine {
     var setupAgain = false
     var runningSetupKey: String?
     var setupIsOutdated = false
-    var runningInstall: (worktree: String, task: Task<CommandOutput, Error>)?
+    var runningCommand: (worktree: String, task: Task<CommandOutput, Error>)?
     // The Redis indexes that nexusd empties now.
     var emptyingRedisIndexes: Set<WorkspaceRedisIndex> = []
     // The downloads and database copies that run now, and the last task list of the watchers.
