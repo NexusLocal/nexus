@@ -628,6 +628,32 @@ Done when: the probe gives a correct result for the 19 Laravel applications in t
 setup. These cover Laravel 8.83 to 13.38, a hardcoded default connection, four MySQL
 connections, custom connection names, SQLite, Reverb, Mix and Vite. The probe only reads.
 
+Built: the module NexusLaravel and `nexus site probe [folder] [--php <line>] [--json]`. The
+request goes through nexusd, because nexusd knows the PHP of the site. The probe runs four
+passes of `php -r`. The first has the real environment and gives the values. The second has text
+markers and the third has numeric markers. These two give the keys. The last pass does what a
+workspace does: it changes only the keys of the database names and the Redis indexes. A setting
+that does not follow its key in this pass is a fixed setting. So a key behind a flag that is off
+never counts. The keys come from config/ and from the config files of the
+framework, because Laravel 11 and newer merge those files. A text marker starts with the number
+of the key. So arithmetic on the value does not stop PHP, and a cast to int keeps the number.
+The step between two numbers is the prime number 1009. So a round number that the application
+adds to a value names no key. A value without a marker is a fixed setting. Xdebug is off in a
+pass, and a pass stops after 30 seconds. The result holds only the sections that Nexus uses:
+app.url, database, session, cache, queue, broadcasting and reverb.
+
+A site on the public folder of a project now holds the whole project, also for nexus php,
+composer, node and npm. A host of MAMP PRO points at the public folder.
+
+Checked on 2026-10-30 with the Laravel applications of MAMP PRO. MAMP PRO now has 20, not 19. 18
+gave a result. 2 stopped on bootstrap/cache/config.php, as work item 5 says. For those 2, the
+same probe ran on an APFS clone without the cached file. A separate script read
+config/database.php of each application and of the framework. It compared 551 settings with the
+result. These are the default connection and the database, host and port of each connection and
+Redis connection. The 2 differences came from that script: one application has read and write
+hosts, and the result shows them correctly. `git status` of each application did not change, and
+the probe changed no file.
+
 ### 8b. Worktree detection
 
 Work: watch .git/worktrees of each site. `git worktree list --porcelain` is the source of truth.
@@ -667,6 +693,12 @@ before and after the copy proves it.
 
 Work: give each Redis connection of each workspace its own index (D47). Empty the indexes at
 removal.
+
+Facts from the probe (8a), to decide before this part:
+- 8 applications feed all their Redis connections from the one key REDIS_DB, with another default
+  for each connection. When Nexus sets this key, all these connections use one index.
+- 3 applications have fixed indexes in config/database.php. D48 makes their workspaces "not
+  isolated".
 
 Done when: a cache write in a workspace is not visible in the main site.
 

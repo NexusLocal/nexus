@@ -425,9 +425,35 @@ struct SiteCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "site",
         abstract: "Adds, lists, changes and removes sites.",
-        subcommands: [List.self, Add.self, Edit.self, Remove.self, Defaults.self],
+        subcommands: [List.self, Add.self, Edit.self, Remove.self, Defaults.self, Probe.self],
         defaultSubcommand: List.self
     )
+
+    struct Probe: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Shows which env key feeds each database, Redis, session, cache, queue and broadcast setting of a Laravel application. The probe only reads.")
+
+        @Argument(help: "A folder in the application.") var folder: String = "."
+        @Option(help: "The PHP version line, for example 8.4. The default is the PHP of the site.") var php: String?
+        @Flag(help: "Print the full result as JSON.") var json = false
+
+        func run() async throws {
+            let response = try await send(.probe(folder: absolutePath(folder), php: php))
+
+            guard case .configuration(let configuration) = response else {
+                try finish(response)
+                return
+            }
+
+            guard json else {
+                ProbeSummary.lines(configuration).forEach { print($0) }
+                return
+            }
+
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            print(String(decoding: try encoder.encode(configuration), as: UTF8.self))
+        }
+    }
 
     struct List: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Lists the sites.")
@@ -834,7 +860,7 @@ private func finish(_ response: NexusResponse) throws {
     }
 }
 
-private extension String {
+extension String {
     func padding(to width: Int) -> String {
         count >= width ? self : self + String(repeating: " ", count: width - count)
     }

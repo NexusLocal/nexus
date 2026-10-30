@@ -462,6 +462,9 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case stopTask(id: String)
     // The command that a tool runs in this folder, with the versions of its site (D38).
     case tool(ProjectTool, folder: String)
+    // The configuration of the Laravel application that holds this folder (D43). php is a version
+    // line. Without it the PHP of the site applies.
+    case probe(folder: String, php: String?)
 }
 
 public enum NexusResponse: Codable, Sendable, Equatable {
@@ -483,6 +486,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case stopped(message: String)
     case failure(message: String)
     case tool(ToolCommand)
+    case configuration(LaravelConfiguration)
 }
 
 public enum NexusMessageCoding {

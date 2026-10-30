@@ -14,17 +14,9 @@ extension NexusEngine {
         let location = ProjectFolder.locate(folder, in: resolvedSites(state).map(\.site))
         let installed = await installer.installedRuntimes()
 
-        func installedRuntime(_ name: String, line: String) -> InstalledRuntime? {
-            installed.first { $0.name == name && $0.line == line }
-        }
-
         switch tool {
         case .php, .composer:
-            let line = if let location { location.site.php } else { try Self.phpLine(nil, installed: installed, defaults: state.siteDefaults) }
-
-            guard let php = installedRuntime("php", line: line) else {
-                throw RuntimeError.unsupported("PHP \(line) is not installed. Run: nexus install php \(line)")
-            }
+            let php = try installedPHP(try phpLine(for: location, state: state, installed: installed), in: installed)
 
             guard tool == .composer else {
                 return try await phpCommand(php)
@@ -38,7 +30,7 @@ extension NexusEngine {
         case .node, .npm:
             let choice = nodeChoice(for: folder, in: location, state: state, installed: installed.filter { $0.name == "node" }.map(\.line))
 
-            guard let node = installedRuntime("node", line: choice.line) else {
+            guard let node = installed.first(where: { $0.name == "node" && $0.line == choice.line }) else {
                 throw RuntimeError.unsupported("Node \(choice.line) is not installed (\(choice.reason)). Run: nexus install node \(choice.line)")
             }
 
@@ -53,6 +45,22 @@ extension NexusEngine {
         }
     }
 
+    func phpLine(for location: ProjectLocation?, state: EngineState, installed: [InstalledRuntime]) throws -> String {
+        if let location {
+            return location.site.php
+        }
+
+        return try Self.phpLine(nil, installed: installed, defaults: state.siteDefaults)
+    }
+
+    func installedPHP(_ line: String, in installed: [InstalledRuntime]) throws -> InstalledRuntime {
+        guard let php = installed.first(where: { $0.name == "php" && $0.line == line }) else {
+            throw RuntimeError.unsupported("PHP \(line) is not installed. Run: nexus install php \(line)")
+        }
+
+        return php
+    }
+
     // The links of CommandLinks come after the folder of the runtime. So a Composer script that
     // runs node or npm gets them too, also without the PATH setting.
     private var commandLinks: String {
@@ -63,7 +71,7 @@ extension NexusEngine {
     // PHP_INI_SCAN_DIR are in the environment and not in -c. So a PHP that the tool starts gets
     // them too. An example is a worker of a parallel test run. They also replace the PHPRC of
     // another tool in the shell of the user.
-    private func phpCommand(_ php: InstalledRuntime, script: URL? = nil) async throws -> ToolCommand {
+    func phpCommand(_ php: InstalledRuntime, script: URL? = nil) async throws -> ToolCommand {
         let folder = paths.phpConfigFolder(line: php.line)
         let confD = folder.appending(path: "conf.d")
 

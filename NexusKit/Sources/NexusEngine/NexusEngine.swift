@@ -209,6 +209,8 @@ public actor NexusEngine {
                 return .done(message: stopTask(id))
             case .tool(let tool, let folder):
                 return .tool(try await toolCommand(tool, folder: folder))
+            case .probe(let folder, let php):
+                return .configuration(try await probeConfiguration(folder: folder, php: php))
             }
         } catch let conflict as PortConflict {
             return .portInUse(conflict)
@@ -914,7 +916,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool: true
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe: true
         default: false
         }
     }

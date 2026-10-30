@@ -33,6 +33,7 @@ extension CommandSection {
             CommandItem(command: "nexus site edit shop.test --server apache", help: "Changes the PHP version, the Node version, the webserver or the aliases."),
             CommandItem(command: "nexus site remove shop.test", help: "Removes a site. The folder stays."),
             CommandItem(command: "nexus site defaults --php 8.4", help: "Changes the PHP version, the Node version or the webserver of a new site."),
+            CommandItem(command: "nexus site probe .", help: "Shows which env key feeds each setting of a Laravel application."),
             CommandItem(command: "nexus park ~/Sites", help: "Makes each folder in ~/Sites a site."),
             CommandItem(command: "nexus unpark ~/Sites", help: "Stops a folder of projects. Its folders stay."),
         ]),

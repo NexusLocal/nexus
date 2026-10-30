@@ -43,6 +43,56 @@ struct ProjectFolderTests {
         #expect(ProjectFolder.locate(try folder("other"), in: [site("shop.test", shop)]) == nil)
     }
 
+    @Test func aSiteOnThePublicFolderHoldsTheWholeProject() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try folder("shop")
+        let publicFolder = try folder("shop/public")
+        let source = try folder("shop/app")
+        try write("{}", to: "shop/composer.json")
+
+        let location = ProjectFolder.locate(source, in: [site("shop.test", publicFolder)])
+
+        #expect(location?.site.host == "shop.test")
+        #expect(location.map { RealPath.of($0.root) } == RealPath.of(shop))
+    }
+
+    @Test func aPublicFolderWithoutAComposerFileHoldsOnlyItself() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let publicFolder = try folder("sites/public")
+        let other = try folder("sites/other")
+        try write("{}", to: "sites/package.json")
+
+        #expect(ProjectFolder.locate(other, in: [site("shop.test", publicFolder)]) == nil)
+        #expect(ProjectFolder.locate(publicFolder, in: [site("shop.test", publicFolder)])?.site.host == "shop.test")
+    }
+
+    @Test func aSiteOnTheProjectAndASiteOnItsPublicFolderKeepTheirOwnFolders() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try folder("shop")
+        let publicFolder = try folder("shop/public")
+        let source = try folder("shop/app")
+        try write("{}", to: "shop/composer.json")
+        let sites = [site("shop.test", shop), site("assets.test", publicFolder)]
+
+        #expect(ProjectFolder.locate(source, in: sites)?.site.host == "shop.test")
+        #expect(ProjectFolder.locate(publicFolder, in: sites)?.site.host == "assets.test")
+        #expect(ProjectFolder.locate(source, in: sites.reversed())?.site.host == "shop.test")
+        #expect(ProjectFolder.locate(publicFolder, in: sites.reversed())?.site.host == "assets.test")
+    }
+
+    @Test func aWorktreeOfAPublicFolderThatIsARepositoryBelongsToTheSite() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let publicFolder = try folder("shop/public")
+        let worktreeFolder = try folder("ticket")
+        try write("{}", to: "shop/composer.json")
+        try worktree(of: "shop/public", at: "ticket")
+
+        let location = ProjectFolder.locate(worktreeFolder, in: [site("shop.test", publicFolder)])
+
+        #expect(location?.site.host == "shop.test")
+        #expect(location.map { RealPath.of($0.root) } == RealPath.of(worktreeFolder))
+    }
+
     @Test func aWorktreeOutsideTheSiteBelongsToTheSite() throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try folder("shop")

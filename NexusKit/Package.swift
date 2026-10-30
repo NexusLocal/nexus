@@ -36,7 +36,8 @@ let package = Package(
         .target(name: "NexusRuntime", dependencies: ["NexusCore", "NexusSupervisor"]),
         .target(name: "NexusSupervisor", dependencies: ["NexusCore"]),
         .target(name: "NexusIPC", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor"]),
-        .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig"]),
+        .target(name: "NexusLaravel", dependencies: ["NexusCore", "NexusSupervisor"]),
+        .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig", "NexusLaravel"]),
         .target(name: "NexusCommands", dependencies: [
             "NexusCore",
             "NexusIPC",
@@ -48,6 +49,7 @@ let package = Package(
         .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusTestSupport"]),
         .testTarget(name: "NexusDNSTests", dependencies: ["NexusDNS", "NexusTestSupport"]),
         .testTarget(name: "NexusConfigTests", dependencies: ["NexusConfig"]),
+        .testTarget(name: "NexusLaravelTests", dependencies: ["NexusLaravel", "NexusCore"]),
         .testTarget(name: "NexusIPCTests", dependencies: ["NexusIPC", "NexusSupervisor"]),
         .testTarget(name: "NexusCommandsTests", dependencies: [
             "NexusCommands",

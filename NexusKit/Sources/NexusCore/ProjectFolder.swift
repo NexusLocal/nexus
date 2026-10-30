@@ -1,8 +1,8 @@
 import Foundation
 
-// The site that holds a folder, for nexus php, composer, node and npm (D38). root is the folder
-// of the site in the checkout of that folder. In a git worktree, root is in the worktree, because
-// the worktree has its own files such as .nvmrc.
+// The site that holds a folder, for nexus php, composer, node and npm (D38). root is the project
+// folder of the site in the checkout of that folder. In a git worktree, root is in the worktree,
+// because the worktree has its own files such as .nvmrc.
 public struct ProjectLocation: Sendable, Equatable {
     public let site: Site
     public let root: URL
@@ -19,10 +19,18 @@ public enum ProjectFolder {
     // of the repository that holds a site gives the same subfolder in the worktree.
     public static func locate(_ folder: URL, in sites: [Site]) -> ProjectLocation? {
         let path = RealPath.of(folder)
-        let siteFolders = sites.map { (site: $0, path: RealPath.of($0.folder)) }
+        let siteFolders = sites.map { (site: $0, path: projectFolder(of: $0), folder: RealPath.of($0.folder)) }
 
-        func deepestSite(holding path: String) -> (site: Site, path: String)? {
-            siteFolders.filter { RealPath.contains($0.path, path) }.max { $0.path.count < $1.path.count }
+        // A site on a project and a site on its public folder have the same project folder. The
+        // site whose own folder holds the path wins then.
+        func deepestSite(holding path: String) -> (site: Site, path: String, folder: String)? {
+            func ownDepth(_ folder: String) -> Int {
+                RealPath.contains(folder, path) ? folder.count : 0
+            }
+
+            return siteFolders.filter { RealPath.contains($0.path, path) }.max {
+                ($0.path.count, ownDepth($0.folder)) < ($1.path.count, ownDepth($1.folder))
+            }
         }
 
         if let found = deepestSite(holding: path) {
@@ -33,13 +41,37 @@ public enum ProjectFolder {
             return nil
         }
 
-        guard let found = deepestSite(holding: worktree.mainCheckout + path.dropFirst(worktree.root.count)),
-              RealPath.contains(worktree.mainCheckout, found.path) else {
+        guard let found = deepestSite(holding: worktree.mainCheckout + path.dropFirst(worktree.root.count)) else {
             return nil
         }
 
-        let root = worktree.root + found.path.dropFirst(worktree.mainCheckout.count)
+        // The project folder of a public folder that is a repository itself is outside that
+        // repository. A worktree has only the files of the repository.
+        let folder = RealPath.contains(worktree.mainCheckout, found.path) ? found.path : found.folder
+
+        guard RealPath.contains(worktree.mainCheckout, folder) else {
+            return nil
+        }
+
+        let root = worktree.root + folder.dropFirst(worktree.mainCheckout.count)
         return ProjectLocation(site: found.site, root: URL(filePath: root, directoryHint: .isDirectory))
+    }
+
+    // A site can point at the public folder of a project, as a host of MAMP PRO does. The whole
+    // project then belongs to the site. Only composer.json counts as the project file, because a
+    // package.json can be in the home folder. A public folder without this file is a site of its
+    // own.
+    private static func projectFolder(of site: Site) -> String {
+        let path = RealPath.of(site.folder)
+
+        guard (path as NSString).lastPathComponent == "public" else {
+            return path
+        }
+
+        let parent = (path as NSString).deletingLastPathComponent
+        let hasComposerFile = FileManager.default.fileExists(atPath: (parent as NSString).appendingPathComponent("composer.json"))
+
+        return hasComposerFile ? parent : path
     }
 
     // A git worktree has a .git file with the line "gitdir: <folder>". That folder is in

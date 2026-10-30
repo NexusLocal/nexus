@@ -182,7 +182,11 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
     application with its own PHP and runs only the bootstrappers LoadEnvironmentVariables and
     LoadConfiguration, so no service provider runs. It sets a unique marker value for each env
     key that config/*.php uses. So Nexus learns which env key feeds which database, Redis,
-    session, cache, queue and broadcast setting.
+    session, cache, queue and broadcast setting. A key that the probe does not find gives a
+    fixed setting. So a missed key gives a workspace that is not isolated (D48), and not a
+    workspace that writes into the main database. A last pass changes only the keys of the
+    database names and the Redis indexes, as a workspace does. A setting that does not follow
+    its key in this pass also counts as fixed.
     Evidence: one application hardcodes 'default' => 'main' in config/database.php and has four MySQL
     connections and four Redis connections. Four sites use their own connection names (app,
     cms, crm, main). Some keys have no line in .env and use the default in the config file.
