@@ -215,6 +215,9 @@ final class AppModel {
     // shows the setting. So a change by hand shows too.
     var pathSetting = ShellPathLine.State.off
     var pathSettingProblem: String?
+    var otherShellCommands: [OtherCommand] = []
+    @ObservationIgnored var shellCommandsCheck: Task<Void, Never>?
+    @ObservationIgnored var shellCommandsStamp: [Double]?
 
     @ObservationIgnored private(set) var client: NexusClient?
     @ObservationIgnored private var feed: NexusEventFeed?

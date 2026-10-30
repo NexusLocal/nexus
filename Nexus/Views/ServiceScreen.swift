@@ -307,11 +307,11 @@ private struct WebserverSections: View {
         let names = service.toggles.filter(\.required).map(\.name)
         let help = "Click a name to see what it does."
 
-        guard let last = names.last else {
+        guard !names.isEmpty else {
             return help
         }
 
-        let list = names.count == 1 ? last : "\(names.dropLast().joined(separator: ", ")) and \(last)"
+        let list = EnglishList.joined(names)
         let reason = service.internalPort ? "Apache needs them behind nginx" : "nginx needs them for every site"
         return "\(list) \(names.count == 1 ? "stays" : "stay") on, because \(reason). \(help)"
     }

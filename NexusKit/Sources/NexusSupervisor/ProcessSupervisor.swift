@@ -126,21 +126,10 @@ public actor ProcessSupervisor {
         markStopped(id)
     }
 
-    // Process starts each service in its own process group. Workers that stay after the main
-    // process ended, for example the workers of a php-fpm that got SIGKILL, keep the port or the
-    // socket of the service. Then each new start fails.
-    // macOS gives the number of a process to no new process while that process is not collected,
-    // or while a group with that number has processes. So the group is still the group of the
-    // service when the main process is not collected yet, or when no process has its number.
-    // When another process has the number, the group of the service has no processes left.
+    // Workers that stay after the main process ended, for example the workers of a php-fpm that got
+    // SIGKILL, keep the port or the socket of the service. Then each new start fails.
     private func endProcessGroup(of process: Process) {
-        let pid = process.processIdentifier
-
-        guard process.isRunning || kill(pid, 0) == -1 && errno == ESRCH else {
-            return
-        }
-
-        kill(-pid, SIGKILL)
+        ProcessGroup.signal(process, SIGKILL)
     }
 
     // The services stop at the same time, so a database that writes its data to disk does not

@@ -6,12 +6,16 @@ public struct Command: Sendable, Equatable {
     public let arguments: [String]
     public let environment: [String: String]
     public let workingDirectory: URL?
+    // The signal that stops the program when the task is cancelled. An interactive shell ignores
+    // SIGTERM. So it needs SIGKILL.
+    public let stopSignal: Int32
 
-    public init(executable: URL, arguments: [String] = [], environment: [String: String] = [:], workingDirectory: URL? = nil) {
+    public init(executable: URL, arguments: [String] = [], environment: [String: String] = [:], workingDirectory: URL? = nil, stopSignal: Int32 = SIGTERM) {
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
         self.workingDirectory = workingDirectory
+        self.stopSignal = stopSignal
     }
 }
 
@@ -60,7 +64,7 @@ public enum CommandRunner {
         let end = await withTaskCancellationHandler {
             await exit.wait()
         } onCancel: {
-            process.terminate()
+            ProcessGroup.signal(process, command.stopSignal)
         }
 
         try Task.checkCancellation()
@@ -106,7 +110,7 @@ public enum CommandRunner {
         do {
             consumerExit = try start(consumer)
         } catch {
-            producer.terminate()
+            ProcessGroup.signal(producer, first.stopSignal)
             _ = await producerExit.wait()
             throw error
         }
@@ -118,8 +122,8 @@ public enum CommandRunner {
             await relay?.wait()
             return (consumerEnd, producerEnd)
         } onCancel: {
-            producer.terminate()
-            consumer.terminate()
+            ProcessGroup.signal(producer, first.stopSignal)
+            ProcessGroup.signal(consumer, second.stopSignal)
         }
 
         try Task.checkCancellation()

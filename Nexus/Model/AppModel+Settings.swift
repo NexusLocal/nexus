@@ -2,6 +2,7 @@ import AppKit
 import NexusCore
 import NexusIPC
 import NexusRuntime
+import NexusSupervisor
 import ServiceManagement
 import UserNotifications
 
@@ -90,6 +91,8 @@ enum Notifier {
 
 // The PATH setting (D39). The sample data never touches ~/.zshrc.
 extension AppModel {
+    static let nexusCommand = Bundle.main.bundleURL.resolvingSymlinksInPath().appending(path: "Contents/Helpers/nexus")
+
     func readPathSetting() {
         guard isLive else {
             return
@@ -97,9 +100,107 @@ extension AppModel {
 
         pathSetting = ShellPathLine.standard.state()
         pathSettingProblem = nil
+        checkShellCommands()
     }
 
-    // Returns false when ~/.zshrc did not change. The reason shows below the setting.
+    // Without the PATH setting the terminal does not use Nexus. That is no problem then.
+    // The check starts the shell files of the user. So it runs again only after a change of the
+    // setting or of a shell file, and not at each view of a screen. A new check stops the check
+    // before it. So an older answer cannot replace a newer one.
+    func checkShellCommands(again: Bool = false) {
+        if again {
+            shellCommandsStamp = nil
+        }
+
+        guard pathSetting != .off else {
+            shellCommandsCheck?.cancel()
+            shellCommandsStamp = nil
+            otherShellCommands = []
+            return
+        }
+
+        let stamp = ShellCommands.files(home: FileManager.default.homeDirectoryForCurrentUser).map { file in
+            ((try? FileManager.default.attributesOfItem(atPath: file.resolvingSymlinksInPath().path(percentEncoded: false)))?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        }
+
+        guard stamp != shellCommandsStamp else {
+            return
+        }
+
+        shellCommandsCheck?.cancel()
+        shellCommandsStamp = stamp
+        shellCommandsCheck = Task {
+            let others = await Self.otherShellCommands()
+
+            guard !Task.isCancelled, pathSetting != .off else {
+                return
+            }
+
+            if others == nil {
+                shellCommandsStamp = nil
+            }
+
+            otherShellCommands = others ?? []
+        }
+    }
+
+    // A new login shell of zsh reads the shell files as a new terminal window does. A shell file
+    // that waits for input stops the check after 10 seconds. The check then shows nothing and
+    // runs again at the next view of a screen. An interactive zsh ignores SIGTERM, so the stop
+    // uses SIGKILL.
+    nonisolated private static func otherShellCommands() async -> [OtherCommand]? {
+        let command = Command(
+            executable: URL(filePath: "/bin/zsh"),
+            arguments: ["-l", "-i", "-c", ShellCommands.script],
+            environment: ["USER": NSUserName(), "LOGNAME": NSUserName(), "SHELL": "/bin/zsh"],
+            stopSignal: SIGKILL
+        )
+
+        let output = await withTaskGroup(of: String?.self) { group in
+            group.addTask { try? await CommandRunner.run(command).standardOutput }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(10))
+                return nil
+            }
+
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+
+        guard let output else {
+            return nil
+        }
+
+        return ShellCommands.others(in: output, bin: NexusPaths.standard.bin)
+    }
+
+    var shellWarningTitle: String {
+        let names = otherShellCommands.map(\.name)
+        return "\(EnglishList.joined(names)) in your terminal \(names.count == 1 ? "does" : "do") not use Nexus"
+    }
+
+    // A command that is not found has another cause and another fix than an alias.
+    var shellWarningReasons: [String] {
+        let found = otherShellCommands.filter { !$0.isNotFound }
+        var reasons: [String] = []
+
+        if !found.isEmpty {
+            reasons.append(found.allSatisfy { $0.description.hasPrefix("\($0.name) is an alias for ") }
+                ? "An alias in your shell files wins over the PATH. Remove it to use the Nexus version."
+                : "An alias, a function or a later change to the PATH in your shell files wins over the line of Nexus. Remove it to use the Nexus version.")
+        }
+
+        if otherShellCommands.contains(where: \.isNotFound) {
+            reasons.append("A command that is not found has no working link in the bin folder of Nexus. Turn the setting off and on to make the links again.")
+        }
+
+        return reasons
+    }
+
+    // Returns false when ~/.zshrc did not change. The reason shows below the setting. nexusd
+    // makes the links in bin/ at its start. The app makes them again when the setting turns on.
+    // So the links of an app that moved work again without a new start of nexusd.
     @discardableResult
     func setAddToPath(_ on: Bool) -> Bool {
         guard isLive else {
@@ -113,8 +214,12 @@ extension AppModel {
         do {
             let line = ShellPathLine.standard
             try on ? line.turnOn() : line.turnOff()
+
+            if on, CommandLinks.canPoint(to: Self.nexusCommand) {
+                try CommandLinks.write(in: NexusPaths.standard.bin, command: Self.nexusCommand)
+            }
         } catch {
-            problem = "Nexus could not change ~/.zshrc. \(error.localizedDescription)"
+            problem = "Nexus could not change ~/.zshrc or the links in its bin folder. \(error.localizedDescription)"
         }
 
         readPathSetting()

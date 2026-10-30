@@ -121,6 +121,25 @@ private struct GeneralSettings: View {
                 Text("Shell")
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
+                    if !model.otherShellCommands.isEmpty {
+                        WarningBanner(title: model.shellWarningTitle) {
+                            ForEach(model.otherShellCommands, id: \.self) { other in
+                                Text(other.description)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .textSelection(.enabled)
+                            }
+
+                            ForEach(model.shellWarningReasons, id: \.self) { reason in
+                                Text(reason)
+                            }
+                        } actions: {
+                            Button("Check again") {
+                                model.checkShellCommands(again: true)
+                            }
+                        }
+                        .padding(.bottom, 4)
+                    }
+
                     Text("Nexus adds one line at the end of ~/.zshrc. php, composer, node and npm in your terminal then use the versions of the site in the current folder. Turn it off to remove the line.")
 
                     if model.pathSetting == .notLast {

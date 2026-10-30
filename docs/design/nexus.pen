@@ -32334,6 +32334,478 @@
           ]
         }
       ]
+    },
+    {
+      "id": "E0Ldb",
+      "type": "ref",
+      "ref": "TMj58",
+      "name": "Settings General · PATH warning A",
+      "x": 6720,
+      "y": 8556,
+      "descendants": {
+        "yroXJ": {
+          "type": "frame",
+          "id": "VHJ0a",
+          "name": "Section Terminal",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 6,
+          "children": [
+            {
+              "type": "text",
+              "id": "g2nQI",
+              "name": "Section Title",
+              "fill": "$label",
+              "content": "Shell",
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "AL9xd",
+              "name": "Group",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$group-bg",
+              "cornerRadius": 10,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "R0PnU",
+                  "name": "Row Add Nexus to PATH",
+                  "width": "fill_container",
+                  "height": 36,
+                  "gap": 10,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "DV39b",
+                      "name": "Label",
+                      "fill": "$label",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Add Nexus to PATH",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "id": "uou57",
+                      "type": "ref",
+                      "ref": "U8SOGP",
+                      "name": "Switch On"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "DfdpZ",
+              "name": "Problem",
+              "width": "fill_container",
+              "fill": "$warning-bg",
+              "cornerRadius": 10,
+              "gap": 10,
+              "padding": [
+                10,
+                12
+              ],
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "wow2a",
+                  "name": "Icon triangle-alert",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "triangle-alert",
+                  "library": "lucide",
+                  "fill": "$orange"
+                },
+                {
+                  "type": "frame",
+                  "id": "pm4lu",
+                  "name": "Problem Text",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "W4elLz",
+                      "name": "Title",
+                      "fill": "$label",
+                      "content": "php and composer in your terminal do not use Nexus",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pi0cI",
+                      "name": "Line php",
+                      "fill": "$secondary-label",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "php is an alias for /Applications/MAMP/bin/php/php8.5.2/bin/php -c \"…/php8.5.2.ini\"",
+                      "fontFamily": "$mono",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "HI58P",
+                      "name": "Line composer",
+                      "fill": "$secondary-label",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "composer is an alias for php /Applications/MAMP/bin/php/composer",
+                      "fontFamily": "$mono",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "m5vwF",
+                      "name": "Reason",
+                      "fill": "$secondary-label",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "An alias in your shell files wins over the PATH. Remove it to use the Nexus version.",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "id": "n8LCPD",
+                  "type": "ref",
+                  "ref": "M2oFR",
+                  "name": "Button Check Again",
+                  "descendants": {
+                    "vYy1h": {
+                      "content": "Check again"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "reJKq",
+              "name": "Footer",
+              "fill": "$secondary-label",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Nexus adds one line at the end of ~/.zshrc. php, composer, node and npm in your terminal then use the versions of the site in the current folder. Turn it off to remove the line.",
+              "lineHeight": 1.4,
+              "fontFamily": "$font",
+              "fontSize": 11,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        "hVe5I": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "id": "BQZoP",
+      "type": "ref",
+      "ref": "TMj58",
+      "name": "Settings General · PATH warning B",
+      "x": 7560,
+      "y": 8556,
+      "descendants": {
+        "yroXJ": {
+          "type": "frame",
+          "id": "zZWSh",
+          "name": "Section Terminal",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 6,
+          "children": [
+            {
+              "type": "text",
+              "id": "UD1xx",
+              "name": "Section Title",
+              "fill": "$label",
+              "content": "Shell",
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "yRRj0",
+              "name": "Group",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$group-bg",
+              "cornerRadius": 10,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "EcYMc",
+                  "name": "Row Add Nexus to PATH",
+                  "width": "fill_container",
+                  "height": 36,
+                  "stroke": "$separator",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 10,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "aBEMh",
+                      "name": "Label",
+                      "fill": "$label",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Add Nexus to PATH",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "id": "iKJZV",
+                      "type": "ref",
+                      "ref": "U8SOGP",
+                      "name": "Switch On"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "mWNkh",
+                  "name": "Row php",
+                  "width": "fill_container",
+                  "height": 36,
+                  "stroke": "$separator",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 10,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "CXTva",
+                      "name": "Icon triangle-alert",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "triangle-alert",
+                      "library": "lucide",
+                      "fill": "$orange"
+                    },
+                    {
+                      "type": "text",
+                      "id": "GYetm",
+                      "name": "Name",
+                      "fill": "$label",
+                      "textGrowth": "fixed-width",
+                      "width": 72,
+                      "content": "php",
+                      "fontFamily": "$mono",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "J5pp9A",
+                      "name": "Reason",
+                      "fill": "$secondary-label",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "An alias: /Applications/MAMP/bin/php/php8.5.2/bin/php -c \"…/php8.5.2.ini\"",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "vesiD",
+                      "name": "Icon info",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "info",
+                      "library": "lucide",
+                      "fill": "$secondary-label"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "mWeRJ",
+                  "name": "Row composer",
+                  "width": "fill_container",
+                  "height": 36,
+                  "gap": 10,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "tI6zn",
+                      "name": "Icon triangle-alert",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "triangle-alert",
+                      "library": "lucide",
+                      "fill": "$orange"
+                    },
+                    {
+                      "type": "text",
+                      "id": "gKv4L",
+                      "name": "Name",
+                      "fill": "$label",
+                      "textGrowth": "fixed-width",
+                      "width": 72,
+                      "content": "composer",
+                      "fontFamily": "$mono",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "va5qr",
+                      "name": "Reason",
+                      "fill": "$secondary-label",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "An alias: php /Applications/MAMP/bin/php/composer",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "vo789",
+                      "name": "Icon info",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "info",
+                      "library": "lucide",
+                      "fill": "$secondary-label"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "jtxQE",
+              "name": "Footer",
+              "fill": "$secondary-label",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Nexus adds one line at the end of ~/.zshrc. php, composer, node and npm in your terminal then use the versions of the site in the current folder. Turn it off to remove the line.",
+              "lineHeight": 1.4,
+              "fontFamily": "$font",
+              "fontSize": 11,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "jWO02",
+              "name": "Warning",
+              "fill": "$orange-text",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "An alias in your shell files wins over the PATH. Remove it to use the Nexus version.",
+              "lineHeight": 1.4,
+              "fontFamily": "$font",
+              "fontSize": 11,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        "hVe5I": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "id": "A8nQy",
+      "type": "ref",
+      "ref": "f42UM",
+      "name": "Command Line · PATH warning",
+      "x": 10400,
+      "y": 1168,
+      "descendants": {
+        "h9pzk": {
+          "type": "frame",
+          "id": "gg74A",
+          "name": "Path Warning",
+          "width": "fill_container",
+          "fill": "$warning-bg",
+          "cornerRadius": 10,
+          "gap": 10,
+          "padding": [
+            10,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "MXirY",
+              "name": "Icon triangle-alert",
+              "width": 16,
+              "height": 16,
+              "icon": "triangle-alert",
+              "library": "lucide",
+              "fill": "$orange"
+            },
+            {
+              "type": "text",
+              "id": "tDOSV",
+              "name": "Warning",
+              "fill": "$label",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "php and composer in your terminal do not use Nexus. Settings > General shows why. nexus --help shows the same list.",
+              "fontFamily": "$font",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "id": "IAWW1",
+              "type": "ref",
+              "ref": "M2oFR",
+              "name": "Button Open Settings",
+              "descendants": {
+                "vYy1h": {
+                  "content": "Open settings"
+                }
+              }
+            }
+          ]
+        }
+      }
     }
   ],
   "themes": {

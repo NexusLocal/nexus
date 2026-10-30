@@ -12,7 +12,7 @@ struct OverviewScreen: View {
             VStack(alignment: .leading, spacing: 24) {
                 switch model.nexusdProblem {
                 case .unreachable(let problem):
-                    Banner(
+                    WarningBanner(
                         title: "Nexus cannot reach its background service",
                         message: "\(problem) Nexus tries again every few seconds. Check that Nexus is on in Login Items."
                     ) {
@@ -21,7 +21,7 @@ struct OverviewScreen: View {
                         }
                     }
                 case .otherVersion(let problem):
-                    Banner(title: "Nexus cannot read its background service", message: problem) {
+                    WarningBanner(title: "Nexus cannot read its background service", message: problem) {
                         Button("Start it again") {
                             model.restartNexusd(from: .window)
                         }
@@ -31,7 +31,7 @@ struct OverviewScreen: View {
                 }
 
                 if let approval = background.approvalNeeded {
-                    Banner(title: "Nexus needs your approval", message: approval) {
+                    WarningBanner(title: "Nexus needs your approval", message: approval) {
                         Button("Open Login Items") {
                             background.helper.openLoginItemsSettings()
                         }
@@ -98,7 +98,7 @@ private struct ProblemBanner: View {
     let holder: PortHolder
 
     var body: some View {
-        Banner(
+        WarningBanner(
             title: "\(service.name) cannot start",
             message: "Port \(holder.port) is in use by \(holder.process) of \(holder.app) (process \(holder.processNumber))."
         ) {
@@ -109,34 +109,6 @@ private struct ProblemBanner: View {
                 model.sheet = .portInUse(service: service.id, holder: holder)
             }
         }
-    }
-}
-
-private struct Banner<Actions: View>: View {
-    let title: String
-    let message: String
-    @ViewBuilder let actions: Actions
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.title3)
-                .foregroundStyle(Color.statusOrange)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .fontWeight(.semibold)
-                Text(message)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 12)
-
-            actions
-        }
-        .padding(12)
-        .background(Color.warningBackground, in: .rect(cornerRadius: 10))
     }
 }
 

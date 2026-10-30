@@ -119,6 +119,36 @@ struct CommandRunnerTests {
         }
         #expect(ContinuousClock.now - started < .seconds(5))
     }
+
+    @Test func aStoppedCommandThatIgnoresSigtermStopsWithItsOwnSignal() async throws {
+        let started = ContinuousClock.now
+        let command = Task {
+            try await CommandRunner.run(Command(executable: URL(filePath: "/bin/sh"), arguments: ["-c", "trap '' TERM; while true; do sleep 1; done"], stopSignal: SIGKILL))
+        }
+
+        try await Task.sleep(for: .milliseconds(300))
+        command.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await command.value
+        }
+        #expect(ContinuousClock.now - started < .seconds(5))
+    }
+
+    @Test func aStopAlsoStopsTheProgramsThatTheProgramStarted() async throws {
+        let marker = "nexus-group-\(UUID().uuidString.prefix(8))"
+        let command = Task {
+            try await CommandRunner.run(Command(executable: URL(filePath: "/bin/sh"), arguments: ["-c", "/bin/sh -c 'while :; do /bin/sleep 1; done' \(marker) & wait"]))
+        }
+
+        try await Task.sleep(for: .milliseconds(300))
+        command.cancel()
+        _ = try? await command.value
+        try await Task.sleep(for: .milliseconds(300))
+
+        let search = try await CommandRunner.run(Command(executable: URL(filePath: "/bin/sh"), arguments: ["-c", "/usr/bin/pgrep -f '\(marker)' || true"]))
+        #expect(search.trimmed.isEmpty)
+    }
 }
 
 private final class ByteCounter: Sendable {

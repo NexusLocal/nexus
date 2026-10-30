@@ -592,8 +592,16 @@ so. The PATH setting is the line in ~/.zshrc itself. So a change by hand shows i
 line of Nexus that is not at the end shows a note. The Command line page shows the banner of
 the design while the setting is off, with a button that copies the path of the nexus command.
 An alias wins over the PATH (D39). On the owner's Mac, ~/.profile of MAMP PRO has aliases for
-php and composer. Checked on 2026-10-29 on the owner's Mac: in a test site with PHP 8.4, nexus
-php -v gave 8.4 and 8.5 outside it. nexus composer install and nexus npm ci worked in a worktree
+php and composer. So while the setting is on, the app starts a new login shell of zsh and asks
+what php, composer, node and npm are. Each one that is not the link of Nexus shows in an orange
+box in Settings > General, with the line of zsh, the reason and "Check again". The Command line
+page shows the same box (design "Settings General · PATH warning" and "Command Line · PATH
+warning", owner 2026-10-30). The Overview uses the same box. The check runs again only after a
+change of the setting or of a shell file. A shell that hangs stops after 10 seconds. A stop now
+ends the whole process group of a command. Neither nexusd nor the app makes a link to a
+temporary copy of the app (AppTranslocation). Checked on 2026-10-30: both screens showed the php
+and composer aliases of the owner. Checked on 2026-10-29 on the owner's Mac: in a test site with
+PHP 8.4, nexus php -v gave 8.4 and 8.5 outside it. nexus composer install and nexus npm ci worked in a worktree
 outside the site. Their scripts got PHP 8.4 and Node 24. With the setting on in Settings >
 General, ./vendor/bin/pest ran on Nexus PHP 8.4 in a new zsh. Without it, Pest ran on the PHP of
 MAMP PRO. Turning the setting off left ~/.zshrc as it was before. The test site is removed.

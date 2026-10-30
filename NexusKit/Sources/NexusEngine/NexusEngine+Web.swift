@@ -933,7 +933,7 @@ extension NexusEngine {
             await supervisor.signal(ServiceCatalog.phpID(line: line), SIGUSR2)
         }
 
-        return "\(changed.sorted().joined(separator: " and ")) \(enabled ? "on" : "off") for PHP \(line). Other PHP versions do not change."
+        return "\(EnglishList.joined(changed.sorted())) \(enabled ? "on" : "off") for PHP \(line). Other PHP versions do not change."
     }
 
     func moduleToggles(_ server: WebServer) async throws -> [Toggle] {
@@ -1010,7 +1010,7 @@ extension NexusEngine {
             try await changeAndRestartNginx { $0.nginxModules = change.enabled }
         }
 
-        let names = changed.sorted().joined(separator: " and ")
+        let names = EnglishList.joined(changed.sorted())
         return "\(names) \(changed.count == 1 ? "is" : "are") \(enabled ? "on" : "off") for \(server.displayName)."
     }
 

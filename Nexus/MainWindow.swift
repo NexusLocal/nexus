@@ -1,4 +1,5 @@
 import AppKit
+import NexusCore
 import SwiftUI
 
 struct MainWindow: View {
@@ -212,11 +213,11 @@ struct MainWindow: View {
         let message = "Its projects are not sites anymore. The folders and their files stay."
         let kept = model.allSites.filter { $0.parkedFolder == folder.path && $0.hasOwnSettings }.map(\.host)
 
-        guard let last = kept.last else {
+        guard !kept.isEmpty else {
             return message
         }
 
-        let names = kept.count == 1 ? last : "\(kept.dropLast().joined(separator: ", ")) and \(last)"
+        let names = EnglishList.joined(kept)
         let settings = kept.count == 1 ? "has settings of its own, so it stays a site" : "have settings of their own, so they stay sites"
         return "\(message) \(names) \(settings)."
     }

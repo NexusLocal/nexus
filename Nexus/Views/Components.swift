@@ -140,6 +140,45 @@ struct PortRow: View {
     }
 }
 
+// A problem that the user must know about, in the orange box of the design ("Problem" on the
+// Overview).
+struct WarningBanner<Details: View, Actions: View>: View {
+    let title: String
+    @ViewBuilder let details: Details
+    @ViewBuilder let actions: Actions
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.title3)
+                .foregroundStyle(Color.statusOrange)
+
+            // The fonts are explicit, because a Section footer gives its content a smaller font.
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                details
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            actions
+        }
+        .padding(12)
+        .background(Color.warningBackground, in: .rect(cornerRadius: 10))
+    }
+}
+
+extension WarningBanner where Details == Text {
+    init(title: String, message: String, @ViewBuilder actions: () -> Actions) {
+        self.init(title: title, details: { Text(message) }, actions: actions)
+    }
+}
+
 struct InfoBanner<Actions: View>: View {
     let text: String
     @ViewBuilder var actions: Actions

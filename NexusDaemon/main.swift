@@ -18,7 +18,7 @@ try? paths.createFolders()
 if let contents = Bundle.main.executableURL?.resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent() {
     let command = contents.appending(path: "Helpers/nexus")
 
-    if FileManager.default.isExecutableFile(atPath: command.path(percentEncoded: false)) {
+    if CommandLinks.canPoint(to: command) {
         try? CommandLinks.write(in: paths.bin, command: command)
     }
 }

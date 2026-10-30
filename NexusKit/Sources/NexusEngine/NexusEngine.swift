@@ -428,7 +428,7 @@ public actor NexusEngine {
         }
 
         try await waitForConnections(definition)
-        return "\(definition.displayName) runs on port \(definition.ports.map(String.init).joined(separator: " and "))."
+        return "\(definition.displayName) runs on port \(EnglishList.joined(definition.ports.map(String.init)))."
     }
 
     // The definition for the next start of a service, with the ports of the state.
@@ -1258,7 +1258,7 @@ extension NexusEngine {
 
         let resolvers = systemFiles.nexusResolvers
         let systemFileNames = resolvers.map { "/etc/resolver/\($0)" } + ["its /etc/hosts lines"]
-        let removedFiles = Self.list(systemFileNames)
+        let removedFiles = EnglishList.joined(systemFileNames)
 
         if !resolvers.isEmpty || systemFiles.hasNexusHosts {
             do {
@@ -1291,18 +1291,9 @@ extension NexusEngine {
         }
 
         return """
-            Nexus removed \(Self.list(systemFileNames + ["its root CA", "its background services"])).
+            Nexus removed \(EnglishList.joined(systemFileNames + ["its root CA", "its background services"])).
             The packages and the databases stay in \(paths.root.path(percentEncoded: false)). Remove that folder to remove them too.
             Quit Nexus and move it to the Trash.
             """
-    }
-
-    // "a", "a and b", or "a, b and c".
-    static func list(_ items: [String]) -> String {
-        guard let last = items.last else {
-            return ""
-        }
-
-        return items.count == 1 ? last : "\(items.dropLast().joined(separator: ", ")) and \(last)"
     }
 }

@@ -160,6 +160,9 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
     ~/Library/Application Support/Nexus/bin first on the PATH. Turning it off removes the line.
     It must be the end of ~/.zshrc: zsh reads ~/.zshrc last, and a ~/.zshrc can add other PHP
     folders to the front of the PATH. An alias still wins over the PATH.
+    While the setting is on, the app shows each of php, composer, node and npm that the terminal
+    does not run from Nexus, with the reason, for example an alias. The user must know when
+    another program runs instead of Nexus. (owner, step 7)
 
 ### Workspaces
 

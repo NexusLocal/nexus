@@ -15,6 +15,13 @@ public enum ProjectTool: String, Codable, Sendable, CaseIterable {
 public enum CommandLinks {
     public static let names = ["nexus"] + ProjectTool.allCases.map(\.rawValue)
 
+    // macOS can run a downloaded app from a temporary copy in an AppTranslocation folder. A link to
+    // that copy breaks at the next start of the app.
+    public static func canPoint(to command: URL) -> Bool {
+        let path = command.path(percentEncoded: false)
+        return FileManager.default.isExecutableFile(atPath: path) && !path.contains("/AppTranslocation/")
+    }
+
     public static func write(in folder: URL, command: URL, using fileManager: FileManager = .default) throws {
         try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
         let target = command.path(percentEncoded: false)

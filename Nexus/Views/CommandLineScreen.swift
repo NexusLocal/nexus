@@ -7,7 +7,7 @@ struct CommandLineScreen: View {
     @State private var search = ""
 
     // Without the PATH setting, a user can still run the nexus command in the app by its path.
-    private static let commandPath = Bundle.main.bundleURL.appending(path: "Contents/Helpers/nexus").path(percentEncoded: false)
+    private static let commandPath = AppModel.nexusCommand.path(percentEncoded: false)
 
     private var sections: [CommandSection] {
         let query = search.trimmingCharacters(in: .whitespaces).lowercased()
@@ -25,30 +25,37 @@ struct CommandLineScreen: View {
         }
     }
 
-    // The note is a row of the form. Outside the form, its text sets a minimum height that makes
-    // the window content taller than the window.
+    // The note and the warning are in the form. Outside the form, their text sets a minimum height
+    // that makes the window content taller than the window. A form row on macOS cannot get the
+    // orange background. So the warning is the footer of a section without rows.
     var body: some View {
         Form {
-            Section {
-                HStack(spacing: 10) {
-                    Image(systemName: "info.circle")
-                        .foregroundStyle(Color.accentText)
+            if model.otherShellCommands.isEmpty {
+                Section {
+                    HStack(spacing: 10) {
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(Color.accentText)
 
-                    if model.pathSetting == .off {
-                        Text("Turn on \"Add Nexus to PATH\" in Settings > General to use nexus in your terminal. nexus --help shows the same list.")
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer()
-                        Button("Copy path") {
-                            copyToPasteboard(Self.shellWord(Self.commandPath))
+                        if model.pathSetting == .off {
+                            Text("Turn on \"Add Nexus to PATH\" in Settings > General to use nexus in your terminal. nexus --help shows the same list.")
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer()
+                            Button("Copy path") {
+                                copyToPasteboard(Self.shellWord(Self.commandPath))
+                            }
+                            .help("Copies the path of the nexus command in the app: \(Self.commandPath)")
+                            openSettingsButton
+                        } else {
+                            Text("nexus --help shows the same list.")
+                            Spacer()
                         }
-                        .help("Copies the path of the nexus command in the app: \(Self.commandPath)")
-                        Button("Open settings") {
-                            UserDefaults.standard.set("general", forKey: SettingsWindow.tabKey)
-                            openSettings()
-                        }
-                    } else {
-                        Text("nexus --help shows the same list.")
-                        Spacer()
+                    }
+                }
+            } else {
+                Section {
+                } footer: {
+                    WarningBanner(title: model.shellWarningTitle, message: "Settings > General shows why. nexus --help shows the same list.") {
+                        openSettingsButton
                     }
                 }
             }
@@ -80,6 +87,13 @@ struct CommandLineScreen: View {
         .searchable(text: $search, placement: .toolbar, prompt: "Search commands")
         .onAppear {
             model.readPathSetting()
+        }
+    }
+
+    private var openSettingsButton: some View {
+        Button("Open settings") {
+            UserDefaults.standard.set("general", forKey: SettingsWindow.tabKey)
+            openSettings()
         }
     }
 
