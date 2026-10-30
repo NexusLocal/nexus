@@ -84,6 +84,7 @@ extension NexusEngine {
                 state.worktrees[key]?.workspaces[index].redisIndexes = finished.redisIndexes
                 state.worktrees[key]?.workspaces[index].redisInstances = finished.redisInstances
                 state.worktrees[key]?.workspaces[index].ports = finished.ports
+                state.worktrees[key]?.workspaces[index].warnings = finished.warnings
             }
             return true
         } catch {
@@ -134,11 +135,14 @@ extension NexusEngine {
 
     private func setUp(_ workspace: Workspace, key: String) async -> Workspace {
         var workspace = workspace
+        workspace.warnings = []
 
         do {
             if let written = try await writeEnvFile(of: &workspace, key: key) {
                 try await copyData(of: written, into: &workspace, key: key)
             }
+
+            await cloneFiles(into: &workspace, key: key)
 
             if workspace.state == .preparing {
                 workspace.state = .ready
@@ -255,7 +259,7 @@ extension NexusEngine {
 
     // The record goes to the state at once, and it finds the workspace by name. A stop of nexusd
     // or a moved worktree must not lose it, because the next setup then refuses this copy.
-    private func updateRecord(of workspace: String, key: String, _ change: @escaping @Sendable (inout Workspace) -> Void) async throws {
+    func updateRecord(of workspace: String, key: String, _ change: @escaping @Sendable (inout Workspace) -> Void) async throws {
         try await stateStore.update { state in
             if let index = state.worktrees[key]?.workspaces.firstIndex(where: { $0.name == workspace }) {
                 change(&state.worktrees[key]!.workspaces[index])
@@ -303,8 +307,8 @@ extension NexusEngine {
     }
 
     // Between two disks or on a disk without APFS, a clone is a normal copy that can take long.
-    private static func cloneOutsideTheActor(_ source: String, to target: String) async throws {
-        try await Task.detached { try FileClone.clone(source, to: target) }.value
+    static func cloneOutsideTheActor(_ source: String, to target: String, preparing prepare: @escaping @Sendable (String) throws -> Void = { _ in }) async throws {
+        try await Task.detached { try FileClone.clone(source, to: target, preparing: prepare) }.value
     }
 
     private struct WrittenEnv {
@@ -404,7 +408,7 @@ extension NexusEngine {
 
     // The application has the same path in the worktree as in the repository. A repository in the
     // public folder holds no application, so the folder of the workspace is the nearest place.
-    private static func applicationFolder(_ mainFolder: String, of site: Site, in workspace: Workspace) -> String {
+    static func applicationFolder(_ mainFolder: String, of site: Site, in workspace: Workspace) -> String {
         guard let root = ProjectFolder.repository(of: site)?.root, RealPath.contains(root, mainFolder) else {
             return workspace.folder
         }

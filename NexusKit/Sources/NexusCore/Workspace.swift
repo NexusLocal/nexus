@@ -51,7 +51,8 @@ public struct WorkspaceRedisIndex: Sendable, Hashable {
 // redisIndexes has the index of each env key (D47), and redisInstances the instances that hold
 // them. ports has the port of each {port:<name>}. databases holds the finished copies, and
 // startedCopies the copies that run or that did not end. plannedCopies counts the copies of the
-// last setup.
+// last setup. installedLockFiles has the digest of each lock file that an install followed.
+// warnings holds what the last setup could not do, when the isolation does not depend on it.
 public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     public let name: String
     public var worktree: String
@@ -64,6 +65,8 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     public var databases: [WorkspaceDatabaseCopy]
     public var startedCopies: [WorkspaceDatabaseCopy]
     public var plannedCopies: Int
+    public var installedLockFiles: [String: String]
+    public var warnings: [String]
 
     public var id: String { name }
 
@@ -84,7 +87,9 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         ports: [String: Int] = [:],
         databases: [WorkspaceDatabaseCopy] = [],
         startedCopies: [WorkspaceDatabaseCopy] = [],
-        plannedCopies: Int = 0
+        plannedCopies: Int = 0,
+        installedLockFiles: [String: String] = [:],
+        warnings: [String] = []
     ) {
         self.name = name
         self.worktree = worktree
@@ -97,10 +102,12 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         self.databases = databases
         self.startedCopies = startedCopies
         self.plannedCopies = plannedCopies
+        self.installedLockFiles = installedLockFiles
+        self.warnings = warnings
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, worktree, folder, branch, state, redisIndexes, redisInstances, ports, databases, startedCopies, plannedCopies
+        case name, worktree, folder, branch, state, redisIndexes, redisInstances, ports, databases, startedCopies, plannedCopies, installedLockFiles, warnings
     }
 
     // A record of part 8b has no state. A record from before part 8f has Redis indexes without their
@@ -121,6 +128,8 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         databases = try container.decodeIfPresent([WorkspaceDatabaseCopy].self, forKey: .databases) ?? []
         startedCopies = try container.decodeIfPresent([WorkspaceDatabaseCopy].self, forKey: .startedCopies) ?? []
         plannedCopies = try container.decodeIfPresent(Int.self, forKey: .plannedCopies) ?? 0
+        installedLockFiles = try container.decodeIfPresent([String: String].self, forKey: .installedLockFiles) ?? [:]
+        warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
     }
 
     // D46: <database>_<workspace>. A - in a database name needs quotes in each query of an

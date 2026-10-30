@@ -91,6 +91,7 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
     public let startedCopies: [WorkspaceDatabaseCopy]?
     public let finishedCopies: Int?
     public let plannedCopies: Int?
+    public let warnings: [String]?
 
     public var id: String { name }
 
@@ -105,7 +106,8 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         state: WorkspaceState? = nil,
         startedCopies: [WorkspaceDatabaseCopy]? = nil,
         finishedCopies: Int? = nil,
-        plannedCopies: Int? = nil
+        plannedCopies: Int? = nil,
+        warnings: [String]? = nil
     ) {
         self.name = name
         self.worktree = worktree
@@ -118,6 +120,7 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         self.startedCopies = startedCopies
         self.finishedCopies = finishedCopies
         self.plannedCopies = plannedCopies
+        self.warnings = warnings
     }
 
     // The percentage over all copies. Each database counts the same, because Nexus knows the size

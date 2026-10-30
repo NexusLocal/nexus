@@ -27,6 +27,37 @@ public enum GitTool {
         }
     }
 
+    // The files and folders that git ignores in a folder. A folder that git ignores as a whole is
+    // one entry, with a slash at its end. The list also holds the ignored files in a folder with a
+    // tracked .gitignore.
+    public static func ignoredEntries(in folder: String, git: URL) async throws -> [String] {
+        let arguments = ["-C", folder, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]
+
+        return try await CommandRunner.run(Command(executable: git, arguments: arguments)).standardOutput
+            .split(separator: "\0")
+            .map(String.init)
+    }
+
+    // The paths that git ignores in this folder. A folder can have thousands of ignored files, and
+    // a command line has a limit. git puts a name with a quote or a line break in quotes. Such a
+    // name then counts as a path that git sees, so Nexus does not write it.
+    public static func ignored(_ paths: [String], in folder: String, git: URL) async throws -> Set<String> {
+        var ignored: Set<String> = []
+
+        for start in stride(from: 0, to: paths.count, by: 500) {
+            let batch = paths[start..<min(start + 500, paths.count)]
+
+            do {
+                let output = try await CommandRunner.run(Command(executable: git, arguments: ["-C", folder, "-c", "core.quotePath=false", "check-ignore", "--"] + batch))
+                ignored.formUnion(output.standardOutput.split(separator: "\n").map(String.init))
+            } catch CommandError.failed(_, let status, _) where status == 1 {
+                continue
+            }
+        }
+
+        return ignored
+    }
+
     static func executable(hasDeveloperTools: Bool, isProgram: (String) -> Bool) -> URL? {
         hasDeveloperTools ? URL(filePath: "/usr/bin/git") : otherPrograms.first(where: isProgram).map { URL(filePath: $0) }
     }

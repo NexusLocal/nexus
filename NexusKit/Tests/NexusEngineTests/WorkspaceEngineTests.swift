@@ -63,12 +63,519 @@ extension NexusEngineTests {
         try await settle(engine)
 
         let path = RealPath.of(worktree)
-        #expect(await workspaces(engine) == [WorkspaceInfo(name: "ticket-123", worktree: path, folder: path, branch: "ticket", hosts: ["shop-ticket-123.test"], problem: "Every site needs nginx, and nginx is not installed. Run: nexus install nginx 1.30", state: .ready, startedCopies: [], finishedCopies: 0, plannedCopies: 0)])
+        #expect(await workspaces(engine) == [WorkspaceInfo(name: "ticket-123", worktree: path, folder: path, branch: "ticket", hosts: ["shop-ticket-123.test"], problem: "Every site needs nginx, and nginx is not installed. Run: nexus install nginx 1.30", state: .ready, startedCopies: [], finishedCopies: 0, plannedCopies: 0, warnings: [])])
 
         try await git("worktree", "remove", worktree.path(percentEncoded: false), in: shop)
         try await settle(engine)
 
         #expect(await workspaces(engine).isEmpty)
+    }
+
+    // A site that is no Laravel application, with the ignored files of a real application.
+    private func applicationWithFiles(in root: URL) async throws -> URL {
+        let shop = try await repository(in: root)
+        try writeFile("vendor\nnode_modules\n/public/build\n/public/hot\n/public/storage\n/bootstrap/cache/*\n.env\n", to: ".gitignore", in: shop)
+        try writeFile("*\n!.gitignore\n", to: "storage/app/.gitignore", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "files", in: shop)
+        try writeFile("<?php", to: "vendor/autoload.php", in: shop)
+        try writeFile("module.exports = 1", to: "node_modules/a/index.js", in: shop)
+        try writeFile("built", to: "public/build/app.js", in: shop)
+        try writeFile("http://127.0.0.1:5173", to: "public/hot", in: shop)
+        try writeFile("cached", to: "bootstrap/cache/packages.php", in: shop)
+        try writeFile("uploaded", to: "storage/app/uploads/a.txt", in: shop)
+        try writeFile("MAIN=1\n", to: ".env", in: shop)
+        try FileManager.default.createSymbolicLink(
+            atPath: shop.appending(path: "public/storage").path(percentEncoded: false),
+            withDestinationPath: "\(RealPath.of(shop))/storage/app/public"
+        )
+        return shop
+    }
+
+    private func gitOutput(_ arguments: String..., in folder: URL) async throws -> String {
+        try await CommandRunner.run(Command(executable: URL(filePath: "/usr/bin/git"), arguments: ["-C", folder.path(percentEncoded: false)] + arguments)).trimmed
+    }
+
+    @Test func aWorkspaceGetsTheFilesThatGitIgnoresAndGitSeesNoChange() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await applicationWithFiles(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let exists = { (path: String) in FileManager.default.fileExists(atPath: worktree.appending(path: path).path(percentEncoded: false)) }
+        let warnings = await workspaces(engine).first?.warnings
+
+        #expect(try String(contentsOf: worktree.appending(path: "vendor/autoload.php"), encoding: .utf8) == "<?php")
+        #expect(exists("node_modules/a/index.js"))
+        #expect(exists("public/build/app.js"))
+        #expect(exists("storage/app/uploads/a.txt"))
+        #expect(!exists("public/hot"))
+        #expect(!exists("bootstrap/cache/packages.php"))
+        #expect(!exists(".env"))
+        #expect(try await gitOutput("status", "--porcelain", in: worktree).isEmpty)
+        #expect(warnings == [])
+    }
+
+    @Test func manyPathsThatGitSeesGiveOneWarning() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let older = try await gitOutput("rev-parse", "HEAD", in: shop)
+        try writeFile("/public/js/*.js\n", to: ".gitignore", in: shop)
+        try writeFile("kept", to: "public/js/.gitkeep", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "assets", in: shop)
+        try writeFile("one", to: "public/js/a.js", in: shop)
+        try writeFile("two", to: "public/js/b.js", in: shop)
+        try writeFile("three", to: "public/js/c.js", in: shop)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), older, in: shop)
+        try await settle(engine)
+
+        let warnings = await workspaces(engine).first?.warnings
+
+        #expect(warnings == ["git does not ignore public/js/a.js and 2 more paths in this worktree, so Nexus does not clone them."])
+    }
+
+    @Test func aFolderThatGitIgnoresAsAWholeLosesTheViteFileAndItsLinkToTheMainCheckout() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        try writeFile("public\n", to: ".gitignore", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "ignore", in: shop)
+        try writeFile("built", to: "public/app.js", in: shop)
+        try writeFile("http://127.0.0.1:5173", to: "public/hot", in: shop)
+        try FileManager.default.createSymbolicLink(
+            atPath: shop.appending(path: "public/storage").path(percentEncoded: false),
+            withDestinationPath: "\(RealPath.of(shop))/storage/app/public"
+        )
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let folder = worktree.appending(path: "public").path(percentEncoded: false)
+
+        #expect(FileManager.default.fileExists(atPath: "\(folder)/app.js"))
+        #expect(!FileManager.default.fileExists(atPath: "\(folder)/hot"))
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: "\(folder)/storage") == "../storage/app/public")
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealRepositoryInThePublicFolderGetsTheFilesThatItIgnores() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = root.appending(path: "shop", directoryHint: .isDirectory)
+        let publicFolder = shop.appending(path: "public", directoryHint: .isDirectory)
+        try writeFile("", to: "artisan", in: shop)
+        try writeFile("{}", to: "composer.json", in: shop)
+        try writeFile(Self.bootstrapApp, to: "bootstrap/app.php", in: shop)
+        try writeFile(Self.bootstrappers, to: "vendor/autoload.php", in: shop)
+        try writeFile("<?php return ['default' => 'main', 'connections' => ['main' => ['driver' => 'sqlite', 'database' => env('DB_DATABASE')]]];", to: "config/database.php", in: shop)
+        try writeFile("APP_NAME=Shop\n", to: ".env", in: shop)
+        try writeFile(".env\nvendor\n", to: ".gitignore", in: publicFolder)
+        try await git("init", "-q", "-b", "main", in: publicFolder)
+        try await git("add", "-A", in: publicFolder)
+        try await git("commit", "-q", "-m", "first", in: publicFolder)
+        try writeFile("<?php", to: "vendor/autoload.php", in: publicFolder)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: publicFolder, php: "8.5")]
+        let engine = try makeSiteEngine(root: root, state: state)
+        try await linkRealRuntimes(in: engine.paths)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: publicFolder)
+            try await settle(engine)
+
+            let warnings = await workspaces(engine).first?.warnings
+
+            #expect(warnings == [])
+            #expect(FileManager.default.fileExists(atPath: worktree.appending(path: "vendor/autoload.php").path(percentEncoded: false)))
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealStopOfNexusdEndsARunningInstall() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let composer = #"{"name":"shop/app","version":"1.0.0","scripts":{"post-install-cmd":"sleep 37"}}"#
+        let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("composer", "2"), lockFile: "composer.lock", main: Self.composerLock, branch: Self.composerLock + "\n", composer: composer)
+        let start = ContinuousClock.now
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", worktree.path(percentEncoded: false), "fix", in: shop)
+
+            let setup = Task { await engine.reconcileWorkspaces() }
+
+            while await engine.runningInstall == nil {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+
+            await engine.stopWatchingWorktrees()
+            await setup.value
+
+            while await engine.workspaceWorkRuns {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+
+            let processes = try await CommandRunner.run(Command(executable: URL(filePath: "/bin/ps"), arguments: ["-eo", "command"])).standardOutput
+
+            #expect(ContinuousClock.now - start < .seconds(30))
+            #expect(!processes.contains("sleep 37"))
+            #expect(try await record(engine, of: shop).state == .preparing)
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealRemovalDuringAnInstallLeavesNoFolder() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let composer = #"{"name":"shop/app","version":"1.0.0","scripts":{"post-install-cmd":"sleep 38"}}"#
+        let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("composer", "2"), lockFile: "composer.lock", main: Self.composerLock, branch: Self.composerLock + "\n", composer: composer)
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", worktree.path(percentEncoded: false), "fix", in: shop)
+
+            let setup = Task { await engine.reconcileWorkspaces() }
+
+            while await engine.runningInstall == nil {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+
+            await setup.value
+            try await git("worktree", "remove", "--force", worktree.path(percentEncoded: false), in: shop)
+            try writeFile("from the install", to: "vendor/part", in: worktree)
+            try await settle(engine)
+
+            #expect(!FileManager.default.fileExists(atPath: worktree.path(percentEncoded: false)))
+        }
+    }
+
+    @Test func aDifferentYarnLockFileGivesAWarning() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        try writeFile("one", to: "yarn.lock", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "lock", in: shop)
+        try await git("branch", "fix", in: shop)
+        try await git("checkout", "-q", "fix", in: shop)
+        try writeFile("two", to: "yarn.lock", in: shop)
+        try await git("commit", "-q", "-am", "other lock", in: shop)
+        try await git("checkout", "-q", "main", in: shop)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+
+        try await git("worktree", "add", "-q", root.appending(path: "fix").path(percentEncoded: false), "fix", in: shop)
+        try await settle(engine)
+
+        let warnings = await workspaces(engine).first?.warnings
+
+        #expect(warnings == ["yarn.lock is different from the main checkout, so node_modules can be out of date. Run the install in the worktree."])
+    }
+
+    @Test func aCloneChangesAloneFromTheMainCheckout() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await applicationWithFiles(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+        try writeFile("changed", to: "storage/app/uploads/a.txt", in: worktree)
+
+        #expect(try String(contentsOf: shop.appending(path: "storage/app/uploads/a.txt"), encoding: .utf8) == "uploaded")
+    }
+
+    @Test func theStorageLinkOfAWorkspaceDoesNotLeadToTheMainCheckout() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await applicationWithFiles(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let link = worktree.appending(path: "public/storage").path(percentEncoded: false)
+
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link) == "../storage/app/public")
+    }
+
+    @Test func aPathBehindALinkOfTheWorktreeLeavesTheOtherClones() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        try writeFile("vendor\n/public/assets/*.js\n", to: ".gitignore", in: shop)
+        try FileManager.default.createDirectory(at: shop.appending(path: "public"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: shop.appending(path: "public/assets").path(percentEncoded: false), withDestinationPath: "../shared")
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "link", in: shop)
+        let older = try await gitOutput("rev-parse", "HEAD", in: shop)
+        try FileManager.default.removeItem(at: shop.appending(path: "public/assets"))
+        try writeFile("kept", to: "public/assets/.gitkeep", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "folder", in: shop)
+        try writeFile("one", to: "public/assets/a.js", in: shop)
+        try writeFile("<?php", to: "vendor/autoload.php", in: shop)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), older, in: shop)
+        try await settle(engine)
+
+        let warnings = await workspaces(engine).first?.warnings
+
+        #expect(FileManager.default.fileExists(atPath: worktree.appending(path: "vendor/autoload.php").path(percentEncoded: false)))
+        #expect(warnings == ["git does not ignore public/assets/a.js in this worktree, so Nexus does not clone it."])
+    }
+
+    @Test func aLockFileGivesNoInstallWhenGitDoesNotIgnoreItsFolder() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let older = try await gitOutput("rev-parse", "HEAD", in: shop)
+        try await git("checkout", "-q", "-b", "fix", older, in: shop)
+        try writeFile("branch", to: "composer.lock", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "lock of the branch", in: shop)
+        try await git("checkout", "-q", "main", in: shop)
+        try writeFile("vendor\n", to: ".gitignore", in: shop)
+        try writeFile("main", to: "composer.lock", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "lock of main", in: shop)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+
+        try await git("worktree", "add", "-q", root.appending(path: "fix").path(percentEncoded: false), "fix", in: shop)
+        try await settle(engine)
+
+        let warnings = await workspaces(engine).first?.warnings
+
+        #expect(warnings == ["vendor does not fit composer.lock, and git does not ignore vendor/ in this worktree. So Nexus runs no install."])
+    }
+
+    @Test func aLinkToAFolderOutsideTheProjectGivesAWarning() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await applicationWithFiles(in: root)
+        let link = shop.appending(path: "public/storage").path(percentEncoded: false)
+        try FileManager.default.removeItem(atPath: link)
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: "/nexus-shared/uploads")
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let workspace = await workspaces(engine).first
+
+        #expect(workspace?.warnings == ["public/storage is a link to a folder outside the project, so Nexus does not clone it."])
+        #expect(workspace?.state == .ready)
+    }
+
+    @Test func aSecondSetupKeepsWhatAWorkspaceChanged() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await applicationWithFiles(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+        try writeFile("changed", to: "vendor/autoload.php", in: worktree)
+
+        _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+        try await settle(engine)
+
+        #expect(try String(contentsOf: worktree.appending(path: "vendor/autoload.php"), encoding: .utf8) == "changed")
+    }
+
+    @Test func aFolderWithAStarPatternGetsItsFiles() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        try writeFile("/vendor/*\n/dist/*\n!/dist/.gitkeep\n", to: ".gitignore", in: shop)
+        try writeFile("kept", to: "dist/.gitkeep", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "ignore", in: shop)
+        try writeFile("<?php", to: "vendor/acme/file.php", in: shop)
+        try writeFile("built", to: "dist/app.js", in: shop)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let warnings = await workspaces(engine).first?.warnings
+
+        #expect(FileManager.default.fileExists(atPath: worktree.appending(path: "vendor/acme/file.php").path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: worktree.appending(path: "dist/app.js").path(percentEncoded: false)))
+        #expect(warnings == [])
+        #expect(try await gitOutput("status", "--porcelain", in: worktree).isEmpty)
+    }
+
+    @Test func aPathThatTheBranchOfTheWorktreeDoesNotIgnoreGivesAWarning() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await applicationWithFiles(in: root)
+        let older = try await gitOutput("rev-parse", "HEAD", in: shop)
+        try writeFile("vendor\nnode_modules\n/public/build\n/public/hot\n/public/storage\n/bootstrap/cache/*\n.env\ndist\n", to: ".gitignore", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "dist", in: shop)
+        try writeFile("built", to: "dist/app.js", in: shop)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), older, in: shop)
+        try await settle(engine)
+
+        let warnings = await workspaces(engine).first?.warnings
+
+        #expect(warnings == ["git does not ignore dist/ in this worktree, so Nexus does not clone it."])
+        #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: "dist").path(percentEncoded: false)))
+        #expect(try await gitOutput("status", "--porcelain", in: worktree).isEmpty)
+    }
+
+    private func applicationWithLockFiles(in root: URL, tool: (name: String, line: String), lockFile: String, main: String, branch: String, composer: String = #"{"name":"shop/app","version":"1.0.0"}"#) async throws -> (shop: URL, engine: NexusEngine, worktree: URL) {
+        let shop = try await repository(in: root)
+        try writeFile("vendor\nnode_modules\n", to: ".gitignore", in: shop)
+        try writeFile(composer, to: "composer.json", in: shop)
+        try writeFile(#"{"name":"app","version":"1.0.0"}"#, to: "package.json", in: shop)
+        try writeFile(main, to: lockFile, in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "locks", in: shop)
+        try await git("branch", "fix", in: shop)
+        try await git("checkout", "-q", "fix", in: shop)
+        try writeFile(branch, to: lockFile, in: shop)
+        try await git("commit", "-q", "--allow-empty", "-am", "other lock", in: shop)
+        try await git("checkout", "-q", "main", in: shop)
+        try writeFile("from the main checkout", to: "vendor/marker", in: shop)
+        try writeFile("from the main checkout", to: "node_modules/marker", in: shop)
+
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.5")]
+        let engine = try makeSiteEngine(root: root, state: state)
+        try await linkRealRuntimes(in: engine.paths)
+        try await link(tool, in: engine)
+        return (shop, engine, root.appending(path: "fix", directoryHint: .isDirectory))
+    }
+
+    private static let composerLock = #"{"content-hash":"none","packages":[],"packages-dev":[],"aliases":[],"minimum-stability":"stable","stability-flags":{},"prefer-stable":false,"prefer-lowest":false,"platform":{},"platform-dev":{},"plugin-api-version":"2.6.0"}"#
+    private static let npmLock = #"{"name":"app","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"app","version":"1.0.0"}}}"#
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceRunsComposerOneTimeWhenItsLockFileIsDifferent() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("composer", "2"), lockFile: "composer.lock", main: Self.composerLock, branch: Self.composerLock + "\n")
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", worktree.path(percentEncoded: false), "fix", in: shop)
+            try await settle(engine)
+
+            let autoload = worktree.appending(path: "vendor/autoload.php").path(percentEncoded: false)
+
+            #expect(await workspaces(engine).first?.warnings == [])
+            #expect(FileManager.default.fileExists(atPath: autoload))
+
+            try FileManager.default.removeItem(atPath: autoload)
+            _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+            try await settle(engine)
+
+            #expect(!FileManager.default.fileExists(atPath: autoload))
+
+            try FileManager.default.removeItem(at: worktree.appending(path: "vendor"))
+            _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+            try await settle(engine)
+
+            #expect(FileManager.default.fileExists(atPath: autoload))
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceRunsComposerWhenItsLockFileGoesBackToTheOneOfTheMainCheckout() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("composer", "2"), lockFile: "composer.lock", main: Self.composerLock, branch: Self.composerLock + "\n")
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", worktree.path(percentEncoded: false), "fix", in: shop)
+            try await settle(engine)
+
+            let autoload = worktree.appending(path: "vendor/autoload.php").path(percentEncoded: false)
+
+            try FileManager.default.removeItem(atPath: autoload)
+            try writeFile(Self.composerLock, to: "composer.lock", in: worktree)
+            _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+            try await settle(engine)
+
+            #expect(FileManager.default.fileExists(atPath: autoload))
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceRunsNpmCiWhenItsLockFileIsDifferent() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("node", "24"), lockFile: "package-lock.json", main: Self.npmLock, branch: Self.npmLock + "\n")
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", worktree.path(percentEncoded: false), "fix", in: shop)
+            try await settle(engine)
+
+            #expect(await workspaces(engine).first?.warnings == [])
+            #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: "node_modules/marker").path(percentEncoded: false)))
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceWithTheSameLockFileRunsNoInstall() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("composer", "2"), lockFile: "composer.lock", main: Self.composerLock, branch: Self.composerLock)
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", worktree.path(percentEncoded: false), "fix", in: shop)
+            try await settle(engine)
+
+            #expect(FileManager.default.fileExists(atPath: worktree.appending(path: "vendor/marker").path(percentEncoded: false)))
+            #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: "vendor/autoload.php").path(percentEncoded: false)))
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealInstallThatFailsGivesAWarningAndAWorkspaceThatStaysReady() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("node", "24"), lockFile: "package-lock.json", main: Self.npmLock, branch: "no json")
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", worktree.path(percentEncoded: false), "fix", in: shop)
+            try await settle(engine)
+
+            let workspace = try #require(await workspaces(engine).first)
+
+            #expect(workspace.state == .ready)
+            #expect(workspace.warnings?.first?.hasPrefix("node_modules does not fit package-lock.json, and the install failed") == true)
+            #expect(FileManager.default.fileExists(atPath: worktree.appending(path: "node_modules/marker").path(percentEncoded: false)))
+        }
     }
 
     private func writeFile(_ text: String, to path: String, in folder: URL) throws {
@@ -1574,6 +2081,33 @@ extension NexusEngineTests {
 
         #expect(await workspaces(engine).map(\.state) == [.notIsolated("git does not ignore .env, so Nexus does not write that file.")])
         #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: ".env").path(percentEncoded: false)))
+        await engine.shutdown()
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceThatIsNotIsolatedRunsNoInstall() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: "vendor\n")
+        try writeFile("main", to: "composer.lock", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "lock", in: shop)
+        try await git("checkout", "-q", "-b", "fix", in: shop)
+        try writeFile("branch", to: "composer.lock", in: shop)
+        try await git("commit", "-q", "-am", "other lock", in: shop)
+        try await git("checkout", "-q", "main", in: shop)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.5")]
+        let engine = try makeSiteEngine(root: root, state: state)
+        try await linkRealRuntimes(in: engine.paths)
+        try await settle(engine)
+
+        try await git("worktree", "add", "-q", root.appending(path: "fix").path(percentEncoded: false), "fix", in: shop)
+        try await settle(engine)
+
+        let warnings = await workspaces(engine).first?.warnings
+
+        #expect(warnings == ["vendor does not fit composer.lock, and Nexus runs no install in a workspace that is not isolated."])
         await engine.shutdown()
     }
 

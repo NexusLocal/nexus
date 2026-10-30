@@ -844,6 +844,42 @@ almost no extra disk. `git status` in the
 worktree shows no change after the setup. Measure the time of the node_modules clone, because
 it has many small files.
 
+Built: after the database copies, the setup clones what git ignores in the main checkout. The list
+comes from `git ls-files`, so git ignores each path there. It holds each ignored path in vendor,
+node_modules, public, dist, build and storage/app. It leaves out public/hot, because that file
+names the Vite server of the main site. bootstrap/cache and the .env files are not on the list. A
+site that is no Laravel application gets the same clones (D54). A second setup keeps what exists.
+
+`git check-ignore` in the worktree decides again, because a branch can have another .gitignore. A
+path that git sees there gets no clone, and the workspace gets a warning (D50). `php artisan
+storage:link` writes an absolute link into the main checkout. The worktree gets a relative link to
+the same place in the worktree, so an upload does not go to the main site and `git worktree move`
+keeps the link. The same applies to each link in a folder that git ignores as a whole, and public/hot
+goes from such a clone. A link outside the repository gets a warning. In a folder that git ignores
+as a whole, that link stays and a relative link gets the full path. A warning shows on the Site
+screen and in `nexus workspace list`, and the workspace stays Ready. The part of a clone stays in a
+temporary folder of macOS on the same disk until it is complete, so git never sees it.
+
+A clone of node_modules before `npm ci` costs seconds for nothing, because that command removes the
+folder first. So the setup clones node_modules only when `npm ci` does not run or fails. An install
+that git removes the worktree from stops, and its folder goes.
+
+When composer.lock or package-lock.json of the worktree is different from the main checkout, the
+setup runs `composer install` or `npm ci` in the worktree, with the PHP and the Node of the site.
+The record keeps a digest of that lock file, so a later setup does not run it again. When vendor or
+node_modules is gone, the record forgets that digest, because the new clone comes from the main
+checkout. A lock file that goes back to the one of the main checkout also gets an install, because
+the folder still fits the digest in the record. A failed install gives a warning. A workspace that is not isolated gets no install, because
+a script of the project can use the main database (D48). A folder that git does not ignore gets no
+install either (D50). Nexus has no yarn and no pnpm, so a different yarn.lock or pnpm-lock.yaml gives
+only a warning.
+
+Checked on 2026-10-30 on the owner's Mac with a clone of 3rdRisk-platform: 556 MB of vendor and 1.0
+GB of node_modules with 61,281 files. The setup took 34 seconds, and the disk use rose by 41 MB.
+The clone of node_modules alone took 9 to 12 seconds, and the clone of vendor 8 to 10. `git status`
+in the worktree stayed empty, and `php artisan --version` worked there. `git worktree remove`
+worked without --force. The test site and the clone are removed.
+
 ### 8h. Commands after the copy
 
 Work: run the list of the site after the database copy (D51). Show the output in the log.

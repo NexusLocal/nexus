@@ -288,11 +288,13 @@ public enum LogFile {
 // Every child process starts with this environment, not with the environment of nexusd. So a
 // PATH or a setting such as MYSQL_HOME from the shell of the user cannot change a service.
 public enum ChildEnvironment {
+    public static let path = "/usr/bin:/bin:/usr/sbin:/sbin"
+
     public static func base() -> [String: String] {
         let inherited = ProcessInfo.processInfo.environment
 
         return [
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "PATH": path,
             "HOME": inherited["HOME"] ?? NSHomeDirectory(),
             "TMPDIR": inherited["TMPDIR"] ?? NSTemporaryDirectory(),
             "LANG": "en_US.UTF-8",

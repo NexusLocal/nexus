@@ -181,6 +181,13 @@ struct SiteScreen: View {
                             .foregroundStyle(Color.orangeText)
                     }
 
+                    ForEach(site.workspaces) { workspace in
+                        ForEach(workspace.warnings ?? [], id: \.self) { warning in
+                            Text("\(workspace.name): \(warning)")
+                                .foregroundStyle(Color.orangeText)
+                        }
+                    }
+
                     Text("When git adds a worktree to this site, Nexus makes a workspace for it. This works for every tool that uses git worktrees. When git no longer lists the worktree, Nexus removes the workspace.")
                 }
             }

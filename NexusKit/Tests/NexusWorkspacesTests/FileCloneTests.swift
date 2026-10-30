@@ -1,4 +1,5 @@
 import Foundation
+import NexusCore
 import NexusSupervisor
 import Testing
 @testable import NexusWorkspaces
@@ -83,19 +84,28 @@ struct FileCloneTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: root.path(percentEncoded: false)).isEmpty)
     }
 
-    @Test func aPartOfAnEarlierCloneDoesNotStayAndDoesNotBlockTheNextClone() throws {
+    @Test func thePartOfACloneIsOutsideTheWorktreeAndOnTheDiskOfTheTarget() throws {
+        let root = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appending(path: "worktree/vendor").path(percentEncoded: false)
+
+        let part = try FileClone.partPath(of: target)
+        defer { try? FileManager.default.removeItem(atPath: (part as NSString).deletingLastPathComponent) }
+
+        let volume = { (path: String) in try URL(filePath: path).resourceValues(forKeys: [.volumeIdentifierKey]).volumeIdentifier as? NSObject }
+
+        #expect(!RealPath.contains(RealPath.of(root), RealPath.of(URL(filePath: (part as NSString).deletingLastPathComponent))))
+        #expect(try volume((part as NSString).deletingLastPathComponent) == volume(root.path(percentEncoded: false)))
+    }
+
+    @Test func aCloneLeavesNoPartInItsTemporaryFolder() throws {
         let root = try folder()
         defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appending(path: "main.sqlite")
-        let target = root.appending(path: "copy/main.sqlite")
-        let part = root.appending(path: "copy/.nexus-part-main.sqlite")
-        try FileManager.default.createDirectory(at: part.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("the da".utf8).write(to: part)
         try Data("the data".utf8).write(to: source)
 
-        try FileClone.clone(source.path(percentEncoded: false), to: target.path(percentEncoded: false))
+        try FileClone.clone(source.path(percentEncoded: false), to: root.appending(path: "copy/main.sqlite").path(percentEncoded: false))
 
-        #expect(try String(contentsOf: target, encoding: .utf8) == "the data")
-        #expect(!FileManager.default.fileExists(atPath: part.path(percentEncoded: false)))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root.appending(path: "copy").path(percentEncoded: false)) == ["main.sqlite"])
     }
 }

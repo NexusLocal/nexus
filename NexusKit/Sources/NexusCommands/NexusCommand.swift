@@ -486,6 +486,10 @@ struct WorkspaceCommand: AsyncParsableCommand {
                 if case .notIsolated(let reason) = row.workspace.state {
                     print("    not isolated: \(reason)")
                 }
+
+                for warning in row.workspace.warnings ?? [] {
+                    print("    warning: \(warning)")
+                }
             }
         }
     }
