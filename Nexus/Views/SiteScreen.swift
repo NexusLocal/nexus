@@ -146,6 +146,7 @@ struct SiteScreen: View {
 
                             Text(stateText(of: workspace))
                                 .foregroundStyle(workspace.isolationProblem == nil ? Color.secondary : Color.orangeText)
+                                .fixedSize(horizontal: true, vertical: false)
 
                             if workspace.isolationProblem != nil || !(workspace.warnings ?? []).isEmpty {
                                 Button("Retry") {
