@@ -138,7 +138,7 @@ extension NexusEngineTests {
         return snapshot
     }
 
-    private static let bootstrappers = #"""
+    static let bootstrappers = #"""
     <?php
     namespace Illuminate\Foundation\Bootstrap {
         class LoadEnvironmentVariables {
@@ -152,7 +152,7 @@ extension NexusEngineTests {
 
         class LoadConfiguration {
             public function bootstrap($app) {
-                $app['config'] = new class(['database' => require "{$app->root}/config/database.php", 'session' => ['lifetime' => (int) env('SESSION_LIFETIME', 120) * 60]]) {
+                $app['config'] = new class(['database' => require "{$app->root}/config/database.php", 'session' => ['lifetime' => (int) env('SESSION_LIFETIME', 120) * 60, 'driver' => env('SESSION_DRIVER', 'file')]]) {
                     public function __construct(private array $items) {}
                     public function all() { return $this->items; }
                     public function get($path, $default) {
@@ -170,7 +170,7 @@ extension NexusEngineTests {
     }
     """#
 
-    private static let bootstrapApp = #"""
+    static let bootstrapApp = #"""
     <?php
     return new class(dirname(__DIR__)) extends ArrayObject {
         public function __construct(public string $root) { parent::__construct(); }

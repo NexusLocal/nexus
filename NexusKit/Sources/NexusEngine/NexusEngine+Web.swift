@@ -505,7 +505,8 @@ extension NexusEngine {
                 nodeSetting: site.node,
                 automaticWorkspaces: site.createsWorkspaces,
                 workspaces: workspaceInfo(key: ProjectFolder.workspaceKey(of: site), sitesOfRecord: workspaces.sitesOfRecord, conflicts: workspaces.conflicts, installed: installed, state: state),
-                workspaceProblem: ProjectFolder.repository(of: site) != nil && git == nil ? GitTool.missing : nil
+                workspaceProblem: ProjectFolder.repository(of: site) != nil && git == nil ? GitTool.missing : nil,
+                workspaceKeys: site.workspaceKeys
             ))
         }
 
@@ -685,6 +686,13 @@ extension NexusEngine {
         if let automaticWorkspaces = change.automaticWorkspaces {
             site.automaticWorkspaces = automaticWorkspaces
         }
+        if let workspaceKeys = change.workspaceKeys {
+            if let wrong = workspaceKeys.first(where: { !$0.hasValidName }) {
+                throw RuntimeError.unsupported("\(wrong.key) is not a valid env key. Use letters, digits and underscores, for example SCOUT_PORT.")
+            }
+
+            site.workspaceKeys = workspaceKeys
+        }
 
         try checkUnique(site, in: state)
 
@@ -697,9 +705,10 @@ extension NexusEngine {
             }
         }
 
-        // The Node line and the workspace setting change no server. So they need no new web
+        // The Node line and the workspace settings change no server. So they need no new web
         // configuration.
-        let onlySettings = (change.node != nil || change.automaticWorkspaces != nil) && change.php == nil && change.server == nil && change.aliases == nil
+        let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil
+        let onlySettings = hasSetting && change.php == nil && change.server == nil && change.aliases == nil
         var notes = onlySettings ? [] : try await changeWeb(.sites, store)
 
         if onlySettings {
@@ -709,6 +718,10 @@ extension NexusEngine {
         if let node = change.node {
             let used = node == NodeLines.fromProject ? "the Node version of the project" : "Node \(node)"
             notes.insert("nexus node and nexus npm use \(used) in its folder.", at: 0)
+        }
+
+        if change.workspaceKeys != nil || change.aliases != nil {
+            try await setUpWorkspacesAgain(keys: [ProjectFolder.workspaceKey(of: edited)])
         }
 
         if change.automaticWorkspaces != nil {

@@ -12,6 +12,8 @@ struct SiteScreen: View {
     @State private var php: String
     @State private var node: String
     @State private var automaticWorkspaces: Bool
+    @State private var nexusKeys: [WorkspaceEnvKey] = []
+    @State private var ownKeys: [WorkspaceEnvKey]
 
     init(site: SiteItem) {
         self.site = site
@@ -19,6 +21,7 @@ struct SiteScreen: View {
         _php = State(initialValue: site.php)
         _node = State(initialValue: site.nodeSetting ?? NodeLines.fromProject)
         _automaticWorkspaces = State(initialValue: site.automaticWorkspaces)
+        _ownKeys = State(initialValue: site.workspaceKeys)
     }
 
     private var group: Binding<String> {
@@ -139,6 +142,15 @@ struct SiteScreen: View {
                                 .lineLimit(1)
                                 .truncationMode(.middle)
 
+                            Text(stateText(of: workspace))
+                                .foregroundStyle(workspace.isolationProblem == nil ? Color.secondary : Color.orangeText)
+
+                            if workspace.isolationProblem != nil {
+                                Button("Retry") {
+                                    Task { await model.retry(workspace, of: site) }
+                                }
+                            }
+
                             if let url = workspace.url {
                                 Button("Open") {
                                     model.openInBrowser(url)
@@ -164,11 +176,63 @@ struct SiteScreen: View {
                             .foregroundStyle(Color.orangeText)
                     }
 
+                    ForEach(site.workspaces.filter { $0.isolationProblem != nil }) { workspace in
+                        Text("\(workspace.name) is not isolated: \(workspace.isolationProblem ?? "")")
+                            .foregroundStyle(Color.orangeText)
+                    }
+
                     Text("When git adds a worktree to this site, Nexus makes a workspace for it. This works for every tool that uses git worktrees. When git no longer lists the worktree, Nexus removes the workspace.")
                 }
             }
+
+            Section {
+                ForEach(nexusKeys.filter { entry in !ownKeys.contains { $0.key == entry.key } }, id: \.key) { entry in
+                    LabeledContent {
+                        Text(entry.value)
+                            .foregroundStyle(.secondary)
+                            .font(.system(.body, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    } label: {
+                        Text(entry.key)
+                            .font(.system(.body, design: .monospaced))
+                    }
+                }
+
+                ForEach(ownKeys.indices, id: \.self) { index in
+                    HStack {
+                        TextField("Key", text: ownKey(at: index, \.key), prompt: Text("KEY"))
+                            .labelsHidden()
+                            .plainTextInput()
+                            .onSubmit { saveOwnKeys() }
+
+                        TextField("Value", text: ownKey(at: index, \.value), prompt: Text("{port:name}"))
+                            .labelsHidden()
+                            .plainTextInput()
+                            .onSubmit { saveOwnKeys() }
+
+                        Button("Remove", systemImage: "minus") {
+                            ownKeys.remove(at: index)
+                            saveOwnKeys()
+                        }
+                        .labelStyle(.iconOnly)
+                    }
+                    .font(.system(.body, design: .monospaced))
+                }
+
+                Button("Add a key") {
+                    ownKeys.append(WorkspaceEnvKey(key: "", value: ""))
+                }
+            } header: {
+                Text("Environment keys")
+            } footer: {
+                Text("Nexus writes these keys to the .env of each workspace. The .env of the main checkout does not change. Your keys can use {workspace}, {host}, {database} and {port:<name>}.")
+            }
         }
         .formStyle(.grouped)
+        .task(id: site.workspaceKeys) {
+            nexusKeys = await model.workspaceEnv(of: site)
+        }
         .screenTitle(site.host, subtitle: "\((WebServer(rawValue: server) ?? .nginx).displayName) · PHP \(php)")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -191,6 +255,11 @@ struct SiteScreen: View {
             php = site.php
             node = site.nodeSetting ?? NodeLines.fromProject
             automaticWorkspaces = site.automaticWorkspaces
+        }
+        .onChange(of: site.workspaceKeys) {
+            if site.workspaceKeys != completeKeys {
+                ownKeys = site.workspaceKeys
+            }
         }
         .onChange(of: automaticWorkspaces) {
             guard automaticWorkspaces != site.automaticWorkspaces else {
@@ -238,6 +307,41 @@ struct SiteScreen: View {
         }
 
         return [chosen] + installed
+    }
+
+    private func stateText(of workspace: WorkspaceInfo) -> String {
+        switch workspace.state {
+        case .ready:
+            "Ready"
+        case .notIsolated:
+            "Not isolated"
+        case .preparing, nil:
+            "Preparing"
+        }
+    }
+
+    // A text field can read its row once more after the row goes away.
+    private func ownKey(at index: Int, _ field: WritableKeyPath<WorkspaceEnvKey, String>) -> Binding<String> {
+        Binding {
+            ownKeys.indices.contains(index) ? ownKeys[index][keyPath: field] : ""
+        } set: { text in
+            if ownKeys.indices.contains(index) {
+                ownKeys[index][keyPath: field] = text
+            }
+        }
+    }
+
+    // A new row without a key stays on the screen, and it is no key for nexusd yet.
+    private var completeKeys: [WorkspaceEnvKey] {
+        ownKeys.filter { !$0.key.isEmpty }
+    }
+
+    private func saveOwnKeys() {
+        guard completeKeys != site.workspaceKeys else {
+            return
+        }
+
+        change(SiteChange(workspaceKeys: completeKeys)) { ownKeys = site.workspaceKeys }
     }
 
     private func change(_ change: SiteChange, revert: @escaping () -> Void) {

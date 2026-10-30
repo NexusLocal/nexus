@@ -112,6 +112,10 @@ extension NexusEngine {
                 await applyWorkspaceSites()
                 publishSites()
             }
+
+            // A workspace can wait for its setup without a change here: a record of part 8b, or a
+            // setup that a stop of nexusd ended.
+            startWorkspaceSetups()
         } while reconcileAgain
     }
 
@@ -173,7 +177,8 @@ extension NexusEngine {
                 branch: workspace.branch,
                 hosts: site?.hosts ?? [],
                 url: problem == nil ? site.map { Self.url(for: $0.host, in: state) } : nil,
-                problem: problem
+                problem: problem,
+                state: workspace.state
             )
         }
     }

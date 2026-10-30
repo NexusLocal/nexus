@@ -21,7 +21,8 @@ extension SiteItem {
             projectNode: info.projectNode,
             automaticWorkspaces: info.automaticWorkspaces ?? true,
             workspaces: info.workspaces ?? [],
-            workspaceProblem: info.workspaceProblem
+            workspaceProblem: info.workspaceProblem,
+            workspaceKeys: info.workspaceKeys ?? []
         )
     }
 }
@@ -200,6 +201,20 @@ extension AppModel {
 
     func park(folder: URL, server: WebServer, php: String) async -> String? {
         await failureMessage(of: .park(folder: folder.path(percentEncoded: false), php: php, server: server))
+    }
+
+    func retry(_ workspace: WorkspaceInfo, of site: SiteItem) async {
+        _ = await perform(.retryWorkspace(host: site.host, name: workspace.name), failure: "\(workspace.name) did not start again", place: .window)
+    }
+
+    // The keys that Nexus sets in the .env of each workspace. A site that is no Laravel application,
+    // or an application that the probe cannot read, gives no list.
+    func workspaceEnv(of site: SiteItem) async -> [WorkspaceEnvKey] {
+        guard case .answer(.workspaceEnv(let keys)) = await outcome(of: .workspaceEnv(host: site.host)) else {
+            return []
+        }
+
+        return keys
     }
 
     func failureOfEdit(_ site: SiteItem, _ change: SiteChange) async -> String? {

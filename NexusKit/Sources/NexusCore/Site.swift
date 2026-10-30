@@ -19,8 +19,18 @@ public struct Site: Codable, Sendable, Equatable {
     public var server: WebServer
     public var node: String?
     public var automaticWorkspaces: Bool?
+    public var workspaceKeys: [WorkspaceEnvKey]?
 
-    public init(host: String, folder: URL, aliases: [String] = [], php: String, server: WebServer = .nginx, node: String? = nil, automaticWorkspaces: Bool? = nil) {
+    public init(
+        host: String,
+        folder: URL,
+        aliases: [String] = [],
+        php: String,
+        server: WebServer = .nginx,
+        node: String? = nil,
+        automaticWorkspaces: Bool? = nil,
+        workspaceKeys: [WorkspaceEnvKey]? = nil
+    ) {
         self.host = host
         self.folder = folder
         self.aliases = aliases
@@ -28,6 +38,7 @@ public struct Site: Codable, Sendable, Equatable {
         self.server = server
         self.node = node
         self.automaticWorkspaces = automaticWorkspaces
+        self.workspaceKeys = workspaceKeys
     }
 
     public var createsWorkspaces: Bool {

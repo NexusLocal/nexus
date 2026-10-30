@@ -423,9 +423,38 @@ struct WorkspaceCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "workspace",
         abstract: "Shows the workspaces of the sites.",
-        subcommands: [List.self],
+        subcommands: [List.self, Env.self, Retry.self],
         defaultSubcommand: List.self
     )
+
+    struct Retry: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Sets up a workspace again, for example after you fix the reason why it is not isolated.")
+
+        @Argument(help: "The host of the site.") var host: String
+        @Argument(help: "The name of the workspace.") var name: String
+
+        func run() async throws {
+            try finish(try await send(.retryWorkspace(host: host, name: name)))
+        }
+    }
+
+    struct Env: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Shows which keys Nexus changes in the .env of each workspace of a site.")
+
+        @Argument(help: "The host of the site.") var host: String
+
+        func run() async throws {
+            let response = try await send(.workspaceEnv(host: host))
+
+            guard case .workspaceEnv(let keys) = response else {
+                try finish(response)
+                return
+            }
+
+            let width = keys.map(\.key.count).max() ?? 0
+            keys.forEach { print("\($0.key.padding(to: width))  \($0.value)") }
+        }
+    }
 
     struct List: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Lists the workspaces of the sites.")
@@ -453,12 +482,26 @@ struct WorkspaceCommand: AsyncParsableCommand {
                 if let problem = row.workspace.problem {
                     print("    does not run: \(problem)")
                 }
+
+                if case .notIsolated(let reason) = row.workspace.state {
+                    print("    not isolated: \(reason)")
+                }
             }
         }
     }
 }
 
 extension WebServer: ExpressibleByArgument {}
+
+extension WorkspaceEnvKey: ExpressibleByArgument {
+    public init?(argument: String) {
+        guard let equals = argument.firstIndex(of: "="), equals != argument.startIndex else {
+            return nil
+        }
+
+        self.init(key: String(argument[..<equals]), value: String(argument[argument.index(after: equals)...]))
+    }
+}
 
 struct SiteCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -590,10 +633,16 @@ struct SiteCommand: AsyncParsableCommand {
         @Option(name: .customLong("alias"), help: "The aliases. They replace the current aliases.") var aliases: [String] = []
         @Flag(help: "Remove every alias.") var noAliases = false
         @Option(help: "on or off. With on, a new git worktree gets a workspace.") var workspaces: OnOff?
+        @Option(name: .customLong("workspace-key"), help: "A key for the .env of each workspace, for example SCOUT_PORT={port:scout}. Repeat it for more keys. These replace the current keys.") var workspaceKeys: [WorkspaceEnvKey] = []
+        @Flag(help: "Remove every key of the workspaces.") var noWorkspaceKeys = false
+
+        private var keyChange: [WorkspaceEnvKey]? {
+            noWorkspaceKeys ? [] : (workspaceKeys.isEmpty ? nil : workspaceKeys)
+        }
 
         func run() async throws {
             let aliasChange: [String]? = noAliases ? [] : (aliases.isEmpty ? nil : aliases)
-            try finish(try await send(.editSite(host: host, change: SiteChange(php: php, server: server, aliases: aliasChange, node: node, automaticWorkspaces: workspaces.map { $0 == .on }))))
+            try finish(try await send(.editSite(host: host, change: SiteChange(php: php, server: server, aliases: aliasChange, node: node, automaticWorkspaces: workspaces.map { $0 == .on }, workspaceKeys: keyChange))))
         }
     }
 

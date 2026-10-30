@@ -51,7 +51,7 @@ let package = Package(
         .testTarget(name: "NexusDNSTests", dependencies: ["NexusDNS", "NexusTestSupport"]),
         .testTarget(name: "NexusConfigTests", dependencies: ["NexusConfig"]),
         .testTarget(name: "NexusLaravelTests", dependencies: ["NexusLaravel", "NexusCore"]),
-        .testTarget(name: "NexusWorkspacesTests", dependencies: ["NexusWorkspaces", "NexusCore"]),
+        .testTarget(name: "NexusWorkspacesTests", dependencies: ["NexusWorkspaces", "NexusCore", "NexusSupervisor"]),
         .testTarget(name: "NexusIPCTests", dependencies: ["NexusIPC", "NexusSupervisor"]),
         .testTarget(name: "NexusCommandsTests", dependencies: [
             "NexusCommands",

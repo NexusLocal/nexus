@@ -63,6 +63,55 @@ struct WorkspaceTests {
         #expect(workspace.hosts(of: [site], tld: "test") == ["shop-fix.test", "www.shop-fix.test"])
     }
 
+    @Test func aDatabaseNameHasNoHyphen() {
+        #expect(Workspace.databaseName("shop", workspace: "ticket-123") == "shop_ticket_123")
+    }
+
+    @Test func aLongDatabaseNameGivesWayToTheWorkspaceName() {
+        let name = Workspace.databaseName(String(repeating: "a", count: 60), workspace: "fix")
+
+        #expect(name.utf8.count == 63)
+        #expect(name.hasSuffix("_fix"))
+    }
+
+    @Test func twoLongDatabaseNamesWithTheSameStartStayDifferent() {
+        let start = String(repeating: "a", count: 62)
+
+        #expect(Workspace.databaseName("\(start)b", workspace: "fix") != Workspace.databaseName("\(start)c", workspace: "fix"))
+    }
+
+    @Test func aLongDatabaseNameWithOtherLettersStaysInsideTheLimitInBytes() {
+        #expect(Workspace.databaseName(String(repeating: "é", count: 40), workspace: "fix").utf8.count <= 63)
+    }
+
+    @Test func aHostPairCoversTheParentDomainWithALeadingDot() {
+        let site = Site(host: "my.shop.test", folder: URL(filePath: "/shop"), aliases: ["blog.local"], php: "8.4")
+
+        let pairs = Workspace.hostPairs(of: [site], workspace: "fix", tld: "test")
+
+        #expect(pairs.map(\.from) == ["my.shop.test", ".shop.test", "blog.local"])
+        #expect(pairs.map(\.to) == ["my.shop-fix.test", ".shop-fix.test", "blog-fix.test"])
+    }
+
+    @Test func aRecordWithoutAStateNeedsItsSetup() throws {
+        let stored = #"{"name":"fix","worktree":"/w/fix","folder":"/w/fix"}"#
+
+        let workspace = try JSONDecoder().decode(Workspace.self, from: Data(stored.utf8))
+
+        #expect(workspace.state == .preparing)
+        #expect(workspace.redisIndexes.isEmpty)
+    }
+
+    @Test(arguments: ["SCOUT_PORT", "_KEY", "app.name"])
+    func anEnvKeyWithAGoodName(key: String) {
+        #expect(WorkspaceEnvKey(key: key, value: "").hasValidName)
+    }
+
+    @Test(arguments: ["TWO WORDS", "A=B", "1KEY", "A\nB", ""])
+    func anEnvKeyWithAWrongName(key: String) {
+        #expect(!WorkspaceEnvKey(key: key, value: "").hasValidName)
+    }
+
     @Test func aTakenNameGetsTheFirstFreeNumber() {
         #expect(Workspace.name(forFolder: "fix", taken: ["fix", "fix-2"]) == "fix-3")
     }
@@ -74,5 +123,14 @@ struct WorkspaceTests {
 
         #expect(site.createsWorkspaces)
         #expect(!Site(host: "shop.test", folder: URL(filePath: "/shop"), php: "8.4", automaticWorkspaces: false).createsWorkspaces)
+    }
+}
+
+struct WorkspaceHostPairTests {
+    @Test func aHostInAnotherDevTLDGoesToTheCurrentTLD() {
+        let pairs = Workspace.pairsFromOtherTLDs([(from: "shop.test", to: "shop-fix.internal")], tld: "internal")
+
+        #expect(pairs.map(\.from) == ["shop-fix.localhost", "shop-fix.test"])
+        #expect(pairs.allSatisfy { $0.to == "shop-fix.internal" })
     }
 }

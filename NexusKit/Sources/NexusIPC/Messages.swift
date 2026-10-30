@@ -33,6 +33,7 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let automaticWorkspaces: Bool?
     public let workspaces: [WorkspaceInfo]?
     public let workspaceProblem: String?
+    public let workspaceKeys: [WorkspaceEnvKey]?
 
     public init(
         hosts: [String],
@@ -49,7 +50,8 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         nodeSetting: String? = nil,
         automaticWorkspaces: Bool? = nil,
         workspaces: [WorkspaceInfo]? = nil,
-        workspaceProblem: String? = nil
+        workspaceProblem: String? = nil,
+        workspaceKeys: [WorkspaceEnvKey]? = nil
     ) {
         self.hosts = hosts
         self.folder = folder
@@ -66,6 +68,7 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         self.automaticWorkspaces = automaticWorkspaces
         self.workspaces = workspaces
         self.workspaceProblem = workspaceProblem
+        self.workspaceKeys = workspaceKeys
     }
 
     public var node: String? {
@@ -84,10 +87,11 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
     public let hosts: [String]?
     public let url: String?
     public let problem: String?
+    public let state: WorkspaceState?
 
     public var id: String { name }
 
-    public init(name: String, worktree: String, folder: String, branch: String? = nil, hosts: [String]? = nil, url: String? = nil, problem: String? = nil) {
+    public init(name: String, worktree: String, folder: String, branch: String? = nil, hosts: [String]? = nil, url: String? = nil, problem: String? = nil, state: WorkspaceState? = nil) {
         self.name = name
         self.worktree = worktree
         self.folder = folder
@@ -95,6 +99,15 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         self.hosts = hosts
         self.url = url
         self.problem = problem
+        self.state = state
+    }
+
+    public var isolationProblem: String? {
+        if case .notIsolated(let reason) = state {
+            return reason
+        }
+
+        return nil
     }
 }
 
@@ -174,13 +187,15 @@ public struct SiteChange: Codable, Sendable, Equatable {
     public var aliases: [String]?
     public var node: String?
     public var automaticWorkspaces: Bool?
+    public var workspaceKeys: [WorkspaceEnvKey]?
 
-    public init(php: String? = nil, server: WebServer? = nil, aliases: [String]? = nil, node: String? = nil, automaticWorkspaces: Bool? = nil) {
+    public init(php: String? = nil, server: WebServer? = nil, aliases: [String]? = nil, node: String? = nil, automaticWorkspaces: Bool? = nil, workspaceKeys: [WorkspaceEnvKey]? = nil) {
         self.php = php
         self.server = server
         self.aliases = aliases
         self.node = node
         self.automaticWorkspaces = automaticWorkspaces
+        self.workspaceKeys = workspaceKeys
     }
 }
 
@@ -501,6 +516,9 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     // The configuration of the Laravel application that holds this folder (D43). php is a version
     // line. Without it the PHP of the site applies.
     case probe(folder: String, php: String?)
+    // What the .env of each workspace of this site gets, with {workspace} in the values.
+    case workspaceEnv(host: String)
+    case retryWorkspace(host: String, name: String)
 }
 
 public enum NexusResponse: Codable, Sendable, Equatable {
@@ -523,6 +541,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case failure(message: String)
     case tool(ToolCommand)
     case configuration(LaravelConfiguration)
+    case workspaceEnv([WorkspaceEnvKey])
 }
 
 public enum NexusMessageCoding {

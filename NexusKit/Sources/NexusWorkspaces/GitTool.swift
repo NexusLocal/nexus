@@ -16,6 +16,17 @@ public enum GitTool {
         return executable(hasDeveloperTools: hasDeveloperTools, isProgram: FileManager.default.isExecutableFile(atPath:))
     }
 
+    // Nexus never writes a file that git sees (D50). git check-ignore exits with 1 for a file that
+    // git does not ignore, and with a higher status on an error.
+    public static func ignores(_ file: String, in folder: String, git: URL) async throws -> Bool {
+        do {
+            try await CommandRunner.run(Command(executable: git, arguments: ["-C", folder, "check-ignore", "-q", "--", file]))
+            return true
+        } catch CommandError.failed(_, let status, _) where status == 1 {
+            return false
+        }
+    }
+
     static func executable(hasDeveloperTools: Bool, isProgram: (String) -> Bool) -> URL? {
         hasDeveloperTools ? URL(filePath: "/usr/bin/git") : otherPrograms.first(where: isProgram).map { URL(filePath: $0) }
     }

@@ -1,6 +1,7 @@
 import Foundation
 import NexusCore
 import NexusIPC
+import NexusLaravel
 import NexusRuntime
 import NexusSupervisor
 import Testing
@@ -29,7 +30,7 @@ extension NexusEngineTests {
     private func settle(_ engine: NexusEngine) async throws {
         await engine.reconcileWorkspaces()
 
-        while await engine.reconcilingWorkspaces {
+        while await engine.workspaceWorkRuns {
             try await Task.sleep(for: .milliseconds(10))
         }
     }
@@ -61,12 +62,320 @@ extension NexusEngineTests {
         try await settle(engine)
 
         let path = RealPath.of(worktree)
-        #expect(await workspaces(engine) == [WorkspaceInfo(name: "ticket-123", worktree: path, folder: path, branch: "ticket", hosts: ["shop-ticket-123.test"], problem: "Every site needs nginx, and nginx is not installed. Run: nexus install nginx 1.30")])
+        #expect(await workspaces(engine) == [WorkspaceInfo(name: "ticket-123", worktree: path, folder: path, branch: "ticket", hosts: ["shop-ticket-123.test"], problem: "Every site needs nginx, and nginx is not installed. Run: nexus install nginx 1.30", state: .ready)])
 
         try await git("worktree", "remove", worktree.path(percentEncoded: false), in: shop)
         try await settle(engine)
 
         #expect(await workspaces(engine).isEmpty)
+    }
+
+    private func writeFile(_ text: String, to path: String, in folder: URL) throws {
+        let file = folder.appending(path: path)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: file)
+    }
+
+    private func committedLaravelApplication(in root: URL, ignoring ignored: String) async throws -> URL {
+        let shop = try await repository(in: root)
+        try writeFile("", to: "artisan", in: shop)
+        try writeFile("{}", to: "composer.json", in: shop)
+        try writeFile(ignored, to: ".gitignore", in: shop)
+        try writeFile(Self.bootstrapApp, to: "bootstrap/app.php", in: shop)
+        try writeFile(#"""
+        <?php
+        return [
+            'default' => 'main',
+            'connections' => [
+                'main' => ['driver' => 'mysql', 'host' => '127.0.0.1', 'port' => env('DB_PORT', '3306'), 'database' => env('DB_DATABASE', 'forge')],
+            ],
+            'redis' => [
+                'default' => ['port' => (int) env('REDIS_PORT', 6379), 'database' => (int) env('REDIS_DB', 0)],
+            ],
+        ];
+        """#, to: "config/database.php", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "application", in: shop)
+        try writeFile(Self.bootstrappers, to: "vendor/autoload.php", in: shop)
+        return shop
+    }
+
+    @Test func aSiteThatIsNoLaravelApplicationIsReadyWithoutAnEnvFile() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        #expect(await workspaces(engine).map(\.state) == [.ready])
+        #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: ".env").path(percentEncoded: false)))
+    }
+
+    @Test func aWorkspaceThatWaitsFromBeforeARestartGetsItsSetup() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        let path = RealPath.of(worktree)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.4")]
+        state.worktrees[RealPath.of(shop)] = SiteWorktrees(listed: [RealPath.of(shop), path], workspaces: [Workspace(name: "fix", worktree: path, folder: path, branch: "fix")])
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("php", "8.4")])
+
+        try await settle(engine)
+
+        #expect(await workspaces(engine).map(\.state) == [.ready])
+    }
+
+    @Test func aWorkspaceWithoutItsFoldersWaitsForItsSetup() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let shop = root.appending(path: "disk/shop", directoryHint: .isDirectory)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.4")]
+        state.worktrees[RealPath.of(shop)] = SiteWorktrees(workspaces: [Workspace(name: "fix", worktree: "/disk/fix", folder: "/disk/fix")])
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("php", "8.4")])
+
+        try await settle(engine)
+
+        #expect(await workspaces(engine).map(\.state) == [.preparing])
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceWithItsOwnCachedConfigurationIsNotIsolated() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\nbootstrap/cache\n")
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.5")]
+        let engine = try makeSiteEngine(root: root, state: state)
+        try await linkRealRuntimes(in: engine.paths)
+        try await settle(engine)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try writeFile("<?php return [];", to: "bootstrap/cache/config.php", in: worktree)
+        try await settle(engine)
+
+        #expect(await workspaces(engine).first?.isolationProblem?.contains("The worktree has bootstrap/cache/config.php") == true)
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealKeyOfTheSiteThatReplacesADatabaseNameIsNotIsolated() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
+        try writeFile("DB_PORT=13999\nDB_DATABASE=shop\n", to: ".env", in: shop)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.5", workspaceKeys: [WorkspaceEnvKey(key: "DB_DATABASE", value: "shop")])]
+        state.ports["mysql-8.4"] = 13999
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("mysql", "8.4")])
+        try await linkRealRuntimes(in: engine.paths)
+        try await settle(engine)
+
+        try await git("worktree", "add", "-q", "-b", "fix", root.appending(path: "fix").path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        #expect(await workspaces(engine).map(\.state) == [.notIsolated("The key DB_DATABASE of the site replaces the value that isolates this workspace.")])
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealNewKeyOfASiteReachesAWorkspaceThatExistsAndKeepsItsPort() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.5", workspaceKeys: [WorkspaceEnvKey(key: "SCOUT_PORT", value: "{port:scout}")])]
+        let engine = try makeSiteEngine(root: root, state: state)
+        try await linkRealRuntimes(in: engine.paths)
+        try await settle(engine)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let store = await engine.stateStore
+        let port = try #require(await store.current().worktrees[RealPath.of(shop)]?.workspaces.first?.ports["scout"])
+        let keys = [WorkspaceEnvKey(key: "SCOUT_PORT", value: "{port:scout}"), WorkspaceEnvKey(key: "SECOND", value: "{workspace}")]
+
+        _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(workspaceKeys: keys)))
+        try await settle(engine)
+
+        let text = try String(contentsOf: worktree.appending(path: ".env"), encoding: .utf8)
+
+        #expect(text.contains("SCOUT_PORT=\(port)\n"))
+        #expect(text.contains("SECOND=fix\n"))
+    }
+
+    @Test func aWrongEnvKeyNameGivesAnErrorAndChangesNothing() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.4")]
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("php", "8.4")])
+
+        let response = await engine.handle(.editSite(host: "shop.test", change: SiteChange(workspaceKeys: [WorkspaceEnvKey(key: "TWO WORDS", value: "1")])))
+
+        #expect(response == .failure(message: "TWO WORDS is not a valid env key. Use letters, digits and underscores, for example SCOUT_PORT."))
+        let store = await engine.stateStore
+        #expect(await store.current().sites.first?.workspaceKeys == nil)
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceKeepsAnEnvFileThatNexusCannotRead() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.5")]
+        let engine = try makeSiteEngine(root: root, state: state)
+        try await linkRealRuntimes(in: engine.paths)
+        try await settle(engine)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        let unreadable = Data("APP_NAME=Caf".utf8) + [0xE9]
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try unreadable.write(to: worktree.appending(path: ".env"))
+        try await settle(engine)
+
+        #expect(try Data(contentsOf: worktree.appending(path: ".env")) == unreadable)
+        #expect(await workspaces(engine).map(\.state) == [.notIsolated("Nexus cannot read \(RealPath.of(worktree))/.env as UTF-8 text, so it does not write the .env of this workspace.")])
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceGetsTheKeysOfEverySiteOfItsProject() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
+        try writeFile("<?php", to: "public/index.php", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "public", in: shop)
+        var state = EngineState()
+        state.sites = [
+            Site(host: "a.test", folder: shop, php: "8.5"),
+            Site(host: "b.test", folder: shop.appending(path: "public", directoryHint: .isDirectory), php: "8.5", workspaceKeys: [WorkspaceEnvKey(key: "SECOND", value: "{workspace}")]),
+        ]
+        let engine = try makeSiteEngine(root: root, state: state)
+        try await linkRealRuntimes(in: engine.paths)
+        try await settle(engine)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let text = try String(contentsOf: worktree.appending(path: ".env"), encoding: .utf8)
+
+        #expect(text.contains("SECOND=fix\n"))
+    }
+
+    @Test func aRetryAfterTheFixOfTheCauseClearsNotIsolated() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\nbootstrap/cache\n")
+        try writeFile("<?php return [];", to: "bootstrap/cache/config.php", in: shop)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.4")]
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("php", "8.4")])
+        try await settle(engine)
+        try await git("worktree", "add", "-q", "-b", "fix", root.appending(path: "fix").path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let unknown = await engine.handle(.retryWorkspace(host: "shop.test", name: "other"))
+        let retried = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+        try await settle(engine)
+
+        #expect(unknown == .failure(message: "shop.test has no workspace other."))
+        #expect(retried == .done(message: "Nexus sets up the workspace fix again."))
+        #expect(await workspaces(engine).first?.state != .preparing)
+    }
+
+    @Test func aCachedConfigurationOfTheMainCheckoutGivesAWorkspaceThatIsNotIsolated() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\nbootstrap/cache\n")
+        try writeFile("<?php return [];", to: "bootstrap/cache/config.php", in: shop)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.4")]
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("php", "8.4")])
+        try await settle(engine)
+
+        try await git("worktree", "add", "-q", "-b", "fix", root.appending(path: "fix").path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        #expect(await workspaces(engine).map(\.state) == [.notIsolated(ProbeError.cachedConfiguration.description)])
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceGetsAnEnvFileWithOnlyTheExpectedChanges() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
+        try writeFile("""
+        APP_NAME=Shop
+        APP_URL=https://my.shop.test
+        SESSION_DOMAIN=.shop.test
+        SESSION_DRIVER=redis
+        DB_PORT=13999
+        DB_DATABASE=shop
+        REDIS_PORT=16999
+
+        """, to: ".env", in: shop)
+        var state = EngineState()
+        state.sites = [Site(host: "my.shop.test", folder: shop, php: "8.5", workspaceKeys: [WorkspaceEnvKey(key: "SCOUT_PORT", value: "{port:scout}")])]
+        state.ports["mysql-8.4"] = 13999
+        state.ports["redis-8.2"] = 16999
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("mysql", "8.4")])
+        try await linkRealRuntimes(in: engine.paths)
+        try await settle(engine)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let store = await engine.stateStore
+        let workspace = try #require(await store.current().worktrees[RealPath.of(shop)]?.workspaces.first)
+        let port = try #require(workspace.ports["scout"])
+        let text = try String(contentsOf: worktree.appending(path: ".env"), encoding: .utf8)
+
+        #expect(workspace.state == .ready)
+        #expect(workspace.redisIndexes == ["REDIS_DB": 16])
+        #expect(text == """
+        APP_NAME=Shop
+        APP_URL=https://my.shop-fix.test
+        SESSION_DOMAIN=.shop-fix.test
+        SESSION_DRIVER=redis
+        DB_PORT=13999
+        DB_DATABASE=shop_fix
+        REDIS_PORT=16999
+        REDIS_DB=16
+        SCOUT_PORT=\(port)
+
+        """)
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceWritesNoEnvFileThatGitSees() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await committedLaravelApplication(in: root, ignoring: "vendor\n")
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.5")]
+        let engine = try makeSiteEngine(root: root, state: state)
+        try await linkRealRuntimes(in: engine.paths)
+        try await settle(engine)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        #expect(await workspaces(engine).map(\.state) == [.notIsolated("git does not ignore .env, so Nexus does not write that file.")])
+        #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: ".env").path(percentEncoded: false)))
     }
 
     @Test func aFailedAutomaticChangeShowsAtTheWorkspaceThatItLeftOut() async throws {
@@ -594,5 +903,11 @@ extension NexusEngine {
     func recordAutomaticFailure(_ failure: String) {
         appliedSites = []
         automaticWebFailure = failure
+    }
+}
+
+extension NexusEngine {
+    var workspaceWorkRuns: Bool {
+        reconcilingWorkspaces || settingUpWorkspaces
     }
 }

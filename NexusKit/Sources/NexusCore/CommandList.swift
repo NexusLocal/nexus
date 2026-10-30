@@ -35,6 +35,8 @@ extension CommandSection {
             CommandItem(command: "nexus site defaults --php 8.4", help: "Changes the PHP version, the Node version or the webserver of a new site."),
             CommandItem(command: "nexus site probe .", help: "Shows which env key feeds each setting of a Laravel application."),
             CommandItem(command: "nexus workspace list", help: "Lists the workspaces of the sites."),
+            CommandItem(command: "nexus workspace env shop.test", help: "Shows which keys Nexus changes in the .env of a workspace."),
+            CommandItem(command: "nexus workspace retry shop.test ticket-123", help: "Sets up a workspace again, for example after you fix why it is not isolated."),
             CommandItem(command: "nexus park ~/Sites", help: "Makes each folder in ~/Sites a site."),
             CommandItem(command: "nexus unpark ~/Sites", help: "Stops a folder of projects. Its folders stay."),
         ]),

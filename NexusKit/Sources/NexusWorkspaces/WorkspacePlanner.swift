@@ -45,10 +45,16 @@ public enum WorkspacePlanner {
             }
 
             // git worktree move keeps the name of the folder. A workspace with its databases must
-            // survive this.
+            // survive this. It needs a new setup, because its .env can hold the old path of a
+            // SQLite file.
             if let moved = gone.first(where: { folderName(of: $0.worktree) == name }) {
                 gone.removeAll { $0.name == moved.name }
-                kept.append(Workspace(name: moved.name, worktree: worktree.path, folder: worktree.path + subfolder, branch: worktree.branch))
+                var workspace = moved
+                workspace.worktree = worktree.path
+                workspace.folder = worktree.path + subfolder
+                workspace.branch = worktree.branch
+                workspace.state = .preparing
+                kept.append(workspace)
                 continue
             }
 

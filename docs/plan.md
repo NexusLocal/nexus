@@ -728,6 +728,26 @@ placeholders (D44, D45). Check with `git check-ignore` before the write (D50).
 
 Done when: a diff between the main .env and the workspace .env shows only the expected keys.
 
+Built: a new workspace now starts in the state Preparing. nexusd sets up one workspace at a time.
+It probes the main checkout with the PHP of the site, checks `.env` with `git check-ignore`, and
+writes the `.env` of the worktree. The state then becomes Ready or Not isolated, with the reason
+(D48). A site that is no Laravel application is Ready at once (D54). Redis indexes come from 16 up
+and the {port:<name>} ports from 20000 up. Both stay in the record of the workspace. The database
+copy of 8e and the "databases" setting of 8f are not there yet, so a workspace cannot use its
+keys before those parts.
+
+`nexus workspace env <host>` shows the keys. `nexus site edit --workspace-key KEY=VALUE` sets your
+own keys. The Site screen has the section Environment keys of the design, and each workspace row
+shows its state. `nexus workspace retry <host> <name>` and the Retry button (not in the design)
+set up a workspace again after the user fixes the cause of Not isolated. A setup also runs again
+after a change of the own keys, the aliases or the dev TLD, and after `git worktree move`. It
+keeps the Redis indexes and the ports. Part 8e must not copy a database again in such a setup.
+
+Checked on 2026-10-30 with throwaway clones of finconnect and 3rdRisk-platform on the owner's
+Mac, with the database and Redis ports of the Nexus instances in their .env. The diff between the
+main .env and the workspace .env showed only the hosts, the database names and the Redis keys.
+`git status` of each worktree stayed empty. The clones are removed.
+
 ### 8e. Databases
 
 Work: copy every database of the site that is on a Nexus instance (D46). MySQL and MariaDB
@@ -745,9 +765,10 @@ before and after the copy proves it.
 Work: give each Redis connection of each workspace its own index (D47). Empty the indexes at
 removal.
 
-Facts from the probe (8a), to decide before this part:
+Facts from the probe (8a):
 - 8 applications feed all their Redis connections from the one key REDIS_DB, with another default
-  for each connection. When Nexus sets this key, all these connections use one index.
+  for each connection. In a workspace all these connections use one index (D47). The workspace
+  stays separate from the main site. A cache clear in that workspace also empties its sessions.
 - 3 applications have fixed indexes in config/database.php. D48 makes their workspaces "not
   isolated".
 

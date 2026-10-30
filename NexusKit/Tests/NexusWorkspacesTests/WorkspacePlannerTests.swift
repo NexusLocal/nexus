@@ -110,6 +110,20 @@ struct WorkspacePlannerTests {
         #expect(result == SiteWorktrees(listed: ["/b/fix"], workspaces: [workspace("fix", at: "/b/fix")]))
     }
 
+    @Test func aMovedWorktreeGetsANewSetupAndKeepsItsIndexesAndPorts() {
+        var ready = workspace("fix", at: "/a/fix")
+        ready.state = .ready
+        ready.redisIndexes = ["REDIS_DB": 16]
+        ready.ports = ["scout": 20000]
+        let known = SiteWorktrees(listed: ["/a/fix"], workspaces: [ready])
+
+        let moved = update(known, [Worktree(path: "/b/fix")]).workspaces.first
+
+        #expect(moved?.state == .preparing)
+        #expect(moved?.redisIndexes == ["REDIS_DB": 16])
+        #expect(moved?.ports == ["scout": 20000])
+    }
+
     @Test func aMovedWorktreeWithTheSettingOffKeepsItsWorkspace() {
         let known = SiteWorktrees(listed: ["/a/fix"], workspaces: [workspace("fix", at: "/a/fix")])
 

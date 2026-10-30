@@ -167,6 +167,7 @@ struct SiteItem: Identifiable, Hashable {
     var automaticWorkspaces = true
     var workspaces: [WorkspaceInfo] = []
     var workspaceProblem: String?
+    var workspaceKeys: [WorkspaceEnvKey] = []
 
     var id: String { host }
 

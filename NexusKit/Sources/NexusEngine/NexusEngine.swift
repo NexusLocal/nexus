@@ -88,6 +88,10 @@ public actor NexusEngine {
     var reconcilingWorkspaces = false
     var reconcileAgain = false
     var watchingStopped = false
+    var settingUpWorkspaces = false
+    var setupAgain = false
+    var runningSetupKey: String?
+    var setupIsOutdated = false
     // The downloads and database copies that run now, and the last task list of the watchers.
     private(set) var runningTasks: [String: RunningTask] = [:]
     // The databases that a copy writes now, as "<instance> <name>". nexusd refuses a second copy
@@ -223,6 +227,10 @@ public actor NexusEngine {
                 return .tool(try await toolCommand(tool, folder: folder))
             case .probe(let folder, let php):
                 return .configuration(try await probeConfiguration(folder: folder, php: php))
+            case .workspaceEnv(let host):
+                return .workspaceEnv(try await workspaceEnvPreview(host: host))
+            case .retryWorkspace(let host, let name):
+                return .done(message: try await retryWorkspace(host: host, name: name))
             }
         } catch let conflict as PortConflict {
             return .portInUse(conflict)
@@ -941,7 +949,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe: true
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv: true
         default: false
         }
     }
@@ -1200,6 +1208,8 @@ extension NexusEngine {
             await applySystemFiles()
             throw error
         }
+
+        try await setUpWorkspacesAgain(keys: Set(await stateStore.current().worktrees.keys))
 
         if let port = dnsServer?.port {
             do {
