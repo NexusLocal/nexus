@@ -448,7 +448,11 @@ struct WorkspaceCommand: AsyncParsableCommand {
             }
 
             for row in rows {
-                print([row.site.padding(to: 28), row.workspace.name.padding(to: 28), row.workspace.folder].joined(separator: " "))
+                print([row.site.padding(to: 28), row.workspace.name.padding(to: 28), (row.workspace.url ?? "").padding(to: 44), row.workspace.folder].joined(separator: " "))
+
+                if let problem = row.workspace.problem {
+                    print("    does not run: \(problem)")
+                }
             }
         }
     }

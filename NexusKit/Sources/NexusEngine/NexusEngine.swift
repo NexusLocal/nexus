@@ -76,6 +76,10 @@ public actor NexusEngine {
     // Apache accepted (D62).
     var parkedWatcher: FolderWatcher?
     var appliedSites: [String]?
+    var automaticWebFailure: String?
+    // The web services that the user stopped with nexus stop. This holds until nexusd stops, so
+    // a new start of nexusd starts them for the sites.
+    var servicesStoppedByHand: Set<String> = []
     // The watch of the .git folders of the sites (D40).
     var worktreeWatcher: FolderWatcher?
     var watchedRepositories: Set<String> = []
@@ -397,6 +401,8 @@ public actor NexusEngine {
             return message
         }
 
+        servicesStoppedByHand.remove(id)
+
         if isWebService(id) {
             _ = try await writeWebConfig()
         }
@@ -485,6 +491,11 @@ public actor NexusEngine {
             }
             $0.stoppedByStopAll.remove(id)
         }
+
+        if disable, isWebService(id) {
+            servicesStoppedByHand.insert(id)
+        }
+
         return "\(id) stopped."
     }
 

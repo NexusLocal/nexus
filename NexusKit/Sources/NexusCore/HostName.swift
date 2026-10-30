@@ -62,6 +62,20 @@ public enum HostName {
         return "\(host.dropLast(old.count))\(new)"
     }
 
+    // D42: every host keeps its subdomains. The label before the TLD gets the workspace name. So
+    // a browser sees a separate site, and no cookie goes between the main site and a workspace. A
+    // host outside the dev TLD gets the dev TLD. A long label gives way to the workspace name,
+    // because a label has at most 63 characters.
+    public static func workspaceHost(_ host: String, workspace: String, tld: String) -> String {
+        let name = privateSuffixes.first { host.hasSuffix(".\($0)") }.map { host.dropLast($0.count + 1) } ?? host[...]
+        var labels = name.split(separator: ".").map(String.init)
+        let label = labels.popLast() ?? host
+        let room = 63 - workspace.count - 1
+        let kept = String(label.prefix(room)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+
+        return (labels + ["\(kept)-\(workspace)", tld]).joined(separator: ".")
+    }
+
     // Makes a DNS label from a folder name: "My Shop_2" becomes "my-shop-2".
     public static func label(from name: String) -> String {
         let lowered = name.lowercased().map { character -> Character in

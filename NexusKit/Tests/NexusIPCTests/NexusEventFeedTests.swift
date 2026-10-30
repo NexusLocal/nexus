@@ -125,6 +125,26 @@ struct NexusEventFeedTests {
         #expect(oldSite.problem == nil)
     }
 
+    @Test func aWorkspaceOfTheNexusdOfPart8bStillReads() throws {
+        let old = #"""
+            {"hosts":["shop.test"],"folder":"/Sites/shop","documentRoot":"/Sites/shop/public","php":"8.5",
+             "server":"nginx","parked":false,"url":"https://shop.test",
+             "workspaces":[{"name":"fix","worktree":"/w/fix","folder":"/w/fix","branch":"fix"}]}
+            """#
+
+        let site = try NexusMessageCoding.decode(SiteInfo.self, from: Data(old.utf8))
+
+        #expect(site.workspaces == [WorkspaceInfo(name: "fix", worktree: "/w/fix", folder: "/w/fix", branch: "fix")])
+    }
+
+    @Test func anAppOfPart8bGetsTheWorktreeOfAWorkspace() throws {
+        let data = try JSONEncoder().encode(WorkspaceInfo(name: "fix", worktree: "/w/fix", folder: "/w/fix/app"))
+
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        #expect(object?["worktree"] as? String == "/w/fix")
+    }
+
     // An app of part 6e sends the group. An app before it does not.
     @Test func anAddSiteRequestWithoutAGroupStillReads() throws {
         let old = #"{"addSite":{"folder":"/Sites/shop","aliases":[],"php":"8.5"}}"#

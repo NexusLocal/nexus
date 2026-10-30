@@ -12,7 +12,16 @@ import Testing
 
 // Site groups, the defaults for new sites and the watch of the parked folders (step 6, part 6e).
 extension NexusEngineTests {
-    private static let realRuntimes = ProcessInfo.processInfo.environment["NEXUS_REAL_RUNTIMES"]
+    static let realRuntimes = ProcessInfo.processInfo.environment["NEXUS_REAL_RUNTIMES"]
+
+    func linkRealRuntimes(in paths: NexusPaths) throws {
+        for runtime in ["nginx/1.30", "php/8.5"] {
+            let parts = runtime.split(separator: "/").map(String.init)
+            let link = paths.runtime(parts[0], line: parts[1])
+            try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: URL(filePath: Self.realRuntimes!).appending(path: runtime))
+        }
+    }
 
     func makeSiteEngine(root: URL, state: EngineState = EngineState(), runtimes: [(name: String, line: String)] = []) throws -> NexusEngine {
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
@@ -198,13 +207,7 @@ extension NexusEngineTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
         try paths.createFolders()
-
-        for runtime in ["nginx/1.30", "php/8.5"] {
-            let parts = runtime.split(separator: "/").map(String.init)
-            let link = paths.runtime(parts[0], line: parts[1])
-            try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: URL(filePath: Self.realRuntimes!).appending(path: runtime))
-        }
+        try linkRealRuntimes(in: paths)
 
         let httpsPort = freePort()
         var state = EngineState()
@@ -275,13 +278,7 @@ extension NexusEngineTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
         try paths.createFolders()
-
-        for runtime in ["nginx/1.30", "php/8.5"] {
-            let parts = runtime.split(separator: "/").map(String.init)
-            let link = paths.runtime(parts[0], line: parts[1])
-            try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: URL(filePath: Self.realRuntimes!).appending(path: runtime))
-        }
+        try linkRealRuntimes(in: paths)
 
         let httpsPort = freePort()
         var state = EngineState()
@@ -357,7 +354,7 @@ extension NexusEngineTests {
     }
 
     // curl does not trust the root CA of the test. That does not matter here.
-    private func page(_ host: String, port: Int, expecting expected: String) async -> String? {
+    func page(_ host: String, port: Int, expecting expected: String) async -> String? {
         let deadline = ContinuousClock.now + .seconds(15)
         var body: String?
 

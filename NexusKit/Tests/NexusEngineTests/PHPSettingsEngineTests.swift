@@ -10,8 +10,6 @@ import Testing
 
 // The custom php.ini lines (D60) and the details of the web services in the service list.
 extension NexusEngineTests {
-    private static let realRuntimes = ProcessInfo.processInfo.environment["NEXUS_REAL_RUNTIMES"]
-
     // A php that refuses a line with "==" as PHP does, with the file and the line. For a value
     // "abc" it writes a warning without a line, as PHP does for a wrong number.
     private func makeFakeCheckingPHP(in root: URL) throws -> ManifestPackage {

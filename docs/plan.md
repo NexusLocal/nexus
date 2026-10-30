@@ -703,6 +703,23 @@ Work: the host rule (D42), a certificate for each workspace host, the nginx serv
 Done when: my.shop.test gives my.shop-test-1.test, and blog.local gives
 blog-test-1.test. Both open with a valid certificate.
 
+Built: `HostName.workspaceHost` makes the host. A workspace runs as a site in the web
+configuration, with the PHP and the webserver of its project, the document root in its worktree
+and its own certificate. Each host of the site gets a workspace host, so aliases work too. Two
+sites of one project share one block for a workspace. A workspace whose host is taken does not
+run and gives a warning. A new or removed workspace gives a new web configuration by itself. The
+Site screen shows the host and Open for each workspace. `nexus workspace list` shows the URL and
+the folder. For a workspace that does not run, both show the warning and no URL. A checkout, a
+pull or a merge that adds the public folder of a worktree changes its document root. A web
+service that the user stopped with `nexus stop` stays stopped after a new workspace or a new
+project in a parked folder. It starts again after `nexus start`, a change of a site or a new
+start of nexusd.
+
+Checked on 2026-10-30 on the owner's Mac through the real DNS server: my.shop.test gave
+my.shop-test-1.test and blog.local gave blog-test-1.test. Each opened over HTTPS with the files
+of its worktree. macOS accepted both certificates with `security verify-cert`. After `git
+worktree remove`, the host gave no site. The test sites are removed.
+
 ### 8d. The .env
 
 Work: copy the .env when the worktree has none. Rewrite the hosts. Set the database and Redis

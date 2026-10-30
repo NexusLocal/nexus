@@ -31,7 +31,7 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let projectNode: NodeChoice?
     public let nodeSetting: String?
     public let automaticWorkspaces: Bool?
-    public let workspaces: [Workspace]?
+    public let workspaces: [WorkspaceInfo]?
     public let workspaceProblem: String?
 
     public init(
@@ -48,7 +48,7 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         projectNode: NodeChoice? = nil,
         nodeSetting: String? = nil,
         automaticWorkspaces: Bool? = nil,
-        workspaces: [Workspace]? = nil,
+        workspaces: [WorkspaceInfo]? = nil,
         workspaceProblem: String? = nil
     ) {
         self.hosts = hosts
@@ -70,6 +70,31 @@ public struct SiteInfo: Codable, Sendable, Equatable {
 
     public var node: String? {
         nodeSetting ?? projectNode?.line
+    }
+}
+
+// A workspace as the app and nexus workspace list show it. url is nil for a workspace that does
+// not run. The problem then says why. A nexusd of part 8b sends only name, worktree, folder and
+// branch. An app of part 8b cannot read the sites without worktree, so nexusd always sends it.
+public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
+    public let name: String
+    public let worktree: String
+    public let folder: String
+    public let branch: String?
+    public let hosts: [String]?
+    public let url: String?
+    public let problem: String?
+
+    public var id: String { name }
+
+    public init(name: String, worktree: String, folder: String, branch: String? = nil, hosts: [String]? = nil, url: String? = nil, problem: String? = nil) {
+        self.name = name
+        self.worktree = worktree
+        self.folder = folder
+        self.branch = branch
+        self.hosts = hosts
+        self.url = url
+        self.problem = problem
     }
 }
 

@@ -1,5 +1,7 @@
 import Foundation
 import NexusCore
+import NexusIPC
+import NexusRuntime
 import NexusWorkspaces
 
 // Worktree detection (D40, part 8b). nexusd watches the .git folder of each site, also without
@@ -53,14 +55,22 @@ extension NexusEngine {
     }
 
     private func worktreeFoldersChanged() async {
-        let signature = Self.signature(of: watchedRepositories)
-
-        guard signature != worktreeSignature, !watchingStopped else {
+        guard !watchingStopped else {
             return
         }
 
-        worktreeSignature = signature
-        await reconcileWorkspaces()
+        let signature = Self.signature(of: watchedRepositories)
+
+        if signature != worktreeSignature {
+            worktreeSignature = signature
+            await reconcileWorkspaces()
+        }
+
+        // A checkout, a pull or a merge in a worktree changes no workspace and nothing that git
+        // lists. It can still add the public folder. That changes the document root.
+        if await applyWorkspaceSites() {
+            publishSites()
+        }
     }
 
     // What git lists for each admin folder. The end of git worktree add writes the index. The end
@@ -99,9 +109,73 @@ extension NexusEngine {
             reconcileAgain = false
 
             if await reconcileWorktrees() {
+                await applyWorkspaceSites()
                 publishSites()
             }
         } while reconcileAgain
+    }
+
+    // A new workspace needs its server block. A change that gives the same blocks does nothing.
+    // Returns true after a change, and after a failure that the app must show.
+    @discardableResult
+    private func applyWorkspaceSites() async -> Bool {
+        let changed = try? await serialWeb {
+            guard await !self.watchingStopped else {
+                return false
+            }
+
+            return try await self.applySitesIfChanged()
+        }
+
+        return changed ?? true
+    }
+
+    // Each workspace runs as a site with its own hosts. A site claims its hosts first. A workspace
+    // whose host is taken is left out with a warning, because two server blocks with one name
+    // make nginx use only one of them. Two sites of one project share a block.
+    func workspaceSites(_ state: EngineState, resolved: [Site]? = nil) -> (sites: [Site], conflicts: [Workspace: String], sitesOfRecord: [String: [Site]]) {
+        let resolved = resolved ?? resolvedSites(state).map(\.site)
+        let sitesOfRecord = Dictionary(grouping: resolved, by: ProjectFolder.workspaceKey(of:))
+        var claimed = Set(resolved.flatMap(\.hosts))
+        var sites: [Site] = []
+        var conflicts: [Workspace: String] = [:]
+
+        for (key, sitesOfProject) in sitesOfRecord.sorted(by: { $0.key < $1.key }) {
+            for workspace in state.worktrees[key]?.workspaces ?? [] {
+                guard let site = workspace.site(of: sitesOfProject, tld: state.tld) else {
+                    continue
+                }
+
+                if let taken = site.hosts.first(where: claimed.contains) {
+                    conflicts[workspace] = "The workspace \(workspace.name) does not run, because another site has the host \(taken) already."
+                    continue
+                }
+
+                claimed.formUnion(site.hosts)
+                sites.append(site)
+            }
+        }
+
+        return (sites, conflicts, sitesOfRecord)
+    }
+
+    func workspaceInfo(key: String, sitesOfRecord: [String: [Site]], conflicts: [Workspace: String], installed: [InstalledRuntime], state: EngineState) -> [WorkspaceInfo] {
+        let sites = sitesOfRecord[key] ?? []
+
+        return (state.worktrees[key]?.workspaces ?? []).map { workspace in
+            let site = workspace.site(of: sites, tld: state.tld)
+            let problem = conflicts[workspace] ?? site.flatMap { Self.problem(of: $0, installed: installed) ?? applyProblem(of: $0) }
+
+            return WorkspaceInfo(
+                name: workspace.name,
+                worktree: workspace.worktree,
+                folder: workspace.folder,
+                branch: workspace.branch,
+                hosts: site?.hosts ?? [],
+                url: problem == nil ? site.map { Self.url(for: $0.host, in: state) } : nil,
+                problem: problem
+            )
+        }
     }
 
     // A site whose worktrees git cannot list keeps what it has. Only a list from git can remove

@@ -38,6 +38,27 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
+extension Workspace {
+    // sites holds the sites that share the project of this workspace.
+    public func hosts(of sites: [Site], tld: String) -> [String] {
+        var seen: Set<String> = []
+
+        return sites.flatMap(\.hosts)
+            .map { HostName.workspaceHost($0, workspace: name, tld: tld) }
+            .filter { seen.insert($0).inserted }
+    }
+
+    // A workspace runs as a site of its own, with the PHP and the webserver of its project.
+    public func site(of sites: [Site], tld: String) -> Site? {
+        guard let main = sites.first else {
+            return nil
+        }
+
+        let hosts = hosts(of: sites, tld: tld)
+        return Site(host: hosts[0], folder: URL(filePath: folder, directoryHint: .isDirectory), aliases: Array(hosts.dropFirst()), php: main.php, server: main.server, node: main.node)
+    }
+}
+
 // What Nexus knows about the worktrees of a site. listed holds the worktrees that were there at
 // the last check, also those without a workspace. So only a new worktree gets a workspace.
 public struct SiteWorktrees: Codable, Sendable, Equatable {

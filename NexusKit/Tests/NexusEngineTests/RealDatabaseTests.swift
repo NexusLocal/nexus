@@ -14,8 +14,6 @@ import Testing
 // NEXUS_REAL_RUNTIMES="$HOME/Library/Application Support/Nexus/runtimes" swift test
 // Each instance is new and lives in a folder in /tmp. So the instances of the user do not change.
 extension NexusEngineTests {
-    private static let realRuntimes = ProcessInfo.processInfo.environment["NEXUS_REAL_RUNTIMES"]
-
     @Test(.enabled(if: realRuntimes != nil), arguments: ["mysql/8.4", "mariadb/11.4", "postgresql/17"])
     func aRealInstanceStartsWithoutAPasswordListsItsDatabasesAndChangesItsAccount(_ runtime: String) async throws {
         let parts = runtime.split(separator: "/").map(String.init)

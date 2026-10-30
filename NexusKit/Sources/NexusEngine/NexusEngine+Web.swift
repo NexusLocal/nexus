@@ -22,10 +22,11 @@ struct WebPlan {
 enum WebChange {
     // The user changed the sites. nexusd starts what the sites need and stops what no site needs.
     case sites
-    // nexusd changed the sites itself, for a new project in a parked folder or at its own start.
-    // While "Stop all services" is in effect, a web service that does not run waits for "Start
-    // stopped services" (D63). A service that the user started after "Stop all services" does
-    // not wait.
+    // nexusd changed the sites itself, for a new project in a parked folder, a new workspace or at
+    // its own start. While "Stop all services" is in effect, a web service that does not run waits
+    // for "Start stopped services" (D63). A service that the user started after "Stop all
+    // services" does not wait. A web service that the user stopped with nexus stop also stays
+    // stopped, until the user starts it or changes a site.
     case automatic
     // A port, a module or the LAN switch changed. nexusd only reloads the running servers. So
     // the services that "Stop all services" stopped stay stopped.
@@ -87,6 +88,7 @@ extension NexusEngine {
         }
 
         do {
+            _ = try site.hosts.map(HostName.validated)
             try WebConfigPath.validate(site.documentRoot)
         } catch {
             return String(describing: error)
@@ -134,14 +136,17 @@ extension NexusEngine {
     func writeWebConfig() async throws -> WebPlan {
         let state = await stateStore.current()
         let resolved = resolveSites(state)
+        let ownSites = resolved.sites.map(\.site)
+        let workspaces = workspaceSites(state, resolved: ownSites)
+        let sites = ownSites + workspaces.sites
         let installed = await installer.installedRuntimes()
         let apache = await newestRuntime(named: "httpd")
-        var plan = WebPlan(warnings: resolved.conflicts, siteSignature: Self.signature(of: resolved.sites.map(\.site)))
-        let root = resolved.sites.isEmpty ? nil : try certificateAuthority.root()
+        var plan = WebPlan(warnings: resolved.conflicts + workspaces.conflicts.values.sorted(), siteSignature: Self.signature(of: sites))
+        let root = sites.isEmpty ? nil : try certificateAuthority.root()
 
         // A site that cannot run is left out with a warning, so it does not stop the others.
         // Without nginx no site runs. The check below the loop says that.
-        for (site, _) in resolved.sites {
+        for site in sites {
             if let problem = Self.problem(of: site, installed: installed, checksNginx: false) {
                 plan.warnings.append("\(site.host) does not run. \(problem)")
                 continue
@@ -302,8 +307,9 @@ extension NexusEngine {
             var needed: Set<String> = []
             var waiting: Set<String> = []
             let stopAllInEffect = change == .automatic && !state.stoppedByStopAll.isEmpty
+            let stoppedByHand = change == .automatic ? servicesStoppedByHand : []
             let waits = { (id: String) in
-                stopAllInEffect && (state.stoppedByStopAll.contains(id) || !enabled.contains(id))
+                stoppedByHand.contains(id) || stopAllInEffect && (state.stoppedByStopAll.contains(id) || !enabled.contains(id))
             }
 
             for line in plan.phpLines.sorted() {
@@ -334,10 +340,12 @@ extension NexusEngine {
             // A needed service that runs leaves the list of "Stop all services", as after nexus
             // start. Otherwise it waits again at the next start of nexusd, although it ran.
             let running = needed.subtracting(waiting)
+            let waitingForStopAll = waiting.subtracting(stoppedByHand)
+            servicesStoppedByHand.subtract(running)
 
-            if !waiting.isEmpty || !running.isDisjoint(with: state.stoppedByStopAll) {
+            if !waitingForStopAll.isEmpty || !running.isDisjoint(with: state.stoppedByStopAll) {
                 try await stateStore.update {
-                    $0.stoppedByStopAll.formUnion(waiting)
+                    $0.stoppedByStopAll.formUnion(waitingForStopAll)
                     $0.stoppedByStopAll.subtract(running)
                 }
             }
@@ -354,6 +362,7 @@ extension NexusEngine {
         // Only a change that the servers took counts. After a failure, the next change in a
         // parked folder tries again.
         appliedSites = plan.siteSignature
+        automaticWebFailure = nil
 
         if etcHosts(await stateStore.current()) != writtenHosts ?? [] {
             await applySystemFiles()
@@ -477,6 +486,7 @@ extension NexusEngine {
 
         let hasRepositories = resolved.contains { ProjectFolder.repository(of: $0.site) != nil }
         let git = hasRepositories ? await GitTool.executable() : nil
+        let workspaces = workspaceSites(state, resolved: resolved.map(\.site))
         var sites: [SiteInfo] = []
 
         for (site, parked) in resolved {
@@ -490,11 +500,11 @@ extension NexusEngine {
                 url: Self.url(for: site.host, in: state),
                 group: groups[site.host],
                 parkedFolder: Self.parkedFolder(of: site, in: state.parked).map { Self.displayPath($0.folder) },
-                problem: Self.problem(of: site, installed: installed),
+                problem: Self.problem(of: site, installed: installed) ?? applyProblem(of: site),
                 projectNode: site.node == nil ? NodeLines.choose(hint: nodeHint(of: site.folder), installed: nodeLines) : nil,
                 nodeSetting: site.node,
                 automaticWorkspaces: site.createsWorkspaces,
-                workspaces: state.worktrees[ProjectFolder.workspaceKey(of: site)]?.workspaces ?? [],
+                workspaces: workspaceInfo(key: ProjectFolder.workspaceKey(of: site), sitesOfRecord: workspaces.sitesOfRecord, conflicts: workspaces.conflicts, installed: installed, state: state),
                 workspaceProblem: ProjectFolder.repository(of: site) != nil && git == nil ? GitTool.missing : nil
             ))
         }
@@ -770,20 +780,42 @@ extension NexusEngine {
         }
     }
 
-    // Returns false when the sites stay the same.
     private func applyParkedSites() async throws -> Bool {
-        guard parkedWatcher != nil, !uninstalling else {
+        guard parkedWatcher != nil else {
             return false
         }
 
-        let sites = Self.signature(of: resolvedSites(await stateStore.current()).map(\.site))
+        return try await applySitesIfChanged()
+    }
 
-        guard sites != appliedSites else {
+    // Returns false when the sites stay the same.
+    func applySitesIfChanged() async throws -> Bool {
+        guard !uninstalling, webSignature(await stateStore.current()) != appliedSites else {
             return false
         }
 
-        try await applyWeb(.automatic)
+        do {
+            try await applyWeb(.automatic)
+        } catch {
+            automaticWebFailure = String(describing: error)
+            throw error
+        }
+
         return true
+    }
+
+    // Nobody waits for an automatic change. So a failure shows at the site that it left out.
+    func applyProblem(of site: Site) -> String? {
+        guard let automaticWebFailure, appliedSites?.contains(Self.signature(of: [site])[0]) != true else {
+            return nil
+        }
+
+        return "The web configuration did not change. \(automaticWebFailure)"
+    }
+
+    private func webSignature(_ state: EngineState) -> [String] {
+        let ownSites = resolvedSites(state).map(\.site)
+        return Self.signature(of: ownSites + workspaceSites(state, resolved: ownSites).sites)
     }
 
     func lan(_ enabled: Bool?) async throws -> String {

@@ -158,7 +158,11 @@ extension AppModel {
     }
 
     func openInBrowser(_ site: SiteItem) {
-        if let url = URL(string: site.url) {
+        openInBrowser(site.url)
+    }
+
+    func openInBrowser(_ link: String) {
+        if let url = URL(string: link) {
             NSWorkspace.shared.open(url)
         }
     }

@@ -133,16 +133,33 @@ struct SiteScreen: View {
 
                 ForEach(site.workspaces) { workspace in
                     LabeledContent {
-                        PathText((workspace.folder as NSString).abbreviatingWithTildeInPath)
+                        HStack {
+                            Text(workspace.hosts?.first ?? workspace.folder)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+
+                            if let url = workspace.url {
+                                Button("Open") {
+                                    model.openInBrowser(url)
+                                }
+                            }
+                        }
                     } label: {
                         Label(workspace.name, systemImage: "arrow.triangle.branch")
                     }
+                    .help((workspace.folder as NSString).abbreviatingWithTildeInPath)
                 }
             } header: {
                 Text("Workspaces")
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     if let problem = site.workspaceProblem {
+                        Text(problem)
+                            .foregroundStyle(Color.orangeText)
+                    }
+
+                    ForEach(Array(Set(site.workspaces.compactMap(\.problem))).sorted(), id: \.self) { problem in
                         Text(problem)
                             .foregroundStyle(Color.orangeText)
                     }

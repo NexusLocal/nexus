@@ -1,5 +1,6 @@
 import Foundation
 import NexusCore
+import NexusIPC
 
 enum Health {
     case running
@@ -164,7 +165,7 @@ struct SiteItem: Identifiable, Hashable {
     var nodeSetting: String?
     var projectNode: NodeChoice?
     var automaticWorkspaces = true
-    var workspaces: [Workspace] = []
+    var workspaces: [WorkspaceInfo] = []
     var workspaceProblem: String?
 
     var id: String { host }
