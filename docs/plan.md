@@ -645,9 +645,9 @@ app.url, database, session, cache, queue, broadcasting and reverb.
 A site on the public folder of a project now holds the whole project, also for nexus php,
 composer, node and npm. A host of MAMP PRO points at the public folder.
 
-Checked on 2026-10-30 with the Laravel applications of MAMP PRO. MAMP PRO now has 20, not 19. 18
-gave a result. 2 stopped on bootstrap/cache/config.php, as work item 5 says. For those 2, the
-same probe ran on an APFS clone without the cached file. A separate script read
+Checked on 2026-10-30 with the Laravel applications of MAMP PRO. MAMP PRO now has 20, not 19. 2
+stopped on bootstrap/cache/config.php, as work item 5 says. After `php artisan config:clear` in
+those 2 (owner), all 20 gave a result. A separate script read
 config/database.php of each application and of the framework. It compared 551 settings with the
 result. These are the default connection and the database, host and port of each connection and
 Redis connection. The 2 differences came from that script: one application has read and write
