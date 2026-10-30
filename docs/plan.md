@@ -846,7 +846,8 @@ it has many small files.
 
 Built: after the database copies, the setup clones what git ignores in the main checkout. The list
 comes from `git ls-files`, so git ignores each path there. It holds each ignored path in vendor,
-node_modules, public, dist, build and storage/app. It leaves out public/hot, because that file
+node_modules, public, dist, build and storage/app, and the Passport keys in storage. finly and
+3rdRisk-platform have such keys. It leaves out public/hot, because that file
 names the Vite server of the main site. bootstrap/cache and the .env files are not on the list. A
 site that is no Laravel application gets the same clones (D54). A second setup keeps what exists.
 

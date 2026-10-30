@@ -224,9 +224,9 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
     and to a .env that git does not ignore. Then the workspace is "not isolated". Nexus shows which
     connection is the cause and starts no background process for that workspace. Reason: a
     workspace that writes into the main database is worse than no workspace.
-49. Files: Nexus makes APFS clones (copy on write) of vendor, node_modules, the build output and
-    storage/app from the main checkout. The build output is each path that git ignores in public,
-    dist and build. A clone takes seconds and uses no extra disk until a file changes. Nexus runs `composer install` only when composer.lock is different from the
+49. Files: Nexus makes APFS clones (copy on write) of vendor, node_modules, the build output,
+    storage/app and the Passport keys in storage from the main checkout. The build output is each
+    path that git ignores in public, dist and build. A clone takes seconds and uses no extra disk until a file changes. Nexus runs `composer install` only when composer.lock is different from the
     main checkout, and the same for package-lock.json. No symlinks: a `composer require` in a
     worktree would then change the main checkout.
 50. Nexus never writes a file that git sees. Before it writes .env or makes a clone, it checks

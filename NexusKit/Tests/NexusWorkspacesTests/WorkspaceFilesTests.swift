@@ -89,6 +89,12 @@ struct WorkspaceFilesTests {
         #expect(try manager.destinationOfSymbolicLink(atPath: "\(clone)/package") == "/package")
     }
 
+    @Test func theCloneHoldsTheKeysOfPassport() {
+        let entries = ["storage/oauth-private.key", "storage/oauth-public.key", "storage/oauth/"]
+
+        #expect(WorkspaceFiles.clonable(entries) == entries)
+    }
+
     @Test func aFolderAboveAnIgnoredPathIsNoEntry() {
         let entries = ["public/", "public/css/", "public/css/app.css", "storage/", "storage/app/", "storage/app/uploads/"]
 

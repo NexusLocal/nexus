@@ -6,7 +6,8 @@ import NexusCore
 // example for vendor/* or a tracked public/index.php. So each ignored path in these folders
 // counts. bootstrap/cache and the .env files are not on this list.
 public enum WorkspaceFiles {
-    private static let folders = ["vendor", "node_modules", "public", "dist", "build", "storage/app"]
+    // Laravel Passport signs its tokens with keys in storage. Without them, a login fails.
+    private static let folders = ["vendor", "node_modules", "public", "dist", "build", "storage/app", "storage/oauth", "storage/oauth-private.key", "storage/oauth-public.key"]
 
     // public/hot holds the address of the Vite server of the main site. The application in the
     // worktree would load its assets from there.
