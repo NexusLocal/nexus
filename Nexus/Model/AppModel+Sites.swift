@@ -18,7 +18,10 @@ extension SiteItem {
             problem: info.problem,
             hasOwnSettings: !info.parked,
             nodeSetting: info.nodeSetting,
-            projectNode: info.projectNode
+            projectNode: info.projectNode,
+            automaticWorkspaces: info.automaticWorkspaces ?? true,
+            workspaces: info.workspaces ?? [],
+            workspaceProblem: info.workspaceProblem
         )
     }
 }

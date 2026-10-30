@@ -169,9 +169,13 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
 40. Nexus creates a workspace for each new worktree of a site, and removes it when the worktree
     goes away. A site setting turns this off. It is on by default. `nexus workspace create`
     works when the setting is off. `nexus workspace wait` waits until a workspace is ready.
+    A worktree that exists when Nexus gets the site, or that comes while the setting is off,
+    gets no workspace by itself. The setting does not stop a removal.
     Evidence: 9 sites have worktrees, up to 14 for one site.
 41. The workspace name is the worktree folder name in lowercase. Every character outside a-z,
-    0-9 and - becomes -. TICKET-123 becomes ticket-123.
+    0-9 and - becomes -. TICKET-123 becomes ticket-123. A name has at most 40 characters and
+    no - at its start or end, because it goes into a host. A name with no other characters
+    becomes workspace.
 42. Domain: every host keeps its subdomains. The label before the TLD gets "-<workspace>".
     my.shop.test becomes my.shop-ticket-123.test. A host outside the dev TLD gets the dev
     TLD: blog.local becomes blog-ticket-123.test.

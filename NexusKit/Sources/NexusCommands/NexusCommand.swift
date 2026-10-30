@@ -74,7 +74,7 @@ struct NexusCommand: AsyncParsableCommand {
         subcommands: [
             Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Installed.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
-            SiteCommand.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
+            SiteCommand.self, WorkspaceCommand.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
             Database.self, PHP.self, Composer.self, Node.self, NPM.self,
         ]
     )
@@ -419,6 +419,41 @@ struct Uninstall: AsyncParsableCommand {
     }
 }
 
+struct WorkspaceCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "workspace",
+        abstract: "Shows the workspaces of the sites.",
+        subcommands: [List.self],
+        defaultSubcommand: List.self
+    )
+
+    struct List: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Lists the workspaces of the sites.")
+
+        func run() async throws {
+            let response = try await send(.sites)
+
+            guard case .sites(let sites) = response else {
+                try finish(response)
+                return
+            }
+
+            let rows = sites.flatMap { site in
+                (site.workspaces ?? []).map { (site: site.hosts.first ?? "", workspace: $0) }
+            }
+
+            if rows.isEmpty {
+                print("Nexus has no workspaces. A new git worktree of a site gets one.")
+                return
+            }
+
+            for row in rows {
+                print([row.site.padding(to: 28), row.workspace.name.padding(to: 28), row.workspace.folder].joined(separator: " "))
+            }
+        }
+    }
+}
+
 extension WebServer: ExpressibleByArgument {}
 
 struct SiteCommand: AsyncParsableCommand {
@@ -550,10 +585,11 @@ struct SiteCommand: AsyncParsableCommand {
         @Option(help: "nginx or apache.") var server: WebServer?
         @Option(name: .customLong("alias"), help: "The aliases. They replace the current aliases.") var aliases: [String] = []
         @Flag(help: "Remove every alias.") var noAliases = false
+        @Option(help: "on or off. With on, a new git worktree gets a workspace.") var workspaces: OnOff?
 
         func run() async throws {
             let aliasChange: [String]? = noAliases ? [] : (aliases.isEmpty ? nil : aliases)
-            try finish(try await send(.editSite(host: host, change: SiteChange(php: php, server: server, aliases: aliasChange, node: node))))
+            try finish(try await send(.editSite(host: host, change: SiteChange(php: php, server: server, aliases: aliasChange, node: node, automaticWorkspaces: workspaces.map { $0 == .on }))))
         }
     }
 

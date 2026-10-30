@@ -76,6 +76,14 @@ public actor NexusEngine {
     // Apache accepted (D62).
     var parkedWatcher: FolderWatcher?
     var appliedSites: [String]?
+    // The watch of the .git folders of the sites (D40).
+    var worktreeWatcher: FolderWatcher?
+    var watchedRepositories: Set<String> = []
+    var watchedPlainFolders: Set<String> = []
+    var worktreeSignature: [String] = []
+    var reconcilingWorkspaces = false
+    var reconcileAgain = false
+    var watchingStopped = false
     // The downloads and database copies that run now, and the last task list of the watchers.
     private(set) var runningTasks: [String: RunningTask] = [:]
     // The databases that a copy writes now, as "<instance> <name>". nexusd refuses a second copy
@@ -256,6 +264,7 @@ public actor NexusEngine {
     public func shutdown() async {
         parkedWatcher?.stop()
         parkedWatcher = nil
+        stopWatchingWorktrees()
         helperRetry?.cancel()
         await supervisor.stopAll()
         stopDNS()
@@ -881,6 +890,11 @@ extension NexusEngine {
     }
 
     func sitesChanged() {
+        publishSites()
+        Task { await workspaceSitesChanged() }
+    }
+
+    func publishSites() {
         sitesMayHaveChanged = true
         servicesChanged()
     }
@@ -1283,6 +1297,7 @@ extension NexusEngine {
 
         parkedWatcher?.stop()
         parkedWatcher = nil
+        stopWatchingWorktrees()
         await supervisor.stopAll()
         stopDNS()
 

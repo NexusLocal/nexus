@@ -40,6 +40,9 @@ public struct EngineState: Codable, Sendable, Equatable {
     // data has root/root, because Nexus made it before the accounts could change (D35).
     public var databaseAccounts: [String: DatabaseAccount] = [:]
     public var newInstanceAccount = DatabaseAccount.newInstance
+    // The worktrees and workspaces of each site, with the project folder of the site as the key.
+    // A host can change. A site of a parked folder has no entry in sites.
+    public var worktrees: [String: SiteWorktrees] = [:]
 
     public init() {}
 
@@ -67,6 +70,7 @@ public struct EngineState: Codable, Sendable, Equatable {
         nginxModules = try container.decodeIfPresent(Set<String>.self, forKey: .nginxModules) ?? defaults.nginxModules
         databaseAccounts = try container.decodeIfPresent([String: DatabaseAccount].self, forKey: .databaseAccounts) ?? defaults.databaseAccounts
         newInstanceAccount = try container.decodeIfPresent(DatabaseAccount.self, forKey: .newInstanceAccount) ?? defaults.newInstanceAccount
+        worktrees = try container.decodeIfPresent([String: SiteWorktrees].self, forKey: .worktrees) ?? defaults.worktrees
     }
 }
 

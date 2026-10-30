@@ -10,7 +10,7 @@ public enum WebServer: String, Codable, Sendable, CaseIterable {
 }
 
 // A site that the user added. The host is the first name of the site and its identity. A Node
-// line of nil comes from the files of the project (D21).
+// line of nil comes from the files of the project (D21). automaticWorkspaces of nil is on (D40).
 public struct Site: Codable, Sendable, Equatable {
     public var host: String
     public var folder: URL
@@ -18,14 +18,20 @@ public struct Site: Codable, Sendable, Equatable {
     public var php: String
     public var server: WebServer
     public var node: String?
+    public var automaticWorkspaces: Bool?
 
-    public init(host: String, folder: URL, aliases: [String] = [], php: String, server: WebServer = .nginx, node: String? = nil) {
+    public init(host: String, folder: URL, aliases: [String] = [], php: String, server: WebServer = .nginx, node: String? = nil, automaticWorkspaces: Bool? = nil) {
         self.host = host
         self.folder = folder
         self.aliases = aliases
         self.php = php
         self.server = server
         self.node = node
+        self.automaticWorkspaces = automaticWorkspaces
+    }
+
+    public var createsWorkspaces: Bool {
+        automaticWorkspaces ?? true
     }
 
     public var hosts: [String] {

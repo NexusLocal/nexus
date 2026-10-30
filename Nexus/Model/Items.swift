@@ -163,6 +163,9 @@ struct SiteItem: Identifiable, Hashable {
     // The Node line that the user chose, and the line that the files of the project give (D21).
     var nodeSetting: String?
     var projectNode: NodeChoice?
+    var automaticWorkspaces = true
+    var workspaces: [Workspace] = []
+    var workspaceProblem: String?
 
     var id: String { host }
 

@@ -11,12 +11,14 @@ struct SiteScreen: View {
     @State private var server: String
     @State private var php: String
     @State private var node: String
+    @State private var automaticWorkspaces: Bool
 
     init(site: SiteItem) {
         self.site = site
         _server = State(initialValue: site.server)
         _php = State(initialValue: site.php)
         _node = State(initialValue: site.nodeSetting ?? NodeLines.fromProject)
+        _automaticWorkspaces = State(initialValue: site.automaticWorkspaces)
     }
 
     private var group: Binding<String> {
@@ -124,6 +126,30 @@ struct SiteScreen: View {
                     }
                 }
             }
+
+            Section {
+                Toggle("Create workspaces automatically", isOn: $automaticWorkspaces)
+                    .toggleStyle(.switch)
+
+                ForEach(site.workspaces) { workspace in
+                    LabeledContent {
+                        PathText((workspace.folder as NSString).abbreviatingWithTildeInPath)
+                    } label: {
+                        Label(workspace.name, systemImage: "arrow.triangle.branch")
+                    }
+                }
+            } header: {
+                Text("Workspaces")
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let problem = site.workspaceProblem {
+                        Text(problem)
+                            .foregroundStyle(Color.orangeText)
+                    }
+
+                    Text("When git adds a worktree to this site, Nexus makes a workspace for it. This works for every tool that uses git worktrees. When git no longer lists the worktree, Nexus removes the workspace.")
+                }
+            }
         }
         .formStyle(.grouped)
         .screenTitle(site.host, subtitle: "\((WebServer(rawValue: server) ?? .nginx).displayName) · PHP \(php)")
@@ -147,6 +173,14 @@ struct SiteScreen: View {
             server = site.server
             php = site.php
             node = site.nodeSetting ?? NodeLines.fromProject
+            automaticWorkspaces = site.automaticWorkspaces
+        }
+        .onChange(of: automaticWorkspaces) {
+            guard automaticWorkspaces != site.automaticWorkspaces else {
+                return
+            }
+
+            change(SiteChange(automaticWorkspaces: automaticWorkspaces)) { automaticWorkspaces = site.automaticWorkspaces }
         }
         .onChange(of: server) {
             guard server != site.server, let choice = WebServer(rawValue: server) else {

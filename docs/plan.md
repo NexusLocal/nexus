@@ -656,11 +656,45 @@ the probe changed no file.
 
 ### 8b. Worktree detection
 
-Work: watch .git/worktrees of each site. `git worktree list --porcelain` is the source of truth.
-A worktree counts as removed only when git no longer lists it (D53).
+Work: watch .git/worktrees of each site. Only `git worktree list --porcelain` says which worktrees
+exist. A worktree counts as removed only when git no longer lists it (D53).
 
 Done when: `git worktree add` and `claude --worktree` both give a workspace. `git worktree
 remove` starts the removal.
+
+Built: the module NexusWorkspaces, `nexus workspace list`, `nexus site edit --workspaces on|off`,
+and the Workspaces section of the Site screen with the switch and a row for each workspace. A
+workspace is only a record now. Parts 8c to 8k add its domain, files and databases. The rows get
+the domain, the state and Open in those parts.
+
+nexusd watches the .git folder of each site. A change counts only when something that git lists
+changes in .git/worktrees: an admin folder, its index, its gitdir or its HEAD. Then `git worktree
+list --porcelain` decides. nexusd also checks at its start and after each change of the sites.
+So a worktree from a time when nexusd did not run gets a workspace too. When git cannot list the
+worktrees, the workspaces stay.
+
+A site that is new to Nexus keeps its worktrees without a workspace, because one application has
+14 worktrees. Only a worktree that comes later gets a workspace (D40). The same applies to a
+worktree that came while the setting was off. A worktree that is itself a site gets no workspace.
+`git worktree move` keeps the workspace when the folder name stays the same. A second worktree
+with the same name gets a number. A worktree of a branch without the folder of the site waits
+until that folder comes. A site without a repository gets a record too, so a worktree after a
+later `git init` counts as new. nexusd reads the list with /usr/bin/git only when `xcode-select
+-p` works, because /usr/bin/git can be a stub that opens the install dialog of macOS. Without git,
+the Site screen says so and the workspaces stay.
+
+A lock is no sign that git still adds a worktree, because `claude --worktree` keeps its worktree
+locked. So a worktree counts as added when it has no lock or when it has an index. The index comes
+at the end of the checkout.
+
+A removed site loses its workspace records. Part 8k must also remove their databases. A record
+stays while the folder of the site does not exist, for example on a disk that is not connected.
+So part 8k must also decide what happens after a user deletes that folder.
+
+Checked on 2026-10-30 on the owner's Mac with a test site through the real nexusd: `git worktree
+add` and `claude --worktree` each gave a workspace in 2 seconds. `git worktree remove` removed it.
+`git worktree move` kept it. With the setting off, a new worktree got no workspace. The test site
+is removed.
 
 ### 8c. Domain and certificate
 

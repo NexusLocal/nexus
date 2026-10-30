@@ -93,6 +93,61 @@ struct ProjectFolderTests {
         #expect(location.map { RealPath.of($0.root) } == RealPath.of(worktreeFolder))
     }
 
+    @Test func theWorkspaceKeyOfASiteLeavesOutThePublicFolder() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try folder("shop")
+        let publicFolder = try folder("shop/public")
+
+        #expect(ProjectFolder.workspaceKey(of: site("a.test", shop)) == RealPath.of(shop))
+        #expect(ProjectFolder.workspaceKey(of: site("b.test", publicFolder)) == RealPath.of(shop))
+    }
+
+    @Test func theRepositoryIsTheFolderWithAGitFolder() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try folder("shop/.git")
+        let backend = try folder("shop/backend")
+
+        #expect(ProjectFolder.repository(holding: RealPath.of(backend)) == RealPath.of(root.appending(path: "shop")))
+    }
+
+    @Test func aFolderWithAGitFileHasNoRepository() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try folder("shop/.git")
+        try worktree(of: "shop", at: "worktrees/ticket-123")
+
+        #expect(ProjectFolder.repository(holding: RealPath.of(root.appending(path: "worktrees/ticket-123"))) == nil)
+    }
+
+    @Test func aSiteInASubfolderHasThatSubfolderInItsRepository() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try folder("shop/.git")
+        let backend = try folder("shop/backend")
+
+        let repository = ProjectFolder.repository(of: Site(host: "shop.test", folder: backend, php: "8.4"))
+
+        #expect(repository?.root == RealPath.of(root.appending(path: "shop")))
+        #expect(repository?.subfolder == "/backend")
+    }
+
+    @Test func aPublicFolderThatIsARepositoryHasNoSubfolder() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try folder("shop")
+        try Data("{}".utf8).write(to: shop.appending(path: "composer.json"))
+        _ = try folder("shop/public/.git")
+        let publicFolder = shop.appending(path: "public")
+
+        let repository = ProjectFolder.repository(of: Site(host: "shop.test", folder: publicFolder, php: "8.4"))
+
+        #expect(repository?.root == RealPath.of(publicFolder))
+        #expect(repository?.subfolder == "")
+    }
+
+    @Test func aFolderOutsideARepositoryHasNoRepository() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        #expect(ProjectFolder.repository(holding: RealPath.of(try folder("plain"))) == nil)
+    }
+
     @Test func aWorktreeOutsideTheSiteBelongsToTheSite() throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try folder("shop")

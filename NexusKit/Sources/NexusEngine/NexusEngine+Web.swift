@@ -7,6 +7,7 @@ import NexusIPC
 import NexusRuntime
 import NexusSupervisor
 import NexusTLS
+import NexusWorkspaces
 
 struct WebPlan {
     var sites: [WebSite] = []
@@ -474,6 +475,8 @@ extension NexusEngine {
             }
         }
 
+        let hasRepositories = resolved.contains { ProjectFolder.repository(of: $0.site) != nil }
+        let git = hasRepositories ? await GitTool.executable() : nil
         var sites: [SiteInfo] = []
 
         for (site, parked) in resolved {
@@ -489,7 +492,10 @@ extension NexusEngine {
                 parkedFolder: Self.parkedFolder(of: site, in: state.parked).map { Self.displayPath($0.folder) },
                 problem: Self.problem(of: site, installed: installed),
                 projectNode: site.node == nil ? NodeLines.choose(hint: nodeHint(of: site.folder), installed: nodeLines) : nil,
-                nodeSetting: site.node
+                nodeSetting: site.node,
+                automaticWorkspaces: site.createsWorkspaces,
+                workspaces: state.worktrees[ProjectFolder.workspaceKey(of: site)]?.workspaces ?? [],
+                workspaceProblem: ProjectFolder.repository(of: site) != nil && git == nil ? GitTool.missing : nil
             ))
         }
 
@@ -666,6 +672,9 @@ extension NexusEngine {
         if let node = change.node {
             site.node = try await nodeLine(node)
         }
+        if let automaticWorkspaces = change.automaticWorkspaces {
+            site.automaticWorkspaces = automaticWorkspaces
+        }
 
         try checkUnique(site, in: state)
 
@@ -678,21 +687,28 @@ extension NexusEngine {
             }
         }
 
-        // The Node line changes no server. So a change of only the Node line needs no new web
+        // The Node line and the workspace setting change no server. So they need no new web
         // configuration.
-        let onlyNode = change.node != nil && change.php == nil && change.server == nil && change.aliases == nil
-        let warnings = onlyNode ? [] : try await changeWeb(.sites, store)
+        let onlySettings = (change.node != nil || change.automaticWorkspaces != nil) && change.php == nil && change.server == nil && change.aliases == nil
+        var notes = onlySettings ? [] : try await changeWeb(.sites, store)
 
-        if onlyNode {
+        if onlySettings {
             try await stateStore.update(store)
         }
 
-        guard let node = change.node else {
-            return await siteMessage(edited, warnings: warnings)
+        if let node = change.node {
+            let used = node == NodeLines.fromProject ? "the Node version of the project" : "Node \(node)"
+            notes.insert("nexus node and nexus npm use \(used) in its folder.", at: 0)
         }
 
-        let used = node == NodeLines.fromProject ? "the Node version of the project" : "Node \(node)"
-        return await siteMessage(edited, warnings: ["nexus node and nexus npm use \(used) in its folder."] + warnings)
+        if change.automaticWorkspaces != nil {
+            let key = ProjectFolder.workspaceKey(of: edited)
+            let sites = resolvedSites(await stateStore.current()).map(\.site)
+            let createsWorkspaces = sites.contains { ProjectFolder.workspaceKey(of: $0) == key && $0.createsWorkspaces }
+            notes.append(createsWorkspaces ? "A new worktree gets a workspace." : "A new worktree gets no workspace.")
+        }
+
+        return await siteMessage(edited, warnings: notes)
     }
 
     func park(folder path: String, php: String?, server: WebServer?) async throws -> String {

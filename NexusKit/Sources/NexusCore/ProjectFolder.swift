@@ -61,7 +61,7 @@ public enum ProjectFolder {
     // project then belongs to the site. Only composer.json counts as the project file, because a
     // package.json can be in the home folder. A public folder without this file is a site of its
     // own.
-    private static func projectFolder(of site: Site) -> String {
+    public static func projectFolder(of site: Site) -> String {
         let path = RealPath.of(site.folder)
 
         guard (path as NSString).lastPathComponent == "public" else {
@@ -74,28 +74,27 @@ public enum ProjectFolder {
         return hasComposerFile ? parent : path
     }
 
-    // A git worktree has a .git file with the line "gitdir: <folder>". That folder is in
-    // .git/worktrees of the main checkout and has a commondir file. A submodule also has a .git
-    // file, but its folder has no commondir file. A folder with a .git folder is a main checkout.
-    static func worktree(holding path: String) -> (root: String, mainCheckout: String)? {
+    // The key of the workspace record of a site. It leaves out /public. So the key stays the same
+    // when composer.json comes or goes, and the sites of one project share a record.
+    public static func workspaceKey(of site: Site) -> String {
+        let path = RealPath.of(site.folder)
+        return (path as NSString).lastPathComponent == "public" ? (path as NSString).deletingLastPathComponent : path
+    }
+
+    // The main checkout that holds a folder. A .git file means a worktree or a submodule. Their
+    // workspaces belong to the site of the main checkout.
+    public static func repository(holding path: String) -> String? {
+        nearestGit(from: path).flatMap { $0.isFolder ? $0.folder : nil }
+    }
+
+    private static func nearestGit(from path: String) -> (folder: String, isFolder: Bool)? {
         var current = path
-        let fileManager = FileManager.default
 
         while true {
-            let dotGit = (current as NSString).appendingPathComponent(".git")
             var isFolder: ObjCBool = false
 
-            if fileManager.fileExists(atPath: dotGit, isDirectory: &isFolder) {
-                guard !isFolder.boolValue, let gitDir = gitDir(in: dotGit, base: current) else {
-                    return nil
-                }
-
-                guard let common = try? String(contentsOfFile: (gitDir as NSString).appendingPathComponent("commondir"), encoding: .utf8) else {
-                    return nil
-                }
-
-                let commonDir = RealPath.of(URL(filePath: common.trimmingCharacters(in: .whitespacesAndNewlines), directoryHint: .isDirectory, relativeTo: URL(filePath: gitDir, directoryHint: .isDirectory)))
-                return (current, (commonDir as NSString).deletingLastPathComponent)
+            if FileManager.default.fileExists(atPath: (current as NSString).appendingPathComponent(".git"), isDirectory: &isFolder) {
+                return (current, isFolder.boolValue)
             }
 
             guard current != "/" else {
@@ -104,6 +103,39 @@ public enum ProjectFolder {
 
             current = (current as NSString).deletingLastPathComponent
         }
+    }
+
+    // The repository of a site, and the path of the project folder in it with a leading / or
+    // empty. A public folder that is a repository itself has its project folder outside that
+    // repository. So a worktree holds only the public folder.
+    public static func repository(of site: Site) -> (root: String, subfolder: String)? {
+        let project = projectFolder(of: site)
+
+        guard let root = repository(holding: RealPath.of(site.folder)) ?? repository(holding: project) else {
+            return nil
+        }
+
+        return (root, RealPath.contains(root, project) ? String(project.dropFirst(root.count)) : "")
+    }
+
+    public static func adminFolder(ofWorktree path: String) -> String? {
+        gitDir(in: (path as NSString).appendingPathComponent(".git"), base: path)
+    }
+
+    // A git worktree has a .git file with the line "gitdir: <folder>". That folder is in
+    // .git/worktrees of the main checkout and has a commondir file. A submodule also has a .git
+    // file, but its folder has no commondir file. A folder with a .git folder is a main checkout.
+    static func worktree(holding path: String) -> (root: String, mainCheckout: String)? {
+        guard let git = nearestGit(from: path), !git.isFolder, let gitDir = adminFolder(ofWorktree: git.folder) else {
+            return nil
+        }
+
+        guard let common = try? String(contentsOfFile: (gitDir as NSString).appendingPathComponent("commondir"), encoding: .utf8) else {
+            return nil
+        }
+
+        let commonDir = RealPath.of(URL(filePath: common.trimmingCharacters(in: .whitespacesAndNewlines), directoryHint: .isDirectory, relativeTo: URL(filePath: gitDir, directoryHint: .isDirectory)))
+        return (git.folder, (commonDir as NSString).deletingLastPathComponent)
     }
 
     private static func gitDir(in file: String, base: String) -> String? {
