@@ -128,6 +128,16 @@ struct WorkspaceTests {
         #expect(workspace.commandsEnded)
     }
 
+    @Test func aReadyRecordFromBeforeTheProcessesStaysReadyWithoutAPreset() throws {
+        let stored = #"{"name":"fix","worktree":"/w/fix","folder":"/w/fix","state":{"ready":{}}}"#
+
+        let workspace = try JSONDecoder().decode(Workspace.self, from: Data(stored.utf8))
+
+        #expect(workspace.state == .ready)
+        #expect(workspace.backgroundPreset == nil)
+        #expect(workspace.database == nil)
+    }
+
     @Test func aReadyRecordThatNeedsItsRedisInstancesHasNoPendingCommands() throws {
         let stored = #"{"name":"fix","worktree":"/w/fix","folder":"/w/fix","state":{"ready":{}},"redisIndexes":{"REDIS_DB":16}}"#
 

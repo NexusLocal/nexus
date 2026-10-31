@@ -42,6 +42,29 @@ struct WorkspaceEnvPlanTests {
 
     private let sessionOnRedis = ["session.driver": ConfigSetting(value: .text("redis"))]
 
+    @Test func reverbGetsItsPortKeysAndKeepsThePortOfItsRedisConnection() {
+        let result = plan([
+            "broadcasting.default": ConfigSetting(value: .text("reverb")),
+            "broadcasting.connections.reverb.driver": ConfigSetting(value: .text("reverb")),
+            "broadcasting.connections.reverb.options.port": keyed(.number(8080), "REVERB_PORT"),
+            "reverb.servers.reverb.port": keyed(.number(8080), "REVERB_SERVER_PORT"),
+            "reverb.servers.reverb.scaling.server.port": keyed(.number(6379), "REDIS_PORT"),
+            "reverb.apps.apps.0.options.port": keyed(.number(8080), "REVERB_APP_PORT"),
+        ])
+
+        #expect(result.reverbPortKeys == ["REVERB_APP_PORT", "REVERB_PORT", "REVERB_SERVER_PORT", "VITE_REVERB_PORT"])
+    }
+
+    @Test func anApplicationWithoutReverbHasNoReverbPortKeys() {
+        let result = plan([
+            "broadcasting.default": ConfigSetting(value: .text("pusher")),
+            "broadcasting.connections.pusher.driver": ConfigSetting(value: .text("pusher")),
+            "broadcasting.connections.pusher.options.port": keyed(.number(443), "PUSHER_PORT"),
+        ])
+
+        #expect(result.reverbPortKeys.isEmpty)
+    }
+
     @Test func aDatabaseOnANexusInstanceGetsACopyName() {
         let result = plan(connection("main", database: keyed(.text("shop"), "DB_DATABASE")))
 

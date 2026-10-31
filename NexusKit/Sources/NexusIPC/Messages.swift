@@ -35,6 +35,10 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let workspaceProblem: String?
     public let workspaceKeys: [WorkspaceEnvKey]?
     public let workspaceCommands: [String]?
+    public let backgroundCommands: [String]?
+    public let workspaceProcesses: Bool?
+    public let mainProcesses: Bool?
+    public let processProblems: [String]?
 
     public init(
         hosts: [String],
@@ -53,7 +57,11 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         workspaces: [WorkspaceInfo]? = nil,
         workspaceProblem: String? = nil,
         workspaceKeys: [WorkspaceEnvKey]? = nil,
-        workspaceCommands: [String]? = nil
+        workspaceCommands: [String]? = nil,
+        backgroundCommands: [String]? = nil,
+        workspaceProcesses: Bool? = nil,
+        mainProcesses: Bool? = nil,
+        processProblems: [String]? = nil
     ) {
         self.hosts = hosts
         self.folder = folder
@@ -72,6 +80,10 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         self.workspaceProblem = workspaceProblem
         self.workspaceKeys = workspaceKeys
         self.workspaceCommands = workspaceCommands
+        self.backgroundCommands = backgroundCommands
+        self.workspaceProcesses = workspaceProcesses
+        self.mainProcesses = mainProcesses
+        self.processProblems = processProblems
     }
 
     public var node: String? {
@@ -231,8 +243,22 @@ public struct SiteChange: Codable, Sendable, Equatable {
     public var automaticWorkspaces: Bool?
     public var workspaceKeys: [WorkspaceEnvKey]?
     public var workspaceCommands: [String]?
+    public var backgroundCommands: [String]?
+    public var workspaceProcesses: Bool?
+    public var mainProcesses: Bool?
 
-    public init(php: String? = nil, server: WebServer? = nil, aliases: [String]? = nil, node: String? = nil, automaticWorkspaces: Bool? = nil, workspaceKeys: [WorkspaceEnvKey]? = nil, workspaceCommands: [String]? = nil) {
+    public init(
+        php: String? = nil,
+        server: WebServer? = nil,
+        aliases: [String]? = nil,
+        node: String? = nil,
+        automaticWorkspaces: Bool? = nil,
+        workspaceKeys: [WorkspaceEnvKey]? = nil,
+        workspaceCommands: [String]? = nil,
+        backgroundCommands: [String]? = nil,
+        workspaceProcesses: Bool? = nil,
+        mainProcesses: Bool? = nil
+    ) {
         self.php = php
         self.server = server
         self.aliases = aliases
@@ -240,6 +266,9 @@ public struct SiteChange: Codable, Sendable, Equatable {
         self.automaticWorkspaces = automaticWorkspaces
         self.workspaceKeys = workspaceKeys
         self.workspaceCommands = workspaceCommands
+        self.backgroundCommands = backgroundCommands
+        self.workspaceProcesses = workspaceProcesses
+        self.mainProcesses = mainProcesses
     }
 }
 
@@ -562,6 +591,8 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case probe(folder: String, php: String?)
     // What the .env of each workspace of this site gets, with {workspace} in the values.
     case workspaceEnv(host: String)
+    // The background processes of a site that the user did not change (D52).
+    case backgroundPreset(host: String)
     case retryWorkspace(host: String, name: String)
 }
 
@@ -586,6 +617,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case tool(ToolCommand)
     case configuration(LaravelConfiguration)
     case workspaceEnv([WorkspaceEnvKey])
+    case backgroundPreset([String])
 }
 
 public enum NexusMessageCoding {

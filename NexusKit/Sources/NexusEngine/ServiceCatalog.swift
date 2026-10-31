@@ -21,8 +21,9 @@ public struct ServiceCatalog: Sendable {
     public static let httpPortKey = "http"
     public static let httpsPortKey = "https"
     public static let databaseStartTimeout: Duration = .seconds(30)
-    // ExitTimeOut in the launchd plist of nexusd must stay longer, or launchd kills a database
-    // while it writes its data to disk.
+    // A stop of nexusd first waits for the background processes, 10 seconds at most. ExitTimeOut in
+    // the launchd plist of nexusd must stay longer than these two times together, or launchd kills
+    // a database while it writes its data to disk.
     public static let databaseStopTimeout: Duration = .seconds(30)
 
     // Every PHP process forks without exec. The Objective-C runtime and the system log of macOS

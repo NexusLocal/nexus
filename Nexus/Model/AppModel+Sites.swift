@@ -23,7 +23,11 @@ extension SiteItem {
             workspaces: info.workspaces ?? [],
             workspaceProblem: info.workspaceProblem,
             workspaceKeys: info.workspaceKeys ?? [],
-            workspaceCommands: info.workspaceCommands ?? []
+            workspaceCommands: info.workspaceCommands ?? [],
+            backgroundCommands: info.backgroundCommands,
+            workspaceProcesses: info.workspaceProcesses ?? true,
+            mainProcesses: info.mainProcesses ?? false,
+            processProblems: info.processProblems ?? []
         )
     }
 }
@@ -232,6 +236,16 @@ extension AppModel {
         }
 
         return keys
+    }
+
+    // A site that is no Laravel application, or an application that the probe cannot read, gives no
+    // list.
+    func backgroundPreset(of site: SiteItem) async -> [String] {
+        guard case .answer(.backgroundPreset(let commands)) = await outcome(of: .backgroundPreset(host: site.host)) else {
+            return []
+        }
+
+        return commands
     }
 
     func failureOfEdit(_ site: SiteItem, _ change: SiteChange) async -> String? {

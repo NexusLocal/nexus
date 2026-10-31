@@ -552,6 +552,665 @@ extension NexusEngineTests {
         }
     }
 
+    private func engineWithProcesses(_ commands: [String], root: URL, shop: URL, supervisor: ProcessSupervisor = ProcessSupervisor()) async throws -> NexusEngine {
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.4", backgroundCommands: commands)]
+        let engine = try makeSiteEngine(root: root, state: state, processSupervisor: supervisor)
+        try await settle(engine)
+        return engine
+    }
+
+    private func runningProcesses(_ engine: NexusEngine) async -> [String] {
+        await engine.processSupervisor.status().filter(\.state.isActive).map(\.displayName).sorted()
+    }
+
+    private func eventually(_ condition: () async throws -> Bool) async rethrows -> Bool {
+        let deadline = ContinuousClock.now + .seconds(10)
+
+        while ContinuousClock.now < deadline {
+            if try await condition() {
+                return true
+            }
+
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+
+        return false
+    }
+
+    private func text(of file: URL) -> String? {
+        try? String(contentsOf: file, encoding: .utf8)
+    }
+
+    private func processNumber(_ engine: NexusEngine) async -> Int32? {
+        for status in await engine.processSupervisor.status() {
+            if case .running(let pid, _) = status.state {
+                return pid
+            }
+        }
+
+        return nil
+    }
+
+    @Test func aWorkspaceRunsItsOwnProcessAndARemovalEndsIt() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["echo {workspace} {host} {port:web} > started.txt; exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        let started = worktree.appending(path: "started.txt")
+
+        try await whileRunning(engine) {
+            #expect(await runningProcesses(engine).isEmpty)
+
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let port = try #require(try await record(engine, of: shop).ports["web"])
+
+            #expect(await eventually { text(of: started) == "fix shop-fix.test \(port)\n" })
+            #expect(await runningProcesses(engine).count == 1)
+
+            try await git("worktree", "remove", "--force", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(await runningProcesses(engine).isEmpty)
+        }
+    }
+
+    @Test func twoWorkspacesRunTheSameCommandOnTwoPorts() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["echo {port:vite} > port.txt; exec sleep 300"], root: root, shop: shop)
+        let first = root.appending(path: "one", directoryHint: .isDirectory)
+        let second = root.appending(path: "two", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "one", first.path(percentEncoded: false), in: shop)
+            try await git("worktree", "add", "-q", "-b", "two", second.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let hasBothPorts = await eventually {
+                text(of: first.appending(path: "port.txt")) != nil && text(of: second.appending(path: "port.txt")) != nil
+            }
+
+            #expect(hasBothPorts)
+            #expect(text(of: first.appending(path: "port.txt")) != text(of: second.appending(path: "port.txt")))
+            #expect(await runningProcesses(engine).count == 2)
+        }
+    }
+
+    @Test func aWorkspaceThatIsNotIsolatedRunsNoProcess() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            #expect(await runningProcesses(engine).count == 1)
+
+            try await engine.updateRecord(of: "fix", key: RealPath.of(shop)) { $0.state = .notIsolated("The connection main is fixed.") }
+            await engine.syncBackgroundProcesses().value
+
+            #expect(await runningProcesses(engine).isEmpty)
+        }
+    }
+
+    @Test func theSwitchOfASiteStopsAndStartsTheProcessesOfItsWorkspaces() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(workspaceProcesses: false)))
+            try await settle(engine)
+            #expect(await runningProcesses(engine).isEmpty)
+
+            _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(workspaceProcesses: true)))
+            try await settle(engine)
+            #expect(await runningProcesses(engine).count == 1)
+        }
+    }
+
+    @Test func aRetryStartsAProcessAgain() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            let first = try #require(await processNumber(engine))
+
+            _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+            try await settle(engine)
+
+            #expect(await processNumber(engine) != nil)
+            #expect(await processNumber(engine) != first)
+        }
+    }
+
+    @Test func aNewListStartsItsCommandsAndGivesANewPort() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let list = ["  ", "echo {port:scout} > port.txt; exec sleep 301", "echo {port:scout} > port.txt; exec sleep 301"]
+            _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(backgroundCommands: list)))
+            try await settle(engine)
+
+            let port = try #require(try await record(engine, of: shop).ports["scout"])
+
+            #expect(await runningProcesses(engine) == ["echo \(port) > port.txt; exec sleep 301"])
+            #expect(await eventually { text(of: worktree.appending(path: "port.txt")) == "\(port)\n" })
+        }
+    }
+
+    @Test func aRemovalDeletesTheCacheThatViteWroteDuringTheDeleteOfGit() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            try await git("worktree", "remove", "--force", worktree.path(percentEncoded: false), in: shop)
+            try writeFile("{}", to: ".vite/deps/_metadata.json", in: worktree)
+            try await settle(engine)
+
+            #expect(!FileManager.default.fileExists(atPath: worktree.path(percentEncoded: false)))
+        }
+    }
+
+    @Test func aRemovalKeepsAFolderWithAFileOfTheUser() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            try await git("worktree", "remove", "--force", worktree.path(percentEncoded: false), in: shop)
+            try writeFile("{}", to: ".vite/deps/_metadata.json", in: worktree)
+            try writeFile("notes", to: "notes.txt", in: worktree)
+            try await settle(engine)
+
+            #expect(text(of: worktree.appending(path: "notes.txt")) == "notes")
+            #expect(!FileManager.default.fileExists(atPath: worktree.appending(path: ".vite").path(percentEncoded: false)))
+        }
+    }
+
+    @Test func aWorktreeOfARemovedSiteKeepsItsViteCache() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            try writeFile("{}", to: ".vite/deps/_metadata.json", in: worktree)
+
+            _ = await engine.handle(.removeSite(host: "shop.test"))
+            try await settle(engine)
+
+            #expect(text(of: worktree.appending(path: ".vite/deps/_metadata.json")) == "{}")
+        }
+    }
+
+    @Test func aWorkspaceKeepsAPortThatItsListLost() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["echo {port:reverb}; exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            let port = try #require(try await record(engine, of: shop).ports["reverb"])
+
+            _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(backgroundCommands: [])))
+            try await settle(engine)
+
+            #expect(try await record(engine, of: shop).ports["reverb"] == port)
+            #expect(await runningProcesses(engine).isEmpty)
+        }
+    }
+
+    @Test func stopAllServicesWithNoServiceThatRunsStopsTheProcessesUntilAServiceStarts() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            #expect(await runningProcesses(engine).count == 1)
+
+            #expect(await engine.handle(.stopAll) == .done(message: "No service runs."))
+            try await settle(engine)
+            #expect(await runningProcesses(engine).isEmpty)
+
+            _ = await engine.handle(.start(service: NexusEngine.dnsServiceID))
+            try await settle(engine)
+            #expect(await runningProcesses(engine).count == 1)
+        }
+    }
+
+    @Test func aProcessThatKeepsStoppingShowsAWarningUntilItsListChanges() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let policy = RestartPolicy(firstDelay: .milliseconds(10), maximumDelay: .milliseconds(20), stableAfter: .seconds(60), maximumQuickRestarts: 2, stopTimeout: .seconds(2))
+        let engine = try await engineWithProcesses(["exit 3"], root: root, shop: shop, supervisor: ProcessSupervisor(policy: policy))
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let warned = await eventually {
+                await workspaces(engine).first?.warnings?.contains { $0.contains("The background process exit 3 does not run.") } == true
+            }
+
+            #expect(warned)
+
+            _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(backgroundCommands: ["exec sleep 300"])))
+            try await settle(engine)
+
+            #expect(await eventually { await workspaces(engine).first?.warnings == [] })
+            #expect(await runningProcesses(engine) == ["exec sleep 300"])
+        }
+    }
+
+    @Test func aStartOfAServiceStartsAProcessAgainThatFailed() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let policy = RestartPolicy(firstDelay: .milliseconds(10), maximumDelay: .milliseconds(20), stableAfter: .seconds(60), maximumQuickRestarts: 2, stopTimeout: .seconds(2))
+        let engine = try await engineWithProcesses(["test -f database.txt && exec sleep 300"], root: root, shop: shop, supervisor: ProcessSupervisor(policy: policy))
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(await eventually { await workspaces(engine).first?.warnings?.isEmpty == false })
+
+            try writeFile("", to: "database.txt", in: worktree)
+            _ = await engine.handle(.start(service: NexusEngine.dnsServiceID))
+            try await settle(engine)
+
+            #expect(await eventually { await runningProcesses(engine).count == 1 })
+            #expect(await eventually { await workspaces(engine).first?.warnings == [] })
+        }
+    }
+
+    @Test func aFailedProbeOfTheMainCheckoutWaitsUntilItsSwitchChanges() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        try writeFile("", to: "artisan", in: shop)
+        try writeFile("<?php", to: "bootstrap/app.php", in: shop)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.4", mainProcesses: true)]
+        let engine = try makeSiteEngine(root: root, state: state)
+        let key = RealPath.of(shop)
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            let first = try #require(await engine.mainProbeFailures[key]?.nextProbe)
+
+            await engine.syncBackgroundProcesses().value
+
+            let sites = await engine.handle(.sites)
+
+            guard case .sites(let list) = sites else {
+                Issue.record("No sites: \(sites)")
+                return
+            }
+
+            #expect(await engine.mainProbeFailures[key]?.nextProbe == first)
+            #expect(list.first?.processProblems?.first?.contains("PHP 8.4 is not installed") == true)
+
+            _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(mainProcesses: true)))
+            try await settle(engine)
+
+            #expect(try #require(await engine.mainProbeFailures[key]?.nextProbe) > first)
+        }
+    }
+
+    @Test func aProcessThatNeedsADatabaseGetsAWarningInAWorkspaceWithoutOne() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["dump {database}", "exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(await workspaces(engine).first?.warnings == ["The background process dump {database} needs a database, and fix has none."])
+            #expect(await runningProcesses(engine) == ["exec sleep 300"])
+        }
+    }
+
+    @Test func aRecordFromBeforeThisPartStartsNoProcessUntilItsNextSetup() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            try await engine.updateRecord(of: "fix", key: RealPath.of(shop)) { $0.backgroundPreset = nil }
+            await engine.syncBackgroundProcesses().value
+            #expect(await runningProcesses(engine).isEmpty)
+
+            _ = await engine.handle(.retryWorkspace(host: "shop.test", name: "fix"))
+            try await settle(engine)
+            #expect(await runningProcesses(engine).count == 1)
+        }
+    }
+
+    @Test func theMainCheckoutRunsTheListOnlyWithItsSwitchAndWithItsOwnPort() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["echo {workspace} {host} {port:web} > started.txt; exec sleep 300"], root: root, shop: shop)
+        let started = shop.appending(path: "started.txt")
+
+        try await whileRunning(engine) {
+            #expect(await runningProcesses(engine).isEmpty)
+
+            _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(mainProcesses: true)))
+            try await settle(engine)
+
+            #expect(await eventually { text(of: started)?.hasPrefix("main shop.test 20") == true })
+            #expect(await runningProcesses(engine).count == 1)
+
+            _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(mainProcesses: false)))
+            try await settle(engine)
+
+            #expect(await runningProcesses(engine).isEmpty)
+        }
+    }
+
+    @Test func theMainCheckoutKeepsItsProcessAndItsPortAfterAChangeOfTheOtherSwitch() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let listener = "echo {port:web} > port.txt; exec /usr/bin/nc -l 127.0.0.1 {port:web}"
+        let engine = try await engineWithProcesses([listener], root: root, shop: shop)
+        let portFile = shop.appending(path: "port.txt")
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(mainProcesses: true)))
+            try await settle(engine)
+
+            let first = try #require(await processNumber(engine))
+            let listens = await eventually {
+                text(of: portFile).flatMap { Int($0.trimmingCharacters(in: .newlines)) }.map { !PortInspector.isFree($0) } == true
+            }
+
+            #expect(listens)
+
+            _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(workspaceProcesses: false)))
+            try await settle(engine)
+
+            #expect(await processNumber(engine) == first)
+        }
+    }
+
+    @Test func aProcessThatDoesNotStartShowsItsReason() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        try await FileManager.default.createDirectory(at: engine.paths.log("main-shop.test"), withIntermediateDirectories: true)
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(mainProcesses: true)))
+            try await settle(engine)
+
+            guard case .sites(let sites) = await engine.handle(.sites) else {
+                Issue.record("no site list")
+                return
+            }
+
+            #expect(sites.first?.processProblems?.first?.hasPrefix("The background process exec sleep 300 does not run.") == true)
+            #expect(await runningProcesses(engine).isEmpty)
+        }
+    }
+
+    @Test func aProcessGetsTheHostOfTheSetupWhenTheFirstSiteHasItsSwitchOff() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        var state = EngineState()
+        state.sites = [
+            Site(host: "alpha.test", folder: shop, php: "8.4", workspaceProcesses: false),
+            Site(host: "beta.test", folder: shop, php: "8.4", backgroundCommands: ["echo {host} > host.txt; exec sleep 300"]),
+        ]
+        let engine = try makeSiteEngine(root: root, state: state)
+        try await settle(engine)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(await eventually { text(of: worktree.appending(path: "host.txt")) == "alpha-fix.test\n" })
+        }
+    }
+
+    @Test func stopAllServicesStopsTheProcessesUntilTheServicesStartAgain() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            try await engine.stateStore.update { $0.stoppedByStopAll = [NexusEngine.dnsServiceID] }
+            await engine.syncBackgroundProcesses().value
+            #expect(await runningProcesses(engine).isEmpty)
+
+            try await engine.stateStore.update { $0.stoppedByStopAll = [] }
+            await engine.syncBackgroundProcesses().value
+            #expect(await runningProcesses(engine).count == 1)
+        }
+    }
+
+    @Test func aRememberedServiceThatRunsOrThatIsGoneDoesNotHoldBackTheProcesses() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            _ = await engine.handle(.start(service: NexusEngine.dnsServiceID))
+            try await settle(engine)
+
+            try await engine.stateStore.update { $0.stoppedByStopAll = [NexusEngine.dnsServiceID, "redis-8.2"] }
+            await engine.syncBackgroundProcesses().value
+
+            #expect(await runningProcesses(engine).count == 1)
+        }
+    }
+
+    @Test func aStopOfNexusdEndsTheProcesses() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+        let process = await processNumber(engine)
+
+        await engine.shutdown()
+        await engine.syncBackgroundProcesses().value
+
+        #expect(process != nil)
+        #expect(await runningProcesses(engine).isEmpty)
+    }
+
+    @Test func aNewStartEndsTheProcessesThatACrashLeft() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let sleeper = root.appending(path: "sleeper")
+        try FileManager.default.copyItem(at: URL(filePath: "/bin/sleep"), to: sleeper)
+        try await CommandRunner.run(Command(executable: URL(filePath: "/usr/bin/codesign"), arguments: ["-f", "-s", "-", sleeper.path(percentEncoded: false)]))
+        let crashed = try await engineWithProcesses(["exec \(sleeper.path(percentEncoded: false)) 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(crashed) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(crashed)
+            let orphan = try #require(await processNumber(crashed))
+
+            await crashed.endProcessesOfEarlierRun()
+
+            #expect(await eventually { await processNumber(crashed) != orphan })
+            #expect(kill(orphan, 0) != 0)
+        }
+    }
+
+    @Test func aRunOfAnotherRootKeepsItsProcesses() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let running = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let other = try makeSiteEngine(root: root.appending(path: "other", directoryHint: .isDirectory))
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(running) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(running)
+            let process = try #require(await processNumber(running))
+
+            await other.endProcessesOfEarlierRun()
+
+            #expect(kill(process, 0) == 0)
+        }
+    }
+
+    @Test func twoSitesOfAProjectRunACommandOneTime() {
+        let folder = URL(filePath: "/work/shop", directoryHint: .isDirectory)
+        let sites = [
+            Site(host: "shop.test", folder: folder, php: "8.4"),
+            Site(host: "store.test", folder: folder, php: "8.4", backgroundCommands: ["php artisan queue:work", "npm run dev"]),
+        ]
+
+        #expect(NexusEngine.backgroundCommands(of: sites, preset: ["php artisan queue:work"]) == ["php artisan queue:work", "npm run dev"])
+    }
+
+    private func reverbApplication(in root: URL, ignoring ignored: String) async throws -> (shop: URL, engine: NexusEngine, worktree: URL) {
+        let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ignored)
+        try writeFile(#"<?php return ['default' => env('QUEUE_CONNECTION', 'sync'), 'connections' => ['sync' => ['driver' => 'sync'], 'database' => ['driver' => 'database']]];"#, to: "config/queue.php", in: shop)
+        try writeFile(#"<?php return ['default' => env('BROADCAST_CONNECTION', 'null'), 'connections' => ['reverb' => ['driver' => 'reverb', 'options' => ['port' => env('REVERB_PORT', 443)]]]];"#, to: "config/broadcasting.php", in: shop)
+        try writeFile(#"<?php return ['default' => 'reverb', 'servers' => ['reverb' => ['port' => env('REVERB_SERVER_PORT', 8080)]], 'apps' => ['apps' => [['options' => ['port' => env('REVERB_PORT', 443)]]]]];"#, to: "config/reverb.php", in: shop)
+        try writeFile("export default {};\n", to: "vite.config.js", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "processes", in: shop)
+        try writeFile("", to: "database/database.sqlite", in: shop)
+
+        let database = "DB_DATABASE=\(RealPath.of(shop.appending(path: "database")))/database.sqlite\n"
+        try writeFile("\(database)QUEUE_CONNECTION=database\nBROADCAST_CONNECTION=reverb\nREVERB_PORT=8080\nVITE_REVERB_PORT=8080\n", to: ".env", in: shop)
+        try await engine.stateStore.update { $0.sites[0].workspaceProcesses = false }
+        return (shop, engine, worktree)
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealWorkspaceGetsThePresetOfItsApplicationAndAPortForReverb() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (shop, engine, worktree) = try await reverbApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n/public/build/\n/public/hot\n")
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let preset = ["php artisan queue:work", "php artisan schedule:work", "php artisan reverb:start --port={port:reverb}", "npm run dev -- --port {port:vite} --strictPort"]
+            let workspace = try await record(engine, of: shop)
+            let port = try #require(workspace.ports["reverb"])
+            let env = try #require(text(of: worktree.appending(path: ".env")))
+            let preview = await engine.handle(.workspaceEnv(host: "shop.test"))
+
+            #expect(workspace.state == .ready)
+            #expect(workspace.backgroundPreset == preset)
+            #expect(workspace.ports["vite"] != nil)
+            #expect(await engine.handle(.backgroundPreset(host: "shop.test")) == .backgroundPreset(preset))
+            #expect(env.contains("REVERB_PORT=\(port)\n"))
+            #expect(env.contains("REVERB_SERVER_PORT=\(port)\n"))
+            #expect(env.contains("VITE_REVERB_PORT=\(port)\n"))
+            #expect(text(of: shop.appending(path: ".env"))?.contains("REVERB_PORT=8080\n") == true)
+
+            guard case .workspaceEnv(let keys) = preview else {
+                Issue.record("No keys: \(preview)")
+                return
+            }
+
+            #expect(keys.contains(WorkspaceEnvKey(key: "REVERB_PORT", value: "{port:reverb}")))
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealPresetLeavesOutViteWhenGitSeesWhatItWrites() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (_, engine, _) = try await reverbApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n/public/hot\n")
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+
+            let preset = await engine.handle(.backgroundPreset(host: "shop.test"))
+
+            #expect(preset == .backgroundPreset(["php artisan queue:work", "php artisan schedule:work", "php artisan reverb:start --port={port:reverb}"]))
+        }
+    }
+
     @Test func aDifferentYarnLockFileGivesAWarning() async throws {
         let root = workspaceRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -2930,7 +3589,7 @@ extension NexusEngine {
 
 extension NexusEngine {
     var workspaceWorkRuns: Bool {
-        reconcilingWorkspaces || settingUpWorkspaces
+        reconcilingWorkspaces || settingUpWorkspaces || processSync != nil
     }
 
     func markAsEmptying(_ indexes: Set<WorkspaceRedisIndex>) {

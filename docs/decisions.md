@@ -245,7 +245,10 @@ Dates are the end of security fixes, from endoflife.date on 2026-10-26.
     An asset process is in the preset only when its output folder is ignored by git.
     Evidence: one application uses Laravel Mix and has 115 built files in public/ in git. A build in
     a workspace would change those files.
-    The same list can run for the main checkout. That switch is off by default.
+    The same list can run for the main checkout. That switch is off by default. The .env of the
+    main checkout does not change, so {port:reverb} is the port of its Reverb server there.
+    A workspace from before this decision starts no process until a Retry. A scheduler must not
+    start without a request in a workspace that exists.
 53. Removal: Nexus removes a workspace only when git no longer lists the worktree. Before it drops
     a workspace database, it writes a compressed dump to the Nexus trash folder. The trash keeps
     a dump for 7 days (a setting). Nexus empties the Redis indexes of the workspace.

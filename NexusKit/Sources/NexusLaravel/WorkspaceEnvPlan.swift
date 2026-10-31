@@ -48,7 +48,8 @@ public struct WorkspaceEnvRequest: Sendable {
 // what Nexus cannot isolate (D48). keys holds a value for each key. A Redis key gets its index from
 // nexusd, because that depends on the other workspaces. redisPorts holds the instances of these
 // keys. mainRedisIndexes holds the indexes of the main site, which a workspace must not get.
-// database is the name for {database}.
+// database is the name for {database}. reverbPortKeys holds the keys that get the port of the Reverb
+// server of the workspace (D52).
 public struct WorkspaceEnvPlan: Sendable, Equatable {
     public var keys: [String: String] = [:]
     public var redisKeys: [String] = []
@@ -60,6 +61,7 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
     // database that the main site does not have either.
     public var databases: [WorkspaceDatabase] = []
     public var sqliteFiles: [WorkspaceFile] = []
+    public var reverbPortKeys: [String] = []
 
     private static let localHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
 
@@ -87,6 +89,25 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
         }
 
         redisKeys.sort()
+        reverbPortKeys = Self.reverbPortKeys(configuration)
+    }
+
+    // The server listens on one key, and the application and the browser connect with another key.
+    // The probe does not see VITE_REVERB_PORT, because only the JavaScript of the site reads it. A
+    // fixed number on that line would send the browser to the server of the main site.
+    private static func reverbPortKeys(_ configuration: LaravelConfiguration) -> [String] {
+        guard BackgroundPreset.usesReverb(configuration) else {
+            return []
+        }
+
+        let settings = configuration.settings
+        let connection = settings["broadcasting.default"]?.value.description ?? ""
+        let server = settings["reverb.default"]?.value.description ?? "reverb"
+        let apps = settings.keys.filter { $0.wholeMatch(of: #/reverb\.apps\.apps\.\d+\.options\.port/#) != nil }
+        let paths = ["broadcasting.connections.\(connection).options.port", "reverb.servers.\(server).port"] + apps
+        let keys = paths.compactMap { settings[$0] }.filter(\.exact).flatMap(\.keys)
+
+        return Set(keys + ["VITE_REVERB_PORT"]).sorted()
     }
 
     private mutating func add(connection name: String, isDefault: Bool, configuration: LaravelConfiguration, request: WorkspaceEnvRequest) {

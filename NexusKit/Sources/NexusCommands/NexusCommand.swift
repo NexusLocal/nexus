@@ -641,9 +641,17 @@ struct SiteCommand: AsyncParsableCommand {
         @Flag(help: "Remove every key of the workspaces.") var noWorkspaceKeys = false
         @Option(name: .customLong("workspace-command"), help: "A command for a new workspace, after the database copy. It can use {workspace}, {host}, {database} and {port:<name>}. Repeat it for more commands. These replace the current commands.") var workspaceCommands: [String] = []
         @Flag(help: "Remove every command of new workspaces.") var noWorkspaceCommands = false
+        @Option(name: .customLong("background-command"), help: "A background process of each workspace. It can use {workspace}, {host}, {database} and {port:<name>}. Repeat it for more processes. These replace the current processes.") var backgroundCommands: [String] = []
+        @Flag(help: "Remove every background process.") var noBackgroundCommands = false
+        @Option(name: .customLong("workspace-processes"), help: "on or off. With on, each workspace runs the background processes.") var workspaceProcesses: OnOff?
+        @Option(name: .customLong("main-processes"), help: "on or off. With on, the main checkout runs the background processes.") var mainProcesses: OnOff?
 
         private var commandChange: [String]? {
             noWorkspaceCommands ? [] : (workspaceCommands.isEmpty ? nil : workspaceCommands)
+        }
+
+        private var backgroundChange: [String]? {
+            noBackgroundCommands ? [] : (backgroundCommands.isEmpty ? nil : backgroundCommands)
         }
 
         private var keyChange: [WorkspaceEnvKey]? {
@@ -652,7 +660,20 @@ struct SiteCommand: AsyncParsableCommand {
 
         func run() async throws {
             let aliasChange: [String]? = noAliases ? [] : (aliases.isEmpty ? nil : aliases)
-            try finish(try await send(.editSite(host: host, change: SiteChange(php: php, server: server, aliases: aliasChange, node: node, automaticWorkspaces: workspaces.map { $0 == .on }, workspaceKeys: keyChange, workspaceCommands: commandChange))))
+            let change = SiteChange(
+                php: php,
+                server: server,
+                aliases: aliasChange,
+                node: node,
+                automaticWorkspaces: workspaces.map { $0 == .on },
+                workspaceKeys: keyChange,
+                workspaceCommands: commandChange,
+                backgroundCommands: backgroundChange,
+                workspaceProcesses: workspaceProcesses.map { $0 == .on },
+                mainProcesses: mainProcesses.map { $0 == .on }
+            )
+
+            try finish(try await send(.editSite(host: host, change: change)))
         }
     }
 

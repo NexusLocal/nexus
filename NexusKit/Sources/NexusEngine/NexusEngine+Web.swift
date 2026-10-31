@@ -507,7 +507,11 @@ extension NexusEngine {
                 workspaces: workspaceInfo(key: ProjectFolder.workspaceKey(of: site), sitesOfRecord: workspaces.sitesOfRecord, conflicts: workspaces.conflicts, installed: installed, state: state),
                 workspaceProblem: ProjectFolder.repository(of: site) != nil && git == nil ? GitTool.missing : nil,
                 workspaceKeys: site.workspaceKeys,
-                workspaceCommands: site.workspaceCommands
+                workspaceCommands: site.workspaceCommands,
+                backgroundCommands: site.backgroundCommands,
+                workspaceProcesses: site.runsWorkspaceProcesses,
+                mainProcesses: site.runsMainProcesses,
+                processProblems: processProblems[Self.processOwner(key: ProjectFolder.workspaceKey(of: site), workspace: nil)]
             ))
         }
 
@@ -695,11 +699,16 @@ extension NexusEngine {
             site.workspaceKeys = workspaceKeys
         }
         if let workspaceCommands = change.workspaceCommands {
-            // A command runs one time in a workspace, so a second row with that text would do nothing.
-            var seen: Set<String> = []
-            site.workspaceCommands = workspaceCommands.filter { command in
-                !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && seen.insert(command).inserted
-            }
+            site.workspaceCommands = Self.uniqueCommands(workspaceCommands)
+        }
+        if let backgroundCommands = change.backgroundCommands {
+            site.backgroundCommands = Self.uniqueCommands(backgroundCommands)
+        }
+        if let workspaceProcesses = change.workspaceProcesses {
+            site.workspaceProcesses = workspaceProcesses
+        }
+        if let mainProcesses = change.mainProcesses {
+            site.mainProcesses = mainProcesses
         }
 
         try checkUnique(site, in: state)
@@ -715,7 +724,8 @@ extension NexusEngine {
 
         // The Node line and the workspace settings change no server. So they need no new web
         // configuration.
-        let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil || change.workspaceCommands != nil
+        let changesProcesses = change.backgroundCommands != nil || change.workspaceProcesses != nil || change.mainProcesses != nil
+        let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil || change.workspaceCommands != nil || changesProcesses
         let onlySettings = hasSetting && change.php == nil && change.server == nil && change.aliases == nil
         var notes = onlySettings ? [] : try await changeWeb(.sites, store)
 
@@ -728,8 +738,17 @@ extension NexusEngine {
             notes.insert("nexus node and nexus npm use \(used) in its folder.", at: 0)
         }
 
-        if change.workspaceKeys != nil || change.aliases != nil {
+        // A new {port:<name>} needs a port from a setup, and {port:reverb} also changes the .env.
+        if change.workspaceKeys != nil || change.aliases != nil || change.backgroundCommands != nil {
             try await setUpWorkspacesAgain(keys: [ProjectFolder.workspaceKey(of: edited)])
+        }
+
+        if change.php != nil {
+            mainProcessPlans[ProjectFolder.workspaceKey(of: edited)] = nil
+        }
+
+        if change.php != nil || change.mainProcesses != nil {
+            mainProbeFailures[ProjectFolder.workspaceKey(of: edited)] = nil
         }
 
         if change.automaticWorkspaces != nil {
@@ -879,6 +898,11 @@ extension NexusEngine {
         }
 
         return newest
+    }
+
+    // A command runs one time for a workspace, so a second row with that text would do nothing.
+    private static func uniqueCommands(_ commands: [String]) -> [String] {
+        distinct(commands.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
     }
 
     private func checkUnique(_ site: Site, in state: EngineState) throws {

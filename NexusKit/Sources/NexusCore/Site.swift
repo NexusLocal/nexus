@@ -11,6 +11,8 @@ public enum WebServer: String, Codable, Sendable, CaseIterable {
 
 // A site that the user added. The host is the first name of the site and its identity. A Node
 // line of nil comes from the files of the project (D21). automaticWorkspaces of nil is on (D40).
+// backgroundCommands of nil follows the preset of the application (D52). workspaceProcesses of nil
+// is on, and mainProcesses of nil is off.
 public struct Site: Codable, Sendable, Equatable {
     public var host: String
     public var folder: URL
@@ -21,6 +23,9 @@ public struct Site: Codable, Sendable, Equatable {
     public var automaticWorkspaces: Bool?
     public var workspaceKeys: [WorkspaceEnvKey]?
     public var workspaceCommands: [String]?
+    public var backgroundCommands: [String]?
+    public var workspaceProcesses: Bool?
+    public var mainProcesses: Bool?
 
     public init(
         host: String,
@@ -31,7 +36,10 @@ public struct Site: Codable, Sendable, Equatable {
         node: String? = nil,
         automaticWorkspaces: Bool? = nil,
         workspaceKeys: [WorkspaceEnvKey]? = nil,
-        workspaceCommands: [String]? = nil
+        workspaceCommands: [String]? = nil,
+        backgroundCommands: [String]? = nil,
+        workspaceProcesses: Bool? = nil,
+        mainProcesses: Bool? = nil
     ) {
         self.host = host
         self.folder = folder
@@ -42,10 +50,21 @@ public struct Site: Codable, Sendable, Equatable {
         self.automaticWorkspaces = automaticWorkspaces
         self.workspaceKeys = workspaceKeys
         self.workspaceCommands = workspaceCommands
+        self.backgroundCommands = backgroundCommands
+        self.workspaceProcesses = workspaceProcesses
+        self.mainProcesses = mainProcesses
     }
 
     public var createsWorkspaces: Bool {
         automaticWorkspaces ?? true
+    }
+
+    public var runsWorkspaceProcesses: Bool {
+        workspaceProcesses ?? true
+    }
+
+    public var runsMainProcesses: Bool {
+        mainProcesses ?? false
     }
 
     public var hosts: [String] {

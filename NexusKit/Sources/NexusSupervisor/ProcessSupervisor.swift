@@ -63,6 +63,7 @@ public actor ProcessSupervisor {
     }
 
     private let policy: RestartPolicy
+    private var closed = false
     private var changeHandler: (@Sendable () -> Void)?
     private var services: [String: Managed] = [:] {
         didSet { changeHandler?() }
@@ -78,6 +79,10 @@ public actor ProcessSupervisor {
     }
 
     public func start(_ definition: ServiceDefinition) async throws {
+        guard !closed else {
+            return
+        }
+
         if let current = services[definition.id], current.state.isActive {
             return
         }
@@ -88,6 +93,10 @@ public actor ProcessSupervisor {
 
         // Another start of the same service can run during the wait for the ports.
         if let current = services[definition.id], current.state.isActive {
+            return
+        }
+
+        guard !closed else {
             return
         }
 
@@ -111,10 +120,16 @@ public actor ProcessSupervisor {
             return
         }
 
-        kill(process.processIdentifier, managed.definition.stopSignal)
+        let definition = managed.definition
 
-        let deadline = ContinuousClock.now + (managed.definition.stopTimeout ?? policy.stopTimeout)
-        while process.isRunning, ContinuousClock.now < deadline {
+        if definition.stopsGroup {
+            ProcessGroup.signal(process, definition.stopSignal)
+        } else {
+            kill(process.processIdentifier, definition.stopSignal)
+        }
+
+        let deadline = ContinuousClock.now + (definition.stopTimeout ?? policy.stopTimeout)
+        while definition.stopsGroup ? ProcessGroup.hasPrograms(process) : process.isRunning, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
         }
 
@@ -140,6 +155,13 @@ public actor ProcessSupervisor {
                 group.addTask { try? await self.stop(id) }
             }
         }
+    }
+
+    // A start can wait for its turn on this actor. After this call that start does nothing, so no
+    // program stays after a stop of nexusd.
+    public func stopForGood() async {
+        closed = true
+        await stopAll()
     }
 
     public func status() -> [ServiceStatus] {
@@ -227,7 +249,11 @@ public actor ProcessSupervisor {
         }
 
         managed.process = nil
-        endProcessGroup(of: process)
+
+        // A stop of a group waits for the programs that still end their work.
+        if !managed.stopping || !managed.definition.stopsGroup {
+            endProcessGroup(of: process)
+        }
 
         if managed.stopping {
             managed.state = .stopped
@@ -271,17 +297,18 @@ public actor ProcessSupervisor {
 }
 
 public enum LogFile {
+    // Programs can share one log. With O_APPEND each write goes to the end of the file, so no
+    // program writes over the output of another program.
     public static func openForAppending(_ file: URL) throws -> FileHandle {
-        let fileManager = FileManager.default
-        try fileManager.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
 
-        if !fileManager.fileExists(atPath: file.path(percentEncoded: false)) {
-            fileManager.createFile(atPath: file.path(percentEncoded: false), contents: nil)
+        let descriptor = open(file.path(percentEncoded: false), O_WRONLY | O_APPEND | O_CREAT, 0o644)
+
+        guard descriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
 
-        let handle = try FileHandle(forWritingTo: file)
-        try handle.seekToEnd()
-        return handle
+        return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 }
 

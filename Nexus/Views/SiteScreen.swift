@@ -15,6 +15,10 @@ struct SiteScreen: View {
     @State private var nexusKeys: [WorkspaceEnvKey] = []
     @State private var ownKeys: [WorkspaceEnvKey]
     @State private var commands: [String]
+    @State private var workspaceProcesses: Bool
+    @State private var mainProcesses: Bool
+    @State private var preset: [String] = []
+    @State private var backgroundCommands: [String]
 
     init(site: SiteItem) {
         self.site = site
@@ -24,6 +28,9 @@ struct SiteScreen: View {
         _automaticWorkspaces = State(initialValue: site.automaticWorkspaces)
         _ownKeys = State(initialValue: site.workspaceKeys)
         _commands = State(initialValue: site.workspaceCommands)
+        _workspaceProcesses = State(initialValue: site.workspaceProcesses)
+        _mainProcesses = State(initialValue: site.mainProcesses)
+        _backgroundCommands = State(initialValue: site.backgroundCommands ?? [])
     }
 
     private var group: Binding<String> {
@@ -196,28 +203,28 @@ struct SiteScreen: View {
             }
 
             Section {
-                ForEach(commands.indices, id: \.self) { index in
-                    HStack {
-                        Image(systemName: "terminal")
-                            .foregroundStyle(.secondary)
+                Toggle("Run in workspaces", isOn: $workspaceProcesses)
+                    .toggleStyle(.switch)
 
-                        TextField("Command", text: command(at: index), prompt: Text("php artisan tenant:domain shop-{workspace}.test"))
-                            .labelsHidden()
-                            .plainTextInput()
-                            .onSubmit { saveCommands() }
+                Toggle("Run for the main checkout", isOn: $mainProcesses)
+                    .toggleStyle(.switch)
 
-                        Button("Remove", systemImage: "minus") {
-                            commands.remove(at: index)
-                            saveCommands()
-                        }
-                        .labelStyle(.iconOnly)
+                CommandRows(commands: $backgroundCommands, prompt: "php artisan horizon", save: saveBackgroundCommands)
+            } header: {
+                Text("Background processes")
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(site.processProblems, id: \.self) { problem in
+                        Text(problem)
+                            .foregroundStyle(Color.orangeText)
                     }
-                    .font(.system(.body, design: .monospaced))
-                }
 
-                Button("Add a command") {
-                    commands.append("")
+                    Text("Each workspace runs its own copy of these commands. {port:vite} gets a free port in each workspace.")
                 }
+            }
+
+            Section {
+                CommandRows(commands: $commands, prompt: "php artisan tenant:domain shop-{workspace}.test", save: saveCommands)
             } header: {
                 Text("Commands after database copy")
             } footer: {
@@ -276,9 +283,28 @@ struct SiteScreen: View {
 
             saveOwnKeys()
             saveCommands()
+            saveBackgroundCommands()
         }
-        .task(id: site.workspaceKeys) {
+        .task(id: EnvPreviewSource(keys: site.workspaceKeys, commands: site.workspaceCommands, backgroundCommands: site.backgroundCommands)) {
             nexusKeys = await model.workspaceEnv(of: site)
+        }
+        .task(id: site.backgroundCommands == nil) {
+            guard site.backgroundCommands == nil else {
+                return
+            }
+
+            let commands = await model.backgroundPreset(of: site)
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            preset = commands
+
+            // The probe can take seconds, and the user can type a command in that time.
+            if completeBackgroundCommands.isEmpty {
+                backgroundCommands = commands
+            }
         }
         .screenTitle(site.host, subtitle: "\((WebServer(rawValue: server) ?? .nginx).displayName) · PHP \(php)")
         .toolbar {
@@ -302,6 +328,8 @@ struct SiteScreen: View {
             php = site.php
             node = site.nodeSetting ?? NodeLines.fromProject
             automaticWorkspaces = site.automaticWorkspaces
+            workspaceProcesses = site.workspaceProcesses
+            mainProcesses = site.mainProcesses
         }
         .onChange(of: site.workspaceKeys) {
             if site.workspaceKeys != completeKeys {
@@ -312,6 +340,25 @@ struct SiteScreen: View {
             if site.workspaceCommands != completeCommands {
                 commands = site.workspaceCommands
             }
+        }
+        .onChange(of: site.backgroundCommands) {
+            if let current = site.backgroundCommands, current != completeBackgroundCommands {
+                backgroundCommands = current
+            }
+        }
+        .onChange(of: workspaceProcesses) {
+            guard workspaceProcesses != site.workspaceProcesses else {
+                return
+            }
+
+            change(SiteChange(workspaceProcesses: workspaceProcesses)) { workspaceProcesses = site.workspaceProcesses }
+        }
+        .onChange(of: mainProcesses) {
+            guard mainProcesses != site.mainProcesses else {
+                return
+            }
+
+            change(SiteChange(mainProcesses: mainProcesses)) { mainProcesses = site.mainProcesses }
         }
         .onChange(of: automaticWorkspaces) {
             guard automaticWorkspaces != site.automaticWorkspaces else {
@@ -388,19 +435,13 @@ struct SiteScreen: View {
         ownKeys.filter { !$0.key.isEmpty }
     }
 
-    private func command(at index: Int) -> Binding<String> {
-        Binding {
-            commands.indices.contains(index) ? commands[index] : ""
-        } set: { text in
-            if commands.indices.contains(index) {
-                commands[index] = text
-            }
-        }
-    }
-
     // A new row without text stays on the screen, and it is no command for nexusd yet.
     private var completeCommands: [String] {
-        commands.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        CommandRows.complete(commands)
+    }
+
+    private var completeBackgroundCommands: [String] {
+        CommandRows.complete(backgroundCommands)
     }
 
     private func saveCommands() {
@@ -409,6 +450,16 @@ struct SiteScreen: View {
         }
 
         change(SiteChange(workspaceCommands: completeCommands)) { commands = site.workspaceCommands }
+    }
+
+    // A site follows the preset until the user changes the list. A preset that did not arrive yet
+    // is no change.
+    private func saveBackgroundCommands() {
+        guard completeBackgroundCommands != site.backgroundCommands ?? preset else {
+            return
+        }
+
+        change(SiteChange(backgroundCommands: completeBackgroundCommands)) { backgroundCommands = site.backgroundCommands ?? preset }
     }
 
     private func saveOwnKeys() {
@@ -423,6 +474,58 @@ struct SiteScreen: View {
         Task {
             if await !model.editSite(site, change) {
                 revert()
+            }
+        }
+    }
+}
+
+// A {port:reverb} in a command adds the Reverb keys to the .env of a workspace.
+private struct EnvPreviewSource: Equatable {
+    let keys: [WorkspaceEnvKey]
+    let commands: [String]
+    let backgroundCommands: [String]?
+}
+
+private struct CommandRows: View {
+    @Binding var commands: [String]
+    let prompt: String
+    let save: () -> Void
+
+    static func complete(_ commands: [String]) -> [String] {
+        commands.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    var body: some View {
+        ForEach(commands.indices, id: \.self) { index in
+            HStack {
+                Image(systemName: "terminal")
+                    .foregroundStyle(.secondary)
+
+                TextField("Command", text: command(at: index), prompt: Text(prompt))
+                    .labelsHidden()
+                    .plainTextInput()
+                    .onSubmit { save() }
+
+                Button("Remove", systemImage: "minus") {
+                    commands.remove(at: index)
+                    save()
+                }
+                .labelStyle(.iconOnly)
+            }
+            .font(.system(.body, design: .monospaced))
+        }
+
+        Button("Add a command") {
+            commands.append("")
+        }
+    }
+
+    private func command(at index: Int) -> Binding<String> {
+        Binding {
+            commands.indices.contains(index) ? commands[index] : ""
+        } set: { text in
+            if commands.indices.contains(index) {
+                commands[index] = text
             }
         }
     }

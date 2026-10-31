@@ -127,6 +127,10 @@ extension NexusEngine {
                 publishSites()
             }
 
+            // A worker of a removed workspace would write to its Redis index again.
+            await syncBackgroundProcesses().value
+            removed.values.joined().forEach(Self.removeViteCache)
+
             for (key, workspaces) in removed {
                 await emptyRedisIndexes(of: workspaces, key: key)
             }
@@ -202,7 +206,7 @@ extension NexusEngine {
                 startedCopies: workspace.startedCopies,
                 finishedCopies: workspace.databases.count,
                 plannedCopies: workspace.plannedCopies,
-                warnings: workspace.warnings
+                warnings: workspace.warnings + (processProblems[Self.processOwner(key: key, workspace: workspace.name)] ?? [])
             )
         }
     }

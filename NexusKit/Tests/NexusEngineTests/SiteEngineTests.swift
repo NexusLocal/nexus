@@ -23,7 +23,7 @@ extension NexusEngineTests {
         }
     }
 
-    func makeSiteEngine(root: URL, state: EngineState = EngineState(), runtimes: [(name: String, line: String)] = []) throws -> NexusEngine {
+    func makeSiteEngine(root: URL, state: EngineState = EngineState(), runtimes: [(name: String, line: String)] = [], processSupervisor: ProcessSupervisor = ProcessSupervisor()) throws -> NexusEngine {
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
         try paths.createFolders()
         var state = state
@@ -43,6 +43,7 @@ extension NexusEngineTests {
             paths: paths,
             helper: helper,
             certificateAuthority: CertificateAuthority(paths: paths, store: keyStore),
+            processSupervisor: processSupervisor,
             systemFiles: SystemDNSFiles(
                 resolverFolder: root.appending(path: "etc/resolver", directoryHint: .isDirectory),
                 hostsFile: root.appending(path: "etc/hosts", directoryHint: .notDirectory)

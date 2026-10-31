@@ -33,6 +33,7 @@ public actor NexusEngine {
 
     let paths: NexusPaths
     let supervisor: ProcessSupervisor
+    let processSupervisor: ProcessSupervisor
     let installer: RuntimeInstaller
     let catalog: ServiceCatalog
     let stateStore: EngineStateStore
@@ -93,6 +94,19 @@ public actor NexusEngine {
     var runningSetupKey: String?
     var setupIsOutdated = false
     var runningCommand: (worktree: String, task: Task<CommandOutput, Error>)?
+    // The background processes that nexusd started, the run of the sync that changes them, and what
+    // stops one of them. An entry in processProblems has the owner of the process as its key.
+    var runningProcesses: [String: BackgroundProcess] = [:]
+    var processSync: Task<Void, Never>?
+    var processSyncAgain = false
+    var stoppingAllServices = false
+    var observesProcesses = false
+    var plannedProcessProblems: [String: [String]] = [:]
+    var processProblems: [String: [String]] = [:]
+    var mainProcessPlans: [String: MainProcessPlan] = [:]
+    var mainProbeFailures: [String: MainProbeFailure] = [:]
+    var restartFailedProcesses = false
+    var processesWaitForAService = false
     // The Redis indexes that nexusd empties now.
     var emptyingRedisIndexes: Set<WorkspaceRedisIndex> = []
     // The downloads and database copies that run now, and the last task list of the watchers.
@@ -111,6 +125,7 @@ public actor NexusEngine {
         helper: any PrivilegedHelper,
         certificateAuthority: CertificateAuthority,
         supervisor: ProcessSupervisor = ProcessSupervisor(),
+        processSupervisor: ProcessSupervisor = ProcessSupervisor(),
         downloader: any PackageDownloader = URLSessionDownloader(),
         manifestSource: any ManifestSource = HTTPManifestSource(),
         systemFiles: SystemDNSFiles = SystemDNSFiles(),
@@ -119,6 +134,7 @@ public actor NexusEngine {
     ) {
         self.paths = paths
         self.supervisor = supervisor
+        self.processSupervisor = processSupervisor
         self.installer = RuntimeInstaller(paths: paths, downloader: downloader)
         self.catalog = ServiceCatalog(paths: paths)
         self.stateStore = EngineStateStore(paths: paths)
@@ -232,6 +248,8 @@ public actor NexusEngine {
                 return .configuration(try await probeConfiguration(folder: folder, php: php))
             case .workspaceEnv(let host):
                 return .workspaceEnv(try await workspaceEnvPreview(host: host))
+            case .backgroundPreset(let host):
+                return .backgroundPreset(try await backgroundPreset(host: host))
             case .retryWorkspace(let host, let name):
                 return .done(message: try await retryWorkspace(host: host, name: name))
             }
@@ -264,6 +282,7 @@ public actor NexusEngine {
     // ran when nexusd stopped the last time. The services that "Stop all services" stopped wait
     // for "Start stopped services" (D63).
     public func startEnabledServices() async {
+        await endProcessesOfEarlierRun()
         _ = try? await startDNS()
         _ = try? await serialWeb { await self.watchParkedFolders() }
         _ = try? await serialWeb { try await self.applyWeb(.automatic) }
@@ -281,6 +300,7 @@ public actor NexusEngine {
         parkedWatcher = nil
         stopWatchingWorktrees()
         helperRetry?.cancel()
+        await processSupervisor.stopForGood()
         await supervisor.stopAll()
         stopDNS()
 
@@ -328,6 +348,27 @@ public actor NexusEngine {
         }
 
         return all.sorted { $0.status.id < $1.status.id }
+    }
+
+    // True while a service of the list of "Stop all services" does not run. DNS runs again after a new
+    // start of nexusd, and a removed package has no service. These do not count. "Stop all services"
+    // with no service that runs has an empty list, so processesWaitForAService holds that request.
+    func waitsForStoppedServices() async -> Bool {
+        let stopped = await stateStore.current().stoppedByStopAll
+
+        guard !processesWaitForAService else {
+            return true
+        }
+
+        guard !stopped.isEmpty else {
+            return false
+        }
+
+        guard let all = try? await services() else {
+            return true
+        }
+
+        return all.contains { !$0.status.state.isActive && stopped.contains($0.status.id) }
     }
 
     private func serviceList() async throws -> ServiceList {
@@ -409,6 +450,7 @@ public actor NexusEngine {
         if id == Self.dnsServiceID {
             let message = try await startDNS()
             try await stateStore.update { $0.stoppedByStopAll.remove(id) }
+            serviceStarted()
             return message
         }
 
@@ -433,7 +475,16 @@ public actor NexusEngine {
             }
             $0.stoppedByStopAll.remove(id)
         }
+
+        serviceStarted()
         return message
+    }
+
+    // A sync during the start must not use this. The service is not there yet, so a process would
+    // fail again and nothing would start it after that.
+    private func serviceStarted() {
+        restartFailedProcesses = true
+        processesWaitForAService = false
     }
 
     func startService(_ id: String) async throws -> String {
@@ -570,8 +621,16 @@ public actor NexusEngine {
         let running = try await services().map(\.status).filter(\.state.isActive).map(\.id)
 
         guard !running.isEmpty else {
+            processesWaitForAService = true
+            await stopBackgroundProcesses()
             return "No service runs."
         }
+
+        // The background processes stop first, as at a stop of nexusd. A worker then ends its job
+        // while its database still runs.
+        stoppingAllServices = true
+        defer { stoppingAllServices = false }
+        await stopBackgroundProcesses()
 
         let results = await withTaskGroup(of: (id: String, failure: String?).self) { group in
             for id in running {
@@ -979,7 +1038,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv: true
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset: true
         default: false
         }
     }
@@ -1349,6 +1408,7 @@ extension NexusEngine {
         parkedWatcher?.stop()
         parkedWatcher = nil
         stopWatchingWorktrees()
+        await processSupervisor.stopForGood()
         await supervisor.stopAll()
         stopDNS()
 

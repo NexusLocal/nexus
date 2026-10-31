@@ -910,6 +910,58 @@ when the workspace is ready. Stop them at removal.
 Done when: a queued job from a workspace runs in the worker of that workspace. Vite of two
 workspaces runs at the same time on two ports.
 
+Built: a site has a list of background commands and two switches, on the Site screen in the section
+of the design or with `nexus site edit --background-command`, `--workspace-processes` and
+`--main-processes`. A site that the user did not change follows the preset. The setup keeps the
+preset of that moment in the record, with the name for {database}. So a start of nexusd needs no
+probe. A Vite process is in the preset when git ignores the output folder and public/hot. The output
+folder is public/build, or the value of buildDirectory or outDir in the vite.config file. An
+application in a folder without git keeps Vite. A queue with the driver sync, null, deferred or
+background gets no worker. Each {port:<name>} of the list gets a free port. With {port:reverb} in
+the list, the .env of the workspace gets that port in each key of the Reverb port, and in
+VITE_REVERB_PORT. An application with REVERB_SCHEME=https or a proxy host needs its own keys for
+REVERB_HOST and REVERB_SCHEME, because a workspace runs Reverb on its own port without TLS.
+
+A sync compares the programs that must run with the programs that run, and it changes only the
+difference. Each request that can change something ends with a sync. A workspace runs its programs
+when it is Ready. So a program stops before a setup and starts after it, and a worker does not keep
+old values of the .env. A change of the list gets a new setup, because a new {port:<name>} needs a
+port and {port:reverb} changes the .env. A removal stops the programs before Nexus empties the Redis
+indexes. A workspace that is not isolated runs nothing (D48), also a workspace with a host conflict.
+"Stop all services" stops the programs before the services, so a worker ends its job while the
+database runs. They start again with the services. A request with no service that runs also stops
+them, and the next start of a service starts them. A Ready record from before this part starts no
+program until a Retry, because a scheduler must not start without a request in a workspace that
+exists. A workspace keeps each port that it got, also when its list loses that {port:<name>},
+because its .env can still name that port. So no other workspace gets it.
+
+The programs have their own supervisor, so they do not show as services. Each program restarts after
+an exit. A program that stops 5 times in a short time gets a warning on its workspace. A Retry starts
+it again, and so does the next start of a service, because that service can be the cause. A stop
+sends SIGTERM to the whole process group and waits 10 seconds for each program in it, so a worker
+ends its job and Vite removes public/hot. A crash of nexusd leaves the programs. The next start finds
+them with a marker in their environment and ends them. macOS hides the environment of its own
+programs, so a shell loop without a PHP or Node program stays after a crash. The output goes to
+logs/workspace-<host>.log and logs/main-<host>.log.
+
+`git worktree remove` of a workspace with a running Vite can end with an error and exit status 255,
+in 7 of 8 tries on the owner's Mac. Nexus sees a removal only after git deleted the files. Vite
+reacts to the removal of its config file and writes a new cache to .vite in that folder, so git
+reports "Directory not empty". git has removed the worktree from its list at that moment. After the
+stop, Nexus deletes .vite and the empty folders, so a new worktree on the same path works. A folder
+with its .git file or with other files stays.
+
+With "Run in workspaces" off, the .env of a workspace keeps the Reverb port of that workspace (review
+finding, 8i). No server listens on that port until the user starts one with `php artisan
+reverb:start` in the worktree. That server then works with no other change. With the keys of the
+main site, a workspace would send its broadcasts to the Reverb server of the main site.
+
+The main checkout runs the list when its switch is on. Its .env does not change, so {port:reverb} is
+the port of the Reverb server in the configuration. Each other {port:<name>} gets a free port, and
+it keeps that port until the switch goes off. {workspace} is main. A failed probe shows on the Site
+screen and does not run again for a minute, because a sync waits for it. A change of the switch or
+of the PHP version tries at once. Part 8k must also remove logs/main-<host>.log.
+
 ### 8j. Isolation check
 
 Work: a workspace with a connection that the probe cannot isolate is "not isolated" (D48).
@@ -930,6 +982,9 @@ finding, 8f).
 A command of 8h that git removes the worktree from stops. A file that it wrote after that removal
 can bring the folder back, and that folder blocks a new worktree on this path. Nexus does not delete
 that folder, because a user can also have files there (review finding, 8h). Decide this in 8k.
+
+Remove logs/workspace-<host>.log, logs/sites/<host>.log and the files in certs/ of a removed
+workspace. A removed site also leaves logs/main-<host>.log and its files in certs/.
 
 Done when: a removed workspace leaves only its dump in trash/. A restore of that dump works.
 

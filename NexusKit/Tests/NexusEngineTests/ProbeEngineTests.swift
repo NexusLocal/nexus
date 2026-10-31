@@ -152,7 +152,15 @@ extension NexusEngineTests {
 
         class LoadConfiguration {
             public function bootstrap($app) {
-                $app['config'] = new class(['database' => require "{$app->root}/config/database.php", 'session' => ['lifetime' => (int) env('SESSION_LIFETIME', 120) * 60, 'driver' => env('SESSION_DRIVER', 'file')]]) {
+                $items = ['database' => require "{$app->root}/config/database.php", 'session' => ['lifetime' => (int) env('SESSION_LIFETIME', 120) * 60, 'driver' => env('SESSION_DRIVER', 'file')]];
+
+                foreach (['queue', 'broadcasting', 'reverb'] as $name) {
+                    if (is_file("{$app->root}/config/{$name}.php")) {
+                        $items[$name] = require "{$app->root}/config/{$name}.php";
+                    }
+                }
+
+                $app['config'] = new class($items) {
                     public function __construct(private array $items) {}
                     public function all() { return $this->items; }
                     public function get($path, $default) {

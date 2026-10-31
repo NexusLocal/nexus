@@ -67,6 +67,80 @@ struct ProcessSupervisorTests {
         await supervisor.stopAll()
     }
 
+    @Test func aStopOfAGroupWaitsForAChildThatEndsItsWork() async throws {
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let done = logs.appending(path: "done.txt")
+        let ready = logs.appending(path: "ready.txt")
+        let child = "trap 'sleep 0.3; touch \"$DONE\"; exit 0' TERM; touch \"$READY\"; while :; do sleep 0.05; done"
+        let definition = ServiceDefinition(
+            id: "worker",
+            displayName: "worker",
+            executable: URL(filePath: "/bin/sh"),
+            arguments: ["-c", "/bin/sh -c \"$WORKER\" & wait"],
+            environment: ["WORKER": child, "DONE": done.path(percentEncoded: false), "READY": ready.path(percentEncoded: false)],
+            logFile: logs.appending(path: "worker.log"),
+            stopsGroup: true
+        )
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        try await supervisor.start(definition)
+        let started = await waitFor { FileManager.default.fileExists(atPath: ready.path(percentEncoded: false)) }
+
+        try await supervisor.stop("worker")
+
+        #expect(started)
+        #expect(FileManager.default.fileExists(atPath: done.path(percentEncoded: false)))
+        #expect(await supervisor.state(of: "worker") == .stopped)
+    }
+
+    @Test func aStopOfAGroupEndsAChildThatIgnoresTheSignal() async throws {
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let childFile = logs.appending(path: "child.pid")
+        let script = "trap '' TERM; /bin/sleep 300 & echo $! > \"$CHILD\"; wait"
+        let definition = ServiceDefinition(
+            id: "stubborn",
+            displayName: "stubborn",
+            executable: URL(filePath: "/bin/sh"),
+            arguments: ["-c", script],
+            environment: ["CHILD": childFile.path(percentEncoded: false)],
+            logFile: logs.appending(path: "stubborn.log"),
+            stopTimeout: .milliseconds(200),
+            stopsGroup: true
+        )
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        try await supervisor.start(definition)
+        let written = await waitFor { (try? String(contentsOf: childFile, encoding: .utf8))?.hasSuffix("\n") == true }
+        let child = try #require(Int32((try String(contentsOf: childFile, encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines)))
+
+        try await supervisor.stop("stubborn")
+        let childEnded = await waitFor { kill(child, 0) != 0 }
+
+        #expect(written)
+        #expect(childEnded)
+    }
+
+    @Test func aSupervisorStartsNothingAfterAStopForGood() async throws {
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        try await supervisor.start(definition("first", executable: "/bin/sleep", arguments: ["30"]))
+
+        await supervisor.stopForGood()
+        try await supervisor.start(definition("second", executable: "/bin/sleep", arguments: ["30"]))
+
+        #expect(await supervisor.state(of: "first") == .stopped)
+        #expect(await supervisor.state(of: "second") == nil)
+    }
+
+    @Test func twoProgramsWithOneLogDoNotWriteOverEachOther() throws {
+        let file = logs.appending(path: "shared.log")
+        let first = try LogFile.openForAppending(file)
+        let second = try LogFile.openForAppending(file)
+
+        try first.write(contentsOf: Data("one\n".utf8))
+        try second.write(contentsOf: Data("two\n".utf8))
+        try first.write(contentsOf: Data("three\n".utf8))
+
+        #expect(try String(contentsOf: file, encoding: .utf8) == "one\ntwo\nthree\n")
+    }
+
     @Test func aReloadKeepsTheProcessAndShowsTheNewPorts() async throws {
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition("sleeper", executable: "/bin/sleep", arguments: ["30"]))

@@ -55,6 +55,7 @@ public struct WorkspaceRedisIndex: Sendable, Hashable {
 // warnings holds what the last setup could not do, when the isolation does not depend on it.
 // finishedCommands holds each command of the site that ended well. commandsEnded is true after the
 // last command, so a command that the site gets later does not run in this workspace.
+// backgroundPreset holds the preset of the last setup (D52). database is the value of {database}.
 public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     public let name: String
     public var worktree: String
@@ -71,6 +72,8 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     public var warnings: [String]
     public var finishedCommands: [String]
     public var commandsEnded: Bool
+    public var backgroundPreset: [String]?
+    public var database: String?
 
     public var id: String { name }
 
@@ -95,7 +98,9 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         installedLockFiles: [String: String] = [:],
         warnings: [String] = [],
         finishedCommands: [String] = [],
-        commandsEnded: Bool = false
+        commandsEnded: Bool = false,
+        backgroundPreset: [String]? = nil,
+        database: String? = nil
     ) {
         self.name = name
         self.worktree = worktree
@@ -112,15 +117,19 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         self.warnings = warnings
         self.finishedCommands = finishedCommands
         self.commandsEnded = commandsEnded
+        self.backgroundPreset = backgroundPreset
+        self.database = database
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, worktree, folder, branch, state, redisIndexes, redisInstances, ports, databases, startedCopies, plannedCopies, installedLockFiles, warnings, finishedCommands, commandsEnded
+        case name, worktree, folder, branch, state, redisIndexes, redisInstances, ports, databases, startedCopies, plannedCopies, installedLockFiles, warnings, finishedCommands, commandsEnded, backgroundPreset, database
     }
 
     // A record of part 8b has no state. A record from before part 8f has Redis indexes without their
     // instances, and only a setup can add these. Such a workspace needs its setup. A Ready record
-    // without commands comes from before part 8h, so that workspace exists and gets no commands.
+    // without commands comes from before part 8h, so that workspace exists and gets no commands. A
+    // record without a preset comes from before part 8i. That workspace starts no process until its
+    // next setup, because the scheduler of an old workspace must not start without a request.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
@@ -140,6 +149,8 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
         finishedCommands = try container.decodeIfPresent([String].self, forKey: .finishedCommands) ?? []
         commandsEnded = try container.decodeIfPresent(Bool.self, forKey: .commandsEnded) ?? (storedState == .ready)
+        backgroundPreset = try container.decodeIfPresent([String].self, forKey: .backgroundPreset)
+        database = try container.decodeIfPresent(String.self, forKey: .database)
     }
 
     // D46: <database>_<workspace>. A - in a database name needs quotes in each query of an

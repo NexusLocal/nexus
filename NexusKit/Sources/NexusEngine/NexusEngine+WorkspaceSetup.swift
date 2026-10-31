@@ -11,7 +11,7 @@ import NexusWorkspaces
 // application gets no .env (D54).
 extension NexusEngine {
     private static let firstRedisIndex = 16
-    private static let firstWorkspacePort = 20000
+    static let firstWorkspacePort = 20000
 
     // A setup can take long, so it runs next to the watch of the worktrees.
     func startWorkspaceSetups() {
@@ -34,7 +34,19 @@ extension NexusEngine {
 
             while !watchingStopped, let next = await nextPreparingWorkspace() {
                 runningSetupKey = next.key
-                let finished = await setUp(next.workspace, key: next.key)
+
+                // A worker reads the .env one time. So a worker that runs during a setup keeps the old
+                // values. The workspace is in Preparing now, so the sync stops its programs.
+                await syncBackgroundProcesses().value
+
+                // A sync can wait for a stop or a probe, and git can move or remove the worktree in
+                // that time. A database copy for a record that is gone would stay for ever.
+                guard !watchingStopped, let workspace = await preparingRecord(like: next.workspace, key: next.key) else {
+                    runningSetupKey = nil
+                    continue
+                }
+
+                let finished = await setUp(workspace, key: next.key)
                 runningSetupKey = nil
 
                 // A stop of nexusd also stops the database of a running copy. That failure says
@@ -44,6 +56,7 @@ extension NexusEngine {
                 }
 
                 publishSites()
+                await syncBackgroundProcesses().value
             }
         } while setupAgain
     }
@@ -63,6 +76,12 @@ extension NexusEngine {
         }
 
         return nil
+    }
+
+    private func preparingRecord(like workspace: Workspace, key: String) async -> Workspace? {
+        await stateStore.current().worktrees[key]?.workspaces.first { record in
+            record.name == workspace.name && record.worktree == workspace.worktree && record.state == .preparing
+        }
     }
 
     // A setup can take long, and git can change the branch or move the worktree in that time. So
@@ -87,6 +106,8 @@ extension NexusEngine {
                 state.worktrees[key]?.workspaces[index].warnings = finished.warnings
                 state.worktrees[key]?.workspaces[index].finishedCommands = finished.finishedCommands
                 state.worktrees[key]?.workspaces[index].commandsEnded = finished.commandsEnded
+                state.worktrees[key]?.workspaces[index].backgroundPreset = finished.backgroundPreset
+                state.worktrees[key]?.workspaces[index].database = finished.database
             }
             return true
         } catch {
@@ -335,14 +356,17 @@ extension NexusEngine {
 
         // A site that is no Laravel application gets no .env, but its commands can use a port.
         guard let main = LaravelProject.root(containing: URL(filePath: ProjectFolder.projectFolder(of: site), directoryHint: .isDirectory)) else {
-            workspace.ports = workspacePorts(for: Self.textsWithPorts(of: sites), of: workspace, state: state)
+            workspace.backgroundPreset = []
+            workspace.database = nil
+            workspace.ports = workspacePorts(for: Self.textsWithPorts(of: sites, preset: []), of: workspace, state: state)
             try await recordAssignments(of: workspace, key: key)
             return nil
         }
 
         let mainFolder = RealPath.of(main)
         let folder = Self.applicationFolder(mainFolder, of: site, in: workspace)
-        let plan = try await envPlan(workspace: workspace.name, site: site, mainFolder: mainFolder, workspaceFolder: folder)
+        let probed = try await configuration(of: site, mainFolder: mainFolder)
+        let plan = try await envPlan(workspace: workspace.name, configuration: probed, mainFolder: mainFolder, workspaceFolder: folder)
 
         guard let git = await GitTool.executable() else {
             throw RuntimeError.unsupported(GitTool.missing)
@@ -357,7 +381,9 @@ extension NexusEngine {
         let earlierRedisIndexes = workspace.redisIndexesOnInstances
 
         (workspace.redisIndexes, workspace.redisInstances) = try await redisIndexes(for: plan, of: workspace, state: state)
-        workspace.ports = workspacePorts(for: Self.textsWithPorts(of: sites), of: workspace, state: state)
+        workspace.backgroundPreset = await presetCommands(probed, in: folder)
+        workspace.database = plan.database
+        workspace.ports = workspacePorts(for: Self.textsWithPorts(of: sites, preset: workspace.backgroundPreset ?? []), of: workspace, state: state)
         try await recordAssignments(of: workspace, key: key)
 
         // The file is read after the waits above, because a start of Redis can take long and the
@@ -370,7 +396,8 @@ extension NexusEngine {
         let pairs = Workspace.hostPairs(of: sites, workspace: workspace.name, tld: state.tld)
         let hosts = (pairs + Workspace.pairsFromOtherTLDs(pairs, tld: state.tld)).map { HostRewrite(from: $0.from, to: $0.to) }
         let isolating = plan.keys.merging(workspace.redisIndexes.mapValues(String.init)) { _, redis in redis }
-        let keys = isolating.merging(own) { _, own in own }
+        let reverb = workspace.ports["reverb"].map { port in Dictionary(uniqueKeysWithValues: plan.reverbPortKeys.map { ($0, String(port)) }) } ?? [:]
+        let keys = isolating.merging(reverb) { isolating, _ in isolating }.merging(own) { _, own in own }
 
         try Data(EnvRewrite.apply(to: text, hosts: hosts, keys: keys).utf8).write(to: URL(filePath: target), options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: Self.permissions(of: source)], ofItemAtPath: target)
@@ -417,6 +444,8 @@ extension NexusEngine {
             record.redisIndexes = workspace.redisIndexes
             record.redisInstances = workspace.redisInstances
             record.ports = workspace.ports
+            record.backgroundPreset = workspace.backgroundPreset
+            record.database = workspace.database
         }
     }
 
@@ -447,11 +476,21 @@ extension NexusEngine {
         (try? FileManager.default.attributesOfItem(atPath: file))?[.posixPermissions] as? Int ?? 0o600
     }
 
-    func envPlan(workspace: String, site: Site, mainFolder: String, workspaceFolder: String) async throws -> WorkspaceEnvPlan {
+    func configuration(of site: Site, mainFolder: String) async throws -> LaravelConfiguration {
         let installed = await installer.installedRuntimes()
         let php = try await phpCommand(installedPHP(site.php, in: installed))
-        let configuration = try await ConfigurationProbe(php: URL(filePath: php.executable), environment: php.environment)
+
+        return try await ConfigurationProbe(php: URL(filePath: php.executable), environment: php.environment)
             .run(root: URL(filePath: mainFolder, directoryHint: .isDirectory))
+    }
+
+    func envPlan(workspace: String, site: Site, mainFolder: String, workspaceFolder: String) async throws -> WorkspaceEnvPlan {
+        let probed = try await configuration(of: site, mainFolder: mainFolder)
+
+        return try await envPlan(workspace: workspace, configuration: probed, mainFolder: mainFolder, workspaceFolder: workspaceFolder)
+    }
+
+    private func envPlan(workspace: String, configuration: LaravelConfiguration, mainFolder: String, workspaceFolder: String) async throws -> WorkspaceEnvPlan {
         let instances = try await databaseInstances()
         let redisPorts = Set(try await redisInstances().map(\.port))
 
@@ -497,20 +536,29 @@ extension NexusEngine {
         return (indexes, instances.map(\.id).sorted())
     }
 
-    static func textsWithPorts(of sites: [Site]) -> [String] {
-        sites.flatMap { $0.workspaceKeys ?? [] }.map(\.value) + commands(of: sites)
+    static func textsWithPorts(of sites: [Site], preset: [String]) -> [String] {
+        sites.flatMap { $0.workspaceKeys ?? [] }.map(\.value) + commands(of: sites) + backgroundCommands(of: sites, preset: preset)
     }
 
+    // A workspace keeps a port that its list lost, because its .env can still name that port. Another
+    // workspace with that port would then get the connections of this workspace.
     func workspacePorts(for texts: [String], of workspace: Workspace, state: EngineState) -> [String: Int] {
-        let taken = Set(state.ports.values).union(state.worktrees.values.flatMap(\.workspaces).flatMap(\.ports.values))
+        let taken = takenPorts(state)
+        let names = WorkspaceKeys.portNames(in: texts) + workspace.ports.keys.sorted()
 
-        return Self.numbers(for: WorkspaceKeys.portNames(in: texts), keeping: workspace.ports, from: Self.firstWorkspacePort) {
+        return Self.numbers(for: names, keeping: workspace.ports, from: Self.firstWorkspacePort) {
             !taken.contains($0) && PortInspector.isFree($0)
         }
     }
 
+    func takenPorts(_ state: EngineState) -> Set<Int> {
+        Set(state.ports.values)
+            .union(state.worktrees.values.flatMap(\.workspaces).flatMap(\.ports.values))
+            .union(mainProcessPlans.values.flatMap(\.ports.values))
+    }
+
     // Each name keeps its number. A new name gets the lowest free number.
-    private static func numbers(for names: [String], keeping kept: [String: Int], from first: Int, isFree: (Int) -> Bool) -> [String: Int] {
+    static func numbers(for names: [String], keeping kept: [String: Int], from first: Int, isFree: (Int) -> Bool) -> [String: Int] {
         var numbers = kept.filter { names.contains($0.key) }
         var number = first
 
@@ -543,18 +591,23 @@ extension NexusEngine {
         }
 
         let mainFolder = RealPath.of(main)
-        let plan = try await envPlan(workspace: WorkspaceKeys.workspacePlaceholder, site: site, mainFolder: mainFolder, workspaceFolder: "{worktree}")
+        let probed = try await configuration(of: site, mainFolder: mainFolder)
+        let plan = try await envPlan(workspace: WorkspaceKeys.workspacePlaceholder, configuration: probed, mainFolder: mainFolder, workspaceFolder: "{worktree}")
         let hosts = Workspace.hostPairs(of: sites, workspace: WorkspaceKeys.workspacePlaceholder, tld: state.tld).map { HostRewrite(from: $0.from, to: $0.to) }
         let text = try Self.envText(of: "\(mainFolder)/.env")
         let own = sites.flatMap { $0.workspaceKeys ?? [] }
         let ownNames = Set(own.map(\.key))
-        var seen = Set(plan.keys.keys).union(plan.redisKeys)
+        let preset = await presetCommands(probed, in: mainFolder)
+        let hasReverbPort = WorkspaceKeys.portNames(in: Self.textsWithPorts(of: sites, preset: preset)).contains("reverb")
+        let reverbKeys = hasReverbPort ? plan.reverbPortKeys : []
+        var seen = Set(plan.keys.keys).union(plan.redisKeys).union(reverbKeys)
         let changes = EnvRewrite.hostChanges(in: text, hosts: hosts)
             .filter { seen.insert($0.key).inserted }
             .map { WorkspaceEnvKey(key: $0.key, value: $0.value) }
         let fromNexus = changes
             + plan.keys.sorted { $0.key < $1.key }.map { WorkspaceEnvKey(key: $0.key, value: $0.value) }
             + plan.redisKeys.map { WorkspaceEnvKey(key: $0, value: "a free Redis index") }
+            + reverbKeys.map { WorkspaceEnvKey(key: $0, value: "{port:reverb}") }
 
         return fromNexus.filter { !ownNames.contains($0.key) } + own
     }

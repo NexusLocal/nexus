@@ -43,7 +43,7 @@ extension NexusEngine {
 
         // The ports of this setup come from before the database copy, and the list can have changed
         // in that time. A {port:<name>} without a number would reach the shell as text.
-        workspace.ports = workspacePorts(for: Self.textsWithPorts(of: sites), of: workspace, state: state)
+        workspace.ports = workspacePorts(for: Self.textsWithPorts(of: sites, preset: workspace.backgroundPreset ?? []), of: workspace, state: state)
         try? await recordAssignments(of: workspace, key: key)
 
         let log = "workspace-\(host)"
@@ -89,11 +89,15 @@ extension NexusEngine {
         }
     }
 
-    // Two sites can share a project and have the same command. That command must run one time.
     static func commands(of sites: [Site]) -> [String] {
+        distinct(sites.flatMap { $0.workspaceCommands ?? [] })
+    }
+
+    // Two sites can share a project and have the same command. That command must run one time.
+    static func distinct(_ commands: [String]) -> [String] {
         var seen: Set<String> = []
 
-        return sites.flatMap { $0.workspaceCommands ?? [] }.filter { seen.insert($0).inserted }
+        return commands.filter { seen.insert($0).inserted }
     }
 
     // A program of a setup gets the PATH of the tool, and the links of nexus for the other tools.

@@ -169,6 +169,11 @@ struct SiteItem: Identifiable, Hashable {
     var workspaceProblem: String?
     var workspaceKeys: [WorkspaceEnvKey] = []
     var workspaceCommands: [String] = []
+    // nil follows the preset of the application (D52).
+    var backgroundCommands: [String]?
+    var workspaceProcesses = true
+    var mainProcesses = false
+    var processProblems: [String] = []
 
     var id: String { host }
 
