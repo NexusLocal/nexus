@@ -7,11 +7,14 @@ import NexusRuntime
 import NexusSupervisor
 import NexusWorkspaces
 
-// One program of the list of a site. owner names the workspace or the main checkout.
+// One program of the list of a site. owner names the workspace or the main checkout. worktree is the
+// root of the linked worktree of this program. git removes only such a worktree. So a program in a
+// real main checkout has none. A site can have its folder in a linked worktree.
 struct BackgroundProcess: Sendable, Equatable {
     let owner: String
     let command: String
     let log: String
+    let worktree: String?
     let definition: ServiceDefinition
 }
 
@@ -39,6 +42,9 @@ extension NexusEngine {
     private static let processMarker = "NEXUS_BACKGROUND_PROCESS"
     private static let nodeLineKey = "NEXUS_SITE_NODE"
     private static let mainProbeWait: Duration = .seconds(60)
+    private static let worktreeWatchLatency: TimeInterval = 0.05
+    // The options before the subcommand of git that take their value as the next argument.
+    private static let gitOptionsWithValue: Set<String> = ["-C", "-c", "--attr-source", "--config-env", "--git-dir", "--namespace", "--super-prefix", "--work-tree"]
 
     // One run at a time, because two runs could start one program two times. A request during a run
     // gives one more run. The task ends after the last run.
@@ -85,21 +91,148 @@ extension NexusEngine {
             let servicesWait = await waitsForStoppedServices()
 
             for (id, process) in wanted.sorted(by: { $0.key < $1.key }) where runningProcesses[id] == nil && !servicesWait && !watchingStopped && !stoppingAllServices {
+                // No start in a worktree that git removes now. That removal can start after the list
+                // of this run. The watch comes before the start, so no removal falls between them.
+                if let worktree = process.worktree {
+                    if removingWorktrees.contains(worktree) {
+                        continue
+                    }
+
+                    watch(worktree)
+                }
+
                 writeToLog(of: process.log, "$ \(process.command)\n")
                 runningProcesses[id] = process
 
                 do {
                     try await processSupervisor.start(process.definition)
+
+                    // An end or a stop can reach the supervisor before this start. Then nothing
+                    // else ends this program.
+                    if runningProcesses[id] == nil {
+                        await processSupervisor.end(id)
+                    }
                 } catch {
                     runningProcesses[id] = nil
                     plannedProcessProblems[process.owner, default: []].append("The background process \(process.command) does not run. \(error)")
                 }
             }
 
+            watchWorktrees()
             await backgroundProcessesChanged()
         } while processSyncAgain
 
         processSync = nil
+    }
+
+    // git has no hook for a removal. It tells nothing until it deleted the files. A program that
+    // writes in that time makes git stop with "Directory not empty". Vite does this each time,
+    // because it reacts to the removal of its config file. So nexusd watches each worktree with a
+    // program in it. The first deleted file reports at once, at each depth of the worktree.
+    private func watchWorktrees() {
+        guard !watchingStopped else {
+            return
+        }
+
+        let worktrees = Set(runningProcesses.values.compactMap(\.worktree)).subtracting(removingWorktrees)
+
+        worktreeWatchers = worktreeWatchers.filter { worktrees.contains($0.key) }
+        worktrees.forEach(watch)
+    }
+
+    private func watch(_ worktree: String) {
+        guard worktreeWatchers[worktree] == nil else {
+            return
+        }
+
+        let folder = URL(filePath: worktree, directoryHint: .isDirectory)
+
+        worktreeWatchers[worktree] = FolderWatcher(folders: [folder], latency: Self.worktreeWatchLatency, reportsFirstChangeAtOnce: true) { [weak self] _ in
+            Task { await self?.worktreeChanged(worktree) }
+        }
+    }
+
+    // A clean stop would give the programs time to write. The worktree goes away anyway. The check
+    // ends after git ended. So a removal that git refuses starts the programs again. One check runs at
+    // a time. A change during that check gives one more. The first deletion of a removal must not
+    // get lost, but a checkout of many files needs no check for each file. The sync comes after the
+    // check, because the programs of that sync have a new watch that a next removal must reach.
+    func worktreeChanged(_ worktree: String) async {
+        guard checkingWorktrees.insert(worktree).inserted else {
+            recheckWorktrees.insert(worktree)
+            return
+        }
+
+        var removing = false
+
+        repeat {
+            recheckWorktrees.remove(worktree)
+            removing = await worktreeRemovalCheck(worktree)
+        } while !removing && recheckWorktrees.contains(worktree)
+
+        guard removing else {
+            checkingWorktrees.remove(worktree)
+            return
+        }
+
+        removingWorktrees.insert(worktree)
+        worktreeWatchers[worktree] = nil
+
+        for (id, process) in runningProcesses where process.worktree == worktree {
+            await processSupervisor.end(id)
+            runningProcesses[id] = nil
+        }
+
+        while !watchingStopped, await worktreeRemovalCheck(worktree) {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+
+        removingWorktrees.remove(worktree)
+        checkingWorktrees.remove(worktree)
+        recheckWorktrees.remove(worktree)
+        await syncBackgroundProcesses().value
+    }
+
+    static func gitRemoves(_ worktree: String) async -> Bool {
+        ProcessArguments.ofPrograms(named: "git").contains { removes(worktree, arguments: $0) }
+    }
+
+    // A full path names one worktree. git also takes the end of a path. So the last part of that path
+    // names the worktree. git ignores upper and lower case in that name on a normal macOS volume. A
+    // path such as . gives no name, because it depends on the folder of git. So it counts.
+    static func removes(_ worktree: String, arguments: [String]) -> Bool {
+        guard let target = worktreeRemovalTarget(arguments) else {
+            return false
+        }
+
+        if target.hasPrefix("/") {
+            return RealPath.of(URL(filePath: target)) == RealPath.of(URL(filePath: worktree))
+        }
+
+        let name = (target as NSString).lastPathComponent
+
+        return name == "." || name == ".." || name.caseInsensitiveCompare((worktree as NSString).lastPathComponent) == .orderedSame
+    }
+
+    // The first argument is the program. Only options can come before the subcommand of git. So the
+    // text of a message, as in git commit -m, does not count. An option of the removal can come
+    // before or after the path. git also takes a short form of an option, such as --forc or -fff.
+    // So each word with a - before the -- is an option.
+    private static func worktreeRemovalTarget(_ arguments: [String]) -> String? {
+        var rest = arguments.dropFirst()
+
+        while let option = rest.first, option.hasPrefix("-") {
+            rest = rest.dropFirst(gitOptionsWithValue.contains(option) ? 2 : 1)
+        }
+
+        guard rest.starts(with: ["worktree", "remove"]) else {
+            return nil
+        }
+
+        let removal = rest.dropFirst(2)
+        let separator = removal.firstIndex(of: "--") ?? removal.endIndex
+
+        return (removal[..<separator].filter { !$0.hasPrefix("-") } + removal[separator...].dropFirst()).last
     }
 
     // "Stop all services" runs in the queue of the changes, and a sync can wait for that queue. So
@@ -107,6 +240,7 @@ extension NexusEngine {
     func stopBackgroundProcesses() async {
         await processSupervisor.stopAll()
         runningProcesses = [:]
+        worktreeWatchers = [:]
     }
 
     // A service that starts again can end the cause, for example a database that a worker needs.
@@ -173,7 +307,7 @@ extension NexusEngine {
     // sites holds each site of the project, so {host} and the log are the same as in the setup.
     // running holds the sites with their switch on.
     private func backgroundProcesses(of workspace: Workspace, sites: [Site], running: [Site], key: String, tld: String) async -> [BackgroundProcess] {
-        guard workspace.state == .ready, let preset = workspace.backgroundPreset, FileManager.default.fileExists(atPath: workspace.worktree) else {
+        guard workspace.state == .ready, let preset = workspace.backgroundPreset, FileManager.default.fileExists(atPath: "\(workspace.worktree)/.git") else {
             return []
         }
 
@@ -188,6 +322,7 @@ extension NexusEngine {
             host: host,
             log: "workspace-\(host)",
             folder: folder,
+            worktree: workspace.worktree,
             node: running[0].node,
             database: workspace.database,
             ports: workspace.ports
@@ -205,7 +340,7 @@ extension NexusEngine {
 
         do {
             let plan = try await mainProcessPlan(of: sites, key: key)
-            let list = BackgroundList(owner: owner, name: "main", host: site.host, log: "main-\(site.host)", folder: plan.folder, node: site.node, database: plan.database, ports: plan.ports)
+            let list = BackgroundList(owner: owner, name: "main", host: site.host, log: "main-\(site.host)", folder: plan.folder, worktree: ProjectFolder.worktree(holding: plan.folder)?.root, node: site.node, database: plan.database, ports: plan.ports)
 
             return await backgroundProcesses(of: Self.backgroundCommands(of: sites, preset: plan.preset), in: list)
         } catch {
@@ -277,6 +412,7 @@ extension NexusEngine {
         let host: String
         let log: String
         let folder: String
+        let worktree: String?
         let node: String?
         let database: String?
         let ports: [String: Int]
@@ -299,7 +435,7 @@ extension NexusEngine {
 
             let expanded = WorkspaceKeys.expanded(command, workspace: list.name, host: list.host, database: list.database.map(WorkspaceKeys.shellWord), ports: list.ports)
 
-            return BackgroundProcess(owner: list.owner, command: expanded, log: list.log, definition: ServiceDefinition(
+            return BackgroundProcess(owner: list.owner, command: expanded, log: list.log, worktree: list.worktree, definition: ServiceDefinition(
                 id: "\(list.owner)\n\(expanded)",
                 displayName: expanded,
                 executable: URL(filePath: "/bin/sh"),

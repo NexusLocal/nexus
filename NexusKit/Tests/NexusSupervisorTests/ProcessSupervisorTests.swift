@@ -118,6 +118,83 @@ struct ProcessSupervisorTests {
         #expect(childEnded)
     }
 
+    @Test func anEndStopsAGroupAtOnceAndGivesNoRestart() async throws {
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let childFile = logs.appending(path: "ended-child.pid")
+        let script = "trap '' TERM; /bin/sleep 300 & echo $! > \"$CHILD\"; wait"
+        let definition = ServiceDefinition(
+            id: "ended",
+            displayName: "ended",
+            executable: URL(filePath: "/bin/sh"),
+            arguments: ["-c", script],
+            environment: ["CHILD": childFile.path(percentEncoded: false)],
+            logFile: logs.appending(path: "ended.log"),
+            stopsGroup: true
+        )
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        try await supervisor.start(definition)
+        let main = try #require(pid(await supervisor.state(of: "ended")))
+        let written = await waitFor { (try? String(contentsOf: childFile, encoding: .utf8))?.hasSuffix("\n") == true }
+        let child = try #require(Int32((try String(contentsOf: childFile, encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines)))
+
+        await supervisor.end("ended")
+        let ended = await waitFor { kill(main, 0) != 0 && kill(child, 0) != 0 }
+        try? await Task.sleep(for: .milliseconds(150))
+
+        #expect(written)
+        #expect(ended)
+        #expect(await supervisor.state(of: "ended") == .stopped)
+    }
+
+    @Test func anEndReachesAGroupWhoseStopWaitsAfterItsMainProcessEnded() async throws {
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let childFile = logs.appending(path: "waiting-child.pid")
+        let script = "trap 'exit 0' TERM; (trap '' TERM; exec /bin/sleep 300) & echo $! > \"$CHILD\"; wait"
+        let definition = ServiceDefinition(
+            id: "waiting",
+            displayName: "waiting",
+            executable: URL(filePath: "/bin/sh"),
+            arguments: ["-c", script],
+            environment: ["CHILD": childFile.path(percentEncoded: false)],
+            logFile: logs.appending(path: "waiting.log"),
+            stopTimeout: .seconds(30),
+            stopsGroup: true
+        )
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        try await supervisor.start(definition)
+        let main = try #require(pid(await supervisor.state(of: "waiting")))
+        #expect(await waitFor { (try? String(contentsOf: childFile, encoding: .utf8))?.hasSuffix("\n") == true })
+        let child = try #require(Int32((try String(contentsOf: childFile, encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines)))
+        try await Task.sleep(for: .milliseconds(100))
+
+        let stop = Task { try await supervisor.stop("waiting") }
+        #expect(await waitFor { kill(main, 0) != 0 })
+        try await Task.sleep(for: .milliseconds(100))
+
+        await supervisor.end("waiting")
+
+        #expect(await waitFor { kill(child, 0) != 0 })
+        try await stop.value
+    }
+
+    @Test func theArgumentsOfARunningProgramAreExact() async throws {
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let file = logs.appending(path: "two  spaces.log")
+        try Data().write(to: file)
+        let tail = Process()
+        tail.executableURL = URL(filePath: "/usr/bin/tail")
+        tail.arguments = ["-f", file.path(percentEncoded: false)]
+        tail.standardOutput = FileHandle.nullDevice
+        try tail.run()
+        defer { tail.terminate() }
+
+        let found = await waitFor {
+            ProcessArguments.ofPrograms(named: "tail").contains(["/usr/bin/tail", "-f", file.path(percentEncoded: false)])
+        }
+
+        #expect(found)
+    }
+
     @Test func aSupervisorStartsNothingAfterAStopForGood() async throws {
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition("first", executable: "/bin/sleep", arguments: ["30"]))

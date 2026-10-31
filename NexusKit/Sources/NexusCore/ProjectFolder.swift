@@ -125,7 +125,7 @@ public enum ProjectFolder {
     // A git worktree has a .git file with the line "gitdir: <folder>". That folder is in
     // .git/worktrees of the main checkout and has a commondir file. A submodule also has a .git
     // file, but its folder has no commondir file. A folder with a .git folder is a main checkout.
-    static func worktree(holding path: String) -> (root: String, mainCheckout: String)? {
+    public static func worktree(holding path: String) -> (root: String, mainCheckout: String)? {
         guard let git = nearestGit(from: path), !git.isFolder, let gitDir = adminFolder(ofWorktree: git.folder) else {
             return nil
         }

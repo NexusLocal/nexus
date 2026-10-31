@@ -57,6 +57,8 @@ public actor ProcessSupervisor {
         var definition: ServiceDefinition
         var state: ServiceState
         var process: Process?
+        // The last program. A stop can wait for its group after its main process ended.
+        var latestProcess: Process?
         var startedAt: Date?
         var quickRestarts = 0
         var stopping = false
@@ -138,6 +140,22 @@ public actor ProcessSupervisor {
         }
 
         endProcessGroup(of: process)
+        markStopped(id)
+    }
+
+    // Ends a service at once, without its stop signal and without a restart.
+    public func end(_ id: String) {
+        guard var managed = services[id] else {
+            return
+        }
+
+        managed.stopping = true
+        services[id] = managed
+
+        if let process = managed.latestProcess {
+            endProcessGroup(of: process)
+        }
+
         markStopped(id)
     }
 
@@ -237,6 +255,7 @@ public actor ProcessSupervisor {
         }
 
         managed.process = process
+        managed.latestProcess = process
         managed.startedAt = .now
         managed.stopping = false
         managed.state = .running(pid: process.processIdentifier, since: .now)

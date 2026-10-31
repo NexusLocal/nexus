@@ -944,12 +944,32 @@ them with a marker in their environment and ends them. macOS hides the environme
 programs, so a shell loop without a PHP or Node program stays after a crash. The output goes to
 logs/workspace-<host>.log and logs/main-<host>.log.
 
-`git worktree remove` of a workspace with a running Vite can end with an error and exit status 255,
-in 7 of 8 tries on the owner's Mac. Nexus sees a removal only after git deleted the files. Vite
-reacts to the removal of its config file and writes a new cache to .vite in that folder, so git
-reports "Directory not empty". git has removed the worktree from its list at that moment. After the
-stop, Nexus deletes .vite and the empty folders, so a new worktree on the same path works. A folder
-with its .git file or with other files stays.
+git has no hook for `git worktree remove`. The list of git changes only after git deleted the files.
+A running Vite reacts to the removal of its config file and writes a new cache to .vite in that
+folder. git then ended with "Directory not empty" in 7 of 8 tries on the owner's Mac. So nexusd
+watches each worktree with a program in it with FSEvents, at each depth. The first change after a
+quiet time reports at once. At each change nexusd reads the exact arguments of each running git
+program from macOS, without ps, because ps joins the arguments with spaces. It looks for `git
+worktree remove` of that worktree. A full path in that command must be the path of the worktree. For
+another path the last part must be the name of the worktree. Upper and lower case do not count there,
+because git ignores them on a normal macOS volume. A path such as . gives no name. So it counts for
+each worktree. A name also gives no project. So a worktree with that name in another project counts
+too (review finding, 8i). A fix needs the folder and the repository of each git program, and the
+cost of a wrong match is one restart of the programs of that worktree.
+
+With such a program nexusd ends the programs of that worktree at once with SIGKILL. A clean stop
+gives them time to write. When git ends and the worktree stays, the programs start again. The watch
+starts before the first program of a worktree starts. A site with its folder in a linked worktree
+gets the same watch for its main list. No program starts in a worktree without its .git file.
+
+Checked on 2026-10-31 on the owner's Mac with a new Laravel application: 17 of 17 removals ended
+without an error. 10 ran with the preset, 6 with a program that wrote to storage/logs each 20
+milliseconds and 1 without --force. A removal that git refused kept the programs.
+
+After the stop Nexus also deletes
+.vite and the empty folders, so a new worktree on the same path works. A folder with its .git file or
+with other files stays. A git alias sets other arguments. So Nexus does not see that alias or `rm -rf`
+of a worktree. These get only the cleanup of .vite.
 
 With "Run in workspaces" off, the .env of a workspace keeps the Reverb port of that workspace (review
 finding, 8i). No server listens on that port until the user starts one with `php artisan

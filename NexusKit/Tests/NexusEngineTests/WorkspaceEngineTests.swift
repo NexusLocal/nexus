@@ -5,6 +5,7 @@ import NexusLaravel
 import NexusRuntime
 import NexusSupervisor
 import NexusWorkspaces
+import Synchronization
 import Testing
 @testable import NexusEngine
 
@@ -721,6 +722,263 @@ extension NexusEngineTests {
             #expect(await runningProcesses(engine) == ["echo \(port) > port.txt; exec sleep 301"])
             #expect(await eventually { text(of: worktree.appending(path: "port.txt")) == "\(port)\n" })
         }
+    }
+
+    @Test func aRemovalEndsTheProcessesAtOnceAndARefusedRemovalStartsThemAgain() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        let removalRuns = Mutex(false)
+
+        await engine.useWorktreeRemovalCheck { removalRuns.withLock { $0 } }
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            let first = try #require(await processNumber(engine))
+
+            removalRuns.withLock { $0 = true }
+            try writeFile("", to: "deleted.txt", in: worktree)
+
+            #expect(await eventually { await runningProcesses(engine).isEmpty })
+            #expect(await eventually { kill(first, 0) != 0 })
+
+            await engine.syncBackgroundProcesses().value
+            #expect(await runningProcesses(engine).isEmpty)
+
+            removalRuns.withLock { $0 = false }
+
+            #expect(await eventually { await runningProcesses(engine).count == 1 })
+        }
+    }
+
+    @Test func aChangeInAWorktreeWithoutARemovalKeepsItsProcesses() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        let checks = Mutex(0)
+
+        await engine.useWorktreeRemovalCheck {
+            checks.withLock { $0 += 1 }
+            return false
+        }
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            let first = await processNumber(engine)
+
+            try writeFile("", to: "new.txt", in: worktree)
+
+            #expect(await eventually { checks.withLock { $0 } > 0 })
+            #expect(first != nil)
+            #expect(await processNumber(engine) == first)
+        }
+    }
+
+    @Test func aRemovalThatDeletedTheGitFileStartsNoProcessesAgain() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        let removalRuns = Mutex(false)
+
+        await engine.useWorktreeRemovalCheck { removalRuns.withLock { $0 } }
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            removalRuns.withLock { $0 = true }
+            try writeFile("", to: "deleted.txt", in: worktree)
+
+            #expect(await eventually { await runningProcesses(engine).isEmpty })
+
+            try FileManager.default.removeItem(at: worktree.appending(path: ".git"))
+            removalRuns.withLock { $0 = false }
+
+            #expect(await eventually { await engine.removingWorktrees.isEmpty })
+            try await settle(engine)
+            #expect(await runningProcesses(engine).isEmpty)
+        }
+    }
+
+    @Test func aChangeDeepInAWorktreeGivesACheck() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        let checks = Mutex(0)
+
+        try FileManager.default.createDirectory(at: root.appending(path: "shop/storage/logs"), withIntermediateDirectories: true)
+        try writeFile("", to: "storage/logs/.keep", in: shop)
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "logs", in: shop)
+
+        await engine.useWorktreeRemovalCheck {
+            checks.withLock { $0 += 1 }
+            return false
+        }
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            try await Task.sleep(for: .milliseconds(300))
+
+            checks.withLock { $0 = 0 }
+            try writeFile("line", to: "storage/logs/laravel.log", in: worktree)
+
+            #expect(await eventually { checks.withLock { $0 } > 0 })
+        }
+    }
+
+    @Test func aStopOfTheProcessesEndsTheWatchOfTheirWorktrees() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            #expect(await engine.worktreeWatchers.count == 1)
+
+            await engine.stopBackgroundProcesses()
+
+            #expect(await engine.worktreeWatchers.isEmpty)
+        }
+    }
+
+    @Test func aMainCheckoutOfASiteInALinkedWorktreeGetsAWatch() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let linked = root.appending(path: "linked", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "linked", linked.path(percentEncoded: false), in: shop)
+
+        var state = EngineState()
+        state.sites = [Site(host: "linked.test", folder: linked, php: "8.4", backgroundCommands: ["exec sleep 300"], mainProcesses: true)]
+        let engine = try makeSiteEngine(root: root, state: state, processSupervisor: ProcessSupervisor())
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+
+            #expect(await engine.worktreeWatchers.keys.sorted() == [RealPath.of(linked)])
+        }
+    }
+
+    @Test func aRefusedRemovalLeavesNoRecheck() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let removalRuns = Mutex(true)
+
+        await engine.useWorktreeRemovalCheck { removalRuns.withLock { $0 } }
+
+        try await whileRunning(engine) {
+            let removal = Task { await engine.worktreeChanged("/work/fix") }
+
+            #expect(await eventually { await engine.removingWorktrees.contains("/work/fix") })
+
+            await engine.worktreeChanged("/work/fix")
+            removalRuns.withLock { $0 = false }
+            await removal.value
+
+            #expect(await engine.recheckWorktrees.isEmpty)
+        }
+    }
+
+    @Test func aChangeDuringTheSyncAfterARemovalGetsItsOwnCheck() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
+        let removalRuns = Mutex(true)
+        let (release, releaseSync) = AsyncStream<Void>.makeStream()
+
+        await engine.useWorktreeRemovalCheck { removalRuns.withLock { $0 } }
+        await engine.holdProcessSync(until: release)
+
+        try await whileRunning(engine) {
+            let removal = Task { await engine.worktreeChanged("/work/fix") }
+
+            #expect(await eventually { await engine.removingWorktrees.contains("/work/fix") })
+
+            removalRuns.withLock { $0 = false }
+
+            #expect(await eventually { await engine.removingWorktrees.isEmpty })
+            #expect(await engine.checkingWorktrees.isEmpty)
+
+            releaseSync.finish()
+            await removal.value
+        }
+    }
+
+    private func removes(_ worktree: String, _ arguments: String...) -> Bool {
+        NexusEngine.removes(worktree, arguments: arguments)
+    }
+
+    @Test func eachOptionOfGitBeforeItsSubcommandCounts() {
+        #expect(removes("/work/fix", "git", "-P", "worktree", "remove", "fix"))
+        #expect(removes("/work/fix", "git", "--paginate", "--literal-pathspecs", "worktree", "remove", "fix"))
+        #expect(removes("/work/fix", "/usr/bin/git", "-C", "/Users/me/My Work/shop", "worktree", "remove", "fix"))
+        #expect(removes("/work/fix", "git", "-c", "core.quotepath=false", "--git-dir=/work/.git", "worktree", "remove", "fix"))
+        #expect(removes("/work/fix", "git", "--git-dir", "/work/.git", "worktree", "remove", "fix"))
+        #expect(removes("/work/fix", "/Applications/Some App.app/Contents/bin/git", "worktree", "remove", "fix"))
+    }
+
+    @Test func onlyTheOptionsOfARemovalAreNoPartOfItsPath() {
+        #expect(removes("/work/fix", "git", "worktree", "remove", "fix", "--force"))
+        #expect(removes("/work/fix", "git", "worktree", "remove", "-f", "-f", "--", "fix"))
+        #expect(removes("/work/fix -2", "git", "worktree", "remove", "--force", "/work/fix -2"))
+        #expect(!removes("/work/fix", "git", "worktree", "remove", "../fix -2"))
+    }
+
+    @Test func aShortFormOfAnOptionIsNoPartOfThePath() {
+        #expect(removes("/work/fix", "git", "worktree", "remove", "fix", "--forc"))
+        #expect(removes("/work/fix", "git", "worktree", "remove", "fix", "-fff"))
+        #expect(removes("/work/fix", "git", "worktree", "remove", "fix", "--"))
+        #expect(removes("/work/-fix", "git", "worktree", "remove", "--", "-fix"))
+    }
+
+    @Test func aNameOfARemovalIgnoresUpperAndLowerCase() {
+        #expect(removes("/work/Fix", "git", "worktree", "remove", "../fix"))
+        #expect(!removes("/work/Fix", "git", "worktree", "remove", "../other"))
+    }
+
+    @Test func aFullPathOfARemovalCountsOnlyForThatWorktree() {
+        #expect(removes("/work/shop/fix", "git", "worktree", "remove", "/work/shop/fix/"))
+        #expect(!removes("/work/shop/fix", "git", "worktree", "remove", "--force", "/work/blog/fix"))
+    }
+
+    @Test func onlyAWorktreeRemovalOfGitCounts() {
+        let worktree = "/work/fix"
+
+        #expect(removes(worktree, "git", "worktree", "remove", "--force", "/work/fix"))
+        #expect(!removes(worktree, "git", "worktree", "list", "--porcelain"))
+        #expect(!removes(worktree, "git", "worktree", "removed", "fix"))
+        #expect(!removes(worktree, "git", "worktree", "remove"))
+        #expect(!removes(worktree, "git", "commit", "-m", "worktree remove fix"))
+        #expect(!removes(worktree, "git", "-C", "/work/shop", "grep", "worktree remove fix"))
+        #expect(!removes(worktree, "git", "-C"))
+        #expect(!removes(worktree))
+    }
+
+    @Test func aWorktreeRemovalCountsOnlyForTheWorktreeOfThatCommand() {
+        #expect(removes("/work/fix", "git", "worktree", "remove", "../fix/"))
+        #expect(removes("/Users/me/My Work/fix  one", "git", "worktree", "remove", "--force", "/Users/me/My Work/fix  one"))
+        #expect(!removes("/work/other", "git", "worktree", "remove", "--force", "/work/fix"))
+        #expect(removes("/work/fix", "git", "worktree", "remove", "."))
+        #expect(removes("/work/fix", "git", "worktree", "remove", "../.."))
     }
 
     @Test func aRemovalDeletesTheCacheThatViteWroteDuringTheDeleteOfGit() async throws {
@@ -3590,6 +3848,18 @@ extension NexusEngine {
 extension NexusEngine {
     var workspaceWorkRuns: Bool {
         reconcilingWorkspaces || settingUpWorkspaces || processSync != nil
+    }
+
+    func useWorktreeRemovalCheck(_ check: @escaping @Sendable () async -> Bool) {
+        worktreeRemovalCheck = { _ in await check() }
+    }
+
+    func holdProcessSync(until release: AsyncStream<Void>) {
+        processSync = Task {
+            for await _ in release {}
+
+            processSync = nil
+        }
     }
 
     func markAsEmptying(_ indexes: Set<WorkspaceRedisIndex>) {

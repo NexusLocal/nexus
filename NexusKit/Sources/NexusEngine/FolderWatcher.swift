@@ -9,7 +9,9 @@ final class FolderWatcher: @unchecked Sendable {
     private let onChange: @Sendable ([String]) -> Void
     private var stream: FSEventStreamRef?
 
-    init?(folders: [URL], latency: TimeInterval = 0.3, onChange: @escaping @Sendable ([String]) -> Void) {
+    // FSEvents waits for the latency before it reports a change. reportsFirstChangeAtOnce reports the
+    // first change after a quiet time without that wait, for a program that reacts to the same change.
+    init?(folders: [URL], latency: TimeInterval = 0.3, reportsFirstChangeAtOnce: Bool = false, onChange: @escaping @Sendable ([String]) -> Void) {
         self.onChange = onChange
 
         guard !folders.isEmpty else {
@@ -25,7 +27,8 @@ final class FolderWatcher: @unchecked Sendable {
             let changed = Unmanaged<CFArray>.fromOpaque(paths).takeUnretainedValue() as NSArray as? [String] ?? []
             Unmanaged<FolderWatcher>.fromOpaque(info).takeUnretainedValue().onChange(changed)
         }
-        let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagWatchRoot)
+        let noDefer = reportsFirstChangeAtOnce ? kFSEventStreamCreateFlagNoDefer : 0
+        let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagWatchRoot | noDefer)
         let paths = folders.map { $0.path(percentEncoded: false) } as CFArray
 
         guard let stream = FSEventStreamCreate(nil, callback, &context, paths, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), latency, flags) else {

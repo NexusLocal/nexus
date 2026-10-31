@@ -107,6 +107,11 @@ public actor NexusEngine {
     var mainProbeFailures: [String: MainProbeFailure] = [:]
     var restartFailedProcesses = false
     var processesWaitForAService = false
+    var worktreeWatchers: [String: FolderWatcher] = [:]
+    var removingWorktrees: Set<String> = []
+    var checkingWorktrees: Set<String> = []
+    var recheckWorktrees: Set<String> = []
+    var worktreeRemovalCheck: @Sendable (String) async -> Bool = { await NexusEngine.gitRemoves($0) }
     // The Redis indexes that nexusd empties now.
     var emptyingRedisIndexes: Set<WorkspaceRedisIndex> = []
     // The downloads and database copies that run now, and the last task list of the watchers.

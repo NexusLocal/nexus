@@ -13,6 +13,7 @@ extension NexusEngine {
         worktreeWatcher = nil
         watchingStopped = true
         runningCommand?.task.cancel()
+        worktreeWatchers = [:]
     }
 
     func workspaceSitesChanged() async {
