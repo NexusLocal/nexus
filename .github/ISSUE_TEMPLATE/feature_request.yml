@@ -1,0 +1,16 @@
+name: Feature request
+description: Nexus does not have something that you need.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you want to do?
+      description: Tell us the task, not only the solution. For example, "I want to see the test mails of my sites."
+    validations:
+      required: true
+  - type: textarea
+    id: now
+    attributes:
+      label: How do you do it now?
+      description: For example, with another tool or by hand.

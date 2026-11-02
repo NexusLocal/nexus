@@ -1,0 +1,44 @@
+name: Bug report
+description: Something in Nexus does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thank you for the report. Your answers help us find the cause.
+  - type: input
+    id: version
+    attributes:
+      label: Version and build of Nexus
+      description: Nexus > About Nexus shows them, for example 0.1.0 (1).
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: Apple menu > About This Mac shows it, for example 27.0.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What did you do?
+      description: Give the steps, one on each line.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened?
+      description: Give the exact text of each message. A screenshot also helps.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+  - type: textarea
+    id: log
+    attributes:
+      label: Activity log
+      description: On the Overview screen, click ... > Show activity log. Drag activity.log into this field. Nexus hides passwords in this file. Read it before you share it.

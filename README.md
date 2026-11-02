@@ -8,6 +8,8 @@ database server with a copy of your data, its own Redis indexes and its own queu
 worktree is ready within seconds, also with a large database. So you can work on many branches at
 the same time, and a tool such as Claude Code can open a worktree that you can test at once.
 
+![The Overview screen of Nexus with the sites, the services and a port that MAMP PRO uses](.github/screenshot.png)
+
 ## Requirements
 
 - A Mac with Apple silicon

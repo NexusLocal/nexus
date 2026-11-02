@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/NexusLocal/nexus/security/policy
+    about: Do not open a public issue for a security problem. Follow the security policy instead.
