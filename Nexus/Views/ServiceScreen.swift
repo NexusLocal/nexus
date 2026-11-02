@@ -1,0 +1,553 @@
+import AppKit
+import NexusCore
+import SwiftUI
+
+struct ServiceScreen: View {
+    @Environment(AppModel.self) private var model
+    let kind: ServiceKind
+
+    private var versions: [ServiceVersion] {
+        model.versions(of: kind)
+    }
+
+    private var selectedID: Binding<String> {
+        Binding(
+            get: {
+                if let stored = model.selectedVersion[kind], versions.contains(where: { $0.id == stored }) {
+                    return stored
+                }
+
+                return versions.first?.id ?? ""
+            },
+            set: { model.selectedVersion[kind] = $0 }
+        )
+    }
+
+    private var selectedService: ServiceVersion? {
+        model.service(selectedID.wrappedValue)
+    }
+
+    // Each event of nexusd replaces the list of services. A binding by position could then read a
+    // position that no longer exists, or change another service.
+    private func binding(to service: ServiceVersion) -> Binding<ServiceVersion> {
+        Binding(
+            get: { model.service(service.id) ?? service },
+            set: { changed in
+                guard let index = model.services.firstIndex(where: { $0.id == service.id }) else {
+                    return
+                }
+
+                model.services[index] = changed
+            }
+        )
+    }
+
+    var body: some View {
+        Group {
+            if let selectedService {
+                VStack(spacing: 0) {
+                    if versions.count > 1 {
+                        VersionPicker(versions: versions, selection: selectedID)
+                            .padding(.top, 16)
+                    }
+
+                    // Each version gets its own form. So a field that the user did not send
+                    // yet does not move to another version.
+                    ServiceForm(service: binding(to: selectedService))
+                        .id(selectedService.id)
+                }
+            } else {
+                ContentUnavailableView {
+                    Label("No \(kind.title) installed", systemImage: kind.systemImage)
+                } description: {
+                    Text("Install a version of \(kind.title) in Packages.")
+                } actions: {
+                    Button("Open Packages") {
+                        model.selection = .packages
+                    }
+                }
+            }
+        }
+        .screenTitle(kind.title, subtitle: subtitle)
+        .toolbar {
+            if let selectedService {
+                ServiceToolbar(model: model, service: selectedService)
+            }
+        }
+    }
+
+    private var subtitle: String {
+        if kind == .webservers {
+            return "\(versions.first?.name ?? "nginx") handles all sites"
+        }
+
+        if kind == .dns {
+            return "Sends every .\(model.settings.tld) name to this Mac"
+        }
+
+        let count = versions.count == 1 ? "1 version" : "\(versions.count) versions"
+
+        if let problem = model.problemVersion(of: kind) {
+            return "\(count) · \(problem.name) cannot start"
+        }
+
+        return versions.allSatisfy(\.isRunning) ? "\(count) · all running" : count
+    }
+}
+
+// A SwiftUI segmented Picker drops the colored status dots. NSSegmentedControl keeps them.
+private struct VersionPicker: NSViewRepresentable {
+    let versions: [ServiceVersion]
+    @Binding var selection: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(selection: $selection)
+    }
+
+    func makeNSView(context: Context) -> NSSegmentedControl {
+        let control = NSSegmentedControl()
+        control.trackingMode = .selectOne
+        control.target = context.coordinator
+        control.action = #selector(Coordinator.changed(_:))
+        return control
+    }
+
+    func updateNSView(_ control: NSSegmentedControl, context: Context) {
+        context.coordinator.selection = $selection
+        context.coordinator.ids = versions.map(\.id)
+        control.segmentCount = versions.count
+
+        for (index, version) in versions.enumerated() {
+            control.setLabel(version.name, forSegment: index)
+            control.setImage(.statusDot(version.health), forSegment: index)
+            control.setImageScaling(.scaleNone, forSegment: index)
+            control.setWidth(0, forSegment: index)
+        }
+
+        control.selectedSegment = versions.firstIndex { $0.id == selection } ?? 0
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSegmentedControl, context: Context) -> CGSize? {
+        nsView.intrinsicContentSize
+    }
+
+    final class Coordinator: NSObject {
+        var ids: [String] = []
+        var selection: Binding<String>
+
+        init(selection: Binding<String>) {
+            self.selection = selection
+        }
+
+        @objc func changed(_ control: NSSegmentedControl) {
+            guard ids.indices.contains(control.selectedSegment) else {
+                return
+            }
+
+            selection.wrappedValue = ids[control.selectedSegment]
+        }
+    }
+}
+
+private struct ServiceToolbar: ToolbarContent {
+    let model: AppModel
+    let service: ServiceVersion
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                model.restart(service)
+            } label: {
+                Label("Restart", systemImage: "arrow.clockwise")
+            }
+            .labelStyle(.titleAndIcon)
+            .disabled(!service.isActive)
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            MoreMenu {
+                if service.kind.isDatabase {
+                    Button("Copy connection URL", systemImage: "link") {
+                        copyToPasteboard(service.databaseURL()?.absoluteString ?? "")
+                    }
+                }
+
+                if service.kind != .dns {
+                    Button("Check for updates", systemImage: "arrow.triangle.2.circlepath") {
+                        Task { await model.checkPackages() }
+                    }
+                }
+
+                if let folder = model.configFolder(of: service) {
+                    Button("Show config folder", systemImage: "folder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([folder])
+                    }
+                }
+
+                if let package = model.package(of: service) {
+                    Divider()
+
+                    Button("Remove \(service.name)…", systemImage: "trash", role: .destructive) {
+                        model.removal = .package(package)
+                    }
+                    .disabled(package.required)
+                }
+            }
+        }
+    }
+}
+
+private struct ConfigFileRow: View {
+    @Environment(AppModel.self) private var model
+    let service: ServiceVersion
+    let file: ConfigFile
+
+    var body: some View {
+        LabeledContent("Config file") {
+            HStack {
+                Text(file.url.lastPathComponent)
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(.secondary)
+
+                Button(file.isYours ? "Open" : "View") {
+                    model.open(file)
+                }
+            }
+        }
+        .help(explanation)
+    }
+
+    private var explanation: String {
+        file.isYours
+            ? "This file is yours. Nexus does not change it. Restart \(service.name) after a change."
+            : "Nexus writes this file again after each change of a site or a setting. So your changes do not stay."
+    }
+}
+
+private struct ServiceForm: View {
+    @Binding var service: ServiceVersion
+
+    var body: some View {
+        Form {
+            StateSection(service: $service)
+
+            switch service.kind {
+            case .webservers:
+                WebserverSections(service: service)
+            case .php:
+                PHPSections(service: service)
+            case .mysql, .mariadb, .postgresql:
+                DatabaseSections(service: $service)
+            case .redis, .dns:
+                EmptyView()
+            }
+
+            if service.kind != .dns {
+                LogSection(file: service.logFile, sampleLines: service.log)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct StateSection: View {
+    @Environment(AppModel.self) private var model
+    @Binding var service: ServiceVersion
+
+    var body: some View {
+        Section {
+            LabeledContent("Running") {
+                HStack {
+                    Text(stateText)
+                        .foregroundStyle(service.problem == nil ? .secondary : Color.orangeText)
+
+                    ServiceSwitch(service: service)
+                }
+            }
+
+            if !service.version.isEmpty {
+                LabeledContent("Version") {
+                    HStack {
+                        if model.checkingPackages {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("\(service.version) · checking for updates…")
+                                .foregroundStyle(.secondary)
+                        } else if let update = model.availableUpdate(of: service) {
+                            Text(service.version)
+                                .foregroundStyle(.secondary)
+                            Button("Update to \(update)") {
+                                if let package = model.package(of: service) {
+                                    model.install(package)
+                                }
+                            }
+                        } else if let problem = model.packagesProblem {
+                            Text("\(service.version) · the check failed")
+                                .foregroundStyle(Color.orangeText)
+                                .help(problem)
+                        } else if model.packagesChecked.isEmpty {
+                            Text("\(service.version) · not checked yet")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("\(service.version) · up to date · checked \(model.packagesChecked)")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            if let file = model.configFile(of: service) {
+                ConfigFileRow(service: service, file: file)
+            }
+
+            if service.internalPort, let port = service.ports.first {
+                PortRow(title: "Port", port: port.number) {
+                    model.changePort(port, of: service, to: $0)
+                }
+                .help("nginx sends the requests of Apache sites to this port. Only this Mac can reach it.")
+            }
+
+            if service.kind == .php {
+                LabeledContent("Used by") {
+                    Text(service.usedBy.isEmpty ? "No site" : service.usedBy.joined(separator: ", "))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: 460, alignment: .trailing)
+                        .help(service.usedBy.joined(separator: "\n"))
+                }
+            }
+
+            if [.mysql, .mariadb, .postgresql, .redis, .dns].contains(service.kind), let port = service.ports.first {
+                PortRow(title: "Port", port: port.number) {
+                    model.changePort(port, of: service, to: $0)
+                }
+            }
+
+            if let dataFolder = service.dataFolder {
+                LabeledContent("Data folder") {
+                    HStack {
+                        PathText(dataFolder)
+                        Button("Show in Finder") {
+                            let folder = URL(filePath: (dataFolder as NSString).expandingTildeInPath)
+                            NSWorkspace.shared.activateFileViewerSelecting([folder])
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text(service.name)
+        } footer: {
+            if let problem = service.problem {
+                Text(problem.detail)
+                    .foregroundStyle(Color.orangeText)
+            } else if let note = model.securityNote(of: service) {
+                Text(note)
+                    .foregroundStyle(Color.orangeText)
+            } else if let note = service.note {
+                Text(note)
+            }
+        }
+    }
+
+    private var stateText: String {
+        if let problem = service.problem {
+            return problem.summary
+        }
+
+        guard service.isRunning else {
+            return "stopped"
+        }
+
+        return service.since.map { "since \($0)" } ?? "running"
+    }
+}
+
+private struct WebserverSections: View {
+    @Environment(AppModel.self) private var model
+    let service: ServiceVersion
+
+    private var modulesFooter: String {
+        let names = service.toggles.filter(\.required).map(\.name)
+        let help = "Click a name to see what it does."
+
+        guard !names.isEmpty else {
+            return help
+        }
+
+        let list = EnglishList.joined(names)
+        let reason = service.internalPort ? "Apache needs them behind nginx" : "nginx needs them for every site"
+        return "\(list) \(names.count == 1 ? "stays" : "stay") on, because \(reason). \(help)"
+    }
+
+    var body: some View {
+        if !service.internalPort {
+            Section {
+                ForEach(service.ports) { port in
+                    PortRow(title: port.name, port: port.number) {
+                        model.changePort(port, of: service, to: $0)
+                    }
+                }
+            } header: {
+                Text("Ports")
+            } footer: {
+                Text("Use 80 and 443 to open sites without a port in the URL. MAMP PRO and Herd also use these ports.")
+            }
+        }
+
+        Section {
+            ToggleGrid(service: service)
+        } header: {
+            Text("Modules")
+        } footer: {
+            Text(modulesFooter)
+        }
+    }
+}
+
+private struct PHPSections: View {
+    @Environment(AppModel.self) private var model
+    let service: ServiceVersion
+
+    var body: some View {
+        let error = model.settingsErrors[service.id]
+        let changed = model.settingsDrafts[service.id] != nil
+        let saving = model.savingSettings.contains(service.id)
+
+        Section {
+            ToggleGrid(service: service)
+        } header: {
+            Text("Extensions")
+        } footer: {
+            Text("An extension is on for every site that uses \(service.name). Click a name to see what it does.")
+        }
+
+        Section {
+            if let error {
+                Label(errorText(error), systemImage: "xmark.circle")
+                    .foregroundStyle(Color.redText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(Color.errorBackground, in: .rect(cornerRadius: 6))
+            }
+
+            CodeEditor(
+                lines: Binding(get: { model.customSettings(of: service) }, set: { model.editCustomSettings(of: service, to: $0) }),
+                errorLine: error?.line
+            )
+            .frame(height: 96)
+        } header: {
+            HStack {
+                Text("Custom settings")
+                Spacer()
+                Button("Revert") {
+                    model.revertCustomSettings(of: service)
+                }
+                .disabled(saving || !changed && error == nil)
+                Button("Save and restart") {
+                    model.saveCustomSettings(of: service)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(saving || !changed)
+            }
+        } footer: {
+            Text("Nexus adds these lines after its own settings in php.ini. Nexus checks the lines before it restarts \(service.name). When a line has an error, \(service.name) keeps the old settings.")
+        }
+    }
+
+    private func errorText(_ error: SettingsError) -> String {
+        let place = error.line.map { "Line \($0): " } ?? ""
+        let state = service.isActive ? "still runs with the old settings" : "keeps the old settings"
+        return "\(place)\(error.message). \(service.name) \(state)."
+    }
+}
+
+private struct DatabaseSections: View {
+    @Environment(AppModel.self) private var model
+    @Binding var service: ServiceVersion
+    @State private var editedUser: String?
+    @State private var editedPassword: String?
+
+    private var databases: [DatabaseItem] {
+        model.databases(of: service)
+    }
+
+    var body: some View {
+        if let account = service.account {
+            Section {
+                LabeledContent("User") {
+                    TextField("User", text: Binding(get: { editedUser ?? account.user }, set: { editedUser = $0 }))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.leading)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(width: 180)
+                }
+
+                LabeledContent("Password") {
+                    HStack {
+                        SecureField("Password", text: Binding(get: { editedPassword ?? account.password }, set: { editedPassword = $0 }), prompt: Text("No password"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.leading)
+                            .frame(width: 180)
+                        Button("Change") {
+                            model.changeAccount(of: service, to: DatabaseAccount(user: editedUser ?? account.user, password: editedPassword ?? account.password))
+                        }
+                        .disabled(!service.isActive || (editedUser ?? account.user) == account.user && (editedPassword ?? account.password) == account.password)
+                    }
+                }
+            } header: {
+                Text("Account")
+            } footer: {
+                Text("Nexus uses this account when it imports or opens a database on \(service.name). A change needs \(service.name) to run.")
+            }
+            // The fields keep a refused account, so the user can correct it.
+            .onChange(of: account) {
+                editedUser = nil
+                editedPassword = nil
+            }
+        }
+
+        Section {
+            if let problem = model.databaseListProblems[service.id] {
+                Text("Nexus cannot list the databases. \(problem)")
+                    .foregroundStyle(Color.orangeText)
+            } else if databases.isEmpty {
+                Text(service.isActive ? "No databases yet." : "Start \(service.name) to see its databases.")
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(databases) { database in
+                HStack(spacing: 10) {
+                    Image(systemName: "cylinder")
+                        .foregroundStyle(.secondary)
+                    MonoText(database.name)
+                    Spacer()
+                    Text(database.usedBy ?? "")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(width: 160, alignment: .leading)
+                        .help(database.usedBy.map { "Used by \($0)" } ?? "")
+                    Text(database.size ?? "")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .frame(width: 64, alignment: .trailing)
+                    OpenDatabaseButton(kind: service.kind, url: service.databaseURL(database.name))
+                }
+            }
+        } header: {
+            HStack {
+                Text("Databases")
+                Spacer()
+                Button("Import database…") {
+                    model.sheet = .importDatabase(instance: service.id)
+                }
+            }
+        } footer: {
+            Text("\"Import database\" copies a database from another server into \(service.name), for example from MAMP PRO. The other server does not change.")
+        }
+        .task(id: "\(service.id) \(service.isActive)") {
+            model.loadDatabases(of: service)
+        }
+    }
+}
