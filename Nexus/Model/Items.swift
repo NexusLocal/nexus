@@ -297,13 +297,8 @@ struct PackageItem: Identifiable {
 
     var id: String { "\(package)-\(line)" }
 
-    // Apache runs only when a site uses it. Node and Composer have no service.
     var serviceID: String? {
-        switch package {
-        case "nginx": package
-        case "php", "redis", "mysql", "mariadb", "postgresql": id
-        default: nil
-        }
+        ServiceID.of(package: package, line: line)
     }
 
     var isInstalled: Bool {

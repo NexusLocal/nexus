@@ -180,7 +180,7 @@ extension AppModel {
 
     // nginx and Apache can have more version lines, and the service uses the newest installed one.
     func package(of service: ServiceVersion) -> PackageItem? {
-        let rows = packages.filter { $0.serviceID == service.id || $0.package == "httpd" && service.id == "apache" }
+        let rows = packages.filter { $0.serviceID == service.id }
         return rows.first { $0.line == service.line } ?? rows.first(where: \.isInstalled)
     }
 
@@ -210,7 +210,7 @@ extension AppModel {
 
         switch service.kind {
         case .webservers:
-            file = service.id == "apache" ? paths.apacheConfig : paths.nginxConfig
+            file = service.id == ServiceID.apache ? paths.apacheConfig : paths.nginxConfig
             isYours = false
         case .php:
             file = paths.phpConfigFolder(line: service.line).appending(path: "php.ini", directoryHint: .notDirectory)

@@ -317,9 +317,9 @@ struct FirstRunPackages {
     }
 
     // Only the new choices. A service that was installed before can be off on purpose, and a start
-    // turns it on for each next start of nexusd.
+    // turns it on for each next start of nexusd. Apache runs only when a site uses it.
     func services(picked: Set<String>) -> Set<String> {
-        Set(packages.filter { picked.contains($0.id) }.compactMap(\.serviceID))
+        Set(packages.filter { picked.contains($0.id) }.compactMap(\.serviceID)).subtracting([ServiceID.apache])
     }
 }
 

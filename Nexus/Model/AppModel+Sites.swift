@@ -149,7 +149,7 @@ extension AppModel {
             return .failed
         }
 
-        let needed = ["nginx", "php-\(site.php)"] + (site.server == WebServer.apache.rawValue ? ["apache"] : [])
+        let needed = [ServiceID.nginx, ServiceID.php(line: site.php)] + (site.server == WebServer.apache.rawValue ? [ServiceID.apache] : [])
         let healths = needed.map { service($0)?.health ?? .stopped }
 
         if healths.allSatisfy({ $0 == .running }) {

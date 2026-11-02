@@ -130,7 +130,7 @@ extension ServiceVersion {
         }
 
         if first.kind == .webservers {
-            return first.id == "nginx"
+            return first.id == ServiceID.nginx
         }
 
         return first.name.compare(second.name, options: .numeric) == .orderedAscending
@@ -141,7 +141,7 @@ extension ServiceVersion {
             return nil
         }
 
-        return id == "apache" ? .apache : .nginx
+        return id == ServiceID.apache ? .apache : .nginx
     }
 
     // The link of a database app (D36), with the account of the instance.

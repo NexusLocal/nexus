@@ -16,8 +16,8 @@ public struct ServiceCatalog: Sendable {
     // A workspace uses the indexes from 16 up, below this number (D47). Do not make it lower. Redis
     // does not start with a data file that holds a higher index.
     public static let redisDatabaseCount = 256
-    public static let nginxID = "nginx"
-    public static let apacheID = "apache"
+    public static let nginxID = ServiceID.nginx
+    public static let apacheID = ServiceID.apache
     public static let httpPortKey = "http"
     public static let httpsPortKey = "https"
     public static let databaseStartTimeout: Duration = .seconds(30)
@@ -42,17 +42,11 @@ public struct ServiceCatalog: Sendable {
     }
 
     public static func phpID(line: String) -> String {
-        "php-\(line)"
+        ServiceID.php(line: line)
     }
 
     public func serviceID(for runtime: InstalledRuntime) -> String? {
-        switch runtime.name {
-        case "redis": "redis-\(runtime.line)"
-        case "nginx": Self.nginxID
-        case "httpd": Self.apacheID
-        case "php": Self.phpID(line: runtime.line)
-        default: Self.databaseKind(of: runtime).map { "\($0.rawValue)-\(runtime.line)" }
-        }
+        ServiceID.of(package: runtime.name, line: runtime.line)
     }
 
     public static func databaseKind(of runtime: InstalledRuntime) -> DatabaseKind? {
@@ -63,7 +57,7 @@ public struct ServiceCatalog: Sendable {
     // "http" and "https". Apache only listens on 127.0.0.1, behind nginx.
     public func portRequirements(for runtime: InstalledRuntime) -> [PortRequirement] {
         switch runtime.name {
-        case "redis": [PortRequirement(key: "redis-\(runtime.line)", standard: Self.redisStandardPort)]
+        case "redis": [PortRequirement(key: ServiceID.redis(line: runtime.line), standard: Self.redisStandardPort)]
         case "nginx": [PortRequirement(key: Self.httpPortKey, standard: 80), PortRequirement(key: Self.httpsPortKey, standard: 443)]
         case "httpd": [PortRequirement(key: Self.apacheID, standard: 8081)]
         default:
