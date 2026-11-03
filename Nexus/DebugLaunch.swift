@@ -2,7 +2,8 @@
 import AppKit
 
 // Launch arguments of a debug build that open one screen. They let a check of the look work
-// without clicks: --screen service:mysql --sheet port --appearance light --settings network
+// without clicks: --screen service:mysql --sheet port --appearance light --settings network. The
+// Add Site sheet can read another folder: --sheet add-site --folder /path
 // The services of the sample data, such as the port problem of --sheet port, need --sample.
 enum DebugLaunch {
     // A check of the look does not get the first run on top of the screen that it checks.
@@ -32,7 +33,7 @@ enum DebugLaunch {
         }
 
         switch value(of: "--sheet") {
-        case "add-site": model.sheet = .addSite(folder: URL(filePath: NSHomeDirectory()).appending(path: "Documents/clients/acme"), manyProjects: false)
+        case "add-site": model.sheet = .addSite(folder: value(of: "--folder").map { URL(filePath: $0, directoryHint: .isDirectory) } ?? URL(filePath: NSHomeDirectory()).appending(path: "Documents/clients/acme"), manyProjects: false)
         case "import": model.sheet = .importDatabase(instance: "mysql-8.0")
         case "port":
             if let blocked = model.blockedServices.first {

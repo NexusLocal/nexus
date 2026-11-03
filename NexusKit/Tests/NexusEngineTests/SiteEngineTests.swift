@@ -14,8 +14,8 @@ import Testing
 extension NexusEngineTests {
     static let realRuntimes = ProcessInfo.processInfo.environment["NEXUS_REAL_RUNTIMES"]
 
-    func linkRealRuntimes(in paths: NexusPaths) throws {
-        for runtime in ["nginx/1.30", "php/8.5"] {
+    func linkRealRuntimes(in paths: NexusPaths, _ runtimes: [String] = ["nginx/1.30", "php/8.5"]) throws {
+        for runtime in runtimes {
             let parts = runtime.split(separator: "/").map(String.init)
             let link = paths.runtime(parts[0], line: parts[1])
             try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -133,6 +133,98 @@ extension NexusEngineTests {
         #expect(missing == .failure(message: "PHP 8.3 is not installed. Run: nexus install php 8.3"))
         #expect(set == .done(message: "A new site gets Apache and PHP 8.4. Its Node version comes from the project. The sites that exist do not change."))
         #expect(read == .siteDefaults(SiteDefaults(server: .apache, php: "8.4")))
+    }
+
+    @Test func aProxySiteNeedsAnAddressOfAnotherServerThanNginx() async throws {
+        let root = siteTestRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appending(path: "api", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var state = EngineState()
+        state.ports[ServiceCatalog.httpsPortKey] = 8443
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("php", "8.5")])
+        let path = folder.path(percentEncoded: false)
+
+        let noAddress = await engine.handle(.addSite(folder: path, host: nil, aliases: [], php: nil, server: nil, runsAs: .proxy))
+        let loop = await engine.handle(.addSite(folder: path, host: nil, aliases: [], php: nil, server: nil, runsAs: .proxy, address: "0.0.0.0:8443"))
+        let noKind = await engine.handle(.addSite(folder: path, host: nil, aliases: [], php: nil, server: nil, address: "3000"))
+        let wrongKind = await engine.handle(.addSite(folder: path, host: nil, aliases: [], php: nil, server: nil, runsAs: .php, command: "npm run dev"))
+        let name = await engine.handle(.addSite(folder: path, host: nil, aliases: [], php: nil, server: nil, runsAs: .proxy, address: "http://shop.test"))
+
+        #expect(noAddress == .failure(message: "A proxy site needs the address of its server, for example: --address 3000"))
+        #expect(loop == .failure(message: "nginx of Nexus listens on port 8443. So a proxy to http://0.0.0.0:8443 sends each request back to nginx. Use the port of your own server."))
+        #expect(noKind == .failure(message: "Only a proxy site has an address. Add --runs-as proxy."))
+        #expect(wrongKind == .failure(message: "Only a Node.js app has a command. Add --runs-as node."))
+        #expect(name == .failure(message: "http://shop.test is not an address that Nexus can use. Use a port, for example 3000, or an IP address with a port, for example http://127.0.0.1:3000."))
+        #expect(await engine.stateStore.current().sites.isEmpty)
+    }
+
+    @Test func aWorkspaceOfAProxySiteDoesNotRun() async throws {
+        let root = siteTestRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let site = Site(host: "shop.test", folder: root, php: "", runsAs: .proxy, address: "http://127.0.0.1:3000")
+        var state = EngineState()
+        state.sites = [site]
+        state.worktrees[ProjectFolder.workspaceKey(of: site)] = SiteWorktrees(workspaces: [Workspace(name: "ticket-1", worktree: "/work/ticket-1", folder: "/work/ticket-1")])
+        let engine = try makeSiteEngine(root: root, state: state)
+
+        let workspaces = await engine.workspaceSites(state)
+
+        #expect(workspaces.sites.isEmpty)
+        #expect(Array(workspaces.conflicts.values) == ["The workspace ticket-1 does not run, because shop.test is a proxy site. Each workspace would go to the same server. Remove the workspace."])
+    }
+
+    @Test func aCommandDoesNotChangeAPHPSite() async throws {
+        let root = siteTestRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: root, php: "8.5")]
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("php", "8.5")])
+
+        let response = await engine.handle(.editSite(host: "shop.test", change: SiteChange(command: Site.commandFromProject)))
+
+        #expect(response == .failure(message: "Only a Node.js app has a command. Add --runs-as node."))
+        #expect(await engine.stateStore.current().sites.first?.kind == .php)
+    }
+
+    @Test func onlyAPHPSiteNeedsPHP() {
+        let installed = [InstalledRuntime(name: "nginx", line: "1.30", version: "1.30.6", revision: 1, sha256: "", installedAt: .now, folder: URL(filePath: "/nginx"))]
+        let folder = URL(filePath: "/projects/shop", directoryHint: .isDirectory)
+
+        let php = NexusEngine.problem(of: Site(host: "shop.test", folder: folder, php: "8.5"), installed: installed)
+        let proxy = NexusEngine.problem(of: Site(host: "shop.test", folder: folder, php: "", server: .apache, runsAs: .proxy, address: "http://127.0.0.1:3000"), installed: installed)
+        let noAddress = NexusEngine.problem(of: Site(host: "shop.test", folder: folder, php: "", runsAs: .proxy), installed: installed)
+
+        #expect(php == "PHP 8.5 is not installed. Run: nexus install php 8.5")
+        #expect(proxy == nil)
+        #expect(noAddress == "It runs as a proxy, and it has no address. Run: nexus site edit shop.test --address 3000")
+    }
+
+    @Test func aCommandOfANodeAppChangesWithoutNginxAndProjectGivesTheScriptAgain() async throws {
+        let root = siteTestRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = root.appending(path: "app", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+        try Data(#"{"scripts":{"dev":"vite"}}"#.utf8).write(to: app.appending(path: "package.json"))
+        try Data().write(to: app.appending(path: "pnpm-lock.yaml"))
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: app, php: "8.5", runsAs: .node)]
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("php", "8.5")])
+
+        let chosen = await engine.handle(.editSite(host: "shop.test", change: SiteChange(command: "  pnpm dev --port {port:app}  ")))
+        let stored = await engine.stateStore.current().sites.first?.command
+        let empty = await engine.handle(.editSite(host: "shop.test", change: SiteChange(command: " ")))
+        let back = await engine.handle(.editSite(host: "shop.test", change: SiteChange(command: Site.commandFromProject)))
+        let shown = await engine.siteInfo().first
+
+        #expect(chosen == .done(message: "https://shop.test runs the Node.js app in \(app.path(percentEncoded: false)) with pnpm dev --port {port:app}."))
+        #expect(stored == "pnpm dev --port {port:app}")
+        #expect(empty == .failure(message: "A command is one line, for example npm run dev. Use project for the script of package.json."))
+        #expect(back == .done(message: "https://shop.test runs the Node.js app in \(app.path(percentEncoded: false)) with pnpm run dev."))
+        #expect(await engine.stateStore.current().sites.first?.command == nil)
+        #expect(shown?.projectCommand == "pnpm run dev")
+        #expect(shown?.framework == nil)
     }
 
     // The engine has no nginx. So the new site shows with its problem, and nothing starts.
@@ -327,6 +419,159 @@ extension NexusEngineTests {
     }
 
     // A project with its public folder after a short wait, as composer create-project makes it.
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealNodeAppAndAProxySiteOpenOverHTTPSAndNextGetsItsOwnOrigin() async throws {
+        let root = URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
+        try paths.createFolders()
+        try linkRealRuntimes(in: paths, ["nginx/1.30", "php/8.5", "node/24"])
+
+        let httpsPort = freePort()
+        var state = EngineState()
+        state.ports[ServiceCatalog.httpPortKey] = freePort()
+        state.ports[ServiceCatalog.httpsPortKey] = httpsPort
+        state.ports[NexusEngine.dnsServiceID] = freeUDPPort()
+        try JSONEncoder().encode(state).write(to: paths.config.appending(path: "state.json"))
+
+        let shop = root.appending(path: "projects/shop", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: shop, withIntermediateDirectories: true)
+        try Data(#"{"scripts":{"dev":"node server.js"},"dependencies":{"next":"16.4.0"}}"#.utf8).write(to: shop.appending(path: "package.json"))
+        try Data("require('http').createServer((request, response) => response.end(`app ${request.headers.host} ${request.headers.origin ?? ''}`)).listen(process.env.PORT, '::1')\n".utf8).write(to: shop.appending(path: "server.js"))
+        let api = root.appending(path: "projects/api", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: api, withIntermediateDirectories: true)
+
+        let engine = NexusEngine(
+            paths: paths,
+            helper: helper,
+            certificateAuthority: CertificateAuthority(paths: paths, store: keyStore),
+            systemFiles: SystemDNSFiles(
+                resolverFolder: root.appending(path: "etc/resolver", directoryHint: .isDirectory),
+                hostsFile: root.appending(path: "etc/hosts", directoryHint: .notDirectory)
+            )
+        )
+        var added: NexusResponse?
+        var app, ownOrigin, otherOrigin, proxy: String?
+        var port = 0
+
+        try await whileRunning(engine) {
+            await engine.startEnabledServices()
+            added = await engine.handle(.addSite(folder: shop.path(percentEncoded: false), host: nil, aliases: [], php: nil, server: nil))
+
+            port = try #require(await engine.siteInfo().first { $0.hosts.first == "shop.test" }?.app?.port)
+            _ = await engine.handle(.addSite(folder: api.path(percentEncoded: false), host: nil, aliases: [], php: nil, server: nil, runsAs: .proxy, address: "http://[::1]:\(port)"))
+
+            app = await page("shop.test", port: httpsPort, expecting: "app shop.test:\(httpsPort) ")
+            ownOrigin = await page("shop.test", port: httpsPort, origin: "https://shop.test:\(httpsPort)", expecting: "app shop.test:\(httpsPort) http://localhost:\(port)")
+            otherOrigin = await page("shop.test", port: httpsPort, origin: "https://evil.example", expecting: "app shop.test:\(httpsPort) https://evil.example")
+            proxy = await page("api.test", port: httpsPort, expecting: "app api.test:\(httpsPort) ")
+
+            _ = await engine.handle(.stopAll)
+        }
+
+        #expect(added.map { if case .done = $0 { true } else { false } } == true, "\(String(describing: added))")
+        #expect(app == "app shop.test:\(httpsPort) ")
+        #expect(ownOrigin == "app shop.test:\(httpsPort) http://localhost:\(port)")
+        #expect(otherOrigin == "app shop.test:\(httpsPort) https://evil.example")
+        #expect(proxy == "app api.test:\(httpsPort) ")
+    }
+
+    static let realNodeApps = ProcessInfo.processInfo.environment["NEXUS_NODE_APPS"]
+
+    // NEXUS_NODE_APPS names a folder with the installed projects next, nuxt and vite. Each one has
+    // a page with the text <name>-marker. The websocket of hot reload must open through nginx.
+    @Test(.enabled(if: realRuntimes != nil && realNodeApps != nil), .timeLimit(.minutes(5)))
+    func realNextNuxtAndViteAppsOpenOverHTTPSWithTheirWebsocket() async throws {
+        let root = URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
+        try paths.createFolders()
+        try linkRealRuntimes(in: paths, ["nginx/1.30", "php/8.5", "node/24"])
+
+        let httpsPort = freePort()
+        var state = EngineState()
+        state.ports[ServiceCatalog.httpPortKey] = freePort()
+        state.ports[ServiceCatalog.httpsPortKey] = httpsPort
+        state.ports[NexusEngine.dnsServiceID] = freeUDPPort()
+        try JSONEncoder().encode(state).write(to: paths.config.appending(path: "state.json"))
+
+        let apps = URL(filePath: Self.realNodeApps!, directoryHint: .isDirectory)
+        let engine = NexusEngine(
+            paths: paths,
+            helper: helper,
+            certificateAuthority: CertificateAuthority(paths: paths, store: keyStore),
+            systemFiles: SystemDNSFiles(
+                resolverFolder: root.appending(path: "etc/resolver", directoryHint: .isDirectory),
+                hostsFile: root.appending(path: "etc/hosts", directoryHint: .notDirectory)
+            )
+        )
+        var pages: [String: String] = [:]
+        var viteClient = "", viteSocket = "", nextSocket = "", nextForeignSocket = ""
+
+        try await whileRunning(engine) {
+            await engine.startEnabledServices()
+
+            for name in ["next", "nuxt", "vite"] {
+                _ = await engine.handle(.addSite(folder: apps.appending(path: name).path(percentEncoded: false), host: nil, aliases: [], php: nil, server: nil))
+            }
+
+            for name in ["next", "nuxt", "vite"] {
+                pages[name] = await page("\(name).test", port: httpsPort, containing: "\(name)-marker")
+            }
+
+            viteClient = await curl(["https://vite.test:\(httpsPort)/@vite/client"], host: "vite.test", port: httpsPort)
+            let token = viteClient.firstMatch(of: /wsToken = "([^"]+)"/).map { String($0.1) } ?? ""
+            viteSocket = await curl(websocket(origin: "https://vite.test:\(httpsPort)", protocol: "vite-hmr") + ["https://vite.test:\(httpsPort)/?token=\(token)"], host: "vite.test", port: httpsPort)
+            nextSocket = await curl(websocket(origin: "https://next.test:\(httpsPort)") + ["https://next.test:\(httpsPort)/_next/hmr?id=nexus"], host: "next.test", port: httpsPort)
+            nextForeignSocket = await curl(websocket(origin: "https://evil.example") + ["https://next.test:\(httpsPort)/_next/hmr?id=nexus"], host: "next.test", port: httpsPort)
+
+            _ = await engine.handle(.stopAll)
+        }
+
+        for name in ["next", "nuxt", "vite"] {
+            #expect(pages[name]?.contains("\(name)-marker") == true, "\(name): \(pages[name]?.prefix(300) ?? "no page")")
+        }
+
+        #expect(viteClient.contains("wsToken"), "\(viteClient.prefix(300))")
+        #expect(viteSocket.hasPrefix("HTTP/1.1 101"), "\(viteSocket.prefix(300))")
+        #expect(nextSocket.hasPrefix("HTTP/1.1 101"), "\(nextSocket.prefix(300))")
+        #expect(!nextForeignSocket.hasPrefix("HTTP/1.1 101"), "\(nextForeignSocket.prefix(300))")
+    }
+
+    private func websocket(origin: String, protocol name: String? = nil) -> [String] {
+        ["--http1.1", "-i", "-N", "-H", "Connection: Upgrade", "-H", "Upgrade: websocket", "-H", "Sec-WebSocket-Version: 13", "-H", "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", "-H", "Origin: \(origin)"]
+            + (name.map { ["-H", "Sec-WebSocket-Protocol: \($0)"] } ?? [])
+    }
+
+    // A dev server compiles the page at the first request. That can take half a minute.
+    private func page(_ host: String, port: Int, containing marker: String) async -> String? {
+        let deadline = ContinuousClock.now + .seconds(90)
+        var body = ""
+
+        while !body.contains(marker), ContinuousClock.now < deadline {
+            body = await curl(["https://\(host):\(port)/"], host: host, port: port, seconds: 30)
+
+            if !body.contains(marker) {
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
+
+        return body
+    }
+
+    private func curl(_ arguments: [String], host: String, port: Int, seconds: Int = 3) async -> String {
+        let curl = Process()
+        curl.executableURL = URL(filePath: "/usr/bin/curl")
+        curl.arguments = ["-sk", "--max-time", "\(seconds)", "--resolve", "\(host):\(port):127.0.0.1"] + arguments
+        let output = Pipe()
+        curl.standardOutput = output
+        curl.standardError = FileHandle.nullDevice
+        try? curl.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        curl.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+    }
+
     private func project(_ name: String, in parked: URL, publicFolder: Bool) throws {
         let folder = parked.appending(path: name, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -355,14 +600,14 @@ extension NexusEngineTests {
     }
 
     // curl does not trust the root CA of the test. That does not matter here.
-    func page(_ host: String, port: Int, expecting expected: String) async -> String? {
+    func page(_ host: String, port: Int, origin: String? = nil, expecting expected: String) async -> String? {
         let deadline = ContinuousClock.now + .seconds(15)
         var body: String?
 
         while body != expected, ContinuousClock.now < deadline {
             let curl = Process()
             curl.executableURL = URL(filePath: "/usr/bin/curl")
-            curl.arguments = ["-sk", "--max-time", "2", "--resolve", "\(host):\(port):127.0.0.1", "https://\(host):\(port)/"]
+            curl.arguments = ["-sk", "--max-time", "2", "--resolve", "\(host):\(port):127.0.0.1"] + (origin.map { ["-H", "Origin: \($0)"] } ?? []) + ["https://\(host):\(port)/"]
             let output = Pipe()
             curl.standardOutput = output
             curl.standardError = FileHandle.nullDevice

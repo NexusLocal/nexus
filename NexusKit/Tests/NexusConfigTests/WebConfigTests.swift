@@ -8,11 +8,13 @@ struct WebConfigTests {
     private let run = URL(filePath: "/Nexus/run", directoryHint: .isDirectory)
 
     private func site(_ server: WebServer, folder: String = "/Sites/My Shop/public", php: String = "8.5") -> WebSite {
+        site(.php(server: server, documentRoot: URL(filePath: folder, directoryHint: .isDirectory), socket: URL(filePath: "/Nexus/run/php-\(php).sock")))
+    }
+
+    private func site(_ backend: WebBackend) -> WebSite {
         WebSite(
             hosts: ["shop.test", "www.shop.test"],
-            documentRoot: URL(filePath: folder, directoryHint: .isDirectory),
-            server: server,
-            phpSocket: URL(filePath: "/Nexus/run/php-\(php).sock"),
+            backend: backend,
             certificate: URL(filePath: "/Nexus/certs/shop.test.crt"),
             key: URL(filePath: "/Nexus/certs/shop.test.key"),
             accessLog: URL(filePath: "/Nexus/logs/sites/shop.test.log")
@@ -44,6 +46,51 @@ struct WebConfigTests {
         #expect(!config.contains("fastcgi_pass"))
     }
 
+    @Test func aProxySiteGoesToItsAddressAndKeepsFoldersWithADot() throws {
+        let config = try NginxConfig.render(sites: [site(.proxy(address: "http://127.0.0.1:3000"))], settings: nginxSettings())
+
+        #expect(config.contains("proxy_pass http://127.0.0.1:3000;"))
+        #expect(config.contains("proxy_set_header Upgrade $http_upgrade;"))
+        #expect(config.contains("proxy_set_header Host $http_host;"))
+        #expect(!config.contains("location ~ /\\."))
+        #expect(!config.contains("fastcgi_pass"))
+        #expect(!config.contains("error_page"))
+    }
+
+    @Test func aNodeAppGoesToItsUpstreamWithTheOtherAddressAsBackup() throws {
+        let config = try NginxConfig.render(sites: [site(.app(port: 20017, framework: .express)), site(.app(port: 20018, framework: .vite))], settings: nginxSettings())
+
+        #expect(config.contains("upstream nexus_app_0 {\n        server 127.0.0.1:20017;\n        server [::1]:20017 backup;\n    }"))
+        #expect(config.contains("upstream nexus_app_1 {\n        server [::1]:20018;\n        server 127.0.0.1:20018 backup;\n    }"))
+        #expect(config.contains("proxy_pass http://nexus_app_0;"))
+        #expect(config.contains("proxy_set_header Connection $connection_upgrade;"))
+        #expect(config.contains("error_page 502 504 = @nexus_app_waits;"))
+        #expect(config.contains("<meta http-equiv='refresh' content='1'>"))
+        #expect(!config.contains("map $http_origin"))
+        #expect(!config.contains("location ~ /\\."))
+    }
+
+    @Test func nextGetsTheOriginOfItsOwnAddressOnlyForTheOriginsOfTheSite() throws {
+        let config = try NginxConfig.render(sites: [site(.app(port: 20019, framework: .next))], settings: nginxSettings())
+
+        #expect(config.contains("map $http_origin $nexus_origin_0 {\n        default $http_origin;\n        \"https://shop.test:8443\" \"http://localhost:20019\";\n        \"http://shop.test:8080\" \"http://localhost:20019\";\n        \"https://www.shop.test:8443\" \"http://localhost:20019\";"))
+        #expect(config.contains("proxy_set_header Origin $nexus_origin_0;"))
+    }
+
+    @Test func standardPortsGiveOriginsWithoutAPort() {
+        let settings = NginxSettings(httpPort: 80, httpsPort: 443, apachePort: 8081, lanAccess: false, runtime: runtime, runFolder: run, modules: [])
+
+        #expect(NginxConfig.origins(of: ["shop.test"], settings: settings) == ["https://shop.test", "http://shop.test"])
+    }
+
+    @Test func apacheGetsNoProxySite() throws {
+        let settings = ApacheSettings(port: 8081, runtime: URL(filePath: "/Nexus/runtimes/httpd/2.4"), runFolder: run, modules: [])
+
+        let config = try ApacheConfig.render(sites: [site(.proxy(address: "http://127.0.0.1:3000"))], settings: settings)
+
+        #expect(!config.contains("<VirtualHost"))
+    }
+
     @Test func onlyThisMacHasAccessUntilTheLANSettingIsOn() throws {
         let closed = try NginxConfig.render(sites: [], settings: nginxSettings())
         let open = try NginxConfig.render(sites: [], settings: nginxSettings(lan: true))
@@ -67,15 +114,7 @@ struct WebConfigTests {
     }
 
     @Test func aSocketPathLongerThanMacOSPermitsIsRefused() {
-        let long = WebSite(
-            hosts: ["shop.test"],
-            documentRoot: URL(filePath: "/Sites/shop"),
-            server: .nginx,
-            phpSocket: URL(filePath: "/" + String(repeating: "a", count: 110) + ".sock"),
-            certificate: URL(filePath: "/c.crt"),
-            key: URL(filePath: "/c.key"),
-            accessLog: URL(filePath: "/a.log")
-        )
+        let long = site(.php(server: .nginx, documentRoot: URL(filePath: "/Sites/shop"), socket: URL(filePath: "/" + String(repeating: "a", count: 110) + ".sock")))
 
         #expect(throws: ConfigError.self) {
             try NginxConfig.render(sites: [long], settings: nginxSettings())

@@ -11,6 +11,7 @@ extension NexusRequest {
         case .remove(let name, let line): "remove \(name) \(line)"
         case .removeSite(let host): "removeSite \(host)"
         case .editSite(let host, _): "editSite \(host)"
+        case .restartApp(let host, let workspace): "restartApp \(host)\(workspace.map { " \($0)" } ?? "")"
         case .setAccount(let instance, _): "setAccount \(instance)"
         case .retryWorkspace(let host, let name): "retryWorkspace \(host) \(name)"
         case .removeWorkspace(let host, let name, _): "removeWorkspace \(host) \(name)"

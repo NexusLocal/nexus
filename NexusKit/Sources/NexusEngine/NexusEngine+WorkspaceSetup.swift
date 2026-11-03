@@ -57,6 +57,7 @@ extension NexusEngine {
                     return
                 }
 
+                await applyWorkspaceSites()
                 publishSites()
 
                 // A change during the setup must stop this workspace before its programs start.
@@ -152,6 +153,10 @@ extension NexusEngine {
         guard let site = ProjectFolder.locate(URL(filePath: path, directoryHint: .isDirectory), in: resolvedSites(state).map(\.site))?.site,
               let repository = ProjectFolder.repository(of: site) else {
             throw RuntimeError.unsupported("No site of Nexus holds \(worktree). Add the main checkout with nexus site add.")
+        }
+
+        guard site.kind != .proxy else {
+            throw RuntimeError.unsupported("\(site.host) is a proxy site. A proxy site gets no workspaces, because each workspace would go to the same server.")
         }
 
         guard let git = await GitTool.executable() else {
@@ -416,11 +421,14 @@ extension NexusEngine {
             return nil
         }
 
-        // A site that is no Laravel application gets no .env, but its commands can use a port.
-        guard let main = LaravelProject.root(containing: URL(filePath: ProjectFolder.projectFolder(of: site), directoryHint: .isDirectory)) else {
+        // A site that is no Laravel application gets no .env, but its commands can use a port. A
+        // Node.js app gets no copy of the database yet (D67).
+        let application = site.kind == .php ? LaravelProject.root(containing: URL(filePath: ProjectFolder.projectFolder(of: site), directoryHint: .isDirectory)) : nil
+
+        guard let main = application else {
             // A checkout in the main checkout can remove these files for a moment. A workspace with a
             // check of its configuration must not lose that check then. Only a Retry accepts this.
-            if workspace.configurationDigest != nil {
+            if site.kind == .php, workspace.configurationDigest != nil {
                 throw RuntimeError.unsupported("The main checkout holds no Laravel application now. Restore it. When this site is no Laravel application any more, use Retry.")
             }
 
@@ -634,8 +642,10 @@ extension NexusEngine {
         return (indexes, instances.map(\.id).sorted())
     }
 
+    // A Node.js app needs a port in each workspace (D67).
     static func textsWithPorts(of sites: [Site], preset: [String]) -> [String] {
-        sites.flatMap { $0.workspaceKeys ?? [] }.map(\.value) + commands(of: sites) + backgroundCommands(of: sites, preset: preset)
+        let app = sites.contains { $0.kind == .node } ? ["{port:\(NodeAppLaunch.portName)}"] : []
+        return sites.flatMap { $0.workspaceKeys ?? [] }.map(\.value) + commands(of: sites) + backgroundCommands(of: sites, preset: preset) + app
     }
 
     // A workspace keeps a port that its list lost, because its .env can still name that port. Another
@@ -651,6 +661,7 @@ extension NexusEngine {
 
     func takenPorts(_ state: EngineState) -> Set<Int> {
         Set(state.ports.values)
+            .union(state.appPorts.values)
             .union(state.worktrees.values.flatMap(\.workspaces).flatMap(\.ports.values))
             .union(mainProcessPlans.values.flatMap(\.ports.values))
             .union(state.databaseRemovals.map(\.server.port))
@@ -685,7 +696,7 @@ extension NexusEngine {
         let key = ProjectFolder.workspaceKey(of: site)
         let sites = resolved.filter { ProjectFolder.workspaceKey(of: $0) == key }
 
-        guard let main = LaravelProject.root(containing: URL(filePath: ProjectFolder.projectFolder(of: site), directoryHint: .isDirectory)) else {
+        guard site.kind == .php, let main = LaravelProject.root(containing: URL(filePath: ProjectFolder.projectFolder(of: site), directoryHint: .isDirectory)) else {
             return []
         }
 

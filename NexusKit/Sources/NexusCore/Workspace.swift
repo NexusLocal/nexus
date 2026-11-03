@@ -307,14 +307,14 @@ extension Workspace {
         }
     }
 
-    // A workspace runs as a site of its own, with the PHP and the webserver of its project.
+    // A workspace runs as a site of its own, with the kind, the PHP and the webserver of its project.
     public func site(of sites: [Site], tld: String) -> Site? {
         guard let main = sites.first else {
             return nil
         }
 
         let hosts = hosts(of: sites, tld: tld)
-        return Site(host: hosts[0], folder: URL(filePath: folder, directoryHint: .isDirectory), aliases: Array(hosts.dropFirst()), php: main.php, server: main.server, node: main.node)
+        return Site(host: hosts[0], folder: URL(filePath: folder, directoryHint: .isDirectory), aliases: Array(hosts.dropFirst()), php: main.php, server: main.server, node: main.node, runsAs: main.runsAs, command: main.command, address: main.address)
     }
 }
 

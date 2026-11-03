@@ -90,7 +90,11 @@ public enum ApacheConfig {
             "</Files>",
         ]
 
-        for site in sites where site.server == .apache {
+        for site in sites {
+            guard case .php(.apache, let documentRoot, let socket) = site.backend else {
+                continue
+            }
+
             lines += [
                 "",
                 "<VirtualHost 127.0.0.1:\(settings.port)>",
@@ -102,14 +106,14 @@ public enum ApacheConfig {
             }
 
             lines += [
-                "    DocumentRoot \(try ConfigText.quoted(site.documentRoot))",
-                "    <Directory \(try ConfigText.quoted(site.documentRoot))>",
+                "    DocumentRoot \(try ConfigText.quoted(documentRoot))",
+                "    <Directory \(try ConfigText.quoted(documentRoot))>",
                 "        Options FollowSymLinks",
                 "        AllowOverride All",
                 "        Require all granted",
                 "    </Directory>",
                 "    <FilesMatch \"\\.php$\">",
-                "        SetHandler \(try ConfigText.socket(site.phpSocket, prefix: "proxy:unix:").dropLast())|fcgi://\(site.phpSocket.deletingPathExtension().lastPathComponent)\"",
+                "        SetHandler \(try ConfigText.socket(socket, prefix: "proxy:unix:").dropLast())|fcgi://\(socket.deletingPathExtension().lastPathComponent)\"",
                 "    </FilesMatch>",
                 "</VirtualHost>",
             ]

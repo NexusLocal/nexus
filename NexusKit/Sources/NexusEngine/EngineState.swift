@@ -46,6 +46,10 @@ public struct EngineState: Codable, Sendable, Equatable {
     public var worktrees: [String: SiteWorktrees] = [:]
     public var databaseRemovals: [DatabaseRemoval] = []
     public var workspaceSettings = WorkspaceSettings()
+    // The port of the Node.js app in the main checkout of each site, with the key of its worktree
+    // record (D67). nginx and the app read the same port, also after a restart of nexusd. A
+    // workspace keeps its port in its record.
+    public var appPorts: [String: Int] = [:]
 
     public init() {}
 
@@ -80,6 +84,7 @@ public struct EngineState: Codable, Sendable, Equatable {
         // Such an entry must not make the whole file unreadable.
         databaseRemovals = (try? container.decodeIfPresent([DatabaseRemoval].self, forKey: .databaseRemovals)) ?? defaults.databaseRemovals
         workspaceSettings = try container.decodeIfPresent(WorkspaceSettings.self, forKey: .workspaceSettings) ?? defaults.workspaceSettings
+        appPorts = try container.decodeIfPresent([String: Int].self, forKey: .appPorts) ?? defaults.appPorts
     }
 }
 

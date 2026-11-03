@@ -155,10 +155,11 @@ extension NexusEngine {
         } while reconcileAgain
     }
 
-    // A new workspace needs its server block. A change that gives the same blocks does nothing.
-    // Returns true after a change, and after a failure that the app must show.
+    // A new workspace needs its server block, and a Node.js app in it needs its port there. A change
+    // that gives the same blocks does nothing. Returns true after a change, and after a failure that
+    // the app must show.
     @discardableResult
-    private func applyWorkspaceSites() async -> Bool {
+    func applyWorkspaceSites() async -> Bool {
         let changed = try? await serialWeb {
             guard await !self.watchingStopped else {
                 return false
@@ -172,7 +173,8 @@ extension NexusEngine {
 
     // Each workspace runs as a site with its own hosts. A site claims its hosts first. A workspace
     // whose host is taken is left out with a warning, because two server blocks with one name
-    // make nginx use only one of them. Two sites of one project share a block.
+    // make nginx use only one of them. Two sites of one project share a block. A workspace of a
+    // proxy site is left out, because it would go to the server of the main checkout.
     func workspaceSites(_ state: EngineState, resolved: [Site]? = nil) -> (sites: [Site], conflicts: [Workspace: String], sitesOfRecord: [String: [Site]]) {
         let resolved = resolved ?? resolvedSites(state).map(\.site)
         let sitesOfRecord = Dictionary(grouping: resolved, by: ProjectFolder.workspaceKey(of:))
@@ -183,6 +185,11 @@ extension NexusEngine {
         for (key, sitesOfProject) in sitesOfRecord.sorted(by: { $0.key < $1.key }) {
             for workspace in state.worktrees[key]?.workspaces ?? [] {
                 guard let site = workspace.site(of: sitesOfProject, tld: state.tld) else {
+                    continue
+                }
+
+                if site.kind == .proxy {
+                    conflicts[workspace] = "The workspace \(workspace.name) does not run, because \(sitesOfProject[0].host) is a proxy site. Each workspace would go to the same server. Remove the workspace."
                     continue
                 }
 
@@ -199,12 +206,13 @@ extension NexusEngine {
         return (sites, conflicts, sitesOfRecord)
     }
 
-    func workspaceInfo(key: String, sitesOfRecord: [String: [Site]], conflicts: [Workspace: String], installed: [InstalledRuntime], state: EngineState) -> [WorkspaceInfo] {
+    func workspaceInfo(key: String, sitesOfRecord: [String: [Site]], conflicts: [Workspace: String], installed: [InstalledRuntime], state: EngineState, appPorts: [String: Int]) -> [WorkspaceInfo] {
         let sites = sitesOfRecord[key] ?? []
 
         return (state.worktrees[key]?.workspaces ?? []).map { workspace in
             let site = workspace.site(of: sites, tld: state.tld)
-            let problem = conflicts[workspace] ?? site.flatMap { Self.problem(of: $0, installed: installed) ?? applyProblem(of: $0) }
+            let problem = conflicts[workspace] ?? site.flatMap { Self.problem(of: $0, installed: installed) ?? applyProblem(of: $0, appPorts: appPorts) }
+            let app = site.flatMap { $0.kind == .node ? appInfo(owner: Self.processOwner(key: key, workspace: workspace.name), port: workspace.ports[NodeAppLaunch.portName], host: $0.host) : nil }
 
             return WorkspaceInfo(
                 name: workspace.name,
@@ -220,7 +228,8 @@ extension NexusEngine {
                     WorkspaceDatabaseInfo(name: database.name, instance: database.instance, port: workspace.servers.first { $0.instance == database.instance }?.port)
                 },
                 redisIndexes: workspace.redisIndexes,
-                ports: workspace.ports
+                ports: workspace.ports,
+                app: app
             )
         }
     }

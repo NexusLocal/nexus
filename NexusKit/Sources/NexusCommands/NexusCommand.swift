@@ -616,6 +616,8 @@ struct WorkspaceCommand: AsyncParsableCommand {
 
 extension WebServer: ExpressibleByArgument {}
 
+extension SiteKind: ExpressibleByArgument {}
+
 extension WorkspaceEnvKey: ExpressibleByArgument {
     public init?(argument: String) {
         guard let equals = argument.firstIndex(of: "="), equals != argument.startIndex else {
@@ -678,7 +680,29 @@ struct SiteCommand: AsyncParsableCommand {
 
             for site in sites {
                 let origin = site.parked ? "parked" : "added"
-                print([site.url.padding(to: 36), "PHP \(site.php)".padding(to: 9), site.server.rawValue.padding(to: 7), origin.padding(to: 7), site.documentRoot].joined(separator: " "))
+                let backend = switch site.kind {
+                case .php: ["PHP \(site.php)".padding(to: 9), site.server.rawValue.padding(to: 7)]
+                case .node: ["Node.js".padding(to: 17)]
+                case .proxy: ["proxy".padding(to: 17)]
+                }
+
+                print(([site.url.padding(to: 36)] + backend + [origin.padding(to: 7), site.kind == .php ? site.documentRoot : site.folder]).joined(separator: " "))
+
+                if site.kind == .node {
+                    print("    command: \(site.command ?? site.projectCommand ?? "none, because package.json has no dev or start script")")
+                }
+
+                if let framework = site.framework {
+                    print("    framework: \(framework.displayName)")
+                }
+
+                if let app = site.app {
+                    print("    app: \(app.summary). Log: \(app.log)")
+                }
+
+                if site.kind == .proxy, let address = site.address {
+                    print("    address: \(address)")
+                }
 
                 if site.hosts.count > 1 {
                     print("    aliases: \(site.hosts.dropFirst().joined(separator: ", "))")
@@ -704,9 +728,12 @@ struct SiteCommand: AsyncParsableCommand {
         @Option(help: "The PHP version line, for example 8.5. The default comes from nexus site defaults.") var php: String?
         @Option(help: "nginx or apache. The default comes from nexus site defaults.") var server: WebServer?
         @Option(help: "The group of the site in the sidebar of the app.") var group: String?
+        @Option(help: "php, node or proxy. A Node.js app runs its command. A proxy site sends its requests to a server that you start.") var runsAs: SiteKind?
+        @Option(help: "The command of a Node.js app, for example \"npm run dev\". The default is the dev or start script of package.json.") var command: String?
+        @Option(help: "The server of a proxy site: a port, for example 3000, or an address, for example http://127.0.0.1:3000.") var address: String?
 
         func run() async throws {
-            try finish(try await send(.addSite(folder: absolutePath(folder), host: host, aliases: aliases, php: php, server: server, group: group)))
+            try finish(try await send(.addSite(folder: absolutePath(folder), host: host, aliases: aliases, php: php, server: server, group: group, runsAs: runsAs, command: command, address: address)))
         }
     }
 
@@ -747,9 +774,12 @@ struct SiteCommand: AsyncParsableCommand {
     }
 
     struct Edit: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Changes the PHP version, the Node version, the web server or the aliases of a site.")
+        static let configuration = CommandConfiguration(abstract: "Changes the kind, the PHP version, the Node version, the web server or the aliases of a site.")
 
         @Argument(help: "The host of the site.") var host: String
+        @Option(help: "php, node or proxy.") var runsAs: SiteKind?
+        @Option(help: "The command of a Node.js app, for example \"npm run dev\", or project for the dev or start script of package.json.") var command: String?
+        @Option(help: "The server of a proxy site: a port, for example 3000, or an address, for example http://127.0.0.1:3000.") var address: String?
         @Option(help: "The PHP version line, for example 8.4.") var php: String?
         @Option(help: "The Node version line, for example 24, or project for the version that the files of the project name.") var node: String?
         @Option(help: "nginx or apache.") var server: WebServer?
@@ -789,7 +819,10 @@ struct SiteCommand: AsyncParsableCommand {
                 workspaceCommands: commandChange,
                 backgroundCommands: backgroundChange,
                 workspaceProcesses: workspaceProcesses.map { $0 == .on },
-                mainProcesses: mainProcesses.map { $0 == .on }
+                mainProcesses: mainProcesses.map { $0 == .on },
+                runsAs: runsAs,
+                command: command,
+                address: address
             )
 
             try finish(try await send(.editSite(host: host, change: change)))

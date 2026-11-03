@@ -136,12 +136,12 @@ extension NexusEngine {
             return WebDetails(
                 toggles: Self.extensionToggles(line: runtime.line, available: available, state: state),
                 customSettings: state.phpCustomSettings[runtime.line] ?? [],
-                usedBy: sites.filter { $0.php == runtime.line }.map(\.host).sorted()
+                usedBy: sites.filter { $0.usedPHP == runtime.line }.map(\.host).sorted()
             )
         case "nginx":
             return WebDetails(toggles: Self.moduleToggles(.nginx, available: available, state: state))
         case "httpd":
-            let users = sites.filter { $0.server == .apache }.map(\.host).sorted()
+            let users = sites.filter(\.usesApache).map(\.host).sorted()
             return WebDetails(
                 toggles: Self.moduleToggles(.apache, available: available, state: state),
                 usedBy: users,

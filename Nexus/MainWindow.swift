@@ -47,7 +47,7 @@ struct MainWindow: View {
         .sheet(item: $model.sheet) { sheet in
             switch sheet {
             case .addSite(let folder, let manyProjects):
-                AddSiteSheet(folder: folder, manyProjects: manyProjects)
+                AddSiteSheet(folder: folder, manyProjects: manyProjects, tld: model.settings.tld)
             case .editAliases(let host):
                 if let site = model.site(host) {
                     EditAliasesSheet(site: site)

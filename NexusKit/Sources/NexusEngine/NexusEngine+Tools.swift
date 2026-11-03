@@ -45,9 +45,10 @@ extension NexusEngine {
         }
     }
 
+    // A Node.js app or a proxy site uses no PHP. So its folder gets the PHP of a new site.
     func phpLine(for location: ProjectLocation?, state: EngineState, installed: [InstalledRuntime]) throws -> String {
-        if let location {
-            return location.site.php
+        if let php = location?.site.usedPHP {
+            return php
         }
 
         return try Self.phpLine(nil, installed: installed, defaults: state.siteDefaults)

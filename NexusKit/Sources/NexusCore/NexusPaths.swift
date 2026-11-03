@@ -93,6 +93,18 @@ public struct NexusPaths: Sendable, Equatable {
         data.appending(path: "workspaces", directoryHint: .isDirectory)
     }
 
+    // corepack runs pnpm and yarn for a Node.js app (D67). Node 26 does not ship it, so Nexus
+    // installs it from npm into package and puts its links for pnpm and yarn in bin.
+    public var corepack: URL { folder("corepack") }
+
+    public var corepackPackage: URL {
+        corepack.appending(path: "package", directoryHint: .isDirectory)
+    }
+
+    public var corepackLinks: URL {
+        corepack.appending(path: "bin", directoryHint: .isDirectory)
+    }
+
     public func createFolders(using fileManager: FileManager = .default) throws {
         for folder in allFolders {
             try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)

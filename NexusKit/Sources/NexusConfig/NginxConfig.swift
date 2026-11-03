@@ -22,7 +22,8 @@ public struct NginxSettings: Sendable, Equatable {
 }
 
 // The front server. It listens on all addresses for HTTP and HTTPS, does TLS for every site,
-// serves the nginx sites through php-fpm and sends the Apache sites to Apache (D23, D24).
+// serves the nginx sites through php-fpm and sends the Apache sites to Apache (D23, D24). A Node.js
+// app or a proxy site gets its requests at its address (D67).
 public enum NginxConfig {
     // These are part of the nginx program. So they are always on. Every site needs them.
     public static let builtInModules = ["ssl", "http2", "proxy"]
@@ -95,16 +96,55 @@ public enum NginxConfig {
             "    }",
         ]
 
-        for site in sites {
+        for (index, site) in sites.enumerated() {
             lines.append("")
-            lines += try server(for: site, settings: settings).map { "    \($0)" }
+            lines += appUpstream(for: site, index: index, settings: settings).map { "    \($0)" }
+            lines += try server(for: site, index: index, settings: settings).map { "    \($0)" }
         }
 
         lines.append("}")
         return lines.joined(separator: "\n") + "\n"
     }
 
-    private static func server(for site: WebSite, settings: NginxSettings) throws -> [String] {
+    // A Node.js app can listen on 127.0.0.1 or on [::1] only, so nginx tries the other address when
+    // the first one refuses. The Vite server listens on [::1], so that address comes first for it.
+    // Next.js gets the origin of its own address for the origins of the site, and only for these.
+    // So an origin of another website stays blocked.
+    private static func appUpstream(for site: WebSite, index: Int, settings: NginxSettings) -> [String] {
+        guard case .app(let port, let framework) = site.backend else {
+            return []
+        }
+
+        let addresses = ["127.0.0.1:\(port)", "[::1]:\(port)"]
+        let ordered = framework?.usesViteServer == true ? Array(addresses.reversed()) : addresses
+        var lines = [
+            "upstream nexus_app_\(index) {",
+            "    server \(ordered[0]);",
+            "    server \(ordered[1]) backup;",
+            "}",
+            "",
+        ]
+
+        guard framework?.checksOrigin == true else {
+            return lines
+        }
+
+        lines += ["map $http_origin $nexus_origin_\(index) {", "    default $http_origin;"]
+        lines += origins(of: site.hosts, settings: settings).map { "    \"\($0)\" \"http://localhost:\(port)\";" }
+        lines += ["}", ""]
+        return lines
+    }
+
+    static func origins(of hosts: [String], settings: NginxSettings) -> [String] {
+        hosts.flatMap { host in
+            [
+                settings.httpsPort == 443 ? "https://\(host)" : "https://\(host):\(settings.httpsPort)",
+                settings.httpPort == 80 ? "http://\(host)" : "http://\(host):\(settings.httpPort)",
+            ]
+        }
+    }
+
+    private static func server(for site: WebSite, index: Int, settings: NginxSettings) throws -> [String] {
         var lines = [
             "server {",
             "    listen \(settings.httpPort);",
@@ -119,10 +159,10 @@ public enum NginxConfig {
             "",
         ]
 
-        switch site.server {
-        case .nginx:
+        switch site.backend {
+        case .php(.nginx, let documentRoot, let socket):
             lines += [
-                "    root \(try ConfigText.quoted(site.documentRoot));",
+                "    root \(try ConfigText.quoted(documentRoot));",
                 "    index index.php index.html index.htm;",
                 "    charset utf-8;",
                 "",
@@ -136,7 +176,7 @@ public enum NginxConfig {
                 "        include \(try ConfigText.quoted(settings.runtime.appending(path: "conf/fastcgi.conf")));",
                 "        fastcgi_param PATH_INFO $fastcgi_path_info;",
                 "        fastcgi_param HTTP_PROXY \"\";",
-                "        fastcgi_pass \(try ConfigText.socket(site.phpSocket, prefix: "unix:"));",
+                "        fastcgi_pass \(try ConfigText.socket(socket, prefix: "unix:"));",
                 "        fastcgi_read_timeout 300;",
                 "    }",
                 "",
@@ -144,27 +184,59 @@ public enum NginxConfig {
                 "        deny all;",
                 "    }",
             ]
-        case .apache:
+        case .php(.apache, _, _):
             lines += [
                 "    location ~ /\\.(?!well-known) {",
                 "        deny all;",
                 "    }",
                 "",
-                "    location / {",
-                "        proxy_pass http://127.0.0.1:\(settings.apachePort);",
-                "        proxy_http_version 1.1;",
-                "        proxy_set_header Host $http_host;",
-                "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-                "        proxy_set_header X-Forwarded-Proto $scheme;",
-                "        proxy_set_header X-Forwarded-Port $server_port;",
-                "        proxy_set_header Upgrade $http_upgrade;",
-                "        proxy_set_header Connection $connection_upgrade;",
-                "        proxy_read_timeout 300;",
-                "    }",
             ]
+            lines += proxyLocation(to: "http://127.0.0.1:\(settings.apachePort)")
+        // A dev server serves files in folders with a dot, for example node_modules/.vite. So
+        // these sites get no rule for such folders.
+        case .app(_, let framework):
+            lines += proxyLocation(to: "http://nexus_app_\(index)", origin: framework?.checksOrigin == true ? "$nexus_origin_\(index)" : nil)
+            lines += appWaitPage
+        case .proxy(let address):
+            lines += proxyLocation(to: address)
         }
 
         lines.append("}")
         return lines
+    }
+
+    // A Node.js app does not answer while it starts or after a crash, and Nexus starts it again.
+    // The client of a dev server reloads the page as soon as nginx answers, also with a 502. So
+    // nginx gives a page that tries again each second, and the page of the app comes back without
+    // a reload by hand.
+    private static let appWaitPage = [
+        "",
+        "    error_page 502 504 = @nexus_app_waits;",
+        "",
+        "    location @nexus_app_waits {",
+        "        default_type text/html;",
+        "        add_header Cache-Control no-store always;",
+        "        add_header Retry-After 1 always;",
+        "        return 503 \"<!doctype html><meta http-equiv='refresh' content='1'><title>The app starts</title><p style='font-family: -apple-system, sans-serif'>The app does not answer yet. Nexus starts it, and this page tries again each second. The Site screen of Nexus shows the state and the log of the app.</p>\";",
+        "    }",
+    ]
+
+    private static func proxyLocation(to address: String, origin: String? = nil) -> [String] {
+        let originLine = origin.map { ["        proxy_set_header Origin \($0);"] } ?? []
+
+        return [
+            "    location / {",
+            "        proxy_pass \(address);",
+            "        proxy_http_version 1.1;",
+            "        proxy_set_header Host $http_host;",
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+            "        proxy_set_header X-Forwarded-Proto $scheme;",
+            "        proxy_set_header X-Forwarded-Port $server_port;",
+            "        proxy_set_header Upgrade $http_upgrade;",
+            "        proxy_set_header Connection $connection_upgrade;",
+        ] + originLine + [
+            "        proxy_read_timeout 300;",
+            "    }",
+        ]
     }
 }

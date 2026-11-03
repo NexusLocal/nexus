@@ -108,6 +108,10 @@ public actor NexusEngine {
     var processProblems: [String: [String]] = [:]
     var mainProcessPlans: [String: MainProcessPlan] = [:]
     var mainProbeFailures: [String: MainProbeFailure] = [:]
+    // The state of each Node.js app by its process id, so a crash or a restart reaches the app.
+    var appStates: [String: ServiceState] = [:]
+    var corepackInstall: Task<Void, Never>?
+    var corepackFailure: (nextTry: ContinuousClock.Instant, reason: String)?
     var restartFailedProcesses = false
     var processesWaitForAService = false
     var worktreeWatchers: [String: FolderWatcher] = [:]
@@ -219,12 +223,15 @@ public actor NexusEngine {
                 return .done(message: try await uninstall())
             case .sites:
                 return .sites(await siteInfo())
-            case .addSite(let folder, let host, let aliases, let php, let server, let group):
-                return .done(message: try await serialWeb { try await self.addSite(folder: folder, host: host, aliases: aliases, php: php, server: server, group: group) })
+            case .addSite(let folder, let host, let aliases, let php, let server, let group, let runsAs, let command, let address, let node):
+                let settings = SiteChange(node: node, runsAs: runsAs, command: command, address: address)
+                return .done(message: try await serialWeb { try await self.addSite(folder: folder, host: host, aliases: aliases, php: php, server: server, group: group, settings: settings) })
             case .removeSite(let host):
                 return .done(message: try await serialWeb { try await self.removeSite(host) })
             case .editSite(let host, let change):
                 return .done(message: try await serialWeb { try await self.editSite(host, change: change) })
+            case .restartApp(let host, let workspace):
+                return .done(message: try await restartApp(host: host, workspace: workspace))
             case .park(let folder, let php, let server):
                 return .done(message: try await serialWeb { try await self.park(folder: folder, php: php, server: server) })
             case .unpark(let folder):
@@ -905,7 +912,7 @@ public actor NexusEngine {
         let state = await stateStore.current()
         let sites = resolvedSites(state).map(\.site)
 
-        if name == "php", let site = sites.first(where: { $0.php == line }) {
+        if name == "php", let site = sites.first(where: { $0.usedPHP == line }) {
             throw RuntimeError.unsupported("\(site.host) uses PHP \(line). Give it another PHP version first: nexus site edit \(site.host) --php <version>")
         }
 
@@ -919,7 +926,7 @@ public actor NexusEngine {
             throw RuntimeError.unsupported("Every site needs nginx, for example \(site.host). Remove the sites first.")
         }
 
-        if name == "httpd", otherLines.isEmpty, let site = sites.first(where: { $0.server == .apache }) {
+        if name == "httpd", otherLines.isEmpty, let site = sites.first(where: \.usesApache) {
             throw RuntimeError.unsupported("\(site.host) uses Apache. Move it to nginx first: nexus site edit \(site.host) --server nginx")
         }
 

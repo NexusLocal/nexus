@@ -16,7 +16,9 @@ public enum NexusServiceID {
 // site has its own settings. The problem says why the site does not run. projectNode is the Node
 // line that the files of the project give (D21). nodeSetting is the line that the user chose for
 // the site, or nil when the line of the project applies. nexusd reads the files of the project
-// only for a site without a chosen line.
+// only for a site without a chosen line. runsAs is nil for a nexusd from before D67. command is
+// the command that the user chose for a Node.js app, or nil for the script of package.json.
+// projectCommand and framework come from package.json and the lock file, only for a Node.js app.
 public struct SiteInfo: Codable, Sendable, Equatable {
     public let hosts: [String]
     public let folder: String
@@ -39,6 +41,12 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let workspaceProcesses: Bool?
     public let mainProcesses: Bool?
     public let processProblems: [String]?
+    public let runsAs: SiteKind?
+    public let command: String?
+    public let address: String?
+    public let projectCommand: String?
+    public let framework: NodeFramework?
+    public let app: AppProcessInfo?
 
     public init(
         hosts: [String],
@@ -61,7 +69,13 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         backgroundCommands: [String]? = nil,
         workspaceProcesses: Bool? = nil,
         mainProcesses: Bool? = nil,
-        processProblems: [String]? = nil
+        processProblems: [String]? = nil,
+        runsAs: SiteKind? = nil,
+        command: String? = nil,
+        address: String? = nil,
+        projectCommand: String? = nil,
+        framework: NodeFramework? = nil,
+        app: AppProcessInfo? = nil
     ) {
         self.hosts = hosts
         self.folder = folder
@@ -84,10 +98,20 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         self.workspaceProcesses = workspaceProcesses
         self.mainProcesses = mainProcesses
         self.processProblems = processProblems
+        self.runsAs = runsAs
+        self.command = command
+        self.address = address
+        self.projectCommand = projectCommand
+        self.framework = framework
+        self.app = app
     }
 
     public var node: String? {
         nodeSetting ?? projectNode?.line
+    }
+
+    public var kind: SiteKind {
+        runsAs ?? .php
     }
 }
 
@@ -113,6 +137,35 @@ public struct WorkspaceDatabaseInfo: Codable, Sendable, Hashable {
     }
 }
 
+// The Node.js app of a main checkout or of a workspace (D67). state is nil while nexusd does not
+// run the app, for example while a workspace is in Preparing. log is the path of its log file.
+public struct AppProcessInfo: Codable, Sendable, Hashable {
+    public let port: Int?
+    public let command: String?
+    public let state: ServiceState?
+    public let log: String
+
+    public init(port: Int?, command: String?, state: ServiceState?, log: String) {
+        self.port = port
+        self.command = command
+        self.state = state
+        self.log = log
+    }
+
+    public var stateText: String {
+        switch state {
+        case .running(_, let since): "Running since \(since.formatted(date: .omitted, time: .shortened))"
+        case .restarting(let attempt): "Starts again, attempt \(attempt)"
+        case .failed: "Does not run"
+        case .stopped, nil: "Not started"
+        }
+    }
+
+    public var summary: String {
+        "\(port.map { "port \($0)" } ?? "no port yet"), \(stateText.prefix(1).lowercased())\(stateText.dropFirst())"
+    }
+}
+
 // A workspace as the app and nexus workspace list show it. url is nil for a workspace that does
 // not run. The problem then says why. A nexusd of part 8b sends only name, worktree, folder and
 // branch. An app of part 8b cannot read the sites without worktree, so nexusd always sends it.
@@ -129,6 +182,7 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
     public let databases: [WorkspaceDatabaseInfo]?
     public let redisIndexes: [String: Int]?
     public let ports: [String: Int]?
+    public let app: AppProcessInfo?
 
     public var id: String { name }
 
@@ -144,7 +198,8 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         warnings: [String]? = nil,
         databases: [WorkspaceDatabaseInfo]? = nil,
         redisIndexes: [String: Int]? = nil,
-        ports: [String: Int]? = nil
+        ports: [String: Int]? = nil,
+        app: AppProcessInfo? = nil
     ) {
         self.name = name
         self.worktree = worktree
@@ -158,6 +213,7 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         self.databases = databases
         self.redisIndexes = redisIndexes
         self.ports = ports
+        self.app = app
     }
 
     public var isolationProblem: String? {
@@ -251,7 +307,8 @@ public struct PHPSettingsError: Error, Codable, Sendable, Equatable, CustomStrin
     }
 }
 
-// A Node line of NodeLines.fromProject gives the site the line of its project again.
+// A Node line of NodeLines.fromProject gives the site the line of its project again. A command of
+// Site.commandFromProject gives the site the script of package.json again.
 public struct SiteChange: Codable, Sendable, Equatable {
     public var php: String?
     public var server: WebServer?
@@ -263,6 +320,9 @@ public struct SiteChange: Codable, Sendable, Equatable {
     public var backgroundCommands: [String]?
     public var workspaceProcesses: Bool?
     public var mainProcesses: Bool?
+    public var runsAs: SiteKind?
+    public var command: String?
+    public var address: String?
 
     public init(
         php: String? = nil,
@@ -274,7 +334,10 @@ public struct SiteChange: Codable, Sendable, Equatable {
         workspaceCommands: [String]? = nil,
         backgroundCommands: [String]? = nil,
         workspaceProcesses: Bool? = nil,
-        mainProcesses: Bool? = nil
+        mainProcesses: Bool? = nil,
+        runsAs: SiteKind? = nil,
+        command: String? = nil,
+        address: String? = nil
     ) {
         self.php = php
         self.server = server
@@ -286,6 +349,9 @@ public struct SiteChange: Codable, Sendable, Equatable {
         self.backgroundCommands = backgroundCommands
         self.workspaceProcesses = workspaceProcesses
         self.mainProcesses = mainProcesses
+        self.runsAs = runsAs
+        self.command = command
+        self.address = address
     }
 }
 
@@ -597,9 +663,11 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case removeHost(String)
     case uninstall
     case sites
-    case addSite(folder: String, host: String?, aliases: [String], php: String?, server: WebServer?, group: String? = nil)
+    case addSite(folder: String, host: String?, aliases: [String], php: String?, server: WebServer?, group: String? = nil, runsAs: SiteKind? = nil, command: String? = nil, address: String? = nil, node: String? = nil)
     case removeSite(host: String)
     case editSite(host: String, change: SiteChange)
+    // Starts the Node.js app of the main checkout again, or of the workspace with this name (D67).
+    case restartApp(host: String, workspace: String?)
     case park(folder: String, php: String?, server: WebServer?)
     case unpark(folder: String)
     case setSiteLayout([SiteLayoutEntry])

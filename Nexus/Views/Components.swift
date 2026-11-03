@@ -58,9 +58,49 @@ struct PathText: View {
     var body: some View {
         Text(path)
             .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .truncationMode(.middle)
+            .rowValue(.middle)
             .help(path)
+    }
+}
+
+extension View {
+    // A form puts a value on a second line when the value is wider than the row. This value has no
+    // width of its own, so it stays on the row of its label. It takes the free width of the row and
+    // ends in "…" only when that width is too small. So it grows and shrinks with the window.
+    func rowValue(_ truncation: Text.TruncationMode = .tail) -> some View {
+        lineLimit(1)
+            .truncationMode(truncation)
+            .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+// A field for a host, a command or an address: one line of monospaced text without corrections.
+struct CodeField: View {
+    let title: String
+    @Binding var text: String
+    var prompt: String?
+    var width: CGFloat = 220
+
+    var body: some View {
+        TextField(title, text: $text, prompt: prompt.map { Text($0) })
+            .labelsHidden()
+            .textFieldStyle(.roundedBorder)
+            .multilineTextAlignment(.leading)
+            .font(.system(.body, design: .monospaced))
+            .plainTextInput()
+            .frame(width: width)
+    }
+}
+
+// The notes under the settings of a Node.js app and a proxy site (D67).
+enum SiteKindNote {
+    static func proxy(url: String) -> String {
+        "nginx sends \(url) to this address with HTTPS. Start the server yourself. This works for every language, for example Python, Go or Ruby."
+    }
+
+    // A proxy address without its scheme, for a short title.
+    static func shortAddress(_ address: String) -> String {
+        address.replacingOccurrences(of: "^https?://", with: "", options: .regularExpression)
     }
 }
 

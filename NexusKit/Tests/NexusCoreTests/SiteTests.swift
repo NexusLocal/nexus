@@ -68,4 +68,58 @@ struct SiteTests {
         #expect(VersionLine.isOlder("8.2", than: "8.10"))
         #expect(VersionLine.newest(["8.4", "8.10", "8.5"]) == "8.10")
     }
+
+    @Test func aSiteFromBeforeNodeSitesIsAPHPSite() throws {
+        let stored = #"{"host":"shop.test","folder":"file:///Sites/shop/","aliases":[],"php":"8.5","server":"apache"}"#
+
+        let site = try JSONDecoder().decode(Site.self, from: Data(stored.utf8))
+
+        #expect(site.kind == .php)
+        #expect(site.usedPHP == "8.5")
+        #expect(site.usesApache)
+    }
+
+    @Test func onlyAPHPSiteUsesPHPAndApache() {
+        let node = Site(host: "shop.test", folder: root, php: "8.5", server: .apache, runsAs: .node)
+        let proxy = Site(host: "api.test", folder: root, php: "8.5", runsAs: .proxy, address: "http://127.0.0.1:3000")
+
+        #expect(node.usedPHP == nil)
+        #expect(!node.usesApache)
+        #expect(node.createsWorkspaces)
+        #expect(proxy.usedPHP == nil)
+        #expect(!proxy.createsWorkspaces)
+    }
+
+    @Test func aProxyAddressGetsASchemeAHostAndAPort() throws {
+        #expect(try ProxyAddress.validated("3000") == "http://127.0.0.1:3000")
+        #expect(try ProxyAddress.validated(" LocalHost:5173 ") == "http://localhost:5173")
+        #expect(try ProxyAddress.validated("http://[::1]:8000/") == "http://[::1]:8000")
+        #expect(try ProxyAddress.validated("HTTPS://192.0.2.10") == "https://192.0.2.10:443")
+        #expect(try ProxyAddress.validated("192.0.2.10") == "http://192.0.2.10:80")
+    }
+
+    @Test func aProxyAddressWithANameAPathAUserOrAnotherSchemeIsRefused() {
+        for address in ["", "http://127.0.0.1:3000/api", "http://user@127.0.0.1:3000", "ftp://127.0.0.1:21", "http://127.0.0.1:99999", "http://a$b:3000", "http://127.0.0.1:3000?x=1", "shop.test:3000", "https://api.example.com", "http://256.1.1.1:80", "http://[::g]:80"] {
+            #expect(throws: ProxyAddressError.self) {
+                try ProxyAddress.validated(address)
+            }
+        }
+    }
+
+    @Test func onlyAnAddressOfThisMacHasAPortOnThisMac() {
+        let interfaces: Set<String> = ["192.0.2.55", "fe80::1"]
+
+        #expect(ProxyAddress.portOnThisMac(of: "http://127.0.0.1:8443", interfaces: interfaces) == 8443)
+        #expect(ProxyAddress.portOnThisMac(of: "http://127.0.1.1:80", interfaces: interfaces) == 80)
+        #expect(ProxyAddress.portOnThisMac(of: "http://0.0.0.0:80", interfaces: interfaces) == 80)
+        #expect(ProxyAddress.portOnThisMac(of: "http://[::1]:3000", interfaces: interfaces) == 3000)
+        #expect(ProxyAddress.portOnThisMac(of: "http://localhost:80", interfaces: interfaces) == 80)
+        #expect(ProxyAddress.portOnThisMac(of: "http://192.0.2.55:8443", interfaces: interfaces) == 8443)
+        #expect(ProxyAddress.portOnThisMac(of: "http://[fe80::1]:8443", interfaces: interfaces) == 8443)
+        #expect(ProxyAddress.portOnThisMac(of: "http://192.0.2.10:8443", interfaces: interfaces) == nil)
+    }
+
+    @Test func theInterfaceAddressesHoldTheLoopback() {
+        #expect(ProxyAddress.interfaceAddresses().contains("127.0.0.1"))
+    }
 }

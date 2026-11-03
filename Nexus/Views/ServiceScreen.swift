@@ -208,6 +208,7 @@ private struct ConfigFileRow: View {
                 Text(file.url.lastPathComponent)
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)
+                    .rowValue(.middle)
 
                 Button(file.isYours ? "Open" : "View") {
                     model.open(file)
@@ -311,8 +312,7 @@ private struct StateSection: View {
                 LabeledContent("Used by") {
                     Text(service.usedBy.isEmpty ? "No site" : service.usedBy.joined(separator: ", "))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .frame(maxWidth: 460, alignment: .trailing)
+                        .rowValue()
                         .help(service.usedBy.joined(separator: "\n"))
                 }
             }

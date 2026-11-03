@@ -1,5 +1,6 @@
 import AppKit
 import NexusCore
+import NexusIPC
 import SwiftUI
 
 // The sheet stays open while nexusd adds the site, because nexusd can start nginx and PHP first.
@@ -20,12 +21,24 @@ struct AddSiteSheet: View {
     @State private var group = ""
     @State private var server = WebServer.nginx.rawValue
     @State private var php = ""
+    @State private var kind = SiteKind.php
+    @State private var project: NodeProject?
+    @State private var projectNode: NodeChoice?
+    @State private var command = ""
+    @State private var node = NodeLines.fromProject
+    @State private var address = ""
     @State private var adding = false
     @State private var failure: String?
 
-    init(folder: URL?, manyProjects: Bool) {
+    let tld: String
+
+    // The Host field gets the focus when the sheet appears. A value that comes after that does not
+    // show in the field. So the host is here from the start.
+    init(folder: URL?, manyProjects: Bool, tld: String) {
+        self.tld = tld
         _folder = State(initialValue: folder)
         _folderType = State(initialValue: manyProjects ? .manyProjects : .oneProject)
+        _host = State(initialValue: folder.map { Self.suggestedHost(for: $0, tld: tld) } ?? "")
     }
 
     private var protectedFolder: String? {
@@ -73,38 +86,13 @@ struct AddSiteSheet: View {
 
                 Section {
                     if folderType == .oneProject {
-                        LabeledContent("Host") {
-                            TextField("Host", text: $host)
-                                .labelsHidden()
-                                .textFieldStyle(.roundedBorder)
-                                .multilineTextAlignment(.leading)
-                                .font(.system(.body, design: .monospaced))
-                                .plainTextInput()
-                                .frame(width: 220)
-                        }
-
-                        LabeledContent("Aliases") {
-                            TextField("Aliases", text: $aliases, prompt: Text("None"))
-                                .labelsHidden()
-                                .textFieldStyle(.roundedBorder)
-                                .multilineTextAlignment(.leading)
-                                .plainTextInput()
-                                .frame(width: 220)
-                        }
-
-                        Picker("Group", selection: $group) {
-                            Text("None").tag("")
-                            ForEach(model.groupNames, id: \.self) { Text($0).tag($0) }
-                        }
+                        oneProjectRows
+                    } else {
+                        phpRows
                     }
-
-                    Picker("Webserver", selection: $server) {
-                        Text("nginx").tag(WebServer.nginx.rawValue)
-                        Text("Apache").tag(WebServer.apache.rawValue)
-                    }
-
-                    Picker("PHP", selection: $php) {
-                        ForEach(model.installedPHPVersions, id: \.self) { Text("PHP \($0)").tag($0) }
+                } footer: {
+                    if folderType == .oneProject {
+                        kindFooter
                     }
                 }
             }
@@ -136,7 +124,7 @@ struct AddSiteSheet: View {
                     add()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(adding || folder == nil || php.isEmpty || folderType == .oneProject && host.isEmpty)
+                .disabled(adding || folder == nil || !hasRequiredValues)
             }
         }
         .padding(20)
@@ -145,14 +133,131 @@ struct AddSiteSheet: View {
             server = model.siteDefaults.server.rawValue
             php = model.defaultPHP
 
-            if let folder, host.isEmpty {
-                host = suggestedHost(for: folder)
+            if let folder {
+                detect(in: folder)
             }
         }
     }
 
+    private var hasRequiredValues: Bool {
+        guard folderType == .oneProject else {
+            return !php.isEmpty
+        }
+
+        guard !host.isEmpty else {
+            return false
+        }
+
+        return switch kind {
+        case .php: !php.isEmpty
+        case .node: !command.trimmingCharacters(in: .whitespaces).isEmpty
+        case .proxy: !address.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+    }
+
+    @ViewBuilder
+    private var oneProjectRows: some View {
+        LabeledContent("Host") {
+            CodeField(title: "Host", text: $host)
+        }
+
+        LabeledContent("Aliases") {
+            TextField("Aliases", text: $aliases, prompt: Text("None"))
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.leading)
+                .plainTextInput()
+                .frame(width: 220)
+        }
+
+        Picker("Group", selection: $group) {
+            Text("None").tag("")
+            ForEach(model.groupNames, id: \.self) { Text($0).tag($0) }
+        }
+
+        Picker("Runs as", selection: $kind) {
+            ForEach(SiteKind.allCases, id: \.self) { Text($0.displayName).tag($0) }
+        }
+
+        switch kind {
+        case .php:
+            phpRows
+        case .node:
+            LabeledContent("Command") {
+                CodeField(title: "Command", text: $command, prompt: "npm run dev")
+            }
+
+            Picker("Node", selection: $node) {
+                Text(projectNode.map { "\($0.line) (\($0.reason))" } ?? "From the project").tag(NodeLines.fromProject)
+                ForEach(model.installedNodeVersions, id: \.self) { Text("Node \($0)").tag($0) }
+            }
+        case .proxy:
+            LabeledContent("Address") {
+                CodeField(title: "Address", text: $address, prompt: "http://127.0.0.1:3000")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var phpRows: some View {
+        Picker("Webserver", selection: $server) {
+            Text("nginx").tag(WebServer.nginx.rawValue)
+            Text("Apache").tag(WebServer.apache.rawValue)
+        }
+
+        Picker("PHP", selection: $php) {
+            ForEach(model.installedPHPVersions, id: \.self) { Text("PHP \($0)").tag($0) }
+        }
+    }
+
+    @ViewBuilder
+    private var kindFooter: some View {
+        let url = "https://\(host.isEmpty ? "the host" : host)"
+
+        switch kind {
+        case .php:
+            EmptyView()
+        case .node:
+            Text(appNote(url: url))
+        case .proxy:
+            Text(SiteKindNote.proxy(url: url))
+        }
+    }
+
+    private func appNote(url: String) -> String {
+        guard project?.command != nil else {
+            return "package.json has no dev or start script. Enter the command that starts the app. Nexus gives it a free port in PORT and sends \(url) to it."
+        }
+
+        let found = project?.framework.map { "Nexus found \($0.displayName) in package.json. " } ?? ""
+
+        return "\(found)Nexus starts the command with a free port and sends \(url) to it."
+    }
+
+    // The files of the folder decide the kind, the command and the Node version (D67). The user can
+    // change each of them.
+    // The Node picker starts at the Node version of the defaults for a new site, as in nexusd (D59).
+    // The line of the project follows the same rule as the line that the Site screen shows.
+    private func detect(in folder: URL) {
+        let defaultNode = model.siteDefaults.node.flatMap { model.installedNodeVersions.contains($0) ? $0 : nil }
+
+        kind = SiteKind.detected(in: folder)
+        project = NodeProject.read(in: Self.projectFolder(of: folder))
+        command = project?.command ?? ""
+        node = defaultNode ?? NodeLines.fromProject
+        projectNode = NodeLines.choose(hint: NodeVersionFiles.hint(from: folder, upTo: folder), installed: model.installedNodeVersions)
+    }
+
+    private static func projectFolder(of folder: URL) -> URL {
+        URL(filePath: NexusCore.ProjectFolder.projectFolder(ofSiteFolder: folder), directoryHint: .isDirectory)
+    }
+
+    private static func suggestedHost(for folder: URL, tld: String) -> String {
+        "\(HostName.label(from: folder.lastPathComponent)).\(tld)"
+    }
+
     private func suggestedHost(for folder: URL) -> String {
-        "\(HostName.label(from: folder.lastPathComponent)).\(model.settings.tld)"
+        Self.suggestedHost(for: folder, tld: tld)
     }
 
     private func chooseFolder() {
@@ -172,6 +277,20 @@ struct AddSiteSheet: View {
 
         folder = chosen
         failure = nil
+        detect(in: chosen)
+    }
+
+    // A command that is the same as the script of package.json is no command of the user. So the
+    // site follows a later change of package.json.
+    private var settings: SiteChange {
+        let typed = command.trimmingCharacters(in: .whitespaces)
+
+        return SiteChange(
+            node: kind == .node ? node : nil,
+            runsAs: kind,
+            command: kind == .node && typed != project?.command ? typed : nil,
+            address: kind == .proxy ? address.trimmingCharacters(in: .whitespaces) : nil
+        )
     }
 
     private func add() {
@@ -185,7 +304,7 @@ struct AddSiteSheet: View {
         Task {
             failure = switch folderType {
             case .oneProject:
-                await model.addSite(folder: folder, host: host.trimmingCharacters(in: .whitespaces).lowercased(), aliases: HostList.names(in: aliases), group: group.isEmpty ? nil : group, server: choice, php: php)
+                await model.addSite(folder: folder, host: host.trimmingCharacters(in: .whitespaces).lowercased(), aliases: HostList.names(in: aliases), group: group.isEmpty ? nil : group, server: choice, php: kind == .php ? php : nil, settings: settings)
             case .manyProjects:
                 await model.park(folder: folder, server: choice, php: php)
             }

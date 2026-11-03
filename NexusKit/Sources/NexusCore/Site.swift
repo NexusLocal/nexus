@@ -9,11 +9,32 @@ public enum WebServer: String, Codable, Sendable, CaseIterable {
     }
 }
 
+// How a site answers a request (D67). A PHP site runs its files with PHP. Nexus starts the command
+// of a Node.js app, and nginx sends the requests to it. A proxy site sends the requests to a
+// server that the user starts.
+public enum SiteKind: String, Codable, Sendable, CaseIterable {
+    case php
+    case node
+    case proxy
+
+    public var displayName: String {
+        switch self {
+        case .php: "PHP site"
+        case .node: "Node.js app"
+        case .proxy: "Proxy to a port"
+        }
+    }
+}
+
 // A site that the user added. The host is the first name of the site and its identity. A Node
 // line of nil comes from the files of the project (D21). automaticWorkspaces of nil is on (D40).
 // backgroundCommands of nil follows the preset of the application (D52). workspaceProcesses of nil
-// is on, and mainProcesses of nil is off.
+// is on, and mainProcesses of nil is off. A site from before D67 has no runsAs, and it is a PHP
+// site. A command of nil comes from package.json. A site keeps its PHP version, its command and its
+// address when it runs as another kind, so a change back restores them.
 public struct Site: Codable, Sendable, Equatable {
+    public static let commandFromProject = "project"
+
     public var host: String
     public var folder: URL
     public var aliases: [String]
@@ -26,6 +47,9 @@ public struct Site: Codable, Sendable, Equatable {
     public var backgroundCommands: [String]?
     public var workspaceProcesses: Bool?
     public var mainProcesses: Bool?
+    public var runsAs: SiteKind?
+    public var command: String?
+    public var address: String?
 
     public init(
         host: String,
@@ -39,7 +63,10 @@ public struct Site: Codable, Sendable, Equatable {
         workspaceCommands: [String]? = nil,
         backgroundCommands: [String]? = nil,
         workspaceProcesses: Bool? = nil,
-        mainProcesses: Bool? = nil
+        mainProcesses: Bool? = nil,
+        runsAs: SiteKind? = nil,
+        command: String? = nil,
+        address: String? = nil
     ) {
         self.host = host
         self.folder = folder
@@ -53,10 +80,28 @@ public struct Site: Codable, Sendable, Equatable {
         self.backgroundCommands = backgroundCommands
         self.workspaceProcesses = workspaceProcesses
         self.mainProcesses = mainProcesses
+        self.runsAs = runsAs
+        self.command = command
+        self.address = address
     }
 
+    public var kind: SiteKind {
+        runsAs ?? .php
+    }
+
+    // The PHP version that the site uses now. A Node.js app or a proxy site uses none.
+    public var usedPHP: String? {
+        kind == .php ? php : nil
+    }
+
+    public var usesApache: Bool {
+        kind == .php && server == .apache
+    }
+
+    // A proxy site sends each host to one server that the user starts. So a workspace cannot get
+    // a server of its own.
     public var createsWorkspaces: Bool {
-        automaticWorkspaces ?? true
+        kind != .proxy && automaticWorkspaces ?? true
     }
 
     public var runsWorkspaceProcesses: Bool {
@@ -193,7 +238,8 @@ extension SiteLayoutEntry {
     }
 }
 
-// A parked folder. Each subfolder is a site with the host <subfolder>.<tld>.
+// A parked folder. Each subfolder is a site with the host <subfolder>.<tld>. Its files decide
+// its kind (D67).
 public struct ParkedFolder: Codable, Sendable, Equatable {
     public var folder: URL
     public var php: String
@@ -216,7 +262,7 @@ public struct ParkedFolder: Codable, Sendable, Equatable {
                 guard let host = try? HostName.validated("\(HostName.label(from: child.lastPathComponent)).\(tld)") else {
                     return nil
                 }
-                return Site(host: host, folder: child, php: php, server: server, node: node)
+                return Site(host: host, folder: child, php: php, server: server, node: node, runsAs: SiteKind.detected(in: child))
             }
             .sorted { $0.host < $1.host }
     }

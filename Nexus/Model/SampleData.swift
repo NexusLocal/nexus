@@ -1,6 +1,7 @@
 import Foundation
 import NexusCore
 import NexusIPC
+import NexusSupervisor
 
 extension AppModel {
     static func sample() -> AppModel {
@@ -43,6 +44,23 @@ extension AppModel {
         )
     }
 
+    private static var sampleNodeApp: SiteItem {
+        var site = site("store.test", folder: "~/Development/store")
+        site.kind = .node
+        site.framework = .next
+        site.projectCommand = "npm run dev"
+        site.projectNode = NodeChoice(line: "24", reason: "from .nvmrc")
+        site.app = AppProcessInfo(port: 19000, command: "npm run dev", state: .running(pid: 4242, since: .now.addingTimeInterval(-3600)), log: "~/Library/Application Support/Nexus/logs/app-store.test.log")
+        return site
+    }
+
+    private static var sampleProxy: SiteItem {
+        var site = site("api.test", folder: "~/Development/api")
+        site.kind = .proxy
+        site.address = "http://127.0.0.1:3000"
+        return site
+    }
+
     private static var sampleSites: [SiteEntry] {
         [
             .group(SiteGroup(name: "Example", sites: [
@@ -57,6 +75,8 @@ extension AppModel {
             .site(site("shop.test", folder: "~/Development/shop", aliases: ["www.shop.test"])),
             .site(site("crm.test", folder: "~/Development/crm", php: "8.5")),
             .site(site("blog.test", folder: "~/Development/blog", aliases: ["blog.local"])),
+            .site(sampleNodeApp),
+            .site(sampleProxy),
             .parked(ParkedFolder(path: "~/Sites", sites: [
                 site("acme.test", folder: "~/Sites/acme"),
                 site("demo.test", folder: "~/Sites/demo"),

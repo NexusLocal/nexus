@@ -22,9 +22,21 @@ struct SiteScreen: View {
     @State private var preset: [String] = []
     @State private var backgroundCommands: [String]
     @FocusState private var focusedBackgroundCommand: Int?
+    @State private var kind: SiteKind
+    @State private var appCommand: String
+    @State private var address: String
+    @FocusState private var focusedKindField: KindField?
+
+    private enum KindField {
+        case command
+        case address
+    }
 
     init(site: SiteItem) {
         self.site = site
+        _kind = State(initialValue: site.kind)
+        _appCommand = State(initialValue: site.command ?? site.projectCommand ?? "")
+        _address = State(initialValue: site.address ?? "")
         _server = State(initialValue: site.server)
         _php = State(initialValue: site.php)
         _node = State(initialValue: site.nodeSetting ?? NodeLines.fromProject)
@@ -44,17 +56,25 @@ struct SiteScreen: View {
     }
 
     var body: some View {
+        updating(form)
+    }
+
+    // A Node.js app and a proxy site have no PHP and no .env. So they get only their own section and,
+    // for a Node.js app, the workspaces (D67).
+    private var form: some View {
         Form {
             Section {
                 LabeledContent("Host") {
                     Text(site.host)
+                        .rowValue()
                 }
 
                 LabeledContent("Aliases") {
                     HStack {
                         Text(site.aliases.isEmpty ? "None" : site.aliases.joined(separator: ", "))
                             .foregroundStyle(site.aliases.isEmpty ? .tertiary : .secondary)
-                            .lineLimit(1)
+                            .rowValue()
+                            .help(site.aliases.joined(separator: ", "))
                         Button("Edit…") {
                             model.sheet = .editAliases(host: site.host)
                         }
@@ -66,6 +86,10 @@ struct SiteScreen: View {
                     ForEach(model.groupNames, id: \.self) { Text($0).tag($0) }
                 }
 
+                Picker("Runs as", selection: $kind) {
+                    ForEach(SiteKind.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+
                 LabeledContent("Folder") {
                     HStack {
                         PathText(site.folder)
@@ -75,8 +99,10 @@ struct SiteScreen: View {
                     }
                 }
 
-                LabeledContent("Document root") {
-                    PathText(site.documentRoot)
+                if kind == .php {
+                    LabeledContent("Document root") {
+                        PathText(site.documentRoot)
+                    }
                 }
 
                 LabeledContent("URL") {
@@ -84,8 +110,11 @@ struct SiteScreen: View {
                         if let url = URL(string: site.url) {
                             Link(site.url, destination: url)
                                 .foregroundStyle(Color.accentText)
+                                .rowValue(.middle)
+                                .help(site.url)
                         } else {
                             Text(site.url)
+                                .rowValue(.middle)
                         }
 
                         Button("Copy") {
@@ -114,175 +143,301 @@ struct SiteScreen: View {
                 }
             }
 
-            Section {
-                Picker("Webserver", selection: $server) {
-                    Text("nginx").tag(WebServer.nginx.rawValue)
-                    Text("Apache").tag(WebServer.apache.rawValue)
-                }
-
-                Picker("PHP", selection: $php) {
-                    ForEach(phpChoices, id: \.self) { Text("PHP \($0)").tag($0) }
-                }
-
-                Picker("Node", selection: $node) {
-                    Text(site.projectNode.map { "\($0.line) (\($0.reason))" } ?? "From the project")
-                        .tag(NodeLines.fromProject)
-                    ForEach(nodeChoices, id: \.self) { Text("Node \($0)").tag($0) }
-                }
-            } header: {
-                Text("Server")
-            } footer: {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("nginx handles HTTPS for every site. For an Apache site, nginx sends each request on to Apache.")
-
-                    if let line = site.node, !model.installedNodeVersions.contains(line) {
-                        Text("nexus node and nexus npm need Node \(line) for this site. Install it on the Packages screen.")
-                            .foregroundStyle(Color.orangeText)
-                    }
-                }
+            switch kind {
+            case .php:
+                serverSection
+            case .node:
+                appSection
+            case .proxy:
+                proxySection
             }
 
-            Section {
-                Toggle("Create workspaces automatically", isOn: $automaticWorkspaces)
-                    .toggleStyle(.switch)
-
-                ForEach(site.workspaces) { workspace in
-                    LabeledContent {
-                        HStack {
-                            Text(workspace.hosts?.first ?? workspace.folder)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-
-                            Text(stateText(of: workspace))
-                                .foregroundStyle(workspace.isolationProblem == nil ? Color.secondary : Color.orangeText)
-                                .fixedSize(horizontal: true, vertical: false)
-                                .id(stateText(of: workspace))
-
-                            if workspace.isolationProblem != nil || !(workspace.warnings ?? []).isEmpty {
-                                Button("Retry") {
-                                    Task { await model.retry(workspace, of: site) }
-                                }
-                            }
-
-                            if let url = workspace.url {
-                                Button("Open") {
-                                    model.openInBrowser(url)
-                                }
-                            }
-                        }
-                    } label: {
-                        Label(workspace.name, systemImage: "arrow.triangle.branch")
-                    }
-                    .help((workspace.folder as NSString).abbreviatingWithTildeInPath)
-                }
-            } header: {
-                Text("Workspaces")
-            } footer: {
-                VStack(alignment: .leading, spacing: 6) {
-                    if let problem = site.workspaceProblem {
-                        Text(problem)
-                            .foregroundStyle(Color.orangeText)
-                    }
-
-                    ForEach(Array(Set(site.workspaces.compactMap(\.problem))).sorted(), id: \.self) { problem in
-                        Text(problem)
-                            .foregroundStyle(Color.orangeText)
-                    }
-
-                    ForEach(site.workspaces.compactMap(\.isolationMessage), id: \.self) { message in
-                        Text(message)
-                            .foregroundStyle(Color.orangeText)
-                    }
-
-                    ForEach(site.workspaces) { workspace in
-                        ForEach(workspace.warnings ?? [], id: \.self) { warning in
-                            Text("\(workspace.name): \(warning)")
-                                .foregroundStyle(Color.orangeText)
-                        }
-                    }
-
-                    Text("When git adds a worktree to this site, Nexus makes a workspace for it. This works for every tool that uses git worktrees. When git no longer lists the worktree, Nexus removes the workspace and keeps a dump of its databases in the trash.")
-                }
+            if kind != .proxy {
+                workspacesSection
             }
 
-            Section {
-                Toggle("Run in workspaces", isOn: $workspaceProcesses)
-                    .toggleStyle(.switch)
-
-                Toggle("Run for the main checkout", isOn: $mainProcesses)
-                    .toggleStyle(.switch)
-
-                CommandRows(commands: $backgroundCommands, saved: site.backgroundCommands ?? preset, focusedRow: $focusedBackgroundCommand, prompt: "php artisan horizon", save: saveBackgroundCommands)
-            } header: {
-                Text("Background processes")
-            } footer: {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(site.processProblems, id: \.self) { problem in
-                        Text(problem)
-                            .foregroundStyle(Color.orangeText)
-                    }
-
-                    Text("Each workspace runs its own copy of these commands. {port:vite} gets a free port in each workspace. A change saves when you press Return or click outside the field. Existing workspaces then use the new list.")
-                }
-            }
-
-            Section {
-                CommandRows(commands: $commands, saved: site.workspaceCommands, focusedRow: $focusedCommand, prompt: "php artisan tenant:domain shop-{workspace}.test", save: saveCommands)
-            } header: {
-                Text("Commands after database clone")
-            } footer: {
-                Text("Nexus runs these commands in a new workspace after it clones the databases. A change saves when you press Return or click outside the field. Existing workspaces do not run the change. The commands can use {workspace}, {host}, {database} and {port:<name>}. Nexus adds the quotes that {database} needs. A database has the same name as on the main site. So a command that connects itself needs {port:database}, the port of the database server of the workspace.")
-            }
-
-            Section {
-                ForEach(nexusKeys.filter { entry in !ownKeys.contains { $0.key == entry.key } }, id: \.key) { entry in
-                    LabeledContent {
-                        Text(entry.value)
-                            .foregroundStyle(.secondary)
-                            .font(.system(.body, design: .monospaced))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    } label: {
-                        Text(entry.key)
-                            .font(.system(.body, design: .monospaced))
-                    }
-                }
-
-                ForEach(ownKeys.indices, id: \.self) { index in
-                    HStack {
-                        TextField("Key", text: ownKey(at: index, \.key), prompt: Text("KEY"))
-                            .labelsHidden()
-                            .plainTextInput()
-                            .focused($focusedKeyField, equals: index * 2)
-                            .onSubmit { saveOwnKeys() }
-
-                        TextField("Value", text: ownKey(at: index, \.value), prompt: Text("{port:name}"))
-                            .labelsHidden()
-                            .plainTextInput()
-                            .focused($focusedKeyField, equals: index * 2 + 1)
-                            .onSubmit { saveOwnKeys() }
-
-                        RowSaveState(isSaved: isKeySaved(at: index))
-
-                        RowRemoveButton(help: "Remove key") {
-                            ownKeys.remove(at: index)
-                            saveOwnKeys()
-                        }
-                    }
-                    .font(.system(.body, design: .monospaced))
-                }
-
-                Button("Add a key") {
-                    ownKeys.append(WorkspaceEnvKey(key: "", value: ""))
-                }
-            } header: {
-                Text("Environment keys")
-            } footer: {
-                Text("Nexus writes these keys to the .env of each workspace. The .env of the main checkout does not change. A change saves when you press Return or click outside the field. Existing workspaces then get the change. Your keys can use {workspace}, {host}, {database} and {port:<name>}.")
+            if kind == .php {
+                phpSections
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var nodePicker: some View {
+        Picker("Node", selection: $node) {
+            Text(site.projectNode.map { "\($0.line) (\($0.reason))" } ?? "From the project")
+                .tag(NodeLines.fromProject)
+            ForEach(nodeChoices, id: \.self) { Text("Node \($0)").tag($0) }
+        }
+    }
+
+    @ViewBuilder
+    private var missingNodeLine: some View {
+        if let line = site.node ?? site.projectNode?.line, !model.installedNodeVersions.contains(line) {
+            Text("This site needs Node \(line). Install it on the Packages screen.")
+                .foregroundStyle(Color.orangeText)
+        }
+    }
+
+    private var hasAppLog: Bool {
+        site.app.map { FileManager.default.fileExists(atPath: $0.log) } ?? false
+    }
+
+    private var serverSection: some View {
+        Section {
+            Picker("Webserver", selection: $server) {
+                Text("nginx").tag(WebServer.nginx.rawValue)
+                Text("Apache").tag(WebServer.apache.rawValue)
+            }
+
+            Picker("PHP", selection: $php) {
+                ForEach(phpChoices, id: \.self) { Text("PHP \($0)").tag($0) }
+            }
+
+            nodePicker
+        } header: {
+            Text("Server")
+        } footer: {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("nginx handles HTTPS for every site. For an Apache site, nginx sends each request on to Apache.")
+                missingNodeLine
+            }
+        }
+    }
+
+    // The design of this section is "Site · Node app" in nexus.pen (D67).
+    private var appSection: some View {
+        Section {
+            LabeledContent("Framework") {
+                Text(site.framework.map { "\($0.displayName) (from package.json)" } ?? "None found")
+                    .foregroundStyle(.secondary)
+                    .rowValue()
+            }
+
+            LabeledContent("Command") {
+                CodeField(title: "Command", text: $appCommand, prompt: site.projectCommand ?? "npm run dev", width: 260)
+                    .focused($focusedKindField, equals: .command)
+                    .onSubmit { saveAppCommand() }
+            }
+
+            nodePicker
+
+            LabeledContent("Port") {
+                Text(verbatim: site.app?.port.map { "internal \(String($0))" } ?? "Not given yet")
+                    .foregroundStyle(.secondary)
+            }
+
+            LabeledContent("State") {
+                HStack {
+                    StatusDot(health: Health(site.app?.state))
+                    Text(site.app?.stateText ?? "Not started")
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+
+                    Button("Show log") {
+                        if let log = site.app?.log {
+                            NSWorkspace.shared.open(URL(filePath: log))
+                        }
+                    }
+                    .disabled(!hasAppLog)
+                    .help(hasAppLog ? "" : "The app has no log yet, because it did not start.")
+
+                    Button("Restart") {
+                        Task { await model.restartApp(of: site) }
+                    }
+                }
+            }
+        } header: {
+            Text("App")
+        } footer: {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(site.processProblems, id: \.self) { problem in
+                    Text(problem)
+                        .foregroundStyle(Color.orangeText)
+                }
+
+                missingNodeLine
+
+                Text("Nexus starts the command with a free port in PORT. nginx sends \(site.url) to that port with HTTPS. Hot reload also works on this address.")
+            }
+        }
+    }
+
+    // The design of this section is "Site · Proxy" in nexus.pen (D67).
+    private var proxySection: some View {
+        Section {
+            LabeledContent("Address") {
+                CodeField(title: "Address", text: $address, prompt: "http://127.0.0.1:3000", width: 260)
+                    .focused($focusedKindField, equals: .address)
+                    .onSubmit { saveAddress() }
+            }
+        } header: {
+            Text("Proxy")
+        } footer: {
+            VStack(alignment: .leading, spacing: 6) {
+                if site.kind != .proxy {
+                    Text("Enter the address of your server, and press Return. \(site.host) then runs as a proxy.")
+                }
+
+                Text(SiteKindNote.proxy(url: site.url))
+            }
+        }
+    }
+
+    private var workspacesSection: some View {
+        Section {
+            Toggle("Create workspaces automatically", isOn: $automaticWorkspaces)
+                .toggleStyle(.switch)
+
+            ForEach(site.workspaces) { workspace in
+                LabeledContent {
+                    HStack {
+                        Text(workspace.hosts?.first ?? workspace.folder)
+                            .foregroundStyle(.secondary)
+                            .rowValue(.middle)
+
+                        Text(stateText(of: workspace))
+                            .foregroundStyle(workspace.isolationProblem == nil ? Color.secondary : Color.orangeText)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .id(stateText(of: workspace))
+
+                        if workspace.isolationProblem != nil || !(workspace.warnings ?? []).isEmpty {
+                            Button("Retry") {
+                                Task { await model.retry(workspace, of: site) }
+                            }
+                        }
+
+                        if let url = workspace.url {
+                            Button("Open") {
+                                model.openInBrowser(url)
+                            }
+                        }
+                    }
+                } label: {
+                    Label(workspace.name, systemImage: "arrow.triangle.branch")
+                }
+                .help((workspace.folder as NSString).abbreviatingWithTildeInPath)
+            }
+        } header: {
+            Text("Workspaces")
+        } footer: {
+            VStack(alignment: .leading, spacing: 6) {
+                if let problem = site.workspaceProblem {
+                    Text(problem)
+                        .foregroundStyle(Color.orangeText)
+                }
+
+                ForEach(Array(Set(site.workspaces.compactMap(\.problem))).sorted(), id: \.self) { problem in
+                    Text(problem)
+                        .foregroundStyle(Color.orangeText)
+                }
+
+                ForEach(site.workspaces.compactMap(\.isolationMessage), id: \.self) { message in
+                    Text(message)
+                        .foregroundStyle(Color.orangeText)
+                }
+
+                ForEach(site.workspaces) { workspace in
+                    ForEach(workspace.warnings ?? [], id: \.self) { warning in
+                        Text("\(workspace.name): \(warning)")
+                            .foregroundStyle(Color.orangeText)
+                    }
+                }
+
+                Text(workspacesNote)
+            }
+        }
+    }
+
+    private var workspacesNote: String {
+        guard kind == .node else {
+            return "When git adds a worktree to this site, Nexus makes a workspace for it. This works for every tool that uses git worktrees. When git no longer lists the worktree, Nexus removes the workspace and keeps a dump of its databases in the trash."
+        }
+
+        return "When git adds a worktree to this site, Nexus makes a workspace for it. Each workspace runs its own copy of the app on its own port and domain."
+    }
+
+    @ViewBuilder
+    private var phpSections: some View {
+        Section {
+            Toggle("Run in workspaces", isOn: $workspaceProcesses)
+                .toggleStyle(.switch)
+
+            Toggle("Run for the main checkout", isOn: $mainProcesses)
+                .toggleStyle(.switch)
+
+            CommandRows(commands: $backgroundCommands, saved: site.backgroundCommands ?? preset, focusedRow: $focusedBackgroundCommand, prompt: "php artisan horizon", save: saveBackgroundCommands)
+        } header: {
+            Text("Background processes")
+        } footer: {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(site.processProblems, id: \.self) { problem in
+                    Text(problem)
+                        .foregroundStyle(Color.orangeText)
+                }
+
+                Text("Each workspace runs its own copy of these commands. {port:vite} gets a free port in each workspace. A change saves when you press Return or click outside the field. Existing workspaces then use the new list.")
+            }
+        }
+
+        Section {
+            CommandRows(commands: $commands, saved: site.workspaceCommands, focusedRow: $focusedCommand, prompt: "php artisan tenant:domain shop-{workspace}.test", save: saveCommands)
+        } header: {
+            Text("Commands after database clone")
+        } footer: {
+            Text("Nexus runs these commands in a new workspace after it clones the databases. A change saves when you press Return or click outside the field. Existing workspaces do not run the change. The commands can use {workspace}, {host}, {database} and {port:<name>}. Nexus adds the quotes that {database} needs. A database has the same name as on the main site. So a command that connects itself needs {port:database}, the port of the database server of the workspace.")
+        }
+
+        Section {
+            ForEach(nexusKeys.filter { entry in !ownKeys.contains { $0.key == entry.key } }, id: \.key) { entry in
+                LabeledContent {
+                    Text(entry.value)
+                        .foregroundStyle(.secondary)
+                        .font(.system(.body, design: .monospaced))
+                        .rowValue(.middle)
+                        .help(entry.value)
+                } label: {
+                    Text(entry.key)
+                        .font(.system(.body, design: .monospaced))
+                }
+            }
+
+            ForEach(ownKeys.indices, id: \.self) { index in
+                HStack {
+                    TextField("Key", text: ownKey(at: index, \.key), prompt: Text("KEY"))
+                        .labelsHidden()
+                        .plainTextInput()
+                        .focused($focusedKeyField, equals: index * 2)
+                        .onSubmit { saveOwnKeys() }
+
+                    TextField("Value", text: ownKey(at: index, \.value), prompt: Text("{port:name}"))
+                        .labelsHidden()
+                        .plainTextInput()
+                        .focused($focusedKeyField, equals: index * 2 + 1)
+                        .onSubmit { saveOwnKeys() }
+
+                    RowSaveState(isSaved: isKeySaved(at: index))
+
+                    RowRemoveButton(help: "Remove key") {
+                        ownKeys.remove(at: index)
+                        saveOwnKeys()
+                    }
+                }
+                .font(.system(.body, design: .monospaced))
+            }
+
+            Button("Add a key") {
+                ownKeys.append(WorkspaceEnvKey(key: "", value: ""))
+            }
+        } header: {
+            Text("Environment keys")
+        } footer: {
+            Text("Nexus writes these keys to the .env of each workspace. The .env of the main checkout does not change. A change saves when you press Return or click outside the field. Existing workspaces then get the change. Your keys can use {workspace}, {host}, {database} and {port:<name>}.")
+        }
+    }
+
+    private func updating(_ form: some View) -> some View {
+        form
         // A move between the two fields of one row also saves. A new row without a key is no
         // key for nexusd yet, so that save does nothing.
         .onChange(of: focusedKeyField) { old, _ in
@@ -308,6 +463,8 @@ struct SiteScreen: View {
             saveOwnKeys()
             saveCommands()
             saveBackgroundCommands()
+            saveAppCommand()
+            saveAddress()
         }
         .task(id: EnvPreviewSource(keys: site.workspaceKeys, commands: site.workspaceCommands, backgroundCommands: site.backgroundCommands)) {
             nexusKeys = await model.workspaceEnv(of: site)
@@ -330,7 +487,7 @@ struct SiteScreen: View {
                 backgroundCommands = commands
             }
         }
-        .screenTitle(site.host, subtitle: "\((WebServer(rawValue: server) ?? .nginx).displayName) · PHP \(php)")
+        .screenTitle(site.host, subtitle: subtitle)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -416,6 +573,84 @@ struct SiteScreen: View {
 
             change(SiteChange(node: node)) { node = current }
         }
+        .onChange(of: site.kind) {
+            kind = site.kind
+        }
+        // A field that the user types in keeps the text of the user.
+        .onChange(of: site.command) {
+            if focusedKindField != .command {
+                appCommand = site.command ?? site.projectCommand ?? ""
+            }
+        }
+        .onChange(of: site.projectCommand) {
+            if focusedKindField != .command {
+                appCommand = site.command ?? site.projectCommand ?? ""
+            }
+        }
+        .onChange(of: site.address) {
+            if focusedKindField != .address {
+                address = site.address ?? ""
+            }
+        }
+        // A proxy site needs its address first. So the choice of a proxy waits for that address. The
+        // Address field comes in this update, so it gets the focus in the next one.
+        .onChange(of: kind) {
+            guard kind != site.kind else {
+                return
+            }
+
+            guard kind != .proxy || site.address != nil else {
+                Task { focusedKindField = .address }
+                return
+            }
+
+            change(SiteChange(runsAs: kind)) { kind = site.kind }
+        }
+        .onChange(of: focusedKindField) { old, _ in
+            if old == .command {
+                saveAppCommand()
+            }
+
+            if old == .address {
+                saveAddress()
+            }
+        }
+    }
+
+    private var subtitle: String {
+        switch kind {
+        case .php:
+            "\((WebServer(rawValue: server) ?? .nginx).displayName) · PHP \(php)"
+        case .node:
+            "\(site.framework?.displayName ?? SiteKind.node.displayName) · Node \(site.node ?? site.projectNode?.line ?? "from the project")"
+        case .proxy:
+            "Proxy to \(site.address.map(SiteKindNote.shortAddress) ?? "a port")"
+        }
+    }
+
+    // An empty command, or the script of package.json, makes the site follow package.json again.
+    private func saveAppCommand() {
+        let typed = appCommand.trimmingCharacters(in: .whitespaces)
+        let saved = site.command ?? site.projectCommand ?? ""
+
+        guard site.kind == .node, typed != saved else {
+            return
+        }
+
+        let value = typed.isEmpty || typed == site.projectCommand ? Site.commandFromProject : typed
+
+        change(SiteChange(command: value)) { appCommand = saved }
+    }
+
+    // The first address of a site that runs as another kind also makes it a proxy site.
+    private func saveAddress() {
+        let typed = address.trimmingCharacters(in: .whitespaces)
+
+        guard kind == .proxy, !typed.isEmpty, typed != site.address || site.kind != .proxy else {
+            return
+        }
+
+        change(SiteChange(runsAs: .proxy, address: typed)) { address = site.address ?? "" }
     }
 
     // A site keeps a PHP version that is not installed anymore, so the picker shows it.

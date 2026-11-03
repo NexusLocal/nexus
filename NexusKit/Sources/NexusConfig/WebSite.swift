@@ -15,24 +15,37 @@ public enum ConfigError: Error, Equatable, CustomStringConvertible {
     }
 }
 
-// A site as the web servers see it: every name, the folders and the files that it needs.
+// What answers the requests of a site. PHP runs in nginx through php-fpm, or in Apache behind
+// nginx. A Node.js app that Nexus starts listens on a port of this Mac. A proxy site gets its
+// requests from nginx at its address.
+public enum WebBackend: Sendable, Equatable {
+    case php(server: WebServer, documentRoot: URL, socket: URL)
+    case app(port: Int, framework: NodeFramework?)
+    case proxy(address: String)
+}
+
+// A site as the web servers see it: every name, the backend and the files that it needs.
 public struct WebSite: Sendable, Equatable {
     public let hosts: [String]
-    public let documentRoot: URL
-    public let server: WebServer
-    public let phpSocket: URL
+    public let backend: WebBackend
     public let certificate: URL
     public let key: URL
     public let accessLog: URL
 
-    public init(hosts: [String], documentRoot: URL, server: WebServer, phpSocket: URL, certificate: URL, key: URL, accessLog: URL) {
+    public init(hosts: [String], backend: WebBackend, certificate: URL, key: URL, accessLog: URL) {
         self.hosts = hosts
-        self.documentRoot = documentRoot
-        self.server = server
-        self.phpSocket = phpSocket
+        self.backend = backend
         self.certificate = certificate
         self.key = key
         self.accessLog = accessLog
+    }
+
+    public var usesApache: Bool {
+        if case .php(.apache, _, _) = backend {
+            return true
+        }
+
+        return false
     }
 }
 

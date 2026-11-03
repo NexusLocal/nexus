@@ -1,6 +1,7 @@
 import AppKit
 import NexusCore
 import NexusIPC
+import NexusSupervisor
 
 extension SiteItem {
     init(_ info: SiteInfo, group: String?) {
@@ -27,8 +28,26 @@ extension SiteItem {
             backgroundCommands: info.backgroundCommands,
             workspaceProcesses: info.workspaceProcesses ?? true,
             mainProcesses: info.mainProcesses ?? false,
-            processProblems: info.processProblems ?? []
+            processProblems: info.processProblems ?? [],
+            kind: info.kind,
+            command: info.command,
+            address: info.address,
+            projectCommand: info.projectCommand,
+            framework: info.framework,
+            app: info.app
         )
+    }
+}
+
+extension Health {
+    // A Node.js app that does not run yet has no state.
+    init(_ state: ServiceState?) {
+        self = switch state {
+        case .running: .running
+        case .restarting: .attention
+        case .failed: .failed
+        case .stopped, nil: .stopped
+        }
     }
 }
 
@@ -139,7 +158,8 @@ extension AppModel {
         settings.tld = tld
     }
 
-    // A site runs when nginx, its PHP version and for an Apache site Apache run.
+    // A site runs when nginx runs. A PHP site also needs its PHP version, and an Apache site also
+    // needs Apache.
     func health(of site: SiteItem) -> Health {
         guard isLive else {
             return site.health
@@ -149,8 +169,11 @@ extension AppModel {
             return .failed
         }
 
-        let needed = [ServiceID.nginx, ServiceID.php(line: site.php)] + (site.server == WebServer.apache.rawValue ? [ServiceID.apache] : [])
-        let healths = needed.map { service($0)?.health ?? .stopped }
+        let php = site.kind == .php ? [ServiceID.php(line: site.php)] : []
+        let apache = site.kind == .php && site.server == WebServer.apache.rawValue ? [ServiceID.apache] : []
+        let needed = [ServiceID.nginx] + php + apache
+        let app = site.kind == .node ? [Health(site.app?.state)] : []
+        let healths = needed.map { service($0)?.health ?? .stopped } + app
 
         if healths.allSatisfy({ $0 == .running }) {
             return .running
@@ -192,9 +215,10 @@ extension AppModel {
     }
 
     // The sheet shows the failure itself, so the user can change the values. The answer is nil
-    // when nexusd added the site or the folder.
-    func addSite(folder: URL, host: String, aliases: [String], group: String?, server: WebServer, php: String) async -> String? {
-        let request = NexusRequest.addSite(folder: folder.path(percentEncoded: false), host: host, aliases: aliases, php: php, server: server, group: group)
+    // when nexusd added the site or the folder. settings holds the kind, the command, the address and
+    // the Node line.
+    func addSite(folder: URL, host: String, aliases: [String], group: String?, server: WebServer, php: String?, settings: SiteChange) async -> String? {
+        let request = NexusRequest.addSite(folder: folder.path(percentEncoded: false), host: host, aliases: aliases, php: php, server: server, group: group, runsAs: settings.runsAs, command: settings.command, address: settings.address, node: settings.node)
         let failure = await failureMessage(of: request)
 
         if failure == nil {
@@ -210,6 +234,10 @@ extension AppModel {
 
     func retry(_ workspace: WorkspaceInfo, of site: SiteItem) async {
         _ = await perform(.retryWorkspace(host: site.host, name: workspace.name), failure: "\(workspace.name) did not start again", place: .window)
+    }
+
+    func restartApp(of site: SiteItem, workspace: String? = nil) async {
+        _ = await perform(.restartApp(host: site.host, workspace: workspace), failure: "The app of \(workspace ?? site.host) did not start again", place: .window)
     }
 
     // The keys that Nexus sets in the .env of each workspace. A site that is no Laravel application,

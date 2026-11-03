@@ -50,7 +50,7 @@ public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-public enum ServiceState: Codable, Sendable, Equatable {
+public enum ServiceState: Codable, Sendable, Hashable {
     case stopped
     case running(pid: Int32, since: Date)
     case restarting(attempt: Int)

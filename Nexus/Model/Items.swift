@@ -174,6 +174,13 @@ struct SiteItem: Identifiable, Hashable {
     var workspaceProcesses = true
     var mainProcesses = false
     var processProblems: [String] = []
+    var kind: SiteKind = .php
+    // nil runs the script of package.json.
+    var command: String?
+    var address: String?
+    var projectCommand: String?
+    var framework: NodeFramework?
+    var app: AppProcessInfo?
 
     var id: String { host }
 

@@ -379,6 +379,7 @@ private struct WorkspacesSettings: View {
                     HStack {
                         Text(trashSummary)
                             .foregroundStyle(.secondary)
+                            .rowValue()
 
                         Button("Show in Finder") {
                             NSWorkspace.shared.open(NexusPaths.standard.trash)
@@ -478,6 +479,7 @@ private struct DatabasesSettings: View {
                         HStack {
                             Text(app.opens)
                                 .foregroundStyle(.secondary)
+                                .rowValue()
 
                             if app.added {
                                 RowRemoveButton(help: "Remove \(app.name)") {

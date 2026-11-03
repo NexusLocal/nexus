@@ -73,12 +73,27 @@ extension NexusEngine {
         return (sites.sorted { $0.site.host < $1.site.host }, conflicts)
     }
 
-    // Why a site does not run, or nil when it can run.
+    // Why a site does not run, or nil when it can run. Only a PHP site needs PHP (D67).
     static func problem(of site: Site, installed: [InstalledRuntime], checksNginx: Bool = true) -> String? {
         if checksNginx, !installed.contains(where: { $0.name == "nginx" }) {
             return "Every site needs nginx, and nginx is not installed. Run: nexus install nginx 1.30"
         }
 
+        switch site.kind {
+        case .php:
+            return phpProblem(of: site, installed: installed)
+        case .node:
+            return nodeProblem(of: site, installed: installed)
+        case .proxy:
+            guard site.address != nil else {
+                return "It runs as a proxy, and it has no address. Run: nexus site edit \(site.host) --address 3000"
+            }
+
+            return hostProblem(of: site)
+        }
+    }
+
+    private static func phpProblem(of site: Site, installed: [InstalledRuntime]) -> String? {
         guard installed.contains(where: { $0.name == "php" && $0.line == site.php }) else {
             return "PHP \(site.php) is not installed. Run: nexus install php \(site.php)"
         }
@@ -87,8 +102,11 @@ extension NexusEngine {
             return "It uses Apache, and Apache is not installed. Run: nexus install httpd 2.4"
         }
 
+        if let problem = hostProblem(of: site) {
+            return problem
+        }
+
         do {
-            _ = try site.hosts.map(HostName.validated)
             try WebConfigPath.validate(site.documentRoot)
         } catch {
             return String(describing: error)
@@ -97,10 +115,84 @@ extension NexusEngine {
         return nil
     }
 
+    // A Node line from the files of the project prefers an installed line. So only a chosen line can
+    // be missing when another line is installed.
+    private static func nodeProblem(of site: Site, installed: [InstalledRuntime]) -> String? {
+        guard installed.contains(where: { $0.name == "node" }) else {
+            return "A Node.js app needs Node, and Node is not installed. Run: nexus install node 24"
+        }
+
+        if let line = site.node, !installed.contains(where: { $0.name == "node" && $0.line == line }) {
+            return "Node \(line) is not installed. Run: nexus install node \(line)"
+        }
+
+        guard site.command != nil || site.nodeProject?.command != nil else {
+            return "package.json has no dev or start script. Set a command, for example: nexus site edit \(site.host) --command \"npm run dev\""
+        }
+
+        return hostProblem(of: site)
+    }
+
+    private static func hostProblem(of site: Site) -> String? {
+        do {
+            _ = try site.hosts.map(HostName.validated)
+        } catch {
+            return String(describing: error)
+        }
+
+        return nil
+    }
+
     // What the configuration of nginx and Apache takes from the sites. A new public folder in a
-    // project changes its document root.
-    static func signature(of sites: [Site]) -> [String] {
-        sites.map { "\($0.hosts.joined(separator: " ")) \($0.documentRoot.path(percentEncoded: false)) \($0.php) \($0.server.rawValue)" }
+    // project changes its document root. appPorts holds the port of each Node.js app by its host.
+    static func signature(of sites: [Site], appPorts: [String: Int]) -> [String] {
+        sites.map { site in
+            let backend = switch site.kind {
+            case .php: "\(site.documentRoot.path(percentEncoded: false)) \(site.php) \(site.server.rawValue)"
+            case .node: "node \(appPorts[site.host].map(String.init) ?? "")"
+            case .proxy: "proxy \(site.address ?? "")"
+            }
+
+            return "\(site.hosts.joined(separator: " ")) \(backend)"
+        }
+    }
+
+    // The port of each Node.js app by its host. The main checkout has its port in appPorts, and a
+    // workspace has its port in its record. sites holds the sites without their workspaces.
+    func appPortsByHost(_ state: EngineState, sites: [Site]) -> [String: Int] {
+        var ports: [String: Int] = [:]
+
+        for (key, group) in Dictionary(grouping: sites, by: ProjectFolder.workspaceKey(of:)) where group.contains(where: { $0.kind == .node }) {
+            for site in group where site.kind == .node {
+                ports[site.host] = state.appPorts[key]
+            }
+
+            for workspace in state.worktrees[key]?.workspaces ?? [] {
+                if let host = workspace.site(of: group, tld: state.tld)?.host {
+                    ports[host] = workspace.ports[NodeAppLaunch.portName]
+                }
+            }
+        }
+
+        return ports
+    }
+
+    // Each Node.js app in a main checkout keeps its port. A site that went away gives its port back.
+    // A setup chooses the ports of a workspace at the same time and outside this queue. So these
+    // ports come from their own range, below the ports of the workspaces.
+    private func assignAppPorts(_ state: EngineState, sites: [Site]) async throws -> EngineState {
+        let keys = Set(sites.filter { $0.kind == .node }.map(ProjectFolder.workspaceKey(of:)))
+        let taken = takenPorts(state)
+        let assigned = Self.numbers(for: keys.sorted(), keeping: state.appPorts, from: Self.firstAppPort) {
+            !taken.contains($0) && PortInspector.isFree($0)
+        }
+
+        guard assigned != state.appPorts else {
+            return state
+        }
+
+        try await stateStore.update { $0.appPorts = assigned }
+        return await stateStore.current()
     }
 
     // The hosts outside the dev TLD need a line in /etc/hosts. The DNS server answers the others.
@@ -131,45 +223,60 @@ extension NexusEngine {
         return port == 443 ? "https://\(host)" : "https://\(host):\(port)"
     }
 
+    private func webBackend(of site: Site, appPort: Int?) -> WebBackend? {
+        switch site.kind {
+        case .php:
+            .php(server: site.server, documentRoot: site.documentRoot, socket: paths.phpSocket(line: site.php))
+        case .node:
+            appPort.map { .app(port: $0, framework: site.nodeProject?.framework) }
+        case .proxy:
+            site.address.map { .proxy(address: $0) }
+        }
+    }
+
     // Writes every configuration file and checks it with the program that reads it. A file
     // that the check refuses goes back to its old content, so a running server keeps working.
     func writeWebConfig() async throws -> WebPlan {
-        let state = await stateStore.current()
-        let resolved = resolveSites(state)
+        let current = await stateStore.current()
+        let resolved = resolveSites(current)
         let ownSites = resolved.sites.map(\.site)
+        let state = try await assignAppPorts(current, sites: ownSites)
         let workspaces = workspaceSites(state, resolved: ownSites)
         let sites = ownSites + workspaces.sites
+        let appPorts = appPortsByHost(state, sites: ownSites)
         let installed = await installer.installedRuntimes()
         let apache = await newestRuntime(named: "httpd")
-        var plan = WebPlan(warnings: resolved.conflicts + workspaces.conflicts.values.sorted(), siteSignature: Self.signature(of: sites))
+        var plan = WebPlan(warnings: resolved.conflicts + workspaces.conflicts.values.sorted(), siteSignature: Self.signature(of: sites, appPorts: appPorts))
         let root = sites.isEmpty ? nil : try certificateAuthority.root()
 
         // A site that cannot run is left out with a warning, so it does not stop the others.
-        // Without nginx no site runs. The check below the loop says that.
+        // Without nginx no site runs. The check below the loop says that. A workspace of a Node.js
+        // app gets its port in its setup, and it waits for that port.
         for site in sites {
             if let problem = Self.problem(of: site, installed: installed, checksNginx: false) {
                 plan.warnings.append("\(site.host) does not run. \(problem)")
                 continue
             }
 
-            guard let root else {
+            guard let root, let backend = webBackend(of: site, appPort: appPorts[site.host]) else {
                 continue
             }
 
             let certificate = try certificateAuthority.hostCertificate(for: site.hosts, root: root)
             plan.sites.append(WebSite(
                 hosts: site.hosts,
-                documentRoot: site.documentRoot,
-                server: site.server,
-                phpSocket: paths.phpSocket(line: site.php),
+                backend: backend,
                 certificate: certificate.certificateFile,
                 key: certificate.keyFile,
                 accessLog: paths.siteLog(site.host)
             ))
-            plan.phpLines.insert(site.php)
+
+            if site.kind == .php {
+                plan.phpLines.insert(site.php)
+            }
         }
 
-        plan.needsApache = plan.sites.contains { $0.server == .apache }
+        plan.needsApache = plan.sites.contains(where: \.usesApache)
         try FileManager.default.createDirectory(at: paths.siteLogs, withIntermediateDirectories: true)
 
         for line in plan.phpLines.sorted() where try await writePHPConfig(line: line, state: state) {
@@ -487,9 +594,13 @@ extension NexusEngine {
         let hasRepositories = resolved.contains { ProjectFolder.repository(of: $0.site) != nil }
         let git = hasRepositories ? await GitTool.executable() : nil
         let workspaces = workspaceSites(state, resolved: resolved.map(\.site))
+        let appPorts = appPortsByHost(state, sites: resolved.map(\.site))
         var sites: [SiteInfo] = []
 
         for (site, parked) in resolved {
+            let key = ProjectFolder.workspaceKey(of: site)
+            let nodeProject = site.kind == .node ? site.nodeProject : nil
+
             sites.append(SiteInfo(
                 hosts: site.hosts,
                 folder: Self.displayPath(site.folder),
@@ -500,18 +611,24 @@ extension NexusEngine {
                 url: Self.url(for: site.host, in: state),
                 group: groups[site.host],
                 parkedFolder: Self.parkedFolder(of: site, in: state.parked).map { Self.displayPath($0.folder) },
-                problem: Self.problem(of: site, installed: installed) ?? applyProblem(of: site),
+                problem: Self.problem(of: site, installed: installed) ?? applyProblem(of: site, appPorts: appPorts),
                 projectNode: site.node == nil ? NodeLines.choose(hint: nodeHint(of: site.folder), installed: nodeLines) : nil,
                 nodeSetting: site.node,
-                automaticWorkspaces: site.createsWorkspaces,
-                workspaces: workspaceInfo(key: ProjectFolder.workspaceKey(of: site), sitesOfRecord: workspaces.sitesOfRecord, conflicts: workspaces.conflicts, installed: installed, state: state),
+                automaticWorkspaces: site.automaticWorkspaces ?? true,
+                workspaces: workspaceInfo(key: key, sitesOfRecord: workspaces.sitesOfRecord, conflicts: workspaces.conflicts, installed: installed, state: state, appPorts: appPorts),
                 workspaceProblem: ProjectFolder.repository(of: site) != nil && git == nil ? GitTool.missing : databaseRemovalProblem(ofSite: ProjectFolder.workspaceKey(of: site), in: state),
                 workspaceKeys: site.workspaceKeys,
                 workspaceCommands: Self.commands(of: [site]),
                 backgroundCommands: site.backgroundCommands,
                 workspaceProcesses: site.runsWorkspaceProcesses,
                 mainProcesses: site.runsMainProcesses,
-                processProblems: processProblems[Self.processOwner(key: ProjectFolder.workspaceKey(of: site), workspace: nil)]
+                processProblems: processProblems[Self.processOwner(key: ProjectFolder.workspaceKey(of: site), workspace: nil)],
+                runsAs: site.kind,
+                command: site.command,
+                address: site.address,
+                projectCommand: nodeProject?.command,
+                framework: nodeProject?.framework,
+                app: site.kind == .node ? appInfo(owner: Self.processOwner(key: key, workspace: nil), port: state.appPorts[key], host: site.host) : nil
             ))
         }
 
@@ -594,7 +711,9 @@ extension NexusEngine {
         return "\(defaults.summary) The sites that exist do not change."
     }
 
-    func addSite(folder path: String, host: String?, aliases: [String], php: String?, server: WebServer?, group: String? = nil) async throws -> String {
+    // settings holds the Node line, the runsAs, the command and the address of the new site. Without
+    // runsAs, the files of the folder decide the kind (D67).
+    func addSite(folder path: String, host: String?, aliases: [String], php: String?, server: WebServer?, group: String? = nil, settings: SiteChange = SiteChange()) async throws -> String {
         let folder = try Self.validatedFolder(path)
         let state = await stateStore.current()
         let host = try HostName.validated(host ?? "\(HostName.label(from: folder.lastPathComponent)).\(state.tld)")
@@ -604,11 +723,19 @@ extension NexusEngine {
             throw RuntimeError.unsupported("\(host) exists already. Change it with: nexus site edit \(host)")
         }
 
-        let site = Site(host: host, folder: folder, aliases: try aliases.map(HostName.validated), php: try await phpLine(php), server: server ?? state.siteDefaults.server, node: await defaultNodeLine())
+        var site = Site(host: host, folder: folder, aliases: try aliases.map(HostName.validated), php: "", server: server ?? state.siteDefaults.server, node: await defaultNodeLine(), runsAs: SiteKind.detected(in: folder))
+        try applyKind(settings, to: &site, state: state)
+
+        if let node = settings.node {
+            site.node = try await nodeLine(node)
+        }
+        site.php = try await phpLine(php, for: site.kind)
         try checkUnique(site, in: state)
 
-        return try await siteMessage(site, warnings: changeWeb { state in
-            state.sites.append(site)
+        let added = site
+
+        return try await siteMessage(added, warnings: changeWeb { state in
+            state.sites.append(added)
 
             if let group, !group.isEmpty {
                 state.siteLayout = state.siteLayout.moving(host, toGroup: group)
@@ -676,6 +803,8 @@ extension NexusEngine {
             throw RuntimeError.unsupported("Nexus has no site \(host).")
         }
 
+        let kindBefore = site.kind
+
         if let php = change.php {
             site.php = try await phpLine(php)
         }
@@ -711,6 +840,13 @@ extension NexusEngine {
             site.mainProcesses = mainProcesses
         }
 
+        try applyKind(change, to: &site, state: state)
+
+        // A site that came as a Node.js app or a proxy site can have no PHP version yet.
+        if site.kind == .php, site.php.isEmpty {
+            site.php = try await phpLine(nil)
+        }
+
         try checkUnique(site, in: state)
 
         let edited = site
@@ -722,11 +858,12 @@ extension NexusEngine {
             }
         }
 
-        // The Node line and the workspace settings change no server. So they need no new web
-        // configuration.
-        let changesProcesses = change.backgroundCommands != nil || change.workspaceProcesses != nil || change.mainProcesses != nil
+        // The Node line, the command and the workspace settings change no server. So they need no
+        // new web configuration.
+        let changesProcesses = change.backgroundCommands != nil || change.workspaceProcesses != nil || change.mainProcesses != nil || change.command != nil
         let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil || change.workspaceCommands != nil || changesProcesses
-        let onlySettings = hasSetting && change.php == nil && change.server == nil && change.aliases == nil
+        let changesServers = change.php != nil || change.server != nil || change.aliases != nil || change.address != nil || edited.kind != kindBefore
+        let onlySettings = hasSetting && !changesServers
         var notes = onlySettings ? [] : try await changeWeb(.sites, store)
 
         if onlySettings {
@@ -738,27 +875,40 @@ extension NexusEngine {
             notes.insert("nexus node and nexus npm use \(used) in its folder.", at: 0)
         }
 
-        // A new {port:<name>} needs a port from a setup, and {port:reverb} also changes the .env.
-        if change.workspaceKeys != nil || change.aliases != nil || change.backgroundCommands != nil {
+        let changesKind = edited.kind != kindBefore
+
+        // A new {port:<name>} needs a port from a setup, and {port:reverb} also changes the .env. A
+        // Node.js app needs {port:app} in each workspace.
+        if change.workspaceKeys != nil || change.aliases != nil || change.backgroundCommands != nil || change.command != nil || changesKind {
             try await setUpWorkspacesAgain(keys: [ProjectFolder.workspaceKey(of: edited)])
         }
 
-        if change.php != nil {
+        // The plan of the main checkout comes from a probe with the PHP of a PHP site.
+        if change.php != nil || changesKind {
             mainProcessPlans[ProjectFolder.workspaceKey(of: edited)] = nil
         }
 
-        if change.php != nil || change.mainProcesses != nil {
+        if change.php != nil || change.mainProcesses != nil || changesKind {
             mainProbeFailures[ProjectFolder.workspaceKey(of: edited)] = nil
         }
 
         if change.automaticWorkspaces != nil {
-            let key = ProjectFolder.workspaceKey(of: edited)
-            let sites = resolvedSites(await stateStore.current()).map(\.site)
-            let createsWorkspaces = sites.contains { ProjectFolder.workspaceKey(of: $0) == key && $0.createsWorkspaces }
-            notes.append(createsWorkspaces ? "A new worktree gets a workspace." : "A new worktree gets no workspace.")
+            notes.append(await workspaceNote(for: edited))
         }
 
         return await siteMessage(edited, warnings: notes)
+    }
+
+    private func workspaceNote(for site: Site) async -> String {
+        guard site.kind != .proxy else {
+            return "A proxy site gets no workspaces, because each workspace would go to the same server."
+        }
+
+        let key = ProjectFolder.workspaceKey(of: site)
+        let sites = resolvedSites(await stateStore.current()).map(\.site)
+        let createsWorkspaces = sites.contains { ProjectFolder.workspaceKey(of: $0) == key && $0.createsWorkspaces }
+
+        return createsWorkspaces ? "A new worktree gets a workspace." : "A new worktree gets no workspace."
     }
 
     func park(folder path: String, php: String?, server: WebServer?) async throws -> String {
@@ -845,8 +995,8 @@ extension NexusEngine {
     }
 
     // Nobody waits for an automatic change. So a failure shows at the site that it left out.
-    func applyProblem(of site: Site) -> String? {
-        guard let automaticWebFailure, appliedSites?.contains(Self.signature(of: [site])[0]) != true else {
+    func applyProblem(of site: Site, appPorts: [String: Int]) -> String? {
+        guard let automaticWebFailure, appliedSites?.contains(Self.signature(of: [site], appPorts: appPorts)[0]) != true else {
             return nil
         }
 
@@ -855,7 +1005,7 @@ extension NexusEngine {
 
     private func webSignature(_ state: EngineState) -> [String] {
         let ownSites = resolvedSites(state).map(\.site)
-        return Self.signature(of: ownSites + workspaceSites(state, resolved: ownSites).sites)
+        return Self.signature(of: ownSites + workspaceSites(state, resolved: ownSites).sites, appPorts: appPortsByHost(state, sites: ownSites))
     }
 
     func lan(_ enabled: Bool?) async throws -> String {
@@ -869,7 +1019,27 @@ extension NexusEngine {
     }
 
     private func siteMessage(_ site: Site, warnings: [String]) async -> String {
-        (["\(await url(for: site.host)) runs on \(site.server.displayName) with PHP \(site.php). Folder: \(site.documentRoot.path(percentEncoded: false))"] + warnings).joined(separator: "\n")
+        let url = await url(for: site.host)
+        let summary = switch site.kind {
+        case .php:
+            "\(url) runs on \(site.server.displayName) with PHP \(site.php). Folder: \(site.documentRoot.path(percentEncoded: false))"
+        case .node:
+            "\(url) runs the Node.js app in \(site.folder.path(percentEncoded: false)) with \(site.command ?? site.nodeProject?.command ?? "no command, because package.json has no dev or start script")."
+        case .proxy:
+            "\(url) sends its requests to \(site.address ?? "")."
+        }
+
+        return ([summary] + warnings).joined(separator: "\n")
+    }
+
+    // A Node.js app or a proxy site keeps a PHP version for a later change to a PHP site. It needs no
+    // installed PHP now, and it then gets none.
+    private func phpLine(_ requested: String?, for kind: SiteKind) async throws -> String {
+        guard kind == .php || requested != nil else {
+            return (try? await phpLine(nil)) ?? ""
+        }
+
+        return try await phpLine(requested)
     }
 
     // Without a request, a new site gets the PHP version of the defaults (D59). A default that is
@@ -903,6 +1073,59 @@ extension NexusEngine {
     // A command runs one time for a workspace, so a second row with that text would do nothing.
     private static func uniqueCommands(_ commands: [String]) -> [String] {
         distinct(commands.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+    }
+
+    // The kind of a site and the values that it needs (D67). A command or an address does not
+    // change the kind, so a change of the command cannot stop a PHP site.
+    private func applyKind(_ change: SiteChange, to site: inout Site, state: EngineState) throws {
+        if let command = change.command {
+            site.command = try Self.appCommand(command)
+        }
+
+        if let address = change.address {
+            site.address = try ProxyAddress.validated(address)
+        }
+
+        if let runsAs = change.runsAs {
+            site.runsAs = runsAs
+        }
+
+        if change.command != nil, site.kind != .node {
+            throw RuntimeError.unsupported("Only a Node.js app has a command. Add --runs-as node.")
+        }
+
+        if change.address != nil, site.kind != .proxy {
+            throw RuntimeError.unsupported("Only a proxy site has an address. Add --runs-as proxy.")
+        }
+
+        guard site.kind == .proxy else {
+            return
+        }
+
+        guard let address = site.address else {
+            throw RuntimeError.unsupported("A proxy site needs the address of its server, for example: --address 3000")
+        }
+
+        let nginxPorts = [state.ports[ServiceCatalog.httpPortKey] ?? 80, state.ports[ServiceCatalog.httpsPortKey] ?? 443]
+
+        if let port = ProxyAddress.portOnThisMac(of: address), nginxPorts.contains(port) {
+            throw RuntimeError.unsupported("nginx of Nexus listens on port \(port). So a proxy to \(address) sends each request back to nginx. Use the port of your own server.")
+        }
+    }
+
+    // A command of Site.commandFromProject gives the script of package.json again.
+    static func appCommand(_ text: String) throws -> String? {
+        let command = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard command != Site.commandFromProject else {
+            return nil
+        }
+
+        guard !command.isEmpty, !command.contains(where: \.isNewline) else {
+            throw RuntimeError.unsupported("A command is one line, for example npm run dev. Use \(Site.commandFromProject) for the script of package.json.")
+        }
+
+        return command
     }
 
     private func checkUnique(_ site: Site, in state: EngineState) throws {

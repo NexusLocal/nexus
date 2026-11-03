@@ -40,7 +40,7 @@ struct MainProbeFailure: Sendable {
 // ends with a sync, through reconcileWorkspaces.
 extension NexusEngine {
     static let processMarker = "NEXUS_BACKGROUND_PROCESS"
-    private static let nodeLineKey = "NEXUS_SITE_NODE"
+    static let nodeLineKey = "NEXUS_SITE_NODE"
     private static let mainProbeWait: Duration = .seconds(60)
     private static let worktreeWatchLatency: TimeInterval = 0.05
     // The options before the subcommand of git that take their value as the next argument.
@@ -264,18 +264,31 @@ extension NexusEngine {
     // next setup or the next start of a service. So the Retry of its workspace starts it again.
     func backgroundProcessesChanged() async {
         var problems = plannedProcessProblems
+        var states: [String: ServiceState] = [:]
 
         for status in await processSupervisor.status() {
-            if case .failed(let reason) = status.state, let process = runningProcesses[status.id] {
-                problems[process.owner, default: []].append("The background process \(process.command) does not run. \(reason)")
+            guard let process = runningProcesses[status.id] else {
+                continue
+            }
+
+            let isApp = status.id == Self.appProcessID(owner: process.owner)
+
+            if isApp {
+                states[status.id] = status.state
+            }
+
+            if case .failed(let reason) = status.state {
+                let name = isApp ? "The Node.js app" : "The background process \(process.command)"
+                problems[process.owner, default: []].append("\(name) does not run. \(reason)")
             }
         }
 
-        guard problems != processProblems else {
+        guard problems != processProblems || states != appStates else {
             return
         }
 
         processProblems = problems
+        appStates = states
         publishSites()
     }
 
@@ -297,14 +310,20 @@ extension NexusEngine {
         mainProcessPlans = mainProcessPlans.filter { hasMainSwitch($0.key) }
         mainProbeFailures = mainProbeFailures.filter { hasMainSwitch($0.key) }
 
+        // A Node.js app is the site itself (D67). So it runs without the switches of the background
+        // processes.
         for (key, sites) in sitesOfRecord {
             let running = sites.filter(\.runsWorkspaceProcesses)
 
-            for workspace in state.worktrees[key]?.workspaces ?? [] where !running.isEmpty && conflicts[workspace] == nil {
-                wanted += await backgroundProcesses(of: workspace, sites: sites, running: running, key: key, tld: state.tld)
+            for workspace in state.worktrees[key]?.workspaces ?? [] where conflicts[workspace] == nil {
+                if !running.isEmpty {
+                    wanted += await backgroundProcesses(of: workspace, sites: sites, running: running, key: key, tld: state.tld)
+                }
+
+                wanted += await appProcesses(of: workspace, sites: sites, key: key, tld: state.tld)
             }
 
-            wanted += await mainProcesses(of: sites.filter(\.runsMainProcesses), key: key)
+            wanted += await mainProcesses(of: sites, key: key, state: state)
         }
 
         return Dictionary(wanted.map { ($0.definition.id, $0) }) { first, _ in first }
@@ -337,22 +356,83 @@ extension NexusEngine {
         return await backgroundProcesses(of: Self.backgroundCommands(of: running, preset: preset), in: list)
     }
 
-    private func mainProcesses(of sites: [Site], key: String) async -> [BackgroundProcess] {
-        guard let site = sites.first, FileManager.default.fileExists(atPath: ProjectFolder.projectFolder(of: site)) else {
+    private func appProcesses(of workspace: Workspace, sites: [Site], key: String, tld: String) async -> [BackgroundProcess] {
+        guard let app = sites.first(where: { $0.kind == .node }), workspace.state == .ready, FileManager.default.fileExists(atPath: "\(workspace.worktree)/.git") else {
             return []
+        }
+
+        guard let folder = await fileFolders(of: workspace, key: key)?.worktree else {
+            return []
+        }
+
+        let owner = Self.processOwner(key: key, workspace: workspace.name)
+
+        // A record from before its site ran as a Node.js app has no port for it.
+        guard workspace.ports[NodeAppLaunch.portName] != nil else {
+            plannedProcessProblems[owner, default: []].append("The Node.js app of \(workspace.name) has no port yet. Use Retry to set up the workspace again.")
+            return []
+        }
+
+        let host = workspace.hosts(of: sites, tld: tld).first ?? ""
+        let list = BackgroundList(
+            owner: owner,
+            name: workspace.name,
+            host: host,
+            log: "workspace-\(host)",
+            folder: folder,
+            worktree: workspace.worktree,
+            node: app.node,
+            database: workspace.database,
+            ports: workspace.ports
+        )
+
+        return await appProcess(of: app, in: list, hosts: [host], tld: tld).map { [$0] } ?? []
+    }
+
+    // The main checkout runs its background processes when its switch is on, and its Node.js app
+    // always.
+    private func mainProcesses(of sites: [Site], key: String, state: EngineState) async -> [BackgroundProcess] {
+        let switched = sites.filter(\.runsMainProcesses)
+        var apps: [BackgroundProcess] = []
+
+        if let app = sites.first(where: { $0.kind == .node }) {
+            apps = await mainApp(app, key: key, state: state)
+        }
+
+        guard let site = switched.first, FileManager.default.fileExists(atPath: ProjectFolder.projectFolder(of: site)) else {
+            return apps
         }
 
         let owner = Self.processOwner(key: key, workspace: nil)
 
         do {
-            let plan = try await mainProcessPlan(of: sites, key: key)
+            let plan = try await mainProcessPlan(of: switched, key: key)
             let list = BackgroundList(owner: owner, name: "main", host: site.host, log: "main-\(site.host)", folder: plan.folder, worktree: ProjectFolder.worktree(holding: plan.folder)?.root, node: site.node, database: plan.database, ports: plan.ports)
 
-            return await backgroundProcesses(of: Self.backgroundCommands(of: sites, preset: plan.preset), in: list)
+            return await backgroundProcesses(of: Self.backgroundCommands(of: switched, preset: plan.preset), in: list) + apps
         } catch {
             plannedProcessProblems[owner, default: []].append("Nexus cannot start the background processes of the main checkout. \(error)")
+            return apps
+        }
+    }
+
+    // The app has the port that nginx sends its requests to. The web configuration gives that port.
+    private func mainApp(_ app: Site, key: String, state: EngineState) async -> [BackgroundProcess] {
+        let folder = ProjectFolder.projectFolder(of: app)
+        let owner = Self.processOwner(key: key, workspace: nil)
+
+        guard FileManager.default.fileExists(atPath: folder) else {
             return []
         }
+
+        guard let port = state.appPorts[key] else {
+            plannedProcessProblems[owner, default: []].append("The Node.js app waits for its port. Nexus gives it a port when it writes the configuration of nginx.")
+            return []
+        }
+
+        let list = BackgroundList(owner: owner, name: "main", host: app.host, log: "main-\(app.host)", folder: folder, worktree: ProjectFolder.worktree(holding: folder)?.root, node: app.node, database: nil, ports: [NodeAppLaunch.portName: port])
+
+        return await appProcess(of: app, in: list, hosts: app.hosts, tld: state.tld).map { [$0] } ?? []
     }
 
     // The main checkout keeps its .env, so {port:reverb} is the port that this .env gives the server.
@@ -383,7 +463,7 @@ extension NexusEngine {
     // version tries at once.
     private func probedMainProcessPlan(of sites: [Site], key: String) async throws -> MainProcessPlan {
         let project = URL(filePath: ProjectFolder.projectFolder(of: sites[0]), directoryHint: .isDirectory)
-        let root = LaravelProject.root(containing: project)
+        let root = sites[0].kind == .php ? LaravelProject.root(containing: project) : nil
         let folder = RealPath.of(root ?? project)
 
         guard root != nil else {
@@ -412,7 +492,7 @@ extension NexusEngine {
         )
     }
 
-    private struct BackgroundList {
+    struct BackgroundList {
         let owner: String
         let name: String
         let host: String

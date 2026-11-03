@@ -5054,6 +5054,93 @@ extension NexusEngineTests {
             try await Task.sleep(for: .milliseconds(100))
         }
     }
+
+    private func nodeAppEngine(root: URL, shop: URL, command: String) async throws -> (engine: NexusEngine, port: Int) {
+        let port = freePort()
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "", runsAs: .node, command: command)]
+        state.appPorts[RealPath.of(shop)] = port
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("node", "24")])
+        try await settle(engine)
+        return (engine, port)
+    }
+
+    private func appPID(_ engine: NexusEngine, workspace: String?, shop: URL) async -> Int32? {
+        let id = NexusEngine.appProcessID(owner: NexusEngine.processOwner(key: RealPath.of(shop), workspace: workspace))
+
+        if case .running(let pid, _) = await engine.processSupervisor.state(of: id) {
+            return pid
+        }
+
+        return nil
+    }
+
+    @Test func aNodeAppRunsInTheMainCheckoutAndInEachWorkspaceOnItsOwnPort() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let (engine, port) = try await nodeAppEngine(root: root, shop: shop, command: "echo {workspace} $PORT {port:app} $__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS > started.txt; exec sleep 300")
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let workspacePort = try #require(await workspaces(engine).first?.ports?[NodeAppLaunch.portName])
+
+            #expect(await eventually { text(of: shop.appending(path: "started.txt")) == "main \(port) \(port) .test\n" })
+            #expect(await eventually { text(of: worktree.appending(path: "started.txt")) == "fix \(workspacePort) \(workspacePort) .test\n" })
+            #expect(workspacePort != port)
+            #expect(await workspaces(engine).first?.app?.port == workspacePort)
+        }
+    }
+
+    @Test func aNodeAppStartsAgainAfterACrashAndAfterARestart() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let (engine, port) = try await nodeAppEngine(root: root, shop: shop, command: "exec sleep 300")
+
+        try await whileRunning(engine) {
+            await engine.syncBackgroundProcesses().value
+            let first = try #require(await appPID(engine, workspace: nil, shop: shop))
+
+            kill(first, SIGKILL)
+
+            #expect(await eventually { await appPID(engine, workspace: nil, shop: shop).map { $0 != first } == true })
+
+            let second = try #require(await appPID(engine, workspace: nil, shop: shop))
+            let restarted = await engine.handle(.restartApp(host: "shop.test", workspace: nil))
+            let third = await appPID(engine, workspace: nil, shop: shop)
+            let shown = await engine.siteInfo().first?.app
+
+            #expect(restarted == .done(message: "Nexus starts the Node.js app of shop.test again."))
+            #expect(third != nil && third != second)
+            #expect(shown?.port == port)
+            #expect(shown?.command == "exec sleep 300")
+            #expect(shown?.log.hasSuffix("logs/app-shop.test.log") == true)
+        }
+    }
+
+    @Test func aNodeAppWithoutAScriptOrACommandGetsAProblem() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        try Data(#"{"scripts":{"build":"vite build"}}"#.utf8).write(to: shop.appending(path: "package.json"))
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "", runsAs: .node)]
+        state.appPorts[RealPath.of(shop)] = freePort()
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("node", "24"), ("nginx", "1.30")])
+
+        try await whileRunning(engine) {
+            await engine.syncBackgroundProcesses().value
+            let site = await engine.siteInfo().first
+
+            #expect(site?.problem?.hasPrefix("package.json has no dev or start script.") == true)
+            #expect(site?.processProblems == ["The Node.js app does not run, because package.json has no dev or start script. Set a command, for example: nexus site edit shop.test --command \"npm run dev\""])
+            #expect(await runningProcesses(engine).isEmpty)
+        }
+    }
 }
 
 extension NexusEngine {
