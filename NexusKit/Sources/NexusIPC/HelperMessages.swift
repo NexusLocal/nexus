@@ -46,10 +46,18 @@ public struct HelperClient: PrivilegedHelper {
 
     public init() {}
 
+    // The helper ends after a time without requests. A request in the moment of that end gets no
+    // answer, so the client tries one more time. launchd then starts the helper again. Each request
+    // gives the same result when it runs twice.
     public func send(_ request: HelperRequest) async throws {
+        let payload = try NexusMessageCoding.encode(request)
         let reply: Data
         do {
-            reply = try await channel.send(try NexusMessageCoding.encode(request))
+            if let first = try? await channel.send(payload) {
+                reply = first
+            } else {
+                reply = try await channel.send(payload)
+            }
         } catch XPCChannelError.unreachable(let reason) {
             throw HelperError.notReachable(reason)
         }

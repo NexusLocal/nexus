@@ -1,0 +1,132 @@
+{
+  "sites": {
+    "_0": {
+      "defaults": {
+        "node": "24",
+        "php": "8.4",
+        "server": "nginx"
+      },
+      "layout": [
+        {
+          "group": {
+            "hosts": [
+              "shop.test"
+            ],
+            "name": "Clients"
+          }
+        },
+        {
+          "site": {
+            "_0": "blog.test"
+          }
+        }
+      ],
+      "parkedFolders": [
+        "/Sites"
+      ],
+      "sites": [
+        {
+          "address": "127.0.0.1:3000",
+          "app": {
+            "command": "npm run dev",
+            "log": "/logs/app-shop.test.log",
+            "port": 19000,
+            "state": {
+              "running": {
+                "pid": 4242,
+                "since": "2026-10-26T07:33:20Z"
+              }
+            }
+          },
+          "automaticWorkspaces": true,
+          "backgroundCommands": [
+            "npm run dev"
+          ],
+          "command": "npm run dev",
+          "documentRoot": "/Sites/shop/public",
+          "folder": "/Sites/shop",
+          "framework": "next",
+          "group": "Clients",
+          "hosts": [
+            "shop.test",
+            "www.shop.test"
+          ],
+          "mainProcesses": false,
+          "nodeSetting": "22",
+          "parked": false,
+          "parkedFolder": "/Sites",
+          "php": "8.5",
+          "problem": "a problem",
+          "processProblems": [
+            "a problem"
+          ],
+          "projectCommand": "next dev",
+          "projectNode": {
+            "line": "24",
+            "reason": ".nvmrc"
+          },
+          "runsAs": "node",
+          "server": "apache",
+          "url": "https://shop.test",
+          "workspaceCommands": [
+            "php artisan migrate"
+          ],
+          "workspaceKeys": [
+            {
+              "key": "APP_NAME",
+              "value": "{workspace}"
+            }
+          ],
+          "workspaceProblem": "a problem",
+          "workspaceProcesses": true,
+          "workspaces": [
+            {
+              "app": {
+                "command": "npm run dev",
+                "log": "/logs/app-shop.test.log",
+                "port": 19000,
+                "state": {
+                  "running": {
+                    "pid": 4242,
+                    "since": "2026-10-26T07:33:20Z"
+                  }
+                }
+              },
+              "branch": "fix",
+              "databases": [
+                {
+                  "instance": "mysql-8.4",
+                  "name": "shop",
+                  "port": 20001
+                }
+              ],
+              "folder": "/w/fix",
+              "hosts": [
+                "fix.shop.test"
+              ],
+              "name": "fix",
+              "ports": {
+                "VITE_PORT": 20002
+              },
+              "problem": "a problem",
+              "redisIndexes": {
+                "REDIS_DB": 16
+              },
+              "state": {
+                "notIsolated": {
+                  "_0": "The .env names the main database."
+                }
+              },
+              "url": "https://fix.shop.test",
+              "warnings": [
+                "a warning"
+              ],
+              "worktree": "/w/fix"
+            }
+          ]
+        }
+      ],
+      "tld": "test"
+    }
+  }
+}

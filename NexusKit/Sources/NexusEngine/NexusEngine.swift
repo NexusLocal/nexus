@@ -143,8 +143,15 @@ public actor NexusEngine {
     // into one of them. It also refuses a second install of a package that it installs now. And
     // it refuses a copy into an instance that an update stops now.
     var copyTargets: Set<String> = []
-    private var installTargets: Set<String> = []
+    var installTargets: Set<String> = []
     var updatingServices: Set<String> = []
+    // The requests that nexusd works on now, the watch of the build of the app on disk, the new
+    // build that nexusd starts after its work, and whether nexusd stops now for an update.
+    var openRequests = 0
+    var updateCheck: UpdateCheck?
+    var updateWatch: Task<Void, Never>?
+    var updateBuild: String?
+    var stoppingForUpdate = false
     private var publishedTasks: TaskList?
     private var tasksTicker: Task<Void, Never>?
 
@@ -177,7 +184,15 @@ public actor NexusEngine {
     }
 
     public func handle(_ request: NexusRequest) async -> NexusResponse {
+        guard !stoppingForUpdate else {
+            return .failure(message: "nexusd starts again for an update of Nexus. Try again in a few seconds.")
+        }
+
+        openRequests += 1
+
         defer {
+            openRequests -= 1
+
             if !request.onlyReads {
                 sitesChanged()
             }
@@ -345,6 +360,7 @@ public actor NexusEngine {
     }
 
     public func shutdown() async {
+        updateWatch?.cancel()
         parkedWatcher?.stop()
         parkedWatcher = nil
         stopWatchingWorktrees()
@@ -461,7 +477,14 @@ public actor NexusEngine {
         }
 
         let stopped = all.map(\.status).filter { !$0.state.isActive && state.stoppedByStopAll.contains($0.id) }.map(\.id)
-        return ServiceList(services: services, stoppedByStopAll: stopped, lanAccess: state.lanAccess, newInstanceAccount: state.newInstanceAccount, build: build)
+        return ServiceList(
+            services: services,
+            stoppedByStopAll: stopped,
+            lanAccess: state.lanAccess,
+            newInstanceAccount: state.newInstanceAccount,
+            build: build,
+            updateBuild: updateBuild
+        )
     }
 
     // One runtime for each service. nginx and Apache use the newest installed version line.
@@ -986,6 +1009,8 @@ extension NexusEngine {
                 Task { await self?.servicesChanged() }
             }
         }
+
+        checkForUpdate()
 
         let (stream, continuation) = AsyncStream.makeStream(of: NexusEvent.self)
         let id = UUID()

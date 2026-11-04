@@ -802,7 +802,7 @@ final class AppModel {
     private func apply(_ update: NexusFeedUpdate) {
         switch update {
         case .event(.services(let list)):
-            versionCheck.received(build: list.build)
+            versionCheck.received(build: list.build, updateBuild: list.updateBuild)
             nexusdProblem = versionProblem
             restartOldNexusd()
             let previous = services
@@ -842,8 +842,6 @@ final class AppModel {
             show(TaskList(tasks: []))
         case .unreadable(let reason):
             nexusdProblem = .otherVersion(reason)
-            versionCheck.receivedUnreadableEvent()
-            restartOldNexusd()
         }
     }
 

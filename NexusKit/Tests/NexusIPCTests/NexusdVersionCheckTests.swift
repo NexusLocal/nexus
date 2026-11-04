@@ -33,10 +33,28 @@ struct NexusdVersionCheckTests {
         #expect(restarts)
     }
 
-    @Test func anEventThatTheAppCannotReadCountsAsOld() {
-        var check = NexusdVersionCheck(appBuild: "12")
+    @Test func aNexusdThatStartsTheBuildOfTheAppGetsNoRestartFromTheApp() {
+        var check = NexusdVersionCheck(appBuild: "13")
 
-        check.receivedUnreadableEvent()
+        check.received(build: "12", updateBuild: "13")
+        let restarts = check.takeRestart(tasksRun: false)
+
+        #expect(!restarts)
+    }
+
+    @Test func aNexusdThatStartsTheBuildOfTheAppShowsNoProblemWhileItsWorkRuns() {
+        var check = NexusdVersionCheck(appBuild: "13", lastRestartBuild: "13")
+
+        check.received(build: "12", updateBuild: "13")
+
+        #expect(!check.restartDidNotHelp)
+    }
+
+    // The app in another folder than the app of nexusd, for example in Downloads.
+    @Test func aNexusdThatStartsAnotherBuildGetsTheRestartOfTheApp() {
+        var check = NexusdVersionCheck(appBuild: "14")
+
+        check.received(build: "12", updateBuild: "13")
         let restarts = check.takeRestart(tasksRun: false)
 
         #expect(restarts)

@@ -1,0 +1,91 @@
+{
+  "services": {
+    "_0": {
+      "build": "5",
+      "lanAccess": true,
+      "newInstanceAccount": {
+        "password": "",
+        "user": "root"
+      },
+      "services": [
+        {
+          "account": {
+            "password": "",
+            "user": "root"
+          },
+          "customSettings": [
+            "memory_limit = 1G"
+          ],
+          "dataFolder": "/data/mysql-8.4",
+          "id": "mysql-8.4",
+          "line": "8.4",
+          "logFile": "/logs/mysql-8.4.log",
+          "name": "mysql",
+          "note": "a note",
+          "portConflict": {
+            "owner": {
+              "command": "mysqld",
+              "executable": "/usr/sbin/mysqld",
+              "mainPID": 76,
+              "mainProcessIsOwn": false,
+              "pid": 77
+            },
+            "port": 13306,
+            "service": "mysql-8.4",
+            "suggestedPort": 13307
+          },
+          "ports": [
+            13306
+          ],
+          "problem": "a problem",
+          "state": {
+            "failed": {
+              "reason": "a reason"
+            }
+          },
+          "toggles": [
+            {
+              "enabled": true,
+              "help": "a help",
+              "name": "xdebug",
+              "required": false
+            }
+          ],
+          "usedBy": [
+            "shop.test"
+          ],
+          "version": "8.4.7"
+        },
+        {
+          "id": "redis-8.2",
+          "line": "8.2",
+          "name": "redis",
+          "ports": [
+            16379
+          ],
+          "state": {
+            "restarting": {
+              "attempt": 2
+            }
+          },
+          "version": "8.2.3"
+        },
+        {
+          "id": "dns",
+          "line": "",
+          "name": "dns",
+          "ports": [
+            10053
+          ],
+          "state": {
+            "stopped": {}
+          },
+          "version": ""
+        }
+      ],
+      "stoppedByStopAll": [
+        "redis-8.2"
+      ]
+    }
+  }
+}

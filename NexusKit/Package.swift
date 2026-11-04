@@ -52,7 +52,7 @@ let package = Package(
         .testTarget(name: "NexusConfigTests", dependencies: ["NexusConfig"]),
         .testTarget(name: "NexusLaravelTests", dependencies: ["NexusLaravel", "NexusCore"]),
         .testTarget(name: "NexusWorkspacesTests", dependencies: ["NexusWorkspaces", "NexusCore", "NexusSupervisor"]),
-        .testTarget(name: "NexusIPCTests", dependencies: ["NexusIPC", "NexusSupervisor"]),
+        .testTarget(name: "NexusIPCTests", dependencies: ["NexusIPC", "NexusSupervisor"], exclude: ["Releases"]),
         .testTarget(name: "NexusCommandsTests", dependencies: [
             "NexusCommands",
             "NexusCore",

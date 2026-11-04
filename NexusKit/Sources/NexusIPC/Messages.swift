@@ -553,13 +553,18 @@ public struct ServiceList: Codable, Sendable, Equatable {
     public let newInstanceAccount: DatabaseAccount?
     // The build of the running nexusd. An older nexusd does not send it.
     public let build: String?
+    // The new build of the app on disk, which nexusd starts by itself after its work. When it is
+    // the build of the app, the app does not restart nexusd. A nexusd of 0.1.1 and older does not
+    // send it.
+    public let updateBuild: String?
 
-    public init(services: [ServiceInfo], stoppedByStopAll: [String], lanAccess: Bool? = nil, newInstanceAccount: DatabaseAccount? = nil, build: String? = nil) {
+    public init(services: [ServiceInfo], stoppedByStopAll: [String], lanAccess: Bool? = nil, newInstanceAccount: DatabaseAccount? = nil, build: String? = nil, updateBuild: String? = nil) {
         self.services = services
         self.stoppedByStopAll = stoppedByStopAll
         self.lanAccess = lanAccess
         self.newInstanceAccount = newInstanceAccount
         self.build = build
+        self.updateBuild = updateBuild
     }
 }
 

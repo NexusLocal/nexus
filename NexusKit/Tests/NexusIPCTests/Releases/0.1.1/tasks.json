@@ -1,0 +1,49 @@
+{
+  "tasks": {
+    "_0": {
+      "tasks": [
+        {
+          "completed": 10,
+          "id": "a",
+          "started": "2026-10-26T07:33:20Z",
+          "total": 100,
+          "work": {
+            "install": {
+              "line": "8.5",
+              "name": "php",
+              "update": true,
+              "version": "8.5.1"
+            }
+          }
+        },
+        {
+          "completed": 5,
+          "id": "b",
+          "started": "2026-10-26T07:33:20Z",
+          "table": "orders",
+          "tableCount": 9,
+          "tableNumber": 3,
+          "total": 50,
+          "work": {
+            "copyDatabase": {
+              "database": "shop",
+              "instance": "mysql-8.4",
+              "name": "shop_copy"
+            }
+          }
+        },
+        {
+          "completed": 0,
+          "id": "c",
+          "started": "2026-10-26T07:33:20Z",
+          "work": {
+            "dumpDatabase": {
+              "instance": "mysql-8.4",
+              "name": "shop"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

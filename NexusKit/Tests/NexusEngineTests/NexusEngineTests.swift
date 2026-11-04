@@ -924,6 +924,97 @@ extension NexusEngineTests {
     }
 }
 
+extension NexusEngineTests {
+    private func makeApp(build: String) throws -> URL {
+        let app = workspace.appending(path: "Nexus.app", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: app.appending(path: "Contents"), withIntermediateDirectories: true)
+        try PropertyListSerialization.data(fromPropertyList: ["CFBundleVersion": build], format: .xml, options: 0)
+            .write(to: app.appending(path: "Contents/Info.plist"))
+        return app
+    }
+
+    @Test func nexusdStopsWhenTheAppOnDiskGetsANewBuild() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        let app = try makeApp(build: "5")
+        let restarts = Mutex<[String]>([])
+
+        try await whileRunning(engine) {
+            await engine.restartAfterUpdates(of: app, every: .milliseconds(20), runningBuild: "5") { build in
+                restarts.withLock { $0.append(build) }
+            }
+            try await Task.sleep(for: .milliseconds(150))
+            let beforeTheUpdate = restarts.withLock { $0 }
+
+            _ = try makeApp(build: "6")
+            let afterTheUpdate = await waitFor { restarts.withLock { $0 } == ["6"] }
+            let request = await engine.handle(.status)
+
+            #expect(beforeTheUpdate.isEmpty)
+            #expect(afterTheUpdate)
+            #expect(request == .failure(message: "nexusd starts again for an update of Nexus. Try again in a few seconds."))
+        }
+    }
+
+    @Test func nexusdWaitsForARunningTaskBeforeItStopsForAnUpdate() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort(), downloader: HalfDownloader())
+        let app = try makeApp(build: "5")
+        let restarts = Mutex<[String]>([])
+
+        try await whileRunning(engine) {
+            let tasks = TaskRecorder()
+            let services = EventRecorder()
+            tasks.record(await engine.events())
+            services.record(await engine.events())
+            let install = Task { await engine.handle(.install(name: "redis", line: "1.0")) }
+            let running = try #require(await tasks.next { !$0.tasks.isEmpty }?.tasks.first)
+
+            await engine.restartAfterUpdates(of: app, every: .milliseconds(20), runningBuild: "4") { build in
+                restarts.withLock { $0.append(build) }
+            }
+            let waiting = await services.next { $0.updateBuild == "5" }
+            try await Task.sleep(for: .milliseconds(150))
+            let whileTheTaskRuns = restarts.withLock { $0 }
+
+            _ = await engine.handle(.stopTask(id: running.id))
+            _ = await install.value
+            let afterTheTask = await waitFor { restarts.withLock { $0 } == ["5"] }
+
+            #expect(waiting != nil)
+            #expect(whileTheTaskRuns.isEmpty)
+            #expect(afterTheTask)
+        }
+    }
+
+    @Test func aNewConnectionOfTheAppChecksTheBuildAtOnce() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        let app = try makeApp(build: "6")
+        let restarts = Mutex<[String]>([])
+
+        try await whileRunning(engine) {
+            await engine.restartAfterUpdates(of: app, every: .seconds(60), runningBuild: "5") { build in
+                restarts.withLock { $0.append(build) }
+            }
+            _ = await engine.events()
+
+            #expect(await waitFor { restarts.withLock { $0 } == ["6"] })
+        }
+    }
+
+    private func waitFor(_ condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(5)
+
+        while ContinuousClock.now < deadline {
+            if condition() {
+                return true
+            }
+
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        return false
+    }
+}
+
 private extension NexusEngine {
     func startCopy(into target: String) {
         copyTargets.insert(target)
