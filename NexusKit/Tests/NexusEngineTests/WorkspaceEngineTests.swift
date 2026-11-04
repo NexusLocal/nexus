@@ -5141,6 +5141,192 @@ extension NexusEngineTests {
             #expect(await runningProcesses(engine).isEmpty)
         }
     }
+
+    // A Node.js app with ignored env files. tracked holds files that git keeps.
+    private func nodeApplication(in root: URL, files: [String: String], tracked: [String: String] = [:], package: String = #"{"scripts":{"dev":"sleep 300"}}"#, ignored: String = ".env\n.env.local\n") async throws -> URL {
+        let shop = try await repository(in: root)
+        try writeFile(ignored, to: ".gitignore", in: shop)
+        try writeFile(package, to: "package.json", in: shop)
+
+        for (name, text) in tracked {
+            try writeFile(text, to: name, in: shop)
+        }
+
+        try await git("add", "-A", in: shop)
+        try await git("commit", "-q", "-m", "app", in: shop)
+
+        for (name, text) in files {
+            try writeFile(text, to: name, in: shop)
+        }
+
+        return shop
+    }
+
+    private func nodeEngine(root: URL, shop: URL, ports: [String: Int] = [:], runtimes: [(name: String, line: String)] = [("node", "24")], keys: [WorkspaceEnvKey]? = nil) throws -> NexusEngine {
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "", workspaceKeys: keys, runsAs: .node, command: "exec sleep 300")]
+        state.appPorts[RealPath.of(shop)] = freePort()
+        state.ports.merge(ports) { _, port in port }
+        return try makeSiteEngine(root: root, state: state, runtimes: runtimes)
+    }
+
+    @Test func aNodeWorkspaceGetsTheEnvFilesOfTheMainCheckoutWithItsOwnHosts() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await nodeApplication(in: root, files: [
+            ".env": "APP_URL=https://shop.test\nSECRET=one\n",
+            ".env.local": "NEXT_PUBLIC_SITE=https://shop.test/about\n",
+        ])
+        let engine = try nodeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let workspace = try #require(await workspaces(engine).first)
+
+            #expect(text(of: worktree.appending(path: ".env")) == "APP_URL=https://shop-fix.test\nSECRET=one\n")
+            #expect(text(of: worktree.appending(path: ".env.local")) == "NEXT_PUBLIC_SITE=https://shop-fix.test/about\n")
+            #expect(workspace.state == .ready)
+            #expect(workspace.warnings == [])
+            #expect(try await gitOutput("status", "--porcelain", in: worktree).isEmpty)
+        }
+    }
+
+    @Test func anOwnKeyGoesIntoEachEnvFileOfANodeAppThatHasIt() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await nodeApplication(in: root, files: [
+            ".env": "SECRET=one\n",
+            ".env.local": "APP_NAME=main\n",
+            ".env.development.local": "APP_NAME=main\n",
+        ], ignored: ".env\n.env.local\n.env.development.local\n")
+        let engine = try nodeEngine(root: root, shop: shop, keys: [WorkspaceEnvKey(key: "APP_NAME", value: "shop {workspace}"), WorkspaceEnvKey(key: "MODE", value: "workspace")])
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            #expect(text(of: worktree.appending(path: ".env.local")) == "APP_NAME=\"shop fix\"\n")
+            #expect(text(of: worktree.appending(path: ".env.development.local")) == "APP_NAME=\"shop fix\"\n")
+            #expect(text(of: worktree.appending(path: ".env")) == "SECRET=one\nMODE=workspace\n")
+            #expect(await workspaces(engine).first?.state == .ready)
+        }
+    }
+
+    @Test func anOwnKeyInATrackedEnvFileOfANodeAppIsNotIsolated() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await nodeApplication(in: root, files: [".env": "SECRET=one\n"], tracked: [".env.development": "APP_NAME=main\n"])
+        let engine = try nodeEngine(root: root, shop: shop, keys: [WorkspaceEnvKey(key: "APP_NAME", value: "{workspace}")])
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let workspace = try #require(await workspaces(engine).first)
+
+            #expect(workspace.isolationProblem == "git does not ignore .env.development, so Nexus does not change APP_NAME in it.")
+        }
+    }
+
+    @Test func aURLOfAServerOnAnotherComputerInAnotherEnvFileStaysAsItIs() {
+        let request = WorkspaceEnvRequest(workspace: "fix", mainFolder: "/a", workspaceFolder: "/b", mysqlPorts: [], postgresqlPorts: [5432], redisPorts: [])
+        let plan = WorkspaceEnvPlan(nodeFiles: [
+            NodeEnvFile(name: ".env", text: "DATABASE_URL=postgres://localhost:5432/app\n"),
+            NodeEnvFile(name: ".env.local", text: "DATABASE_URL=postgres://db.example.com:5432/app\n"),
+        ], usesDatabaseClient: true, request: request)
+        let values = NodeEnvValues(plan: plan, serverPorts: [5432: 20001], redisIndexes: [:])
+
+        #expect(values.values(in: "DATABASE_URL=postgres://db.example.com:5432/app\n").isEmpty)
+        #expect(values.values(in: "DATABASE_URL=postgres://localhost:5432/app\n") == ["DATABASE_URL": "postgres://127.0.0.1:20001/app"])
+    }
+
+    @Test func aNodeWorkspaceWithADatabaseClientAndNoKeyGetsAWarning() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await nodeApplication(in: root, files: [".env": "SECRET=one\n"], package: #"{"scripts":{"dev":"sleep 300"},"dependencies":{"pg":"^8.0.0"}}"#)
+        let engine = try nodeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let workspace = try #require(await workspaces(engine).first)
+
+            #expect(workspace.state == .ready)
+            #expect(workspace.warnings == ["Nexus found no database key in the env files of the app. When the app reaches a Nexus database in another way, this workspace uses the database of the main site."])
+        }
+    }
+
+    @Test func aDatabaseKeyInATrackedEnvFileOfANodeAppIsNotIsolated() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let port = freePort()
+        let shop = try await nodeApplication(in: root, files: [:], tracked: [".env.development": "DATABASE_URL=postgresql://root@127.0.0.1:\(port)/shop\n"])
+        let engine = try nodeEngine(root: root, shop: shop, ports: ["postgresql-17": port], runtimes: [("node", "24"), ("postgresql", "17")])
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await whileRunning(engine) {
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let workspace = try #require(await workspaces(engine).first)
+
+            #expect(workspace.isolationProblem?.contains("git does not ignore .env.development, so Nexus does not change DATABASE_URL in it.") == true)
+            #expect(text(of: worktree.appending(path: ".env.development")) == "DATABASE_URL=postgresql://root@127.0.0.1:\(port)/shop\n")
+        }
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)), arguments: [("postgresql", "17", "postgresql"), ("mysql", "8.4", "mysql")])
+    func aRealNodeWorkspaceGetsItsOwnDatabaseServerAndRedisIndex(name: String, line: String, scheme: String) async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = "\(name)-\(line)"
+        let port = freePort()
+        let redisPort = freePort()
+        let shop = try await nodeApplication(in: root, files: [
+            ".env": "DATABASE_URL=\(scheme)://root@localhost:\(port)/shop\nREDIS_URL=redis://127.0.0.1:\(redisPort)/3\n",
+        ], package: #"{"scripts":{"dev":"sleep 300"},"dependencies":{"pg":"^8.0.0"}}"#)
+        let engine = try nodeEngine(root: root, shop: shop, ports: [id: port, "redis-8.2": redisPort], runtimes: [])
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        try linkRealRuntimes(in: await engine.paths)
+        try await link((name, line), in: engine)
+        try await link(("redis", "8.2"), in: engine)
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.start(service: id))
+            _ = await engine.handle(.start(service: "redis-8.2"))
+            let client = try await databaseClient(engine, id: id, port: port)
+            try await mainDatabase(client)
+            let main = try await digest(client, "shop")
+
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+
+            let workspace = try #require(await workspaces(engine).first)
+            let server = try #require(try await record(engine, of: shop).servers.first)
+            let own = try await workspaceClient(engine, id: id, of: shop)
+            let copy = try await digest(own, "shop")
+            try await own.query("INSERT INTO items VALUES (2, 'workspace')", database: "shop")
+
+            #expect(workspace.state == .ready)
+            #expect(text(of: worktree.appending(path: ".env")) == "DATABASE_URL=\(scheme)://root@127.0.0.1:\(server.port)/shop\nREDIS_URL=redis://127.0.0.1:\(redisPort)/16\n")
+            #expect(copy == main)
+            #expect(try await digest(client, "shop") == main)
+            #expect(try await digest(own, "shop") != main)
+        }
+    }
 }
 
 extension NexusEngine {

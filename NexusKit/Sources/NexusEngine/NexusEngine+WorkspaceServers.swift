@@ -18,7 +18,7 @@ extension NexusEngine {
         var instances: [(tools: DatabaseTools, mainPort: Int)] = []
         let runtimes = await databaseRuntimes()
 
-        for mainPort in plan.serverPortKeys.keys.sorted() {
+        for mainPort in plan.serverPorts {
             var found: DatabaseTools?
 
             for tools in runtimes where try await port(of: tools) == mainPort {

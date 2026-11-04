@@ -1,5 +1,6 @@
 import Foundation
 import NexusCore
+import NexusLaravel
 import NexusRuntime
 
 // A pull, a checkout or an edit in a worktree gives the application another configuration after its
@@ -16,7 +17,10 @@ extension NexusEngine {
     // What the probe reads in a worktree, and the files that decide if Nexus can write the .env.
     static func configurationDigest(of folder: String, in root: String) -> String {
         let configFiles = (FileManager.default.subpaths(atPath: "\(folder)/config") ?? []).filter { $0.hasSuffix(".php") }.sorted()
-        let files = [".env", "artisan", "bootstrap/app.php", "bootstrap/cache/config.php"] + configFiles.map { "config/\($0)" }
+        // The other env files of a Node.js app count only when they are there. So the digest of a
+        // Laravel application stays the same as before D67.
+        let nodeEnvFiles = NodeEnvFile.names.filter { $0 != ".env" && FileManager.default.fileExists(atPath: "\(folder)/\($0)") }
+        let files = [".env", "artisan", "bootstrap/app.php", "bootstrap/cache/config.php"] + configFiles.map { "config/\($0)" } + nodeEnvFiles
         let digests = files.map { file in "\(file) \(digest(of: file, in: folder) ?? "")" }
         let ignoreFiles = foldersWithIgnoreFiles(of: folder, in: root).map { "\($0)/.gitignore \(digest(of: ".gitignore", in: $0) ?? "")" }
 

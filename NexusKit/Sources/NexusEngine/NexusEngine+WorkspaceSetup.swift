@@ -271,6 +271,8 @@ extension NexusEngine {
                 try await checkConfiguration(of: rewritten, in: &workspace)
             }
 
+            workspace.warnings += (written?.warnings ?? []).filter { !workspace.warnings.contains($0) }
+
             // A worktree that is gone got no check of its configuration. Its disk can come back, so
             // the record waits in Preparing.
             if workspace.state == .preparing, FileManager.default.fileExists(atPath: workspace.worktree) {
@@ -316,7 +318,16 @@ extension NexusEngine {
     // have a fixed name, or a key that the plan does not know (D48). A repository in the public
     // folder holds no application, so its worktree has no configuration to check.
     private func checkConfiguration(of written: WrittenEnv, in workspace: inout Workspace) async throws {
-        guard !watchingStopped, workspace.state == .preparing, written.repositoryHoldsApplication else {
+        guard !watchingStopped, workspace.state == .preparing else {
+            return
+        }
+
+        if written.site.kind == .node {
+            try await checkNodeEnvFiles(of: written, in: &workspace)
+            return
+        }
+
+        guard written.repositoryHoldsApplication else {
             return
         }
 
@@ -399,7 +410,7 @@ extension NexusEngine {
         try await Task.detached { try FileClone.clone(source, to: target, preparing: prepare) }.value
     }
 
-    private struct WrittenEnv {
+    struct WrittenEnv {
         let servers: [(tools: DatabaseTools, mainPort: Int, port: Int)]
         let databases: [WorkspaceDatabase]
         let sqliteFiles: [WorkspaceFile]
@@ -410,6 +421,9 @@ extension NexusEngine {
         let isolatingKeys: Set<String>
         let mainFolder: String
         let repositoryHoldsApplication: Bool
+        // What the workspace shares with the main site without a Not isolated state. The setup
+        // adds it after the commands, because a warning before them means a failed command.
+        var warnings: [String] = []
     }
 
     // Returns nil when the workspace has no .env, so nothing after this step applies to it.
@@ -421,8 +435,11 @@ extension NexusEngine {
             return nil
         }
 
-        // A site that is no Laravel application gets no .env, but its commands can use a port. A
-        // Node.js app gets no copy of the database yet (D67).
+        if site.kind == .node {
+            return try await writeNodeEnvFiles(of: &workspace, site: site, sites: sites, key: key, state: state)
+        }
+
+        // A site that is no Laravel application gets no .env, but its commands can use a port.
         let application = site.kind == .php ? LaravelProject.root(containing: URL(filePath: ProjectFolder.projectFolder(of: site), directoryHint: .isDirectory)) : nil
 
         guard let main = application else {
@@ -559,7 +576,7 @@ extension NexusEngine {
     }
 
     // A file that Nexus cannot read is no empty file. The write would replace its lines.
-    private static func envText(of file: String) throws -> String {
+    static func envText(of file: String) throws -> String {
         guard FileManager.default.fileExists(atPath: file) else {
             return ""
         }
@@ -571,7 +588,7 @@ extension NexusEngine {
         return text
     }
 
-    private static func permissions(of file: String) -> Int {
+    static func permissions(of file: String) -> Int {
         (try? FileManager.default.attributesOfItem(atPath: file))?[.posixPermissions] as? Int ?? 0o600
     }
 
@@ -594,12 +611,23 @@ extension NexusEngine {
     // kind of its server. All connections of a default Laravel application read DB_PORT, and a MySQL
     // client that connects to PostgreSQL waits until the probe stops.
     private func envPlan(workspace: String, configuration: LaravelConfiguration, mainFolder: String, workspaceFolder: String, realMainFolder: String? = nil, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)] = []) async throws -> WorkspaceEnvPlan {
+        WorkspaceEnvPlan(configuration: configuration, request: try await workspaceEnvRequest(
+            workspace: workspace,
+            mainFolder: mainFolder,
+            workspaceFolder: workspaceFolder,
+            realMainFolder: realMainFolder,
+            servers: servers
+        ))
+    }
+
+    // The ports of the Nexus instances of each kind, and of the servers of the workspace.
+    func workspaceEnvRequest(workspace: String, mainFolder: String, workspaceFolder: String, realMainFolder: String? = nil, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)]) async throws -> WorkspaceEnvRequest {
         let instances = try await databaseInstances()
         let redisPorts = Set(try await redisInstances().map(\.port))
         let mysqlServers = servers.filter(\.tools.kind.usesMySQLProtocol).map(\.port)
         let postgresqlServers = servers.filter { !$0.tools.kind.usesMySQLProtocol }.map(\.port)
 
-        return WorkspaceEnvPlan(configuration: configuration, request: WorkspaceEnvRequest(
+        return WorkspaceEnvRequest(
             workspace: workspace,
             mainFolder: mainFolder,
             workspaceFolder: workspaceFolder,
@@ -607,7 +635,7 @@ extension NexusEngine {
             postgresqlPorts: Set(instances.filter { !$0.kind.usesMySQLProtocol }.map(\.port)).union(postgresqlServers),
             redisPorts: redisPorts,
             realMainFolder: realMainFolder
-        ))
+        )
     }
 
     // The main sites use the indexes below 16, the number that Redis has by default. An index with
@@ -615,7 +643,7 @@ extension NexusEngine {
     // not keep an index that its main site uses now, or an index with keys on an instance that is
     // new for this workspace. A record without instances comes from before part 8f, so its keys
     // are the keys of the workspace.
-    private func redisIndexes(for plan: WorkspaceEnvPlan, of workspace: Workspace, state: EngineState) async throws -> (indexes: [String: Int], instances: [String]) {
+    func redisIndexes(for plan: WorkspaceEnvPlan, of workspace: Workspace, state: EngineState) async throws -> (indexes: [String: Int], instances: [String]) {
         let instances = try await redisInstances().filter { plan.redisPorts.contains($0.port) }
         let mainIndexes = await redisIndexesOfMainSites().union(plan.mainRedisIndexes)
         var taken = Set(state.worktrees.values.flatMap(\.workspaces).flatMap(\.redisIndexes.values)).union(mainIndexes)
@@ -695,6 +723,10 @@ extension NexusEngine {
 
         let key = ProjectFolder.workspaceKey(of: site)
         let sites = resolved.filter { ProjectFolder.workspaceKey(of: $0) == key }
+
+        if site.kind == .node {
+            return try await nodeEnvPreview(of: site, sites: sites, tld: state.tld)
+        }
 
         guard site.kind == .php, let main = LaravelProject.root(containing: URL(filePath: ProjectFolder.projectFolder(of: site), directoryHint: .isDirectory)) else {
             return []

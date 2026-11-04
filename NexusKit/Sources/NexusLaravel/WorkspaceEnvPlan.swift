@@ -68,12 +68,28 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
     public var databases: [WorkspaceDatabase] = []
     public var sqliteFiles: [WorkspaceFile] = []
     public var reverbPortKeys: [String] = []
+    // A Node.js app can name its server in a URL, for example DATABASE_URL (D67). Each of these keys
+    // gets the URL of its file with the host and the port of the server of the workspace. urlPorts
+    // holds the ports of the instances in these URLs. A Redis key with a URL is in redisKeys too,
+    // and it gets the URL with the index of the workspace.
+    public var serverURLKeys: Set<String> = []
+    public var urlPorts: Set<Int> = []
+    public var redisURLKeys: Set<String> = []
+    // What a workspace of a Node.js app shares with the main site, without a Not isolated state.
+    public var warnings: [String] = []
 
     public var isolatingKeys: Set<String> {
-        Set(keys.keys).union(redisKeys).union(serverPortKeys.values.joined())
+        Set(keys.keys).union(redisKeys).union(serverPortKeys.values.joined()).union(serverURLKeys)
     }
 
-    private static let localHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+    // The ports of the instances that the workspace gets a server for.
+    public var serverPorts: [Int] {
+        Set(serverPortKeys.keys).union(urlPorts).sorted()
+    }
+
+    static let localHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+
+    init() {}
 
     // PHP and the MySQL client use a socket for localhost, and a socket ignores the port. The server
     // of a workspace listens only on this address.

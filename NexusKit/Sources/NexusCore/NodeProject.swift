@@ -138,12 +138,21 @@ public struct NodeProject: Sendable, Equatable {
     public let packageManager: PackageManager
     // The text of the script, for example "vite --port 3000".
     public let scriptText: String?
+    // A dependency that connects to MySQL, PostgreSQL or Redis.
+    public let usesDatabaseClient: Bool
 
-    public init(script: String?, framework: NodeFramework?, packageManager: PackageManager, scriptText: String? = nil) {
+    // The clients and the ORMs that connect to a server on this Mac.
+    static let databaseClients: Set<String> = [
+        "pg", "postgres", "mysql", "mysql2", "mariadb", "@prisma/client", "drizzle-orm", "knex",
+        "sequelize", "typeorm", "kysely", "@mikro-orm/core", "ioredis", "redis", "bullmq",
+    ]
+
+    public init(script: String?, framework: NodeFramework?, packageManager: PackageManager, scriptText: String? = nil, usesDatabaseClient: Bool = false) {
         self.script = script
         self.framework = framework
         self.packageManager = packageManager
         self.scriptText = scriptText
+        self.usesDatabaseClient = usesDatabaseClient
     }
 
     public var command: String? {
@@ -175,7 +184,8 @@ public struct NodeProject: Sendable, Equatable {
             script: script,
             framework: NodeFramework.allCases.first { dependencies[$0.dependency] != nil },
             packageManager: packageManager(of: folder, named: package["packageManager"] as? String),
-            scriptText: script.flatMap { scripts[$0] as? String }
+            scriptText: script.flatMap { scripts[$0] as? String },
+            usesDatabaseClient: !databaseClients.isDisjoint(with: dependencies.keys)
         )
     }
 
