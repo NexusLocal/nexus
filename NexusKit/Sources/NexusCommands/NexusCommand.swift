@@ -6,6 +6,8 @@ import NexusRuntime
 import NexusSupervisor
 
 public enum NexusCLI {
+    // A link such as php or node runs its tool first, so node sendmail runs sendmail.js and not
+    // nexus sendmail.
     public static func main() async {
         if let invocation = toolInvocation(CommandLine.arguments) {
             do {
@@ -13,6 +15,10 @@ public enum NexusCLI {
             } catch {
                 NexusCommand.exit(withError: error)
             }
+        }
+
+        if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "sendmail" {
+            exit(SendmailRun.run(Array(CommandLine.arguments.dropFirst(2))))
         }
 
         await NexusCommand.main()
@@ -75,7 +81,7 @@ struct NexusCommand: AsyncParsableCommand {
             Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Installed.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
             SiteCommand.self, WorkspaceCommand.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
-            Database.self, PHP.self, Composer.self, Node.self, NPM.self,
+            Database.self, PHP.self, Composer.self, Node.self, NPM.self, MailCommand.self, Sendmail.self,
         ]
     )
 }
@@ -632,9 +638,64 @@ struct SiteCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "site",
         abstract: "Adds, lists, changes and removes sites.",
-        subcommands: [List.self, Add.self, Edit.self, Remove.self, Defaults.self, Probe.self],
+        subcommands: [List.self, Add.self, Edit.self, Remove.self, Defaults.self, Probe.self, Mail.self],
         defaultSubcommand: List.self
     )
+
+    // Where the main checkout sends its mail (Phase 3, 3c). Nexus changes its .env only with
+    // --send-to-nexus or --restore (D44).
+    struct Mail: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Shows where a site sends its mail. --send-to-nexus sends the mail of a Laravel site to the mail service of Nexus. --restore puts the old mail settings back.")
+
+        @Argument(help: "The host of the site, for example shop.test.") var host: String
+        @Flag(help: "Changes the mail keys in the .env of the main checkout. The old values stay there as comment lines.") var sendToNexus = false
+        @Flag(help: "Puts back the old mail settings from the comment lines of Nexus in the .env.") var restore = false
+
+        func validate() throws {
+            if sendToNexus, restore {
+                throw ValidationError("Use --send-to-nexus or --restore, not both.")
+            }
+        }
+
+        func run() async throws {
+            if sendToNexus {
+                try finish(try await send(.sendMailToNexus(host: host)))
+                return
+            }
+
+            if restore {
+                try finish(try await send(.restoreMailSettings(host: host)))
+                return
+            }
+
+            let response = try await send(.siteMail(host: host))
+
+            guard case .siteMail(let mail) = response else {
+                try finish(response)
+                return
+            }
+
+            if let problem = mail.problem {
+                FileHandle.standardError.write(Data("Nexus cannot read the mail settings of \(host). \(problem)\n".utf8))
+                throw ExitCode.failure
+            }
+
+            print(mail.sendsToNexus ? "\(host) sends its mail to the mail service of Nexus." : mail.warning ?? "\(host) does not send its mail to the mail service of Nexus.")
+
+            if mail.canSendToNexus {
+                print("Send it to Nexus with: nexus site mail \(host) --send-to-nexus")
+                print("This changes these keys in the .env. The old values stay there as comment lines.")
+
+                for change in mail.changes {
+                    print("    \(change.key)=\(change.value)\(change.isNew ? "    (a new line)" : "")")
+                }
+            }
+
+            if mail.canRestore {
+                print("Put the old mail settings back with: nexus site mail \(host) --restore")
+            }
+        }
+    }
 
     struct Probe: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Shows which env key feeds each database, Redis, session, cache, queue and broadcast setting of a Laravel application. The probe only reads.")
@@ -1138,7 +1199,7 @@ private func absolutePath(_ path: String) -> String {
         .path(percentEncoded: false)
 }
 
-private func send(_ request: NexusRequest) async throws -> NexusResponse {
+func send(_ request: NexusRequest) async throws -> NexusResponse {
     do {
         return try await NexusClient().send(request)
     } catch {
@@ -1147,7 +1208,7 @@ private func send(_ request: NexusRequest) async throws -> NexusResponse {
     }
 }
 
-private func finish(_ response: NexusResponse) throws {
+func finish(_ response: NexusResponse) throws {
     switch response {
     case .done(let message):
         print(message)

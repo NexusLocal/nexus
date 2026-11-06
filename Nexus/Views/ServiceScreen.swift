@@ -239,7 +239,7 @@ private struct ServiceForm: View {
                 PHPSections(service: service)
             case .mysql, .mariadb, .postgresql:
                 DatabaseSections(service: $service)
-            case .redis, .dns:
+            case .redis, .mail, .dns:
                 EmptyView()
             }
 
@@ -251,7 +251,8 @@ private struct ServiceForm: View {
     }
 }
 
-private struct StateSection: View {
+// The Mail screen shows this section too, with the SMTP port and the inbox port.
+struct StateSection: View {
     @Environment(AppModel.self) private var model
     @Binding var service: ServiceVersion
 
@@ -323,6 +324,14 @@ private struct StateSection: View {
                 }
             }
 
+            if service.kind == .mail {
+                ForEach(service.ports) { port in
+                    PortRow(title: "\(port.name) port", port: port.number) {
+                        model.changePort(port, of: service, to: $0)
+                    }
+                }
+            }
+
             if let dataFolder = service.dataFolder {
                 LabeledContent("Data folder") {
                     HStack {
@@ -335,7 +344,7 @@ private struct StateSection: View {
                 }
             }
         } header: {
-            Text(service.name)
+            Text(service.kind == .mail ? "Mail service" : service.name)
         } footer: {
             if let problem = service.problem {
                 Text(problem.detail)
@@ -345,6 +354,8 @@ private struct StateSection: View {
                     .foregroundStyle(Color.orangeText)
             } else if let note = service.note {
                 Text(note)
+            } else if service.kind == .mail {
+                Text("Each site sends its mail here. No mail leaves the Mac. mail() of PHP goes through nexus sendmail. An app with SMTP uses 127.0.0.1 and the SMTP port.")
             }
         }
     }

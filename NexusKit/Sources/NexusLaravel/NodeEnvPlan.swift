@@ -49,6 +49,12 @@ extension WorkspaceEnvPlan {
         }
 
         redisKeys.sort()
+
+        if let port = request.smtpPort {
+            let mail = NodeMail.nexusKeys(merged, user: Self.hostPlaceholder, nexusPort: port)
+            mailKeys = mail.keys
+            warnings += mail.warnings
+        }
     }
 
     private static func databaseURLFirst(_ first: String, _ second: String) -> Bool {

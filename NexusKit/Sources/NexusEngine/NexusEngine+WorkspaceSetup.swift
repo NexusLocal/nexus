@@ -504,9 +504,11 @@ extension NexusEngine {
         let pairs = Workspace.hostPairs(of: sites, workspace: workspace.name, tld: state.tld)
         let hosts = (pairs + Workspace.pairsFromOtherTLDs(pairs, tld: state.tld)).map { HostRewrite(from: $0.from, to: $0.to) }
         let serverKeys = servers.flatMap { server in (plan.serverPortKeys[server.mainPort] ?? []).map { ($0, String(server.port)) } }
+        let mail = plan.mailKeys.mapValues { $0.replacing(WorkspaceEnvPlan.hostPlaceholder, with: host) }
         let isolating = plan.keys
             .merging(serverKeys) { _, port in port }
             .merging(workspace.redisIndexes.mapValues(String.init)) { _, redis in redis }
+            .merging(mail) { database, _ in database }
         let reverb = workspace.ports["reverb"].map { port in Dictionary(uniqueKeysWithValues: plan.reverbPortKeys.map { ($0, String(port)) }) } ?? [:]
         let keys = isolating.merging(reverb) { isolating, _ in isolating }.merging(own) { _, own in own }
 
@@ -538,7 +540,8 @@ extension NexusEngine {
             site: site,
             isolatingKeys: plan.isolatingKeys,
             mainFolder: mainFolder,
-            repositoryHoldsApplication: ProjectFolder.repository(of: site).map { RealPath.contains($0.root, mainFolder) } ?? false
+            repositoryHoldsApplication: ProjectFolder.repository(of: site).map { RealPath.contains($0.root, mainFolder) } ?? false,
+            warnings: plan.warnings
         )
     }
 
@@ -582,7 +585,7 @@ extension NexusEngine {
         }
 
         guard let text = try? String(contentsOfFile: file, encoding: .utf8) else {
-            throw RuntimeError.unsupported("Nexus cannot read \(file) as UTF-8 text, so it does not write the .env of this workspace.")
+            throw RuntimeError.unsupported("Nexus cannot read \(file) as UTF-8 text. So Nexus does not use its lines and does not change it.")
         }
 
         return text
@@ -634,7 +637,8 @@ extension NexusEngine {
             mysqlPorts: Set(instances.filter(\.kind.usesMySQLProtocol).map(\.port)).union(mysqlServers),
             postgresqlPorts: Set(instances.filter { !$0.kind.usesMySQLProtocol }.map(\.port)).union(postgresqlServers),
             redisPorts: redisPorts,
-            realMainFolder: realMainFolder
+            realMainFolder: realMainFolder,
+            smtpPort: try await smtpPort(in: await stateStore.current())
         )
     }
 
@@ -748,6 +752,7 @@ extension NexusEngine {
             .map { WorkspaceEnvKey(key: $0.key, value: $0.value) }
         let fromNexus = changes
             + plan.keys.sorted { $0.key < $1.key }.map { WorkspaceEnvKey(key: $0.key, value: $0.value) }
+            + plan.mailKeys.sorted { $0.key < $1.key }.map { WorkspaceEnvKey(key: $0.key, value: $0.value) }
             + plan.serverPortKeys.values.joined().sorted().map { WorkspaceEnvKey(key: $0, value: "the port of the database server of the workspace") }
             + plan.redisKeys.map { WorkspaceEnvKey(key: $0, value: "a free Redis index") }
             + reverbKeys.map { WorkspaceEnvKey(key: $0, value: "{port:reverb}") }

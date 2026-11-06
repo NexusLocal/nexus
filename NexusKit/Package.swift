@@ -15,6 +15,7 @@ let package = Package(
         .library(name: "NexusEngine", targets: ["NexusEngine"]),
         .library(name: "NexusCommands", targets: ["NexusCommands"]),
         .library(name: "NexusDNS", targets: ["NexusDNS"]),
+        .library(name: "NexusMail", targets: ["NexusMail"]),
         .library(name: "NexusTLS", targets: ["NexusTLS"]),
     ],
     dependencies: [
@@ -26,6 +27,7 @@ let package = Package(
     targets: [
         .target(name: "NexusCore"),
         .target(name: "NexusDNS", dependencies: ["NexusCore"]),
+        .target(name: "NexusMail"),
         .target(name: "NexusConfig", dependencies: ["NexusCore"]),
         .target(name: "NexusTLS", dependencies: [
             "NexusCore",
@@ -35,20 +37,22 @@ let package = Package(
         ]),
         .target(name: "NexusRuntime", dependencies: ["NexusCore", "NexusSupervisor"]),
         .target(name: "NexusSupervisor", dependencies: ["NexusCore"]),
-        .target(name: "NexusIPC", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor"]),
+        .target(name: "NexusIPC", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusMail"]),
         .target(name: "NexusLaravel", dependencies: ["NexusCore", "NexusSupervisor"]),
         .target(name: "NexusWorkspaces", dependencies: ["NexusCore", "NexusSupervisor"]),
-        .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig", "NexusLaravel", "NexusWorkspaces"]),
+        .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig", "NexusLaravel", "NexusWorkspaces", "NexusMail"]),
         .target(name: "NexusCommands", dependencies: [
             "NexusCore",
             "NexusIPC",
+            "NexusMail",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]),
         .testTarget(name: "NexusCoreTests", dependencies: ["NexusCore"]),
         .testTarget(name: "NexusRuntimeTests", dependencies: ["NexusRuntime"]),
         .testTarget(name: "NexusSupervisorTests", dependencies: ["NexusSupervisor"]),
-        .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusTestSupport"]),
+        .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusMail", "NexusTestSupport"]),
         .testTarget(name: "NexusDNSTests", dependencies: ["NexusDNS", "NexusTestSupport"]),
+        .testTarget(name: "NexusMailTests", dependencies: ["NexusMail"]),
         .testTarget(name: "NexusConfigTests", dependencies: ["NexusConfig"]),
         .testTarget(name: "NexusLaravelTests", dependencies: ["NexusLaravel", "NexusCore"]),
         .testTarget(name: "NexusWorkspacesTests", dependencies: ["NexusWorkspaces", "NexusCore", "NexusSupervisor"]),
@@ -56,6 +60,7 @@ let package = Package(
         .testTarget(name: "NexusCommandsTests", dependencies: [
             "NexusCommands",
             "NexusCore",
+            "NexusMail",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]),
         .testTarget(name: "NexusTLSTests", dependencies: [

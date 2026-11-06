@@ -34,8 +34,10 @@ public struct WorkspaceEnvRequest: Sendable {
     // The check of a worktree sends that worktree as mainFolder, and this field then names the main
     // checkout. A file in the main checkout is not the file of the workspace.
     public let realMainFolder: String?
+    // The SMTP port of the receiver of nexusd. A workspace always sends its mail there (Phase 3, 3c).
+    public let smtpPort: Int?
 
-    public init(workspace: String, mainFolder: String, workspaceFolder: String, mysqlPorts: Set<Int>, postgresqlPorts: Set<Int>, redisPorts: Set<Int>, realMainFolder: String? = nil) {
+    public init(workspace: String, mainFolder: String, workspaceFolder: String, mysqlPorts: Set<Int>, postgresqlPorts: Set<Int>, redisPorts: Set<Int>, realMainFolder: String? = nil, smtpPort: Int? = nil) {
         self.workspace = workspace
         self.mainFolder = mainFolder
         self.workspaceFolder = workspaceFolder
@@ -43,6 +45,7 @@ public struct WorkspaceEnvRequest: Sendable {
         self.postgresqlPorts = postgresqlPorts
         self.redisPorts = redisPorts
         self.realMainFolder = realMainFolder
+        self.smtpPort = smtpPort
     }
 }
 
@@ -75,12 +78,36 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
     public var serverURLKeys: Set<String> = []
     public var urlPorts: Set<Int> = []
     public var redisURLKeys: Set<String> = []
-    // What a workspace of a Node.js app shares with the main site, without a Not isolated state.
+    // What a workspace shares with the main site without a Not isolated state. A Node.js app gets
+    // these for its servers. A Laravel app gets one for mail that cannot reach Nexus.
     public var warnings: [String] = []
+    // The keys that send the mail of the workspace to the receiver of nexusd. A value can hold
+    // {host}, the host of the workspace, which becomes the tag of each mail.
+    public var mailKeys: [String: String] = [:]
 
     public var isolatingKeys: Set<String> {
-        Set(keys.keys).union(redisKeys).union(serverPortKeys.values.joined()).union(serverURLKeys)
+        Set(keys.keys).union(redisKeys).union(serverPortKeys.values.joined()).union(serverURLKeys).union(mailKeys.keys)
     }
+
+    public static let hostPlaceholder = "{host}"
+
+    // A mail of a workspace that does not reach Nexus can reach a real customer. The workspace
+    // still runs with its queue worker, because the app needs the queue (owner, 2026-11-06). So
+    // it gets a warning and is not Not isolated.
+    mutating func addMail(_ configuration: LaravelConfiguration, request: WorkspaceEnvRequest) {
+        guard let port = request.smtpPort else {
+            return
+        }
+
+        let mail = LaravelMail.nexusKeys(configuration, user: Self.hostPlaceholder, nexusPort: port)
+        mailKeys = mail.keys
+
+        if !mail.problems.isEmpty {
+            warnings.append((mail.problems + [Self.realMailWarning]).joined(separator: " "))
+        }
+    }
+
+    static let realMailWarning = "A mail of this workspace can then reach a real person."
 
     // The ports of the instances that the workspace gets a server for.
     public var serverPorts: [Int] {
@@ -120,6 +147,7 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
 
         redisKeys.sort()
         reverbPortKeys = Self.reverbPortKeys(configuration)
+        addMail(configuration, request: request)
     }
 
     // The server listens on one key, and the application and the browser connect with another key.

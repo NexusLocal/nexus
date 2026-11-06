@@ -259,6 +259,8 @@ struct MainWindow: View {
             } else {
                 OverviewScreen()
             }
+        case .service(.mail):
+            MailScreen()
         case .service(let kind):
             ServiceScreen(kind: kind)
                 .id(kind)

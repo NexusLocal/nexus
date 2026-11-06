@@ -153,6 +153,7 @@ struct SiteScreen: View {
             }
 
             if kind != .proxy {
+                SiteMailSection(site: site)
                 workspacesSection
             }
 

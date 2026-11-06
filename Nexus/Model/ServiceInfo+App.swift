@@ -12,6 +12,7 @@ extension ServiceKind {
         case "mariadb": self = .mariadb
         case "postgresql": self = .postgresql
         case "redis": self = .redis
+        case "mailpit": self = .mail
         case "dns": self = .dns
         default: return nil
         }
@@ -22,7 +23,7 @@ extension ServiceKind {
         case .mysql: .mysql
         case .mariadb: .mariadb
         case .postgresql: .postgresql
-        case .webservers, .php, .redis, .dns: nil
+        case .webservers, .php, .redis, .mail, .dns: nil
         }
     }
 }
@@ -38,7 +39,8 @@ extension PortHolder {
             path: conflict.owner?.executable ?? "",
             suggestedPort: conflict.suggestedPort,
             managerApp: conflict.owner?.managerBundleIdentifier,
-            canStop: conflict.owner?.canStop ?? false
+            canStop: conflict.owner?.canStop ?? false,
+            portKey: conflict.portKey
         )
     }
 
@@ -78,6 +80,7 @@ extension ServiceVersion {
         let name = switch info.name {
         case "nginx": "nginx \(info.line)"
         case "httpd": "Apache \(info.line)"
+        case "mailpit": "Mailpit"
         case "dns": "DNS"
         default: "\(kind.title) \(info.line)"
         }
@@ -157,6 +160,7 @@ extension ServiceVersion {
         let names: [(name: String, key: String)] = switch info.name {
         case "nginx": [("HTTP", "http"), ("HTTPS", "https")]
         case "httpd": [("Internal", "apache")]
+        case "mailpit": [("SMTP", "smtp"), ("Inbox", "inbox")]
         default: [("Port", info.id)]
         }
 

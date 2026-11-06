@@ -409,23 +409,27 @@ public struct DatabaseSize: Codable, Sendable, Equatable {
 }
 
 // A start that failed because another program listens on the port of the service (D31). The
-// owner is nil when the program belongs to another user, because lsof cannot see it then.
+// owner is nil when the program belongs to another user, because lsof cannot see it then. A
+// service with more ports, such as nginx or the mail service, names the port with portKey. An
+// older nexusd sends no portKey.
 public struct PortConflict: Error, Codable, Sendable, Equatable, CustomStringConvertible {
     public let service: String
     public let port: Int
     public let owner: PortOwner?
     public let suggestedPort: Int
+    public let portKey: String?
 
-    public init(service: String, port: Int, owner: PortOwner?, suggestedPort: Int) {
+    public init(service: String, port: Int, owner: PortOwner?, suggestedPort: Int, portKey: String? = nil) {
         self.service = service
         self.port = port
         self.owner = owner
         self.suggestedPort = suggestedPort
+        self.portKey = portKey
     }
 
     public var description: String {
         let holder = owner.map { "\($0.description)" } ?? "a process that Nexus cannot see, probably one of another user"
-        return "Port \(port) is in use by \(holder). Stop that app, or give \(service) another port, for example: nexus port \(service) \(suggestedPort)"
+        return "Port \(port) is in use by \(holder). Stop that app, or give \(service) another port, for example: nexus port \(portKey ?? service) \(suggestedPort)"
     }
 }
 
@@ -715,6 +719,102 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case emptyTrash
     // file is a path, or a name in the Nexus trash.
     case restoreDump(file: String, instance: String, name: String)
+    // The mail service (Phase 3): its ports, the outbox and the settings.
+    case mailStatus
+    case clearOutbox
+    case setMailSettings(MailSettings)
+    // The user saw the number of mails that the limits removed. The count starts again at 0.
+    case acknowledgeRemovedMails
+    // Where the main checkout of a site sends its mail, "Send mail to Nexus" for a Laravel site
+    // and the way back (Phase 3, 3c). Nexus changes the .env of a main checkout only after a
+    // click (D44).
+    case siteMail(host: String)
+    case sendMailToNexus(host: String)
+    case restoreMailSettings(host: String)
+}
+
+// Where a site sends its mail, for the Site screen. warning names a provider that can reach a real
+// person, or TLS that the mail service does not offer. canSendToNexus shows "Send mail to Nexus…"
+// and changes holds the keys that it writes. canRestore shows "Use the old mail settings…",
+// because the .env has the comment lines of Nexus. problem holds the reason when the probe of the
+// site failed.
+public struct SiteMail: Codable, Sendable, Equatable {
+    public let sendsToNexus: Bool
+    public let warning: String?
+    public let canSendToNexus: Bool
+    public let problem: String?
+    // The server or the provider that gets the mail when it is not the inbox of Nexus, for
+    // example smtp.postmarkapp.com or the sendmail of macOS.
+    public let destination: String?
+    public let changes: [EnvKeyChange]
+    public let canRestore: Bool
+
+    public init(sendsToNexus: Bool, warning: String? = nil, canSendToNexus: Bool = false, problem: String? = nil, destination: String? = nil, changes: [EnvKeyChange] = [], canRestore: Bool = false) {
+        self.sendsToNexus = sendsToNexus
+        self.warning = warning
+        self.canSendToNexus = canSendToNexus
+        self.problem = problem
+        self.destination = destination
+        self.changes = changes
+        self.canRestore = canRestore
+    }
+
+    // A nexusd of an older build sends no changes and no canRestore until it restarts.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sendsToNexus = try container.decode(Bool.self, forKey: .sendsToNexus)
+        warning = try container.decodeIfPresent(String.self, forKey: .warning)
+        canSendToNexus = try container.decode(Bool.self, forKey: .canSendToNexus)
+        problem = try container.decodeIfPresent(String.self, forKey: .problem)
+        destination = try container.decodeIfPresent(String.self, forKey: .destination)
+        changes = try container.decodeIfPresent([EnvKeyChange].self, forKey: .changes) ?? []
+        canRestore = try container.decodeIfPresent(Bool.self, forKey: .canRestore) ?? false
+    }
+}
+
+// A key that "Send mail to Nexus" writes into a .env, with its new value. isNew means that the
+// .env has no line for this key yet.
+public struct EnvKeyChange: Codable, Sendable, Hashable {
+    public let key: String
+    public let value: String
+    public let isNew: Bool
+
+    public init(key: String, value: String, isNew: Bool) {
+        self.key = key
+        self.value = value
+        self.isNew = isNew
+    }
+}
+
+// What the Mail screen and nexus mail show. The inbox port is nil while the mail package is not
+// installed. waiting counts the mails in the outbox, removed the mails that its limits removed
+// since the last clear, and refused the mails that Mailpit refused for good.
+public struct MailStatus: Codable, Sendable, Equatable {
+    public let installed: Bool
+    public let running: Bool
+    public let receiving: Bool
+    public let smtpPort: Int?
+    public let inboxPort: Int?
+    public let waiting: Int
+    public let waitingBytes: Int
+    public let removed: Int
+    public let refused: Int
+    public let outboxFolder: String
+    public let settings: MailSettings
+
+    public init(installed: Bool, running: Bool, receiving: Bool, smtpPort: Int?, inboxPort: Int?, waiting: Int, waitingBytes: Int, removed: Int, refused: Int, outboxFolder: String, settings: MailSettings) {
+        self.installed = installed
+        self.running = running
+        self.receiving = receiving
+        self.smtpPort = smtpPort
+        self.inboxPort = inboxPort
+        self.waiting = waiting
+        self.waitingBytes = waitingBytes
+        self.removed = removed
+        self.refused = refused
+        self.outboxFolder = outboxFolder
+        self.settings = settings
+    }
 }
 
 public enum NexusResponse: Codable, Sendable, Equatable {
@@ -741,6 +841,8 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case workspaceSettings(WorkspaceSettings)
     case dumps([DatabaseDump])
     case backgroundPreset([String])
+    case mailStatus(MailStatus)
+    case siteMail(SiteMail)
 }
 
 public enum NexusMessageCoding {

@@ -3,6 +3,11 @@ import Foundation
 // Reads the keys of a .env file. A value can have quotes, and a value without quotes ends at a #
 // with a space before it. A line can start with export. ${...} stays as text.
 public enum EnvFile {
+    // The comment lines that "Send mail to Nexus" writes above a key. The first one holds the old
+    // line of a key that Nexus changed. The second one names a key that Nexus added.
+    public static let beforeNexus = "# Before Nexus: "
+    public static let addedByNexus = "# Added by Nexus: "
+
     public static func values(of file: URL) -> [String: String] {
         guard let text = try? String(contentsOf: file, encoding: .utf8) else {
             return [:]

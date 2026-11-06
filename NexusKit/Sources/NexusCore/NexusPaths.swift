@@ -19,9 +19,16 @@ public struct NexusPaths: Sendable, Equatable {
     public var certs: URL { folder("certs") }
     public var trash: URL { folder("trash") }
     public var bin: URL { folder("bin") }
+    public var mail: URL { folder("mail") }
 
     public var allFolders: [URL] {
-        [runtimes, config, data, run, logs, certs, trash, bin]
+        [runtimes, config, data, run, logs, certs, trash, bin, mail]
+    }
+
+    // The mails that wait while the inbox does not run (Phase 3, 3b). nexus sendmail writes here
+    // too when nexusd does not run.
+    public var mailOutbox: URL {
+        mail.appending(path: "outbox", directoryHint: .isDirectory)
     }
 
     public func runtime(_ name: String, line: String) -> URL {

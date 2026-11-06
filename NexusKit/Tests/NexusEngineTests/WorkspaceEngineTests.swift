@@ -4364,7 +4364,7 @@ extension NexusEngineTests {
         try await settle(engine)
 
         #expect(try Data(contentsOf: worktree.appending(path: ".env")) == unreadable)
-        #expect(await workspaces(engine).map(\.state) == [.notIsolated("Nexus cannot read \(RealPath.of(worktree))/.env as UTF-8 text, so it does not write the .env of this workspace.")])
+        #expect(await workspaces(engine).map(\.state) == [.notIsolated("Nexus cannot read \(RealPath.of(worktree))/.env as UTF-8 text. So Nexus does not use its lines and does not change it.")])
         await engine.shutdown()
     }
 

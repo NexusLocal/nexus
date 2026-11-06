@@ -71,11 +71,29 @@ public enum PHPConfig {
         return messages
     }
 
-    public static func nexusIni(extensionDirectory: URL, extensions: [String]) throws -> String {
-        var lines = [
-            "; Nexus writes this file for the extension toggles. Change the php.ini in the folder above.",
-            "extension_dir = \(try ConfigText.quoted(extensionDirectory))",
+    // mail() of PHP gives each mail to the mail service of Nexus, never to the sendmail of macOS
+    // (Phase 3, 3b). PHP runs sendmail_path with /bin/sh, so the path of the command is in single
+    // quotes for the space in Application Support. Symfony Mailer with native://default refuses a
+    // sendmail_path without -t, so the flags of the old default stay. The X header names the
+    // script that sent the mail.
+    public static func mailLines(command: URL, smtpPort: Int) throws -> [String] {
+        let path = command.path(percentEncoded: false)
+
+        guard path.rangeOfCharacter(from: CharacterSet(charactersIn: "'\"\\$").union(.controlCharacters).union(.newlines)) == nil else {
+            throw ConfigError.unsafePath(path)
+        }
+
+        return [
+            "sendmail_path = \"'\(path)' sendmail -S 127.0.0.1:\(smtpPort) -t -i\"",
+            "mail.add_x_header = On",
         ]
+    }
+
+    public static func nexusIni(extensionDirectory: URL, extensions: [String], mailLines: [String] = []) throws -> String {
+        var lines = [
+            "; Nexus writes this file for the extension toggles and the mail service. Change the php.ini in the folder above.",
+            "extension_dir = \(try ConfigText.quoted(extensionDirectory))",
+        ] + mailLines
 
         for name in extensions {
             lines.append(zendExtensions.contains(name) ? "zend_extension = \(name)" : "extension = \(name)")

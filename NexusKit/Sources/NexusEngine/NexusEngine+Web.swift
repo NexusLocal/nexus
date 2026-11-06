@@ -345,7 +345,9 @@ extension NexusEngine {
         let fpm = try PHPConfig.fpmConfig(socket: paths.phpSocket(line: line), pidFile: paths.run.appending(path: "php-\(line).pid"))
         let enabled = state.phpExtensions[line] ?? PHPConfig.defaultExtensions
         let (directory, available) = Self.phpExtensions(of: runtime)
-        let nexusIni = try PHPConfig.nexusIni(extensionDirectory: directory, extensions: PHPConfig.extensionsToLoad(enabled: enabled, available: available))
+        let smtpPort = try await smtpPort(in: state)
+        let mailLines = try PHPConfig.mailLines(command: paths.bin.appending(path: "nexus"), smtpPort: smtpPort)
+        let nexusIni = try PHPConfig.nexusIni(extensionDirectory: directory, extensions: PHPConfig.extensionsToLoad(enabled: enabled, available: available), mailLines: mailLines)
 
         let customIni = PHPConfig.customIni(lines: state.phpCustomSettings[line] ?? [])
 

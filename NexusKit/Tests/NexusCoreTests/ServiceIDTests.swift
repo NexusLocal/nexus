@@ -10,6 +10,7 @@ struct ServiceIDTests {
         ("mysql", "8.4", "mysql-8.4"),
         ("mariadb", "11.4", "mariadb-11.4"),
         ("postgresql", "17", "postgresql-17"),
+        ("mailpit", "1", "mail"),
     ])
     func aPackageWithAServiceGetsItsID(package: String, line: String, id: String) {
         #expect(ServiceID.of(package: package, line: line) == id)

@@ -56,7 +56,7 @@ struct OverviewScreen: View {
                         VStack(spacing: 16) {
                             ServiceGroup(title: "Webservers", services: model.versions(of: .webservers))
                             ServiceGroup(title: "PHP", services: model.versions(of: .php))
-                            ServiceGroup(title: "Redis and DNS", services: model.versions(of: .redis) + model.versions(of: .dns))
+                            ServiceGroup(title: "Redis, Mail and DNS", services: model.versions(of: .redis) + model.versions(of: .mail) + model.versions(of: .dns))
                         }
                         .frame(maxWidth: .infinity)
 

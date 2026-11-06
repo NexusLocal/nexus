@@ -3,6 +3,7 @@ import Foundation
 import NexusCore
 import NexusDNS
 import NexusIPC
+import NexusMail
 import NexusRuntime
 import NexusSupervisor
 import NexusTLS
@@ -65,7 +66,7 @@ public actor NexusEngine {
     private var publishing = false
     private var publishAgain = false
     private var observesSupervisor = false
-    private let activity: ActivityLog?
+    let activity: ActivityLog?
     private var loggedStates: [String: String] = [:]
     private let build = NexusVersion.build()
     // The last start of each service that failed on a port in use (D31).
@@ -154,6 +155,16 @@ public actor NexusEngine {
     var stoppingForUpdate = false
     private var publishedTasks: TaskList?
     private var tasksTicker: Task<Void, Never>?
+    // The SMTP receiver of nexusd and the port conflict of its last start, the route of each mail
+    // to Mailpit or to the outbox, and the process of Mailpit that got the waiting mails last.
+    var mailReceiver: SMTPReceiver?
+    var mailReceiverConflict: PortConflict?
+    let mailRouter: MailRouter
+    var mailpitWithWaitingMails: Int32?
+    // A mail can reach the outbox while Mailpit runs, for example from a queue worker that still
+    // has an old port. So nexusd tries the outbox again while Mailpit runs.
+    var mailRetry: Task<Void, Never>?
+    var mailRetryInterval: Duration = .seconds(15)
 
     public init(
         paths: NexusPaths,
@@ -174,6 +185,7 @@ public actor NexusEngine {
         self.processSupervisor = processSupervisor
         self.installer = RuntimeInstaller(paths: paths, downloader: downloader)
         self.catalog = ServiceCatalog(paths: paths)
+        self.mailRouter = MailRouter(outbox: MailOutbox(folder: paths.mailOutbox))
         self.stateStore = EngineStateStore(paths: paths)
         self.manifestSource = manifestSource
         self.helper = helper
@@ -316,6 +328,21 @@ public actor NexusEngine {
             case .restoreDump(let file, let instance, let name):
                 // A restore can take minutes, so it does not wait in the queue of the changes.
                 return .done(message: try await restoreDump(file, instance: instance, name: name))
+            case .mailStatus:
+                return .mailStatus(try await mailStatus())
+            case .clearOutbox:
+                return .done(message: clearOutbox())
+            case .setMailSettings(let settings):
+                return .done(message: try await serialWeb { try await self.setMailSettings(settings) })
+            case .acknowledgeRemovedMails:
+                mailRouter.outbox.resetRemovedCount()
+                return .done(message: "The count of the removed mails starts again at 0.")
+            case .siteMail(let host):
+                return .siteMail(await siteMail(host: host))
+            case .sendMailToNexus(let host):
+                return .done(message: try await sendMailToNexus(host: host))
+            case .restoreMailSettings(let host):
+                return .done(message: try await restoreMailSettings(host: host))
             }
         } catch let conflict as PortConflict {
             return .portInUse(conflict)
@@ -346,10 +373,14 @@ public actor NexusEngine {
     // ran when nexusd stopped the last time. The services that "Stop all services" stopped wait
     // for "Start stopped services" (D63).
     public func startEnabledServices() async {
+        await observeSupervisor()
         await endProcessesOfEarlierRun()
         _ = try? await startDNS()
+        applyMailSettings(await stateStore.current().mailSettings)
+        try? await startMailReceiver()
         _ = try? await serialWeb { await self.watchParkedFolders() }
         _ = try? await serialWeb { try await self.applyWeb(.automatic) }
+        await updateMailFolders()
 
         let state = await stateStore.current()
         for id in state.enabledServices.subtracting(state.stoppedByStopAll).sorted() {
@@ -368,6 +399,8 @@ public actor NexusEngine {
         await processSupervisor.stopForGood()
         await supervisor.stopAll()
         stopDNS()
+        stopMailReceiver()
+        mailRetry?.cancel()
 
         for watcher in watchers.values {
             watcher.finish()
@@ -400,7 +433,7 @@ public actor NexusEngine {
             }
 
             if let status = supervised[id], status.state.isActive {
-                all.append((runtime, status))
+                all.append((runtime, ServiceStatus(id: id, displayName: status.displayName, ports: try await shownPorts(status.ports, of: runtime), state: status.state)))
                 continue
             }
 
@@ -409,7 +442,7 @@ public actor NexusEngine {
             let ports = try await self.ports(for: runtime)
             let definition = catalog.definition(for: runtime, ports: ports)
             let state = supervised[id]?.state ?? .stopped
-            all.append((runtime, ServiceStatus(id: id, displayName: definition?.displayName ?? id, ports: definition?.ports ?? [], state: state)))
+            all.append((runtime, ServiceStatus(id: id, displayName: definition?.displayName ?? id, ports: try await shownPorts(definition?.ports ?? [], of: runtime), state: state)))
         }
 
         return all.sorted { $0.status.id < $1.status.id }
@@ -436,7 +469,7 @@ public actor NexusEngine {
         return all.contains { !$0.status.state.isActive && stopped.contains($0.status.id) }
     }
 
-    private func serviceList() async throws -> ServiceList {
+    func serviceList() async throws -> ServiceList {
         let all = try await services()
         let dnsProblem = await dnsNamesProblem()
         let state = await stateStore.current()
@@ -451,13 +484,14 @@ public actor NexusEngine {
             }
 
             let tools = ServiceCatalog.databaseKind(of: runtime).map { DatabaseTools(id: status.id, kind: $0, runtime: runtime) }
-            let ownsData = tools != nil || runtime.name == "redis"
+            let ownsData = tools != nil || runtime.name == "redis" || runtime.name == "mailpit"
             var account: DatabaseAccount?
             if let tools {
                 account = try await self.account(of: tools)
             }
 
             let details = webDetails(of: runtime, state: state, sites: sites)
+            let mail = runtime.name == "mailpit" ? mailDetails(running: status.state.isActive) : nil
             services.append(ServiceInfo(
                 id: status.id,
                 name: runtime.name,
@@ -465,7 +499,8 @@ public actor NexusEngine {
                 version: runtime.version,
                 ports: status.ports,
                 state: status.state,
-                portConflict: status.state.isActive ? nil : portConflicts[status.id],
+                problem: mail?.problem,
+                portConflict: status.state.isActive ? nil : portConflicts[status.id] ?? mail?.conflict,
                 logFile: paths.log(status.id).path(percentEncoded: false),
                 dataFolder: ownsData ? catalog.dataFolder(for: runtime).path(percentEncoded: false) : nil,
                 account: account,
@@ -532,6 +567,10 @@ public actor NexusEngine {
             _ = try await writeWebConfig()
         }
 
+        if id == ServiceCatalog.mailID {
+            try await startMailReceiver()
+        }
+
         if id.hasPrefix("php-") {
             _ = try await writePHPConfig(line: String(id.dropFirst(4)), state: await stateStore.current())
         }
@@ -546,6 +585,12 @@ public actor NexusEngine {
                 $0.enabledServices.insert(id)
             }
             $0.stoppedByStopAll.remove(id)
+        }
+
+        if id == ServiceCatalog.mailID {
+            await mailServiceChanged()
+            serviceStarted()
+            return try await mailStartMessage() ?? message
         }
 
         serviceStarted()
@@ -567,7 +612,7 @@ public actor NexusEngine {
         do {
             try await supervisor.start(definition)
         } catch SupervisorError.portInUse(let port, let owner) {
-            let conflict = PortConflict(service: id, port: port, owner: owner, suggestedPort: await suggestedPort(after: port))
+            let conflict = PortConflict(service: id, port: port, owner: owner, suggestedPort: await suggestedPort(after: port), portKey: try await portKey(of: id, port: port))
             portConflicts[id] = conflict
             throw conflict
         }
@@ -615,7 +660,17 @@ public actor NexusEngine {
             return nil
         }
 
-        return catalog.definition(for: runtime, ports: try await ports(for: runtime))
+        return catalog.definition(for: runtime, ports: try await ports(for: runtime), inboxMails: await stateStore.current().mailSettings.inboxMails)
+    }
+
+    // The name of the port for nexus port. A database has one port with the name of its service.
+    // nginx and the mail service have more.
+    private func portKey(of id: String, port: Int) async throws -> String? {
+        guard let runtime = await serviceRuntimes().first(where: { catalog.serviceID(for: $0) == id }) else {
+            return nil
+        }
+
+        return try await ports(for: runtime).first { $0.value == port }?.key
     }
 
     // The answer goes back only when the service accepts connections. So a request right after
@@ -646,6 +701,11 @@ public actor NexusEngine {
 
         portConflicts[id] = nil
         try await supervisor.stop(id)
+
+        if id == ServiceCatalog.mailID {
+            await mailServiceChanged()
+        }
+
         try await stateStore.update {
             if disable {
                 $0.enabledServices.remove(id)
@@ -661,7 +721,7 @@ public actor NexusEngine {
     }
 
     // The next port above the one in use that is free and that no other Nexus service has.
-    private func suggestedPort(after port: Int) async -> Int {
+    func suggestedPort(after port: Int) async -> Int {
         let taken = Set(await stateStore.current().ports.values)
         var candidate = port + 1
 
@@ -672,7 +732,7 @@ public actor NexusEngine {
         return candidate
     }
 
-    private func restart(_ id: String) async throws -> String {
+    func restart(_ id: String) async throws -> String {
         let running = id == Self.dnsServiceID
             ? dnsState.isActive
             : await supervisor.state(of: id)?.isActive == true
@@ -784,11 +844,15 @@ public actor NexusEngine {
             if id.hasPrefix("php-") {
                 throw RuntimeError.unsupported("PHP has no port. nginx and Apache reach it through a socket.")
             }
+            if id == ServiceCatalog.mailID {
+                throw RuntimeError.unsupported("The mail service has three ports. Run: nexus port smtp <port>, nexus port inbox <port>, or: nexus port mailpit-smtp <port>")
+            }
             throw RuntimeError.unsupported("Nexus has no port named \(id). The ports are: \(names.sorted().joined(separator: ", ")).")
         }
 
         let nginxPortKeys = [ServiceCatalog.httpPortKey, ServiceCatalog.httpsPortKey]
-        portConflicts[nginxPortKeys.contains(id) ? ServiceCatalog.nginxID : id] = nil
+        let service = nginxPortKeys.contains(id) ? ServiceCatalog.nginxID : Self.mailPortKeys.contains(id) ? ServiceCatalog.mailID : id
+        portConflicts[service] = nil
 
         if id == Self.dnsServiceID {
             return try await setDNSPort(port)
@@ -798,10 +862,14 @@ public actor NexusEngine {
             return try await setWebPort(id, port)
         }
 
+        if id == ServiceCatalog.smtpPortKey {
+            return try await setSMTPPort(port)
+        }
+
         try await stateStore.update { $0.ports[id] = port }
 
-        if await supervisor.state(of: id)?.isActive == true {
-            return "\(id) gets port \(port) at its next start. Run: nexus restart \(id)"
+        if await supervisor.state(of: service)?.isActive == true {
+            return "\(service) gets port \(port) at its next start. Run: nexus restart \(service)"
         }
 
         return "\(id) uses port \(port)."
@@ -861,7 +929,8 @@ public actor NexusEngine {
         let folder = runtime.folder.path(percentEncoded: false)
 
         guard let current else {
-            return "\(runtime.name) \(runtime.version) is installed in \(folder)"
+            let installed = "\(runtime.name) \(runtime.version) is installed in \(folder)"
+            return name == "mailpit" ? await receiveMail(after: installed) : installed
         }
 
         return "\(runtime.name) \(runtime.line) is updated from \(current.version) to \(runtime.version) in \(folder)"
@@ -978,6 +1047,11 @@ public actor NexusEngine {
 
         try await installer.remove(name: name, line: line)
 
+        if name == "mailpit", await mailRuntime() == nil {
+            stopMailReceiver()
+            mailReceiverConflict = nil
+        }
+
         let data = catalog.dataFolder(for: runtime)
         let dataPath = data.path(percentEncoded: false)
 
@@ -1003,13 +1077,7 @@ extension NexusEngine {
     // The stream starts with the current services and sites. A new watcher makes every watcher
     // get the lists again. That does no harm.
     public func events() async -> AsyncStream<NexusEvent> {
-        if !observesSupervisor {
-            observesSupervisor = true
-            await supervisor.onChange { [weak self] in
-                Task { await self?.servicesChanged() }
-            }
-        }
-
+        await observeSupervisor()
         checkForUpdate()
 
         let (stream, continuation) = AsyncStream.makeStream(of: NexusEvent.self)
@@ -1078,6 +1146,22 @@ extension NexusEngine {
         watchers[id] = nil
     }
 
+    // Each change of a service reaches the watchers. A new start of Mailpit, also one after a
+    // crash, gets the waiting mails.
+    func observeSupervisor() async {
+        guard !observesSupervisor else {
+            return
+        }
+
+        observesSupervisor = true
+        await supervisor.onChange { [weak self] in
+            Task {
+                await self?.servicesChanged()
+                await self?.mailServiceChanged()
+            }
+        }
+    }
+
     // A change during a publish makes the loop run once more. So many changes in a short time
     // give few events, and the last event always has the newest state.
     func servicesChanged() {
@@ -1099,9 +1183,11 @@ extension NexusEngine {
         Task { await workspaceSitesChanged() }
     }
 
+    // A new workspace comes here without sitesChanged. Its folder gets its host for the mail too.
     func publishSites() {
         sitesMayHaveChanged = true
         servicesChanged()
+        Task { await updateMailFolders() }
     }
 
     private func logStateChanges(in list: ServiceList) {
@@ -1155,7 +1241,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash: true
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings: true
         default: false
         }
     }
@@ -1528,6 +1614,8 @@ extension NexusEngine {
         await processSupervisor.stopForGood()
         await supervisor.stopAll()
         stopDNS()
+        stopMailReceiver()
+        mailRetry?.cancel()
 
         let unregister = unregister
         Task {

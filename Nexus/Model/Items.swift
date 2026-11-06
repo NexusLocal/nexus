@@ -16,6 +16,7 @@ enum ServiceKind: String, CaseIterable, Identifiable {
     case mariadb
     case postgresql
     case redis
+    case mail
     case dns
 
     var id: Self { self }
@@ -28,6 +29,7 @@ enum ServiceKind: String, CaseIterable, Identifiable {
         case .mariadb: "MariaDB"
         case .postgresql: "PostgreSQL"
         case .redis: "Redis"
+        case .mail: "Mail"
         case .dns: "DNS"
         }
     }
@@ -38,6 +40,7 @@ enum ServiceKind: String, CaseIterable, Identifiable {
         case .php: "chevron.left.forwardslash.chevron.right"
         case .mysql, .mariadb, .postgresql: "cylinder.split.1x2"
         case .redis: "square.3.layers.3d"
+        case .mail: "envelope"
         case .dns: "network"
         }
     }

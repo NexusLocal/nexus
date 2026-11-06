@@ -50,6 +50,7 @@ public struct EngineState: Codable, Sendable, Equatable {
     // record (D67). nginx and the app read the same port, also after a restart of nexusd. A
     // workspace keeps its port in its record.
     public var appPorts: [String: Int] = [:]
+    public var mailSettings = MailSettings()
 
     public init() {}
 
@@ -85,6 +86,7 @@ public struct EngineState: Codable, Sendable, Equatable {
         databaseRemovals = (try? container.decodeIfPresent([DatabaseRemoval].self, forKey: .databaseRemovals)) ?? defaults.databaseRemovals
         workspaceSettings = try container.decodeIfPresent(WorkspaceSettings.self, forKey: .workspaceSettings) ?? defaults.workspaceSettings
         appPorts = try container.decodeIfPresent([String: Int].self, forKey: .appPorts) ?? defaults.appPorts
+        mailSettings = try container.decodeIfPresent(MailSettings.self, forKey: .mailSettings) ?? defaults.mailSettings
     }
 }
 

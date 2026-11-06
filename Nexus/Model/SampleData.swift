@@ -1,6 +1,7 @@
 import Foundation
 import NexusCore
 import NexusIPC
+import NexusMail
 import NexusSupervisor
 
 extension AppModel {
@@ -23,7 +24,54 @@ extension AppModel {
             "max_execution_time = 120",
         ]
         model.settingsErrors["php-8.4"] = SettingsError(line: 3, message: "syntax error, unexpected '='")
+        model.mails = sampleMails
+        model.mailCount = 248
+        model.mailTags = ["blog.test", "crm.test", "fix.shop.test", "shop.test"]
+        model.mailStatus = MailStatus(installed: true, running: true, receiving: true, smtpPort: 1025, inboxPort: 8025, waiting: 0, waitingBytes: 0, removed: 0, refused: 0, outboxFolder: "~/Library/Application Support/Nexus/mail/outbox", settings: MailSettings())
+        model.openMailID = sampleMails.first?.id
+        model.openMail = sampleMail(sampleMails[0].id)
         return model
+    }
+
+    private static let sampleMails: [MailpitAPI.Summary] = [
+        ("Shop <noreply@shop.test>", "Reset your password", "Choose a new password with the link.", "shop.test", "09:41"),
+        ("Shop <noreply@shop.test>", "Your order #1042", "We send your order today.", "fix.shop.test", "09:38"),
+        ("CRM <crm@crm.test>", "New lead: Acme B.V.", "A new lead came in through the form.", "crm.test", "09:20"),
+        ("WordPress <wordpress@blog.test>", "New comment on Hello world", "A comment waits for your approval.", "blog.test", "08:55"),
+        ("Shop <noreply@shop.test>", "Welcome to Shop", "Your account is ready.", "shop.test", "08:31"),
+        ("root <www@localhost>", "Cron <www@localhost> php artisan", "No commands are ready to run.", nil, "07:00"),
+    ].enumerated().map { index, mail in
+        MailpitAPI.Summary(id: "sample-\(index)", from: mail.0, to: ["customer@example.com"], subject: mail.1, tags: mail.3.map { [$0] } ?? [], created: "2026-10-27T\(mail.4):00.000+01:00", snippet: mail.2)
+    }
+
+    static func sampleMail(_ id: String) -> MailpitAPI.Message? {
+        guard let summary = sampleMails.first(where: { $0.id == id }) else {
+            return nil
+        }
+
+        let html = """
+            <div style="font-family:-apple-system,Helvetica;background:#F4F3F7;padding:24px">
+            <div style="background:#fff;border-radius:8px;padding:24px;max-width:380px;margin:auto">
+            <p style="font-weight:700;font-size:16px">Shop</p>
+            <h2 style="font-size:18px">\(summary.subject)</h2>
+            <p style="color:#3C3C43;font-size:13px;line-height:1.5">\(summary.snippet)</p>
+            <a style="display:inline-block;background:#1F6FEB;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none">Reset password</a>
+            </div></div>
+            """
+
+        return MailpitAPI.Message(
+            id: summary.id,
+            from: summary.from,
+            to: summary.to,
+            cc: [],
+            subject: summary.subject,
+            date: summary.created,
+            tags: summary.tags,
+            text: summary.snippet,
+            html: html,
+            attachments: [],
+            headers: ["Subject": [summary.subject], "From": [summary.from], "To": summary.to]
+        )
     }
 
     private static func site(_ host: String, folder: String, server: String = "nginx", php: String = "8.4", aliases: [String] = [], group: String? = nil) -> SiteItem {
@@ -284,6 +332,16 @@ extension AppModel {
                     "4840:M 27 Oct 2026 09:02:11.301 * Server initialized",
                     "4840:M 27 Oct 2026 09:02:11.301 * Ready to accept connections tcp",
                 ]
+            ),
+            ServiceVersion(
+                id: ServiceID.mail,
+                kind: .mail,
+                name: "Mailpit",
+                version: "1.33.0",
+                health: .running,
+                since: "09:02",
+                ports: [ServicePort(name: "SMTP", number: 1025, key: ServiceID.smtpPortKey), ServicePort(name: "Inbox", number: 8025, key: ServiceID.inboxPortKey)],
+                dataFolder: "~/Library/Application Support/Nexus/data/mailpit-1"
             ),
             ServiceVersion(
                 id: "dns",

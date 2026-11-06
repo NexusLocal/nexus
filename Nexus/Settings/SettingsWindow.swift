@@ -27,6 +27,10 @@ struct SettingsWindow: View {
                 DatabasesSettings()
             }
 
+            Tab("Mail", systemImage: "envelope", value: "mail") {
+                MailSettingsTab()
+            }
+
             Tab("Network", systemImage: "network", value: "network") {
                 NetworkSettings()
             }

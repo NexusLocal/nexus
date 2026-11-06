@@ -256,10 +256,12 @@ struct FirstRunWindow: View {
 }
 
 // The rules of the Packages step (D56). Every site needs nginx and PHP. Workspaces need
-// Composer. An installed package stays picked, because the first run removes nothing.
+// Composer. The mail service is picked too, but the user can leave it out (Phase 3, 3a). An
+// installed package stays picked, because the first run removes nothing.
 struct FirstRunPackages {
     static let required = ["nginx", "php", "composer"]
-    static let columns = [["nginx", "php", "composer", "httpd"], ["mysql", "mariadb", "node"], ["postgresql", "redis"]]
+    static let preselected = required + ["mailpit"]
+    static let columns = [["nginx", "php", "composer", "httpd"], ["mysql", "mariadb", "node"], ["postgresql", "redis", "mailpit"]]
 
     let packages: [PackageItem]
     private let rowsByName: [String: [PackageItem]]
@@ -277,9 +279,9 @@ struct FirstRunPackages {
         rowsByName[name] ?? []
     }
 
-    // nginx, the newest PHP and Composer, when no version of it is installed (D56).
+    // nginx, the newest PHP, Composer and Mailpit, when no version of it is installed (D56).
     var preselection: Set<String> {
-        Set(Self.required.compactMap { name in
+        Set(Self.preselected.compactMap { name in
             let rows = rows(of: name)
             return rows.contains(where: isKept) ? nil : rows.first?.id
         })

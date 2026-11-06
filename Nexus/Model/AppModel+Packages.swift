@@ -153,6 +153,7 @@ extension AppModel {
         case "mariadb": "MariaDB"
         case "postgresql": "PostgreSQL"
         case "redis": "Redis"
+        case "mailpit": "Mail"
         case "node", "composer": "Node and Composer"
         default: "Other"
         }
@@ -164,6 +165,7 @@ extension AppModel {
         case "httpd": "Apache"
         case "composer": "Composer"
         case "node": "Node"
+        case "mailpit": "Mailpit"
         default: ServiceKind(package: name)?.title ?? name
         }
     }
@@ -222,7 +224,7 @@ extension AppModel {
             file = kind == .postgresql
                 ? paths.dataFolder(service: kind.rawValue, line: service.line).appending(path: "postgresql.conf", directoryHint: .notDirectory)
                 : paths.databaseConfig(kind, line: service.line)
-        case .redis, .dns:
+        case .redis, .mail, .dns:
             return nil
         }
 
@@ -253,7 +255,7 @@ extension AppModel {
         switch service.kind {
         case .webservers: path = service.id
         case .php, .mysql, .mariadb: path = "\(service.kind.rawValue)/\(service.line)"
-        case .postgresql, .redis, .dns: return nil
+        case .postgresql, .redis, .mail, .dns: return nil
         }
 
         let folder = NexusPaths.standard.config.appending(path: path, directoryHint: .isDirectory)

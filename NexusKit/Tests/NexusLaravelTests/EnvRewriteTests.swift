@@ -91,6 +91,104 @@ struct EnvRewriteTests {
         #expect(rewrite("A=1\nA=2\n", keys: ["A": "3"]) == "A=3\nA=3\n")
     }
 
+    @Test func aChangedKeyKeepsItsOldLineAsACommentLineAbove() {
+        let text = "APP_NAME=Shop\nMAIL_HOST=smtp.postmarkapp.com # the provider\nMAIL_PORT=587\n"
+
+        let result = EnvRewrite.applyKeepingOldValues(to: text, keys: ["MAIL_HOST": "127.0.0.1", "MAIL_PORT": "1025", "MAIL_USERNAME": "shop.test"])
+
+        #expect(result == """
+        APP_NAME=Shop
+        # Before Nexus: MAIL_HOST=smtp.postmarkapp.com # the provider
+        MAIL_HOST=127.0.0.1
+        # Before Nexus: MAIL_PORT=587
+        MAIL_PORT=1025
+        # Added by Nexus: MAIL_USERNAME
+        MAIL_USERNAME=shop.test
+
+        """)
+    }
+
+    @Test func aKeyWithTheNewValueAlreadyGetsNoCommentLine() {
+        #expect(EnvRewrite.applyKeepingOldValues(to: "MAIL_HOST=127.0.0.1\n", keys: ["MAIL_HOST": "127.0.0.1"]) == "MAIL_HOST=127.0.0.1\n")
+    }
+
+    @Test func aSecondSendKeepsTheFirstOldValue() {
+        let first = EnvRewrite.applyKeepingOldValues(to: "MAIL_PORT=587\n", keys: ["MAIL_PORT": "1025", "MAIL_USERNAME": "shop.test"])
+
+        let second = EnvRewrite.applyKeepingOldValues(to: first, keys: ["MAIL_PORT": "2025", "MAIL_USERNAME": "shop.test"])
+
+        #expect(second == "# Before Nexus: MAIL_PORT=587\nMAIL_PORT=2025\n# Added by Nexus: MAIL_USERNAME\nMAIL_USERNAME=shop.test\n")
+    }
+
+    @Test func aSecondSendKeepsTheFirstOldValueWithALineBetween() {
+        let text = "# Before Nexus: MAIL_PORT=587\n\nMAIL_PORT=1025\n"
+
+        let second = EnvRewrite.applyKeepingOldValues(to: text, keys: ["MAIL_PORT": "2025"])
+
+        #expect(second == "# Before Nexus: MAIL_PORT=587\n\nMAIL_PORT=2025\n")
+        #expect(EnvRewrite.restoringOldValues(in: second).text == "MAIL_PORT=587\n\n")
+    }
+
+    @Test func theRestoreRemovesTheLineOfNexusAlsoWithALineBetween() {
+        let text = "# Before Nexus: MAIL_HOST=smtp.postmarkapp.com\n# the local server\nMAIL_HOST=127.0.0.1\n"
+
+        let restore = EnvRewrite.restoringOldValues(in: text)
+
+        #expect(restore.text == "MAIL_HOST=smtp.postmarkapp.com\n# the local server\n")
+        #expect(restore.restored == ["MAIL_HOST"])
+    }
+
+    @Test func theRestoreRemovesOnlyTheKeyThatNexusAdded() {
+        let text = "# Added by Nexus: MAIL_USERNAME\nQUEUE_CONNECTION=redis\nMAIL_USERNAME=shop.test\n"
+
+        let restore = EnvRewrite.restoringOldValues(in: text)
+
+        #expect(restore.text == "QUEUE_CONNECTION=redis\n")
+        #expect(restore.removed == ["MAIL_USERNAME"])
+    }
+
+    @Test func theRestorePutsBackTheOldFile() {
+        let text = "APP_NAME=Shop\nexport MAIL_HOST=\"smtp.postmarkapp.com\"\n  MAIL_PORT=587 \nMAIL_PASSWORD=secret\n"
+        let sent = EnvRewrite.applyKeepingOldValues(to: text, keys: ["MAIL_HOST": "127.0.0.1", "MAIL_PORT": "1025", "MAIL_PASSWORD": "", "MAIL_USERNAME": "shop.test", "MAIL_MAILER": "smtp"])
+
+        let restore = EnvRewrite.restoringOldValues(in: sent)
+
+        #expect(EnvRewrite.hasOldValues(in: sent))
+        #expect(restore.text == text)
+        #expect(restore.restored == ["MAIL_HOST", "MAIL_PORT", "MAIL_PASSWORD"])
+        #expect(restore.removed == ["MAIL_MAILER", "MAIL_USERNAME"])
+        #expect(!EnvRewrite.hasOldValues(in: restore.text))
+    }
+
+    @Test func theRestorePutsBackAnOldLineWhoseNewLineIsGone() {
+        let restore = EnvRewrite.restoringOldValues(in: "# Before Nexus: MAIL_HOST=smtp.example.com\nAPP_NAME=Shop\n")
+
+        #expect(restore.text == "MAIL_HOST=smtp.example.com\nAPP_NAME=Shop\n")
+    }
+
+    @Test func theRestoreKeepsACommentLineWithoutAValidOldLine() {
+        let text = "# Before Nexus: not a key line\nMAIL_HOST=127.0.0.1\n"
+
+        #expect(EnvRewrite.restoringOldValues(in: text).text == text)
+    }
+
+    @Test func aCommentLineOfAnAddedKeyWithoutItsKeyIsNoOldValue() {
+        let text = "# Added by Nexus: MAIL_USERNAME\nAPP_NAME=Shop\n"
+
+        let restore = EnvRewrite.restoringOldValues(in: text)
+
+        #expect(restore.text == "APP_NAME=Shop\n")
+        #expect(restore.removed.isEmpty)
+        #expect(!EnvRewrite.hasOldValues(in: text))
+    }
+
+    @Test func aFileWithoutCommentLinesOfNexusHasNoOldValues() {
+        let text = "# Mail\nMAIL_HOST=127.0.0.1\n"
+
+        #expect(!EnvRewrite.hasOldValues(in: text))
+        #expect(EnvRewrite.restoringOldValues(in: text).text == text)
+    }
+
     @Test func theChangesNameEachKeyWithAHostOnce() {
         let text = "APP_URL=\"https://my.shop.test\"\nSESSION_DOMAIN=.shop.test\nAPP_NAME=Shop\n# X=my.shop.test\n"
 

@@ -38,7 +38,7 @@ public enum ProbeError: Error, Equatable, CustomStringConvertible {
 public struct ConfigurationProbe: Sendable {
     public static let timeout: Duration = .seconds(30)
 
-    private static let sections = ["database.", "session.", "cache.", "queue.", "broadcasting.", "reverb."]
+    private static let sections = ["database.", "session.", "cache.", "queue.", "broadcasting.", "reverb.", "mail."]
 
     private let php: URL
     private let environment: [String: String]

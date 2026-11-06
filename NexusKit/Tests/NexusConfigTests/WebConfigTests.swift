@@ -155,6 +155,20 @@ struct WebConfigTests {
         #expect(ini.contains("xdebug.start_with_request = trigger"))
     }
 
+    @Test func mailOfPHPGoesToNexusSendmailWithThePathInSingleQuotes() throws {
+        let lines = try PHPConfig.mailLines(command: URL(filePath: "/Users/me/Library/Application Support/Nexus/bin/nexus"), smtpPort: 11025)
+        let ini = try PHPConfig.nexusIni(extensionDirectory: URL(filePath: "/ext", directoryHint: .isDirectory), extensions: [], mailLines: lines)
+
+        #expect(lines == [
+            "sendmail_path = \"'/Users/me/Library/Application Support/Nexus/bin/nexus' sendmail -S 127.0.0.1:11025 -t -i\"",
+            "mail.add_x_header = On",
+        ])
+        #expect(ini.contains("\(lines[0])\n"))
+        #expect(throws: ConfigError.self) {
+            try PHPConfig.mailLines(command: URL(filePath: "/Users/o'brien/nexus"), smtpPort: 1025)
+        }
+    }
+
     @Test func theFPMPoolListensOnASocketThatOnlyTheUserCanUse() throws {
         let config = try PHPConfig.fpmConfig(socket: URL(filePath: "/Nexus/run/php-8.5.sock"), pidFile: URL(filePath: "/Nexus/run/php-8.5.pid"))
 

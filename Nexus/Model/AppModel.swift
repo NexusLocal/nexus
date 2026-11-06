@@ -1,6 +1,7 @@
 import AppKit
 import NexusCore
 import NexusIPC
+import NexusMail
 import NexusRuntime
 import NexusSupervisor
 import Observation
@@ -70,6 +71,9 @@ struct PortHolder {
     // The app that must stop its own servers.
     let managerApp: String?
     let canStop: Bool
+    // The name of the port in nexusd. The internal port of Mailpit is not on the screen, so the
+    // number alone does not find it.
+    var portKey: String?
 }
 
 // The settings that only the app uses. nexusd keeps the others. A chosen app is the path of its
@@ -79,6 +83,7 @@ enum AppPreference {
     static let showInDock = "showInDock"
     static let notifyServiceStops = "notifyServiceStops"
     static let notifyImportDone = "notifyImportDone"
+    static let notifyNewMail = "notifyNewMail"
     static let checkPackageUpdates = "checkPackageUpdates"
     static let installPackageUpdates = "installPackageUpdates"
     static let nexusdRestartBuild = "nexusdRestartBuild"
@@ -251,6 +256,18 @@ final class AppModel {
     var otherShellCommands: [OtherCommand] = []
     @ObservationIgnored var shellCommandsCheck: Task<Void, Never>?
     @ObservationIgnored var shellCommandsStamp: [Double]?
+    // The mail service (Phase 3): the outbox and the settings from nexusd, the inbox of Mailpit
+    // with its filter, and the mail that the Mail screen shows. The notifications remember the
+    // newest mail that they saw.
+    var mailStatus: MailStatus?
+    var mails: [MailpitAPI.Summary] = []
+    var mailCount = 0
+    var mailTags: [String] = []
+    var mailFilter: String?
+    var openMailID: String?
+    var openMail: MailpitAPI.Message?
+    var mailProblem: String?
+    @ObservationIgnored var newestNotifiedMail: String?
 
     @ObservationIgnored private(set) var client: NexusClient?
     @ObservationIgnored private var feed: NexusEventFeed?
@@ -276,6 +293,12 @@ final class AppModel {
         model.packages = []
         model.activities = []
         model.packagesChecked = ""
+        model.mails = []
+        model.mailCount = 0
+        model.mailTags = []
+        model.mailStatus = nil
+        model.openMailID = nil
+        model.openMail = nil
         model.findApps()
 
         // This copy quits after the question. A restart of nexusd from here would use up the one
@@ -283,6 +306,7 @@ final class AppModel {
         if !MoveToApplications.willAsk {
             model.watchNexusd()
             model.watchPackageUpdates()
+            model.watchNewMail()
         }
 
         return model
@@ -622,15 +646,15 @@ final class AppModel {
         }
     }
 
-    // A database or Redis gets its new port at a start. So a running one starts again. nginx,
-    // Apache and DNS move at once.
+    // A database, Redis and the inbox of Mailpit get their new port at a start. So a running one
+    // starts again. nginx, Apache, DNS and the SMTP port of the mail service move at once.
     func changePort(_ port: ServicePort, of service: ServiceVersion, to number: Int, place: ActionPlace = .window) {
         Task {
             guard await perform(.setPort(service: port.key, port: number), failure: "\(service.name) did not get port \(number)", place: place) != nil else {
                 return
             }
 
-            if service.isActive, service.kind.isDatabase || service.kind == .redis {
+            if service.isActive, service.kind.isDatabase || service.kind == .redis || service.kind == .mail && port.key != ServiceID.smtpPortKey {
                 await perform(.restart(service: service.id), failure: "\(service.name) did not restart", place: place)
             }
         }
@@ -647,7 +671,7 @@ final class AppModel {
     }
 
     func start(_ service: ServiceVersion, movingPortOf holder: PortHolder, to number: Int) {
-        guard let key = (service.ports.first(where: { $0.number == holder.port }) ?? service.ports.first)?.key else {
+        guard let key = holder.portKey ?? (service.ports.first(where: { $0.number == holder.port }) ?? service.ports.first)?.key else {
             return
         }
 
@@ -682,18 +706,30 @@ final class AppModel {
         NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
     }
 
-    // An app quits as a user would quit it. A program that is not an app, such as a mysqld of
-    // Homebrew, gets SIGTERM on its main process. The start then waits up to 10 seconds for the
-    // port. A server that an earlier nexusd left behind belongs to "Nexus". This app must not quit
-    // itself then.
+    // An app quits as a user would quit it. A Homebrew service stops with brew services stop,
+    // because launchd starts it again after a SIGTERM (Phase 3, 3a). Another program that is not
+    // an app gets SIGTERM on its main process. The start then waits up to 10 seconds for the port.
+    // A server that an earlier nexusd left behind belongs to "Nexus". This app must not quit itself
+    // then.
     func stop(_ holder: PortHolder, andStart service: ServiceVersion) {
-        if let app = runningApp(of: holder) {
-            app.terminate()
-        } else if holder.processNumber > 0 {
-            kill(pid_t(holder.processNumber), SIGTERM)
-        }
-
         Task {
+            if let app = runningApp(of: holder) {
+                app.terminate()
+            } else if holder.processNumber > 0 {
+                let pid = pid_t(holder.processNumber)
+
+                if let job = await LaunchdJob.of(pid: pid), let formula = job.homebrewFormula {
+                    do {
+                        try await job.stopHomebrewService(executable: holder.path)
+                    } catch {
+                        failure = ActionFailure(title: "brew services stop \(formula) failed", message: String(describing: error), place: .window)
+                        return
+                    }
+                } else {
+                    kill(pid, SIGTERM)
+                }
+            }
+
             let deadline = ContinuousClock.now + .seconds(10)
             while !PortInspector.isFree(holder.port), ContinuousClock.now < deadline {
                 try? await Task.sleep(for: .milliseconds(200))

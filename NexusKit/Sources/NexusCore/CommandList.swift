@@ -78,6 +78,17 @@ extension CommandSection {
             CommandItem(command: "nexus ini 8.4 \"memory_limit = 512M\"", help: "Replaces the custom php.ini lines of a PHP version."),
             CommandItem(command: "nexus module apache rewrite off", help: "Turns a webserver module on or off."),
         ]),
+        CommandSection(title: "Mail", commands: [
+            CommandItem(command: "nexus mail", help: "Opens the inbox of the mail service in the browser."),
+            CommandItem(command: "nexus mail list --site shop.test", help: "Lists the newest mails, of one site or workspace with --site. --json prints JSON."),
+            CommandItem(command: "nexus mail show latest", help: "Shows a mail with its text. --json gives the HTML, the headers and the files too."),
+            CommandItem(command: "nexus mail remove latest", help: "Removes one mail from the inbox, or more with more ids."),
+            CommandItem(command: "nexus mail clear", help: "Removes all mails from the inbox."),
+            CommandItem(command: "nexus mail outbox", help: "Shows the mails that wait for the mail service. --clear removes them."),
+            CommandItem(command: "nexus mail settings --outbox-mails 500", help: "Changes the limits of the outbox and the inbox. Without options it shows them."),
+            CommandItem(command: "nexus site mail shop.test", help: "Shows where a site sends its mail. --send-to-nexus sends the mail of a Laravel site to the inbox. --restore puts the old mail settings back."),
+            CommandItem(command: "nexus sendmail -S 127.0.0.1:1025 -t", help: "Gives the mail on the input to the mail service. PHP runs it for mail()."),
+        ]),
         CommandSection(title: "Domains and certificates", commands: [
             CommandItem(command: "nexus tld internal", help: "Gives every site a name in another dev domain."),
             CommandItem(command: "nexus trust", help: "Trusts the Nexus root certificate."),

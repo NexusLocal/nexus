@@ -1,5 +1,6 @@
 import Foundation
 import NexusCore
+import NexusMail
 import NexusRuntime
 import NexusSupervisor
 
@@ -20,6 +21,14 @@ public struct ServiceCatalog: Sendable {
     public static let apacheID = ServiceID.apache
     public static let httpPortKey = "http"
     public static let httpsPortKey = "https"
+    // The mail service has three ports. nexusd itself listens on the SMTP port. Mailpit gets the
+    // inbox and an SMTP port of its own, which only nexusd uses (Phase 3, 3b).
+    public static let mailID = ServiceID.mail
+    public static let smtpPortKey = ServiceID.smtpPortKey
+    public static let inboxPortKey = ServiceID.inboxPortKey
+    public static let mailpitSMTPPortKey = ServiceID.mailpitSMTPPortKey
+    public static let smtpStandardPort = 1025
+    public static let standardInboxMails = 1000
     public static let databaseStartTimeout: Duration = .seconds(30)
     // A stop of nexusd first waits for the background processes, 10 seconds at most. ExitTimeOut in
     // the launchd plist of nexusd must stay longer than these two times together, or launchd kills
@@ -60,6 +69,11 @@ public struct ServiceCatalog: Sendable {
         case "redis": [PortRequirement(key: ServiceID.redis(line: runtime.line), standard: Self.redisStandardPort)]
         case "nginx": [PortRequirement(key: Self.httpPortKey, standard: 80), PortRequirement(key: Self.httpsPortKey, standard: 443)]
         case "httpd": [PortRequirement(key: Self.apacheID, standard: 8081)]
+        case "mailpit": [
+            PortRequirement(key: Self.smtpPortKey, standard: Self.smtpStandardPort),
+            PortRequirement(key: Self.inboxPortKey, standard: 8025),
+            PortRequirement(key: Self.mailpitSMTPPortKey, standard: 1026),
+        ]
         default:
             if let kind = Self.databaseKind(of: runtime), let id = serviceID(for: runtime) {
                 [PortRequirement(key: id, standard: kind.standardPort)]
@@ -69,7 +83,7 @@ public struct ServiceCatalog: Sendable {
         }
     }
 
-    public func definition(for runtime: InstalledRuntime, ports: [String: Int]) -> ServiceDefinition? {
+    public func definition(for runtime: InstalledRuntime, ports: [String: Int], inboxMails: Int = standardInboxMails) -> ServiceDefinition? {
         guard let id = serviceID(for: runtime) else {
             return nil
         }
@@ -138,6 +152,19 @@ public struct ServiceCatalog: Sendable {
                 workingDirectory: folder,
                 logFile: paths.log(id)
             )
+        case "mailpit":
+            let data = dataFolder(for: runtime)
+            try? FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
+
+            return ServiceDefinition(
+                id: id,
+                displayName: "Mailpit \(runtime.version)",
+                executable: runtime.folder.appending(path: "bin/mailpit"),
+                arguments: Self.mailpitArguments(smtpPort: requiredPorts[2], inboxPort: requiredPorts[1], database: data.appending(path: "mailpit.db"), inboxMails: inboxMails),
+                workingDirectory: data,
+                ports: [requiredPorts[1], requiredPorts[2]],
+                logFile: paths.log(id)
+            )
         default:
             guard let kind = Self.databaseKind(of: runtime) else {
                 return nil
@@ -149,6 +176,24 @@ public struct ServiceCatalog: Sendable {
 
     public func dataFolder(for runtime: InstalledRuntime) -> URL {
         paths.dataFolder(service: runtime.name, line: runtime.line)
+    }
+
+    // The default of Mailpit is 0.0.0.0, so both addresses are set. Mailpit refuses a login
+    // without TLS unless it gets --smtp-auth-allow-insecure. The user name of the login becomes
+    // the tag of the mail. Nexus never gives a relay option, so no mail leaves the Mac. Mailpit
+    // takes 100 recipients by default, and the receiver of nexusd takes more.
+    static func mailpitArguments(smtpPort: Int, inboxPort: Int, database: URL, inboxMails: Int) -> [String] {
+        [
+            "--smtp", "127.0.0.1:\(smtpPort)",
+            "--listen", "127.0.0.1:\(inboxPort)",
+            "--database", database.path(percentEncoded: false),
+            "--max", String(inboxMails),
+            "--smtp-max-recipients", String(SMTPSession.maxRecipients),
+            "--smtp-auth-accept-any",
+            "--smtp-auth-allow-insecure",
+            "--tags-username",
+            "--disable-version-check",
+        ]
     }
 
     // The server of a workspace (D66). It has a small buffer pool and no performance_schema, because

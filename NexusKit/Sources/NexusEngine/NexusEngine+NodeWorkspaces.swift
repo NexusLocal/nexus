@@ -43,8 +43,10 @@ extension NexusEngine {
         }
         let host = workspace.hosts(of: sites, tld: state.tld).first ?? ""
         let pairs = Workspace.hostPairs(of: sites, workspace: workspace.name, tld: state.tld)
+        var planWithMail = plan
+        planWithMail.keys.merge(plan.mailKeys.mapValues { $0.replacing(WorkspaceEnvPlan.hostPlaceholder, with: host) }) { database, _ in database }
         let isolating = NodeEnvValues(
-            plan: plan,
+            plan: planWithMail,
             serverPorts: Dictionary(uniqueKeysWithValues: servers.map { ($0.mainPort, $0.port) }),
             redisIndexes: workspace.redisIndexes
         )
@@ -165,6 +167,7 @@ extension NexusEngine {
             .map { WorkspaceEnvKey(key: $0.key, value: $0.value) }
         let fromNexus = changes
             + plan.keys.sorted { $0.key < $1.key }.map { WorkspaceEnvKey(key: $0.key, value: $0.value) }
+            + plan.mailKeys.sorted { $0.key < $1.key }.map { WorkspaceEnvKey(key: $0.key, value: $0.value) }
             + plan.serverPortKeys.values.joined().sorted().map { WorkspaceEnvKey(key: $0, value: "the port of the database server of the workspace") }
             + plan.serverURLKeys.sorted().map { WorkspaceEnvKey(key: $0, value: "the URL with the database server of the workspace") }
             + plan.redisKeys.map { WorkspaceEnvKey(key: $0, value: plan.redisURLKeys.contains($0) ? "the URL with a free Redis index" : "a free Redis index") }
