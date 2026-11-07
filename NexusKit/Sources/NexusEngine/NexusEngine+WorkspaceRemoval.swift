@@ -228,7 +228,7 @@ extension NexusEngine {
         dumpsOfRemovals[key].map { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) } ?? false
     }
 
-    private func writeDump(of name: String, as fileName: String, with copier: DatabaseCopier, instance: String, kind: DatabaseKind) async throws -> URL {
+    func writeDump(of name: String, as fileName: String, with copier: DatabaseCopier, instance: String, kind: DatabaseKind) async throws -> URL {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd-HHmmss"

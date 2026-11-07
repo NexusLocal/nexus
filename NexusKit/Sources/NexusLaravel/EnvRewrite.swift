@@ -99,6 +99,14 @@ public enum EnvRewrite {
         return joined + missing.map { "\(EnvFile.addedByNexus)\($0.key)\n\($0.key)=\(quoted($0.value))\n" }.joined()
     }
 
+    // Removes the comment lines of Nexus for these keys, and keeps the key lines. A next change then
+    // keeps the value of just before it, as "Undo…" of a URL change needs it.
+    public static func removingOldValues(in text: String, keys: Set<String>) -> String {
+        text.components(separatedBy: "\n")
+            .filter { line in NexusMark(line).map { !keys.contains($0.key) } ?? true }
+            .joined(separator: "\n")
+    }
+
     public static func hasOldValues(in text: String) -> Bool {
         let restore = restoringOldValues(in: text)
         return !restore.restored.isEmpty || !restore.removed.isEmpty
@@ -108,14 +116,14 @@ public enum EnvRewrite {
     // Nexus. A comment line acts on the first line below it that sets its key. Other lines can be
     // between them. A comment line of a changed key without that line gives back the old line in
     // its place. A comment line that holds no valid key line stays, because Laravel reads no .env
-    // with a wrong line.
-    public static func restoringOldValues(in text: String) -> (text: String, restored: [String], removed: [String]) {
+    // with a wrong line. With keys, only the comment lines of these keys act.
+    public static func restoringOldValues(in text: String, keys: Set<String>? = nil) -> (text: String, restored: [String], removed: [String]) {
         var lines: [String?] = text.components(separatedBy: "\n")
         var restored: [String] = []
         var removed: [String] = []
 
         for index in lines.indices {
-            guard let line = lines[index], let mark = NexusMark(line) else {
+            guard let line = lines[index], let mark = NexusMark(line), keys?.contains(mark.key) != false else {
                 continue
             }
 

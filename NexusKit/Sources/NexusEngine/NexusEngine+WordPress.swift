@@ -41,6 +41,24 @@ extension NexusEngine {
             shownFile?.lastPathComponent ?? (type == .bedrock ? ".env" : "wp-config.php")
         }
 
+        // The file that sets WP_HOME (3d). For Bedrock that is .env.local when it sets WP_HOME.
+        var homeFile: URL? {
+            guard type == .bedrock else {
+                return configFile
+            }
+
+            return bedrockFiles.last { EnvFile.values(of: $0)["WP_HOME"]?.isEmpty == false }
+        }
+
+        // The file that sets DOMAIN_CURRENT_SITE of a network.
+        var domainFile: URL? {
+            guard type == .bedrock else {
+                return configFile
+            }
+
+            return bedrockFiles.last { EnvFile.values(of: $0)["DOMAIN_CURRENT_SITE"]?.isEmpty == false }
+        }
+
         private var bedrockFiles: [URL] {
             [".env", ".env.local"]
                 .map { project.appending(path: $0) }
@@ -68,6 +86,7 @@ extension NexusEngine {
         }
 
         let database = await databaseCheck(of: config, in: instances)
+        let state = await stateStore.current()
 
         return WordPressSiteInfo(
             type: target.type,
@@ -80,7 +99,13 @@ extension NexusEngine {
             home: database.home,
             siteURL: database.siteURL,
             problem: database.problem,
-            suggestedDBHost: database.suggestedDBHost
+            suggestedDBHost: database.suggestedDBHost,
+            url: Self.url(for: target.site.host, in: state),
+            configHome: Self.literalHome(of: config),
+            configHomeFile: Self.literalHome(of: config) == nil ? nil : target.homeFile.map { Self.displayPath($0) },
+            urlPlan: urlPlan(of: target, config: config, check: database, in: state),
+            urlChange: urlChange(of: target.site.host, database: config.database, instance: database.instance, in: state),
+            copyInstance: database.copyInstance
         )
     }
 
@@ -254,13 +279,14 @@ extension NexusEngine {
         }
     }
 
-    private struct DatabaseCheck {
+    struct DatabaseCheck {
         var instance: String?
         var exists: Bool?
         var home: String?
         var siteURL: String?
         var problem: String?
         var suggestedDBHost: String?
+        var copyInstance: String?
     }
 
     func mysqlInstances() async -> [DatabaseInstance] {
@@ -269,13 +295,22 @@ extension NexusEngine {
 
     // Nexus reads only an instance of its own. It connects with the account of the instance and not
     // with the account of wp-config.php.
-    private func databaseCheck(of config: WordPressConfig, in instances: [DatabaseInstance]) async -> DatabaseCheck {
+    func databaseCheck(of config: WordPressConfig, in instances: [DatabaseInstance]) async -> DatabaseCheck {
         guard let address = config.address else {
             return DatabaseCheck(problem: "wp-config.php gives no DB_HOST that Nexus can read.")
         }
 
         guard let port = address.localPort else {
             guard case .socket = address else {
+                if let other = await otherServer(config, in: instances) {
+                    return other
+                }
+
+                // After a copy from another host, DB_HOST moves to the Nexus instance.
+                if let name = config.database, let holder = await holder(of: name, in: instances) {
+                    return DatabaseCheck(problem: "DB_HOST is \(config.host ?? ""). The database \(name) is on \(holder.id). \(Self.fixText(holder))", suggestedDBHost: "127.0.0.1:\(holder.port)")
+                }
+
                 return DatabaseCheck(problem: "DB_HOST is \(config.host ?? ""). Nexus checks only a database on this Mac.")
             }
 
@@ -284,6 +319,10 @@ extension NexusEngine {
         }
 
         guard let instance = instances.first(where: { $0.port == port }) else {
+            if let other = await otherServer(config, in: instances) {
+                return other
+            }
+
             let suggested = await suggestedInstance(for: config.database, in: instances)
             return DatabaseCheck(problem: "DB_HOST names port \(port). No MySQL or MariaDB of Nexus listens on that port. \(Self.fixText(suggested))", suggestedDBHost: suggested.map { "127.0.0.1:\($0.port)" })
         }
@@ -332,6 +371,40 @@ extension NexusEngine {
         }
 
         return DatabaseCheck(instance: instance.id, exists: false)
+    }
+
+    // DB_HOST names a server that Nexus did not make, for example MAMP PRO, and no Nexus instance
+    // holds the database. Nexus does not change that server (D37). So the database comes to Nexus
+    // first, and DB_HOST changes after the copy (owner, 2026-11-07). Without a running instance the
+    // old text applies.
+    private func otherServer(_ config: WordPressConfig, in instances: [DatabaseInstance]) async -> DatabaseCheck? {
+        guard let name = config.database, let address = config.address, case .tcp = address, let target = Self.instanceForNewDatabase(in: instances) else {
+            return nil
+        }
+
+        // A port on this Mac where nothing listens is no server, for example an old port of Nexus.
+        if let port = address.localPort, !PortInspector.acceptsConnections(port) {
+            return nil
+        }
+
+        guard await holder(of: name, in: instances) == nil else {
+            return nil
+        }
+
+        return DatabaseCheck(
+            problem: "DB_HOST names \(config.host ?? ""). Nexus did not make that server. So Nexus does not change the URLs there. Copy the database \(name) to \(target.id) first. Then set DB_HOST to its port. Change the URLs after that.",
+            copyInstance: target.id
+        )
+    }
+
+    private func holder(of database: String, in instances: [DatabaseInstance]) async -> DatabaseInstance? {
+        for instance in instances where instance.running {
+            if await holds(database, instance: instance) {
+                return instance
+            }
+        }
+
+        return nil
     }
 
     private static func fixText(_ suggested: DatabaseInstance?) -> String {

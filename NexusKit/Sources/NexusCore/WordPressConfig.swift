@@ -150,27 +150,98 @@ public enum WordPressFiles {
 
     public static let beforeNexus = "// Before Nexus: "
 
-    // Gives DB_HOST a new value with a click of the user, as "Send mail to Nexus" does for a .env
-    // (D44). The old line stays above it as a comment line. A file with no line or with two lines
-    // for DB_HOST, for example one in each branch of an if, gives nil. A line with another statement
-    // after the define gives nil too, because the comment would hide that statement.
     public static func settingDBHost(_ value: String, in text: String) -> String? {
-        var lines = text.components(separatedBy: "\n")
-        let matches = lines.indices.filter { lines[$0].contains(dbHostDefine) }
+        settingConstant("DB_HOST", to: value, in: text)
+    }
 
-        guard matches.count == 1, let index = matches.first, lines[index].wholeMatch(of: dbHostLine) != nil, !value.contains("'"), !value.contains("\\") else {
+    // Gives a constant a new value with a click of the user, as "Send mail to Nexus" does for a .env
+    // (D44). The old line stays above it as a comment line. A file with no line or with two lines
+    // for the constant, for example one in each branch of an if, gives nil. A line with another
+    // statement after the define gives nil too, because the comment would hide that statement. With
+    // replacingOldLine, a comment line of an earlier change goes first. So the comment line holds
+    // the value of just before this change, as "Undo…" of a URL change needs it.
+    public static func settingConstant(_ name: String, to value: String, in text: String, replacingOldLine: Bool = false) -> String? {
+        guard let define = ConstantDefine(name), !value.contains("'"), !value.contains("\\") else {
+            return nil
+        }
+
+        var lines = text.components(separatedBy: "\n")
+
+        if replacingOldLine {
+            lines.removeAll { define.oldLine(in: $0) != nil }
+        }
+
+        let matches = lines.indices.filter { define.starts(lines[$0]) }
+
+        guard matches.count == 1, let index = matches.first, define.isWhole(lines[index]) else {
             return nil
         }
 
         let old = lines[index]
         let indent = String(old.prefix { $0 == " " || $0 == "\t" })
-        lines[index] = "\(indent)define( 'DB_HOST', '\(value)' );"
+        lines[index] = "\(indent)define( '\(name)', '\(value)' );"
         lines.insert("\(indent)\(beforeNexus)\(old.trimmingCharacters(in: .whitespaces))", at: index)
         return lines.joined(separator: "\n")
     }
 
-    nonisolated(unsafe) static let dbHostDefine = /^\s*\\?define\s*\(\s*['"]DB_HOST['"]/
-    nonisolated(unsafe) static let dbHostLine = /\s*\\?define\s*\(\s*['"]DB_HOST['"]\s*,[^;]*\)\s*;\s*(\/\/.*|#.*)?/
+    // The way back of settingConstant: the old line comes back in place of the comment line, and
+    // the define of Nexus below it goes. A file without such a comment line gives nil.
+    public static func restoringConstant(_ name: String, in text: String) -> String? {
+        guard let define = ConstantDefine(name) else {
+            return nil
+        }
+
+        var lines = text.components(separatedBy: "\n")
+
+        guard let mark = lines.indices.first(where: { define.oldLine(in: lines[$0]) != nil }), let old = define.oldLine(in: lines[mark]) else {
+            return nil
+        }
+
+        let indent = String(lines[mark].prefix { $0 == " " || $0 == "\t" })
+        lines[mark] = "\(indent)\(old)"
+
+        if let line = lines.indices.first(where: { $0 > mark && define.starts(lines[$0]) }) {
+            lines.remove(at: line)
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    // The patterns of one constant, made once for all lines of a file.
+    private struct ConstantDefine {
+        let start: Regex<AnyRegexOutput>
+        let whole: Regex<AnyRegexOutput>
+
+        init?(_ name: String) {
+            guard name.wholeMatch(of: /[A-Z_][A-Z0-9_]*/) != nil,
+                  let start = try? Regex(#"^\s*\\?define\s*\(\s*['"]\#(name)['"]"#),
+                  let whole = try? Regex(#"\s*\\?define\s*\(\s*['"]\#(name)['"]\s*,[^;]*\)\s*;\s*(\/\/.*|#.*)?"#) else {
+                return nil
+            }
+
+            self.start = start
+            self.whole = whole
+        }
+
+        func starts(_ line: String) -> Bool {
+            line.contains(start)
+        }
+
+        func isWhole(_ line: String) -> Bool {
+            line.wholeMatch(of: whole) != nil
+        }
+
+        func oldLine(in line: String) -> String? {
+            let text = line.drop { $0 == " " || $0 == "\t" }
+
+            guard text.hasPrefix(WordPressFiles.beforeNexus) else {
+                return nil
+            }
+
+            let old = String(text.dropFirst(WordPressFiles.beforeNexus.count))
+            return starts(old) ? old : nil
+        }
+    }
 
     private static func exists(_ file: URL) -> Bool {
         FileManager.default.fileExists(atPath: file.path(percentEncoded: false))

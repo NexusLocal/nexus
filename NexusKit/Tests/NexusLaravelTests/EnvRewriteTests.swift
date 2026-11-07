@@ -138,6 +138,23 @@ struct EnvRewriteTests {
         #expect(restore.restored == ["MAIL_HOST"])
     }
 
+    @Test func aRestoreOfSomeKeysKeepsTheOtherChangesOfNexus() {
+        let text = "# Before Nexus: DB_HOST=localhost\nDB_HOST=127.0.0.1:13307\n# Before Nexus: WP_HOME=http://shop.test\nWP_HOME='https://shop.test:8443'\n"
+
+        let restore = EnvRewrite.restoringOldValues(in: text, keys: ["WP_HOME", "WP_SITEURL"])
+
+        #expect(restore.text == "# Before Nexus: DB_HOST=localhost\nDB_HOST=127.0.0.1:13307\nWP_HOME=http://shop.test\n")
+        #expect(restore.restored == ["WP_HOME"])
+    }
+
+    @Test func anotherChangeKeepsTheValueOfJustBeforeIt() {
+        let text = "# Before Nexus: WP_HOME=http://shop.test\nWP_HOME=https://shop.test:8443\n"
+
+        let second = EnvRewrite.applyKeepingOldValues(to: EnvRewrite.removingOldValues(in: text, keys: ["WP_HOME"]), keys: ["WP_HOME": "https://shop.test"])
+
+        #expect(second == "# Before Nexus: WP_HOME=https://shop.test:8443\nWP_HOME=https://shop.test\n")
+    }
+
     @Test func theRestoreRemovesOnlyTheKeyThatNexusAdded() {
         let text = "# Added by Nexus: MAIL_USERNAME\nQUEUE_CONNECTION=redis\nMAIL_USERNAME=shop.test\n"
 

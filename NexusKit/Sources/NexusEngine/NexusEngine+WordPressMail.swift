@@ -206,7 +206,9 @@ extension NexusEngine {
     static let mailCheckSeparator = "@@nexus-mail-check@@"
 
     // Runs before WordPress loads. A filter in $wp_filter before plugin.php becomes a normal filter.
-    static let mailCheckSetup = "if (!defined('DISABLE_WP_CRON')) { define('DISABLE_WP_CRON', true); } function nexus_block_mail() { return false; } $GLOBALS['wp_filter']['pre_wp_mail'][PHP_INT_MIN][] = array('function' => 'nexus_block_mail', 'accepted_args' => 1);"
+    // No cron job runs: the list of ready jobs is empty. A constant such as DISABLE_WP_CRON does not
+    // work here, because Bedrock refuses a constant that is defined before its configuration.
+    static let mailCheckSetup = "function nexus_block_mail() { return false; } function nexus_no_cron_jobs() { return array(); } $GLOBALS['wp_filter']['pre_wp_mail'][PHP_INT_MIN][] = array('function' => 'nexus_block_mail', 'accepted_args' => 1); $GLOBALS['wp_filter']['pre_get_ready_cron_jobs'][PHP_INT_MIN][] = array('function' => 'nexus_no_cron_jobs', 'accepted_args' => 1);"
 
     static let mailCheckSource = #"""
     $nexus_real = function ($path) {

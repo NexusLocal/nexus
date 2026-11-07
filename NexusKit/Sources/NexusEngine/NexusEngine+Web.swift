@@ -813,6 +813,7 @@ extension NexusEngine {
 
             if !staysParked {
                 state.siteLayout = state.siteLayout.moving(host, toGroup: nil)
+                state.wordPressURLChanges[host] = nil
             }
         }
         return (["\(host) is removed."] + warnings).joined(separator: "\n")

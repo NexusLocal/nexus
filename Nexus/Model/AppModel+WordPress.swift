@@ -80,6 +80,26 @@ extension AppModel {
         await sendWordPressChange(.setWordPressDBHost(host: site.host, value: value), failure: "DB_HOST of \(site.host) did not change")
     }
 
+    func changeWordPressURLs(_ site: SiteItem, plan: WordPressURLPlan) async -> Bool {
+        await sendWordPressChange(.changeWordPressURLs(host: site.host, plan: plan), failure: "Nexus did not change the URLs of \(site.host)")
+    }
+
+    func undoWordPressURLChange(_ site: SiteItem, plan: WordPressURLPlan) async -> Bool {
+        await sendWordPressChange(.undoWordPressURLChange(host: site.host, plan: plan), failure: "Nexus did not undo the URL change of \(site.host)")
+    }
+
+    // "Copy to Nexus…" opens the import sheet with the server and the account of wp-config.php.
+    func copyWordPressDatabase(_ site: SiteItem, instance: String) async {
+        guard isLive else {
+            sheet = .importDatabase(instance: instance, source: WordPressCopySource(server: DatabaseServer(port: 8889), database: "blog", instance: instance))
+            return
+        }
+
+        if case .wordPressCopySource(let source)? = await perform(.wordPressCopySource(host: site.host), failure: "Nexus cannot copy the database of \(site.host)", place: .window) {
+            sheet = .importDatabase(instance: source.instance, source: source)
+        }
+    }
+
     func turnOffMailPlugins(_ site: SiteItem, folders: [String]) async -> Bool {
         await sendWordPressChange(.turnOffMailPlugins(host: site.host, folders: folders), failure: "Nexus did not turn off the mail plugins of \(site.host)")
     }

@@ -728,6 +728,12 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case setUpWordPress(host: String, database: String, instance: String)
     case createWordPressDatabase(host: String)
     case setWordPressDBHost(host: String, value: String)
+    // The site URL and HTTPS (Phase 4, 3d). The plan is what the user confirmed.
+    case changeWordPressURLs(host: String, plan: WordPressURLPlan)
+    case undoWordPressURLChange(host: String, plan: WordPressURLPlan)
+    // The server, the account and the database of wp-config.php, for "Copy to Nexus…". The
+    // password is in it, so the Site screen asks for it only after the click.
+    case wordPressCopySource(host: String)
     // The plugins that the user confirmed (Phase 4, 3h).
     case turnOffMailPlugins(host: String, folders: [String])
     // The background processes of a site that the user did not change (D52).
@@ -902,6 +908,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case configuration(LaravelConfiguration)
     case siteDatabases([SiteDatabase])
     case wordPressSite(WordPressSiteInfo)
+    case wordPressCopySource(WordPressCopySource)
     case workspaceEnv([WorkspaceEnvKey])
     case workspaceSettings(WorkspaceSettings)
     case dumps([DatabaseDump])
@@ -915,7 +922,10 @@ public enum NexusResponse: Codable, Sendable, Equatable {
 // names. databaseExists is nil when Nexus cannot check it, for example on a stopped instance. home
 // and siteURL come from the options table of the database. The password is not in it. Without a
 // wp-config.php, setUpDatabase and setUpInstance say what "Set up WordPress" makes.
-// suggestedDBHost is the value that "Set DB_HOST" writes.
+// suggestedDBHost is the value that "Set DB_HOST" writes. url is the URL of Nexus for the site.
+// configHome is WP_HOME of the configuration, from configHomeFile. urlPlan is what "Change the
+// URLs" changes, and urlChange is the last change that "Undo…" can put back (3d). copyInstance is the Nexus instance
+// that "Copy to Nexus…" copies the database to, when it is on a server that Nexus did not make.
 public struct WordPressSiteInfo: Codable, Sendable, Equatable {
     public let type: PHPProjectType
     public let version: String?
@@ -930,11 +940,23 @@ public struct WordPressSiteInfo: Codable, Sendable, Equatable {
     public let setUpDatabase: String?
     public let setUpInstance: String?
     public let suggestedDBHost: String?
+    public let url: String?
+    public let configHome: String?
+    public let configHomeFile: String?
+    public let urlPlan: WordPressURLPlan?
+    public let urlChange: WordPressURLChange?
+    public let copyInstance: String?
 
-    public init(type: PHPProjectType, version: String? = nil, configFile: String? = nil, database: String? = nil, dbHost: String? = nil, instance: String? = nil, databaseExists: Bool? = nil, home: String? = nil, siteURL: String? = nil, problem: String? = nil, setUpDatabase: String? = nil, setUpInstance: String? = nil, suggestedDBHost: String? = nil) {
+    public init(type: PHPProjectType, version: String? = nil, configFile: String? = nil, database: String? = nil, dbHost: String? = nil, instance: String? = nil, databaseExists: Bool? = nil, home: String? = nil, siteURL: String? = nil, problem: String? = nil, setUpDatabase: String? = nil, setUpInstance: String? = nil, suggestedDBHost: String? = nil, url: String? = nil, configHome: String? = nil, configHomeFile: String? = nil, urlPlan: WordPressURLPlan? = nil, urlChange: WordPressURLChange? = nil, copyInstance: String? = nil) {
         self.setUpDatabase = setUpDatabase
         self.setUpInstance = setUpInstance
         self.suggestedDBHost = suggestedDBHost
+        self.url = url
+        self.configHome = configHome
+        self.configHomeFile = configHomeFile
+        self.urlPlan = urlPlan
+        self.urlChange = urlChange
+        self.copyInstance = copyInstance
         self.type = type
         self.version = version
         self.configFile = configFile
@@ -945,6 +967,19 @@ public struct WordPressSiteInfo: Codable, Sendable, Equatable {
         self.home = home
         self.siteURL = siteURL
         self.problem = problem
+    }
+}
+
+// The other server of a WordPress site and the Nexus instance that gets the copy (3d).
+public struct WordPressCopySource: Codable, Sendable, Equatable {
+    public let server: DatabaseServer
+    public let database: String
+    public let instance: String
+
+    public init(server: DatabaseServer, database: String, instance: String) {
+        self.server = server
+        self.database = database
+        self.instance = instance
     }
 }
 

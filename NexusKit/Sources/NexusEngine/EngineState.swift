@@ -51,6 +51,8 @@ public struct EngineState: Codable, Sendable, Equatable {
     // workspace keeps its port in its record.
     public var appPorts: [String: Int] = [:]
     public var mailSettings = MailSettings()
+    // The last change of the URLs of each WordPress site, by its host (Phase 4, 3d).
+    public var wordPressURLChanges: [String: WordPressURLChange] = [:]
 
     public init() {}
 
@@ -87,6 +89,7 @@ public struct EngineState: Codable, Sendable, Equatable {
         workspaceSettings = try container.decodeIfPresent(WorkspaceSettings.self, forKey: .workspaceSettings) ?? defaults.workspaceSettings
         appPorts = try container.decodeIfPresent([String: Int].self, forKey: .appPorts) ?? defaults.appPorts
         mailSettings = try container.decodeIfPresent(MailSettings.self, forKey: .mailSettings) ?? defaults.mailSettings
+        wordPressURLChanges = (try? container.decodeIfPresent([String: WordPressURLChange].self, forKey: .wordPressURLChanges)) ?? defaults.wordPressURLChanges
     }
 }
 

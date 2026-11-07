@@ -698,10 +698,13 @@ struct SiteCommand: AsyncParsableCommand {
         @Flag(help: "Without a wp-config.php: makes a database on MySQL 8.4 and writes wp-config.php.") var setUp = false
         @Flag(help: "Makes the database that wp-config.php names, empty, when it does not exist.") var createDatabase = false
         @Flag(name: .customLong("set-db-host"), help: "Sets DB_HOST to the port of the Nexus instance. The old line stays as a comment line.") var setDBHost = false
+        @Flag(name: .customLong("copy-database"), help: "Copies the database from the server that DB_HOST names to a Nexus instance. Nexus only reads the other server.") var copyDatabase = false
+        @Flag(name: .customLong("change-urls"), help: "Changes the URLs in the database and WP_HOME to the URL of Nexus. A dump of the database goes to the trash first.") var changeURLs = false
+        @Flag(name: .customLong("undo-url-change"), help: "Puts back the database from the dump of the last URL change, and the old WP_HOME.") var undoURLChange = false
 
         func validate() throws {
-            if [setUp, createDatabase, setDBHost].filter({ $0 }).count > 1 {
-                throw ValidationError("Use one of --set-up, --create-database and --set-db-host.")
+            if [setUp, createDatabase, setDBHost, copyDatabase, changeURLs, undoURLChange].filter({ $0 }).count > 1 {
+                throw ValidationError("Use one of --set-up, --create-database, --set-db-host, --copy-database, --change-urls and --undo-url-change.")
             }
         }
 
@@ -738,6 +741,38 @@ struct SiteCommand: AsyncParsableCommand {
                 return
             }
 
+            if copyDatabase {
+                let response = try await send(.wordPressCopySource(host: host))
+
+                guard case .wordPressCopySource(let source) = response else {
+                    try finish(response)
+                    return
+                }
+
+                try finish(try await send(.copyDatabase(DatabaseCopy(source: source.server, database: source.database, instance: source.instance, name: source.database))))
+                return
+            }
+
+            if changeURLs {
+                guard let plan = info.urlPlan else {
+                    print("The URLs of \(host) need no change. Nexus changes nothing.")
+                    return
+                }
+
+                try finish(try await send(.changeWordPressURLs(host: host, plan: plan)))
+                return
+            }
+
+            if undoURLChange {
+                guard let change = info.urlChange else {
+                    FileHandle.standardError.write(Data("Nexus has no change of the URLs of \(host) that it can undo.\n".utf8))
+                    throw ExitCode.failure
+                }
+
+                try finish(try await send(.undoWordPressURLChange(host: host, plan: change.plan)))
+                return
+            }
+
             let database = info.database.map { name in
                 let place = info.instance.map { " on \($0)" } ?? ""
                 let state = info.databaseExists.map { $0 ? "" : " (it does not exist)" } ?? ""
@@ -751,6 +786,8 @@ struct SiteCommand: AsyncParsableCommand {
                 ("DB_HOST", info.dbHost ?? "not found"),
                 ("Home", info.home ?? "-"),
                 ("Site URL", info.siteURL ?? "-"),
+            ] + (info.configHome.map { [("WP_HOME", $0)] } ?? []) + [
+                ("Nexus URL", info.url ?? "-"),
             ]
 
             for (label, value) in rows {
@@ -771,6 +808,16 @@ struct SiteCommand: AsyncParsableCommand {
 
             if info.databaseExists == false, info.suggestedDBHost == nil {
                 print("nexus site wordpress \(host) --create-database makes the database.")
+            }
+
+            if info.copyInstance != nil {
+                print("nexus site wordpress \(host) --copy-database copies the database to \(info.copyInstance ?? "").")
+            }
+
+            if let plan = info.urlPlan {
+                print("nexus site wordpress \(host) --change-urls changes the URLs to \(plan.to).")
+            } else if let change = info.urlChange {
+                print("nexus site wordpress \(host) --undo-url-change puts back the URLs of before \(change.date.formatted(date: .abbreviated, time: .shortened)).")
             }
         }
     }

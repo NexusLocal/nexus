@@ -7,6 +7,10 @@ struct ImportDatabaseSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State var instance: String
+    // The server and the database of a WordPress site (Phase 4, 3d). The fields start with them.
+    var source: WordPressCopySource?
+    // The database of the WordPress site. A list that fails to load does not make it go.
+    @State private var wantedDatabase: String?
     // A Nexus instance, or nil for another server such as MAMP PRO.
     @State private var sourceInstance: String?
     @State private var host = "127.0.0.1"
@@ -201,8 +205,20 @@ struct ImportDatabaseSheet: View {
         .padding(20)
         .frame(width: 520)
         .onAppear {
-            useStandardAccount(of: kind)
-            sourceInstance = nexusSources.first?.id
+            guard let source else {
+                useStandardAccount(of: kind)
+                sourceInstance = nexusSources.first?.id
+                return
+            }
+
+            sourceInstance = nil
+            wantedDatabase = source.database
+            host = source.server.host
+            port = String(source.server.port ?? kind.standardPort)
+            user = source.server.account.user
+            password = source.server.account.password
+            database = source.database
+            name = source.database
         }
         // A chosen server that is no source anymore goes away. "Another server" stays chosen.
         .onChange(of: nexusSources.map(\.id)) { _, sources in
@@ -280,7 +296,12 @@ struct ImportDatabaseSheet: View {
         case .success(let list):
             sources = list
             sourcesProblem = nil
-            select(list.contains { $0.name == database } ? database : list.first?.name ?? "")
+            let choice = [wantedDatabase, database].compactMap { $0 }.first { name in list.contains { $0.name == name } }
+            select(choice ?? list.first?.name ?? "")
+
+            if choice != nil, choice == wantedDatabase {
+                wantedDatabase = nil
+            }
         case .failure(let problem):
             sources = []
             sourcesProblem = problem.message
