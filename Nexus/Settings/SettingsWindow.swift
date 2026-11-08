@@ -96,6 +96,7 @@ private struct GeneralSettings: View {
     @AppStorage(AppPreference.showInDock) private var showInDock = true
     @AppStorage(AppPreference.notifyServiceStops) private var notifyServiceStops = true
     @AppStorage(AppPreference.notifyImportDone) private var notifyImportDone = true
+    @AppStorage(AppPreference.notifyWorkspaceReady) private var notifyWorkspaceReady = true
 
     var body: some View {
         Form {
@@ -182,6 +183,7 @@ private struct GeneralSettings: View {
 
             Section {
                 Toggle("When a service stops or fails", isOn: $notifyServiceStops)
+                Toggle("When a workspace is ready", isOn: $notifyWorkspaceReady)
                 Toggle("When an import is done", isOn: $notifyImportDone)
             } header: {
                 Text("Notifications")
@@ -192,8 +194,8 @@ private struct GeneralSettings: View {
         .formStyle(.grouped)
         .toggleStyle(.switch)
         .fixedSize(horizontal: false, vertical: true)
-        .onChange(of: notifyServiceStops || notifyImportDone) {
-            if notifyServiceStops || notifyImportDone {
+        .onChange(of: notifyServiceStops || notifyImportDone || notifyWorkspaceReady) {
+            if notifyServiceStops || notifyImportDone || notifyWorkspaceReady {
                 Task { await model.requestNotificationPermission() }
             }
         }
@@ -209,7 +211,7 @@ private struct GeneralSettings: View {
 }
 
 // "Choose another app…" opens a file dialog. The chosen app joins the list and becomes the
-// selected app.
+// selected app. With "None", the menus of a site have no "Open in" item for this kind of app.
 private struct AppPicker: View {
     let title: String
     let systemImage: String
@@ -228,7 +230,7 @@ private struct AppPicker: View {
             set: { name in
                 if name == Self.chooseAnotherTag {
                     choosesApp = true
-                } else if !name.isEmpty {
+                } else {
                     choose(name)
                 }
             }
@@ -237,10 +239,10 @@ private struct AppPicker: View {
 
     var body: some View {
         Picker(title, selection: chosenApp) {
-            if selection.isEmpty {
-                Text("None")
-                    .tag("")
-            }
+            Text("None")
+                .tag("")
+
+            Divider()
 
             ForEach(apps) { app in
                 Label(app.name, systemImage: systemImage)
@@ -344,7 +346,7 @@ private struct SitesSettings: View {
             } header: {
                 Text("WordPress")
             } footer: {
-                Text("A new WordPress site starts with these values. Plugins write their rules into .htaccess, which only Apache reads. Many plugins are not tested on PHP 8.5 yet.")
+                Text("A new WordPress site starts with these values. WordPress runs on nginx and on Apache. Only Apache reads the rules that plugins write into .htaccess. Many plugins are not tested on PHP 8.5 yet.")
             }
         }
         .formStyle(.grouped)
@@ -442,6 +444,7 @@ private struct WorkspacesSettings: View {
                         .disabled(dumps.isEmpty)
                     }
                 }
+                .labeledContentStyle(.rowValue)
             } header: {
                 Text("Removed workspaces")
             } footer: {
@@ -532,41 +535,36 @@ private struct DatabasesSettings: View {
                                 .foregroundStyle(.secondary)
                                 .rowValue()
 
-                            if app.added {
-                                RowRemoveButton(help: "Remove \(app.name)") {
-                                    model.removeDatabaseApp(app)
-                                }
+                            RowRemoveButton(help: "Remove \(app.name)") {
+                                model.removeDatabaseApp(app)
                             }
                         }
                     } label: {
                         Label(app.name, systemImage: "cylinder.split.1x2")
                     }
+                    .labeledContentStyle(.rowValue)
                 }
 
                 Button("Add app…") {
                     addsApp = true
                 }
+                .trailingInRow()
                 .appChooser(isPresented: $addsApp) {
                     model.addApp($0, as: .database)
                 }
             } header: {
                 Text("Database apps")
             } footer: {
-                Text("Nexus finds the database apps on this Mac. Click \"Add app\" to add an app that Nexus did not find.")
+                Text("Nexus finds the database apps on this Mac. \"Add app…\" adds an app that Nexus did not find, or an app that you removed.")
             }
 
             Section {
-                Picker("MySQL and MariaDB", selection: Binding(get: { model.settings.mysqlApp }, set: { model.chooseDatabaseApp($0, for: .mysql) })) {
-                    ForEach(model.databaseApps(for: .mysql)) { Text($0.name).tag($0.name) }
-                }
-
-                Picker("PostgreSQL", selection: Binding(get: { model.settings.postgresqlApp }, set: { model.chooseDatabaseApp($0, for: .postgresql) })) {
-                    ForEach(model.databaseApps(for: .postgresql)) { Text($0.name).tag($0.name) }
-                }
+                DatabaseAppPicker(title: "MySQL and MariaDB", kind: .mysql, selection: model.settings.mysqlApp)
+                DatabaseAppPicker(title: "PostgreSQL", kind: .postgresql, selection: model.settings.postgresqlApp)
             } header: {
                 Text("Open with")
             } footer: {
-                Text("\"Open\" uses this app. The arrow next to \"Open\" shows the other apps.")
+                Text("\"Open\" uses this app. The arrow next to \"Open\" shows the other apps. With \"None\", a database shows \"Copy URL\" instead of \"Open\".")
             }
         }
         .formStyle(.grouped)
@@ -584,6 +582,28 @@ private struct DatabasesSettings: View {
     }
 }
 
+// "None" is also the choice when Nexus finds no app for this kind of database.
+private struct DatabaseAppPicker: View {
+    @Environment(AppModel.self) private var model
+    let title: String
+    let kind: ServiceKind
+    let selection: String
+
+    var body: some View {
+        Picker(title, selection: Binding(get: { selection }, set: { model.chooseDatabaseApp($0, for: kind) })) {
+            Text("None")
+                .tag("")
+
+            Divider()
+
+            ForEach(model.databaseApps(for: kind)) { app in
+                Text(app.name)
+                    .tag(app.name)
+            }
+        }
+    }
+}
+
 // One row of the port list. The names of the ports repeat, for example "Port" of each database.
 // So the id names the service too. With the name alone, every database row showed the first
 // database.
@@ -593,6 +613,16 @@ private struct PortLine: Identifiable {
 
     var id: String {
         "\(service.id) \(port.name)"
+    }
+}
+
+private struct PortGroup: Identifiable {
+    let title: String
+    let lines: [PortLine]
+    var footer: [String] = []
+
+    var id: String {
+        title
     }
 }
 
@@ -627,16 +657,24 @@ private struct NetworkSettings: View {
                 Text("Only .test, .internal and .localhost are possible. Other endings can send real traffic of this Mac to Nexus.")
             }
 
-            Section {
-                ForEach(model.services.flatMap { service in service.ports.map { PortLine(service: service, port: $0) } }) { row in
-                    PortRow(title: portTitle(service: row.service, port: row.port), port: row.port.number) {
-                        model.changePort(row.port, of: row.service, to: $0, place: .settings)
+            ForEach(portGroups()) { group in
+                Section {
+                    ForEach(group.lines) { row in
+                        PortRow(title: portTitle(service: row.service, port: row.port), port: row.port.number) {
+                            model.changePort(row.port, of: row.service, to: $0, place: .settings)
+                        }
+                    }
+                } header: {
+                    Text(group.title)
+                } footer: {
+                    if !group.footer.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(group.footer, id: \.self) { line in
+                                Text(line)
+                            }
+                        }
                     }
                 }
-            } header: {
-                Text("Ports")
-            } footer: {
-                Text("Every service has its own port. Apache gets the requests of its sites from nginx, so it needs no HTTPS port. When a port is in use, Nexus shows the program that uses it.")
             }
         }
         .formStyle(.grouped)
@@ -649,6 +687,28 @@ private struct NetworkSettings: View {
         } message: { tld in
             Text(model.tldChangeMessage(to: tld))
         }
+    }
+
+    // The ports of one kind of service sit together, from the lowest number to the highest. So a
+    // free number and a port that is used twice are easy to see.
+    // The last group that has ports gets the text about all ports.
+    private func portGroups() -> [PortGroup] {
+        let lines = model.services
+            .flatMap { service in service.ports.map { PortLine(service: service, port: $0) } }
+            .sorted { $0.port.number < $1.port.number }
+
+        var groups = [
+            PortGroup(title: "Webserver ports", lines: lines.filter { $0.service.kind == .webservers }, footer: ["Apache gets the requests of its sites from nginx. So it needs no HTTPS port."]),
+            PortGroup(title: "Database ports", lines: lines.filter { $0.service.kind.isDatabase }),
+            PortGroup(title: "Mail ports", lines: lines.filter { $0.service.kind == .mail }),
+            PortGroup(title: "Other ports", lines: lines.filter { ![.webservers, .mail].contains($0.service.kind) && !$0.service.kind.isDatabase }),
+        ].filter { !$0.lines.isEmpty }
+
+        if !groups.isEmpty {
+            groups[groups.count - 1].footer.append("Every service has its own port. When a port is in use, Nexus shows the program that uses it.")
+        }
+
+        return groups
     }
 
     private func portTitle(service: ServiceVersion, port: ServicePort) -> String {
@@ -732,8 +792,17 @@ private struct UpdatesSettings: View {
             Section {
                 Toggle("Check for updates automatically", isOn: $updater.checksAutomatically)
                 LabeledContent("Last check") {
-                    Text(updater.lastCheck?.formatted(date: .abbreviated, time: .shortened) ?? "Never")
+                    HStack {
+                        Text(updater.lastCheck?.formatted(date: .abbreviated, time: .shortened) ?? "Never")
+                            .rowValue()
+
+                        Button("Check now") {
+                            updater.check()
+                        }
+                        .disabled(!updater.canCheck)
+                    }
                 }
+                .labeledContentStyle(.rowValue)
             } header: {
                 Text("Nexus")
             } footer: {
@@ -836,6 +905,7 @@ private struct AdvancedSettings: View {
                 }
             }
         }
+        .labeledContentStyle(.rowValue)
     }
 }
 

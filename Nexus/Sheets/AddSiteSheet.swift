@@ -86,6 +86,7 @@ struct AddSiteSheet: View {
                             Button("Choose…", action: chooseFolder)
                         }
                     }
+                    .labeledContentStyle(.rowValue)
                 } footer: {
                     if let protectedFolder {
                         Text(ProtectedFolder.explanation(protectedFolder))

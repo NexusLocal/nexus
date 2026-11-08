@@ -231,16 +231,28 @@ extension AppModel {
 // Settings (step 6, part 6g).
 extension AppModel {
     // The found apps come first, then the added apps that still exist. A name shows once. A
-    // chosen app that is not installed anymore gives the first app of its list.
+    // database app that the user removed does not show. Nexus runs this each time it becomes the
+    // active app. So a value changes only when it is different, and the views do not draw again.
     func findApps() {
-        settings.terminals = Self.withAdded(KnownApps.installed(KnownApps.terminals), role: .terminal)
-        settings.editors = Self.withAdded(KnownApps.installed(KnownApps.editors), role: .editor)
-        settings.databaseApps = Self.withAdded(DatabaseApps.found(), role: .database)
+        let hidden = Set(UserDefaults.standard.stringArray(forKey: AppPreference.hiddenDatabaseApps) ?? [])
+        let foundDatabaseApps = DatabaseApps.found().filter { app in
+            app.location.map { !hidden.contains(Self.appPath($0)) } ?? true
+        }
 
-        settings.terminal = Self.chosen(AppPreference.terminalApp, in: settings.terminals)?.name ?? settings.terminals.first?.name ?? ""
-        settings.editor = Self.chosen(AppPreference.editorApp, in: settings.editors)?.name ?? settings.editors.first?.name ?? ""
-        settings.mysqlApp = chosenDatabaseApp(AppPreference.mysqlApp, for: .mysql)
-        settings.postgresqlApp = chosenDatabaseApp(AppPreference.postgresqlApp, for: .postgresql)
+        update(\.terminals, to: Self.withAdded(KnownApps.installed(KnownApps.terminals), role: .terminal))
+        update(\.editors, to: Self.withAdded(KnownApps.installed(KnownApps.editors), role: .editor))
+        update(\.databaseApps, to: Self.withAdded(foundDatabaseApps, role: .database))
+
+        update(\.terminal, to: Self.chosenName(AppPreference.terminalApp, in: settings.terminals))
+        update(\.editor, to: Self.chosenName(AppPreference.editorApp, in: settings.editors))
+        update(\.mysqlApp, to: chosenDatabaseApp(AppPreference.mysqlApp, for: .mysql))
+        update(\.postgresqlApp, to: chosenDatabaseApp(AppPreference.postgresqlApp, for: .postgresql))
+    }
+
+    private func update<Value: Equatable>(_ path: WritableKeyPath<AppSettings, Value>, to value: Value) {
+        if settings[keyPath: path] != value {
+            settings[keyPath: path] = value
+        }
     }
 
     private static func withAdded(_ found: [AppChoice], role: AppRole) -> [AppChoice] {
@@ -253,69 +265,84 @@ extension AppModel {
         return (found + added).filter { names.insert($0.name).inserted }
     }
 
-    private static func chosen(_ key: String, in apps: [AppChoice]) -> AppChoice? {
-        guard let path = UserDefaults.standard.string(forKey: key) else {
-            return nil
+    // An empty setting is the choice "None". A chosen app that is not installed anymore gives the
+    // standard app, or else the first app of the list.
+    private static func chosenName(_ key: String, in apps: [AppChoice], standard: String? = nil) -> String {
+        let path = UserDefaults.standard.string(forKey: key)
+
+        if path?.isEmpty == true {
+            return ""
         }
 
-        return apps.first { $0.location?.path(percentEncoded: false) == path }
+        if let path, let chosen = apps.first(where: { $0.location?.path(percentEncoded: false) == path }) {
+            return chosen.name
+        }
+
+        return apps.first { $0.name == standard }?.name ?? apps.first?.name ?? ""
     }
 
     // Without a choice of the user, "Open" uses the app that macOS opens the link with.
     private func chosenDatabaseApp(_ key: String, for kind: ServiceKind) -> String {
-        let apps = databaseApps(for: kind)
-
-        if let chosen = Self.chosen(key, in: apps) {
-            return chosen.name
-        }
-
-        let standard = DatabaseApps.defaultApp(for: kind).map(KnownApps.name)
-        return apps.first { $0.name == standard }?.name ?? apps.first?.name ?? ""
+        Self.chosenName(key, in: databaseApps(for: kind), standard: DatabaseApps.defaultApp(for: kind).map(KnownApps.name))
     }
 
     func databaseApps(for kind: ServiceKind) -> [AppChoice] {
         settings.databaseApps.filter { $0.canOpen(kind) }
     }
 
+    // An empty name is the choice "None".
     func chooseTerminal(_ name: String) {
         settings.terminal = name
-        remember(settings.terminals.first { $0.name == name }, as: AppPreference.terminalApp)
+        remember(name, in: settings.terminals, as: AppPreference.terminalApp)
     }
 
     func chooseEditor(_ name: String) {
         settings.editor = name
-        remember(settings.editors.first { $0.name == name }, as: AppPreference.editorApp)
+        remember(name, in: settings.editors, as: AppPreference.editorApp)
     }
 
     func chooseDatabaseApp(_ name: String, for kind: ServiceKind) {
-        let app = databaseApps(for: kind).first { $0.name == name }
-
         if kind == .postgresql {
             settings.postgresqlApp = name
-            remember(app, as: AppPreference.postgresqlApp)
+            remember(name, in: databaseApps(for: kind), as: AppPreference.postgresqlApp)
         } else {
             settings.mysqlApp = name
-            remember(app, as: AppPreference.mysqlApp)
+            remember(name, in: databaseApps(for: kind), as: AppPreference.mysqlApp)
         }
     }
 
-    private func remember(_ app: AppChoice?, as key: String) {
-        guard let path = app?.location?.path(percentEncoded: false) else {
+    private func remember(_ name: String, in apps: [AppChoice], as key: String) {
+        if name.isEmpty {
+            UserDefaults.standard.set("", forKey: key)
+            return
+        }
+
+        guard let path = apps.first(where: { $0.name == name })?.location?.path(percentEncoded: false) else {
             return
         }
 
         UserDefaults.standard.set(path, forKey: key)
     }
 
+    // A path of an app always ends in a slash. So a found app and a chosen app compare.
+    private static func appPath(_ app: URL) -> String {
+        URL(filePath: app.path(percentEncoded: false), directoryHint: .isDirectory).path(percentEncoded: false)
+    }
+
     // An added terminal app or code editor becomes the chosen one. An app with the name of a
-    // found app is that app.
+    // found app is that app. An added database app that the user removed shows again.
     func addApp(_ app: URL, as role: AppRole) {
-        let path = URL(filePath: app.path(percentEncoded: false), directoryHint: .isDirectory).path(percentEncoded: false)
+        let path = Self.appPath(app)
         var paths = UserDefaults.standard.stringArray(forKey: role.addedKey) ?? []
 
         if !paths.contains(path) {
             paths.append(path)
             UserDefaults.standard.set(paths, forKey: role.addedKey)
+        }
+
+        if role == .database {
+            let hidden = (UserDefaults.standard.stringArray(forKey: AppPreference.hiddenDatabaseApps) ?? []).filter { $0 != path }
+            UserDefaults.standard.set(hidden, forKey: AppPreference.hiddenDatabaseApps)
         }
 
         findApps()
@@ -327,20 +354,67 @@ extension AppModel {
         }
     }
 
-    // Only an app that the user added can go. A chosen app that goes gives the default again.
+    // An added app leaves the added apps. A found app stays hidden until "Add app…" adds it again.
+    // A chosen app that goes gives the default again.
     func removeDatabaseApp(_ app: AppChoice) {
-        guard app.added, let path = app.location?.path(percentEncoded: false) else {
+        guard let location = app.location else {
             return
         }
 
-        let paths = (UserDefaults.standard.stringArray(forKey: AppPreference.addedDatabaseApps) ?? []).filter { $0 != path }
-        UserDefaults.standard.set(paths, forKey: AppPreference.addedDatabaseApps)
+        let path = Self.appPath(location)
+        let added = (UserDefaults.standard.stringArray(forKey: AppPreference.addedDatabaseApps) ?? []).filter { $0 != path }
+        UserDefaults.standard.set(added, forKey: AppPreference.addedDatabaseApps)
 
-        for key in [AppPreference.mysqlApp, AppPreference.postgresqlApp] where UserDefaults.standard.string(forKey: key) == path {
-            UserDefaults.standard.removeObject(forKey: key)
+        if !app.added {
+            let hidden = UserDefaults.standard.stringArray(forKey: AppPreference.hiddenDatabaseApps) ?? []
+            UserDefaults.standard.set(hidden + [path], forKey: AppPreference.hiddenDatabaseApps)
+        }
+
+        for key in [AppPreference.mysqlApp, AppPreference.postgresqlApp] {
+            if let chosen = UserDefaults.standard.string(forKey: key), !chosen.isEmpty, Self.appPath(URL(filePath: chosen)) == path {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
         }
 
         findApps()
+    }
+
+    // git worktree add makes a workspace without a click in Nexus. So a notification tells when its
+    // site works: when a workspace leaves "preparing", or when a workspace that was not in the last
+    // list is ready at once. The caller gives no previous list after a launch or a new connection,
+    // and a new site with the workspaces that it has already gives none either.
+    func notifyReadyWorkspaces(from previous: SiteList?, to list: SiteList) {
+        guard let previous else {
+            return
+        }
+
+        let oldHosts = Set(previous.sites.compactMap(\.hosts.first))
+        let oldWorkspaces = Dictionary(previous.sites.flatMap { site in
+            (site.workspaces ?? []).map { workspace in ("\(site.hosts.first ?? "") \(workspace.name)", workspace.state) }
+        }, uniquingKeysWith: { first, _ in first })
+
+        for site in list.sites {
+            guard let host = site.hosts.first, oldHosts.contains(host) else {
+                continue
+            }
+
+            for workspace in site.workspaces ?? [] {
+                let key = "\(host) \(workspace.name)"
+
+                guard oldWorkspaces[key].map({ $0 == nil || $0 == .preparing }) ?? true else {
+                    continue
+                }
+
+                switch workspace.state {
+                case .ready:
+                    Notifier.post("\(workspace.name) is ready", "\(workspace.hosts?.first ?? workspace.name) is the workspace of \(host).", setting: AppPreference.notifyWorkspaceReady)
+                case .notIsolated(let reason):
+                    Notifier.post("\(workspace.name) is ready without its own data", reason, setting: AppPreference.notifyWorkspaceReady)
+                case .preparing, nil:
+                    break
+                }
+            }
+        }
     }
 
     // The first event after a launch or after a new connection to nexusd shows no

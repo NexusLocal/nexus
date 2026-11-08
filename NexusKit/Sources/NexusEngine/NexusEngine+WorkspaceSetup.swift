@@ -745,7 +745,7 @@ extension NexusEngine {
         }
 
         let mainFolder = RealPath.of(main)
-        let probed = try await configuration(of: site, folder: mainFolder)
+        let probed = try await shownConfiguration(of: site, folder: mainFolder)
         let plan = try await envPlan(workspace: WorkspaceKeys.workspacePlaceholder, configuration: probed, mainFolder: mainFolder, workspaceFolder: "{worktree}")
         let hosts = Workspace.hostPairs(of: sites, workspace: WorkspaceKeys.workspacePlaceholder, tld: state.tld).map { HostRewrite(from: $0.from, to: $0.to) }
         let text = try Self.envText(of: "\(mainFolder)/.env")

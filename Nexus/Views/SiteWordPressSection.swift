@@ -21,6 +21,7 @@ struct SiteWordPressSection: View {
                     .foregroundStyle(.secondary)
                     .rowValue()
             }
+            .labeledContentStyle(.rowValue)
 
             if let info {
                 configurationRow(info)
@@ -36,6 +37,7 @@ struct SiteWordPressSection: View {
                             .rowValue(.middle)
                             .help(home)
                     }
+                    .labeledContentStyle(.rowValue)
                 }
             }
         } header: {
@@ -90,6 +92,7 @@ struct SiteWordPressSection: View {
                 }
             }
         }
+        .labeledContentStyle(.rowValue)
     }
 
     @ViewBuilder
@@ -98,14 +101,16 @@ struct SiteWordPressSection: View {
 
         LabeledContent("Database") {
             HStack {
-                if warns {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Color.statusOrange)
-                }
+                HStack {
+                    if warns {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Color.statusOrange)
+                    }
 
-                Text(databaseText(info, database: database))
-                    .foregroundStyle(warns ? Color.orangeText : Color.secondary)
-                    .rowValue()
+                    Text(databaseText(info, database: database))
+                        .foregroundStyle(warns ? Color.orangeText : Color.secondary)
+                }
+                .rowValue()
 
                 if info.databaseExists == true, let service = info.instance.flatMap(model.service) {
                     OpenDatabaseButton(kind: service.kind, url: service.databaseURL(database))
@@ -128,6 +133,7 @@ struct SiteWordPressSection: View {
                 }
             }
         }
+        .labeledContentStyle(.rowValue)
     }
 
     @ViewBuilder

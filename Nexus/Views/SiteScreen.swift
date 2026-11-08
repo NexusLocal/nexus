@@ -73,6 +73,7 @@ struct SiteScreen: View {
                     Text(site.host)
                         .rowValue()
                 }
+                .labeledContentStyle(.rowValue)
 
                 LabeledContent("Aliases") {
                     HStack {
@@ -85,6 +86,7 @@ struct SiteScreen: View {
                         }
                     }
                 }
+                .labeledContentStyle(.rowValue)
 
                 Picker("Group", selection: group) {
                     Text("None").tag("")
@@ -101,6 +103,7 @@ struct SiteScreen: View {
                             .foregroundStyle(.secondary)
                             .rowValue()
                     }
+                    .labeledContentStyle(.rowValue)
                 }
 
                 LabeledContent("Folder") {
@@ -111,11 +114,13 @@ struct SiteScreen: View {
                         }
                     }
                 }
+                .labeledContentStyle(.rowValue)
 
                 if kind == .php {
                     LabeledContent("Document root") {
                         PathText(site.documentRoot)
                     }
+                    .labeledContentStyle(.rowValue)
                 }
 
                 LabeledContent("URL") {
@@ -135,6 +140,7 @@ struct SiteScreen: View {
                         }
                     }
                 }
+                .labeledContentStyle(.rowValue)
             } header: {
                 Text("General")
             } footer: {
@@ -159,6 +165,10 @@ struct SiteScreen: View {
             switch kind {
             case .php:
                 serverSection
+
+                if site.projectType == .laravel {
+                    SiteDatabasesSection(site: site)
+                }
 
                 if isWordPress {
                     SiteWordPressSection(site: site)
@@ -218,7 +228,7 @@ struct SiteScreen: View {
         } footer: {
             VStack(alignment: .leading, spacing: 6) {
                 if isWordPress, server == WebServer.apache.rawValue {
-                    Text("nginx handles HTTPS for every site and sends each request on to Apache. A new WordPress site gets Apache, because plugins write their rules into .htaccess.")
+                    Text("nginx handles HTTPS for every site and sends each request on to Apache. Apache reads the rules that plugins write into .htaccess.")
                 } else {
                     Text("nginx handles HTTPS for every site. For an Apache site, nginx sends each request on to Apache.")
                 }
@@ -236,6 +246,7 @@ struct SiteScreen: View {
                     .foregroundStyle(.secondary)
                     .rowValue()
             }
+            .labeledContentStyle(.rowValue)
 
             LabeledContent("Command") {
                 CodeField(title: "Command", text: $appCommand, prompt: site.projectCommand ?? "npm run dev", width: 260)
@@ -339,6 +350,7 @@ struct SiteScreen: View {
                 } label: {
                     Label(workspace.name, systemImage: "arrow.triangle.branch")
                 }
+                .labeledContentStyle(.rowValue)
                 .help((workspace.folder as NSString).abbreviatingWithTildeInPath)
             }
         } header: {
@@ -434,6 +446,7 @@ struct SiteScreen: View {
                     Text(entry.key)
                         .font(.system(.body, design: .monospaced))
                 }
+                .labeledContentStyle(.rowValue)
             }
 
             ForEach(ownKeys.indices, id: \.self) { index in
@@ -463,6 +476,7 @@ struct SiteScreen: View {
             Button("Add a key") {
                 ownKeys.append(WorkspaceEnvKey(key: "", value: ""))
             }
+            .trailingInRow()
         } header: {
             Text("Environment keys")
         } footer: {
@@ -828,6 +842,7 @@ private struct CommandRows: View {
         Button("Add a command") {
             commands.append("")
         }
+        .trailingInRow()
     }
 
     // A new row without text is no command for nexusd yet.

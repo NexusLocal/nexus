@@ -83,6 +83,7 @@ enum AppPreference {
     static let showInDock = "showInDock"
     static let notifyServiceStops = "notifyServiceStops"
     static let notifyImportDone = "notifyImportDone"
+    static let notifyWorkspaceReady = "notifyWorkspaceReady"
     static let notifyNewMail = "notifyNewMail"
     static let checkPackageUpdates = "checkPackageUpdates"
     static let installPackageUpdates = "installPackageUpdates"
@@ -92,6 +93,7 @@ enum AppPreference {
     static let addedTerminals = "addedTerminals"
     static let addedEditors = "addedEditors"
     static let addedDatabaseApps = "addedDatabaseApps"
+    static let hiddenDatabaseApps = "hiddenDatabaseApps"
     static let mysqlApp = "mysqlApp"
     static let postgresqlApp = "postgresqlApp"
     static let firstRunDone = "firstRunDone"
@@ -102,6 +104,7 @@ enum AppPreference {
             showInDock: true,
             notifyServiceStops: true,
             notifyImportDone: true,
+            notifyWorkspaceReady: true,
             checkPackageUpdates: true,
             installPackageUpdates: false,
         ])
@@ -275,6 +278,9 @@ final class AppModel {
     @ObservationIgnored private(set) var client: NexusClient?
     @ObservationIgnored private var feed: NexusEventFeed?
     @ObservationIgnored private var finishedSwitches: Set<String> = []
+    @ObservationIgnored private var announcedPackages: [String]?
+    // A workspace that got ready while the app had no connection gives no notification.
+    @ObservationIgnored private var sitesSinceConnection = false
 
     // A debug build with the launch argument --sample shows only sample data, for a check of
     // the screens against the design.
@@ -303,6 +309,13 @@ final class AppModel {
         model.openMailID = nil
         model.openMail = nil
         model.findApps()
+
+        // An app that the user installs or removes while Nexus runs then shows in the lists.
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak model] _ in
+            MainActor.assumeIsolated {
+                model?.findApps()
+            }
+        }
 
         // This copy quits after the question. A restart of nexusd from here would use up the one
         // restart of this build, and the copy in Applications could then not restart nexusd.
@@ -846,6 +859,9 @@ final class AppModel {
             restartOldNexusd()
             let previous = services
             let versions = Set(services.map { "\($0.id) \($0.version)" })
+            // The launch loads the installed packages already. So the first list only gets noted.
+            let packagesChanged = announcedPackages != nil && list.installed != nil && list.installed != announcedPackages
+            announcedPackages = list.installed
             services = list.services.compactMap(ServiceVersion.init).sorted(by: ServiceVersion.showsBefore)
             stoppedByStopAll = list.stoppedByStopAll
             settings.lanAccess = list.lanAccess ?? false
@@ -863,19 +879,22 @@ final class AppModel {
             // minute. Without the automatic check, only the installed packages load.
             if packagesChecked.isEmpty, AppPreference.isOn(AppPreference.checkPackageUpdates), lastPackageCheck.map({ Date.now.timeIntervalSince($0) > 60 }) ?? true {
                 Task { await checkPackages() }
-            } else if installedProblem != nil || versions != Set(services.map { "\($0.id) \($0.version)" }) {
+            } else if packagesChanged || installedProblem != nil || versions != Set(services.map { "\($0.id) \($0.version)" }) {
                 // The command line can install, update or remove a package too. A restart of
                 // nexusd can end the read of the installed packages.
                 Task { await loadInstalledRuntimes() }
             }
         case .event(.sites(let list)):
             nexusdProblem = versionProblem
+            notifyReadyWorkspaces(from: sitesSinceConnection ? siteList : nil, to: list)
+            sitesSinceConnection = true
             siteList = list
             show(list)
         case .event(.tasks(let list)):
             show(list)
             restartOldNexusd()
         case .unreachable(let reason):
+            sitesSinceConnection = false
             nexusdProblem = .unreachable(reason)
             versionCheck.connectionEnded()
             show(TaskList(tasks: []))

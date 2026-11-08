@@ -146,6 +146,9 @@ public actor NexusEngine {
     var copyTargets: Set<String> = []
     var installTargets: Set<String> = []
     var updatingServices: Set<String> = []
+    // The configuration that the Site screen shows, for each folder, with the files that it came
+    // from. The setup of a workspace always runs the probe again.
+    var shownConfigurations: [String: (files: String, configuration: LaravelConfiguration)] = [:]
     // The requests that nexusd works on now, the watch of the build of the app on disk, the new
     // build that nexusd starts after its work, and whether nexusd stops now for an update.
     var openRequests = 0
@@ -308,6 +311,8 @@ public actor NexusEngine {
                 return .configuration(try await probeConfiguration(folder: folder, php: php))
             case .workspaceEnv(let host):
                 return .workspaceEnv(try await workspaceEnvPreview(host: host))
+            case .siteDatabases(let host):
+                return .siteDatabases(try await siteDatabases(host: host))
             case .wordPressSite(let host):
                 return .wordPressSite(try await wordPressSite(host: host))
             case .setUpWordPress(let host, let database, let instance):
@@ -435,11 +440,11 @@ public actor NexusEngine {
     }
 
     // DNS has no runtime. Each service has its real state here.
-    private func services() async throws -> [(runtime: InstalledRuntime?, status: ServiceStatus)] {
+    private func services(installed: [InstalledRuntime]? = nil) async throws -> [(runtime: InstalledRuntime?, status: ServiceStatus)] {
         let supervised = Dictionary(uniqueKeysWithValues: await supervisor.status().map { ($0.id, $0) })
         var all: [(runtime: InstalledRuntime?, status: ServiceStatus)] = [(nil, await dnsStatus())]
 
-        for runtime in await serviceRuntimes() {
+        for runtime in await serviceRuntimes(of: installed) {
             guard let id = catalog.serviceID(for: runtime) else {
                 continue
             }
@@ -482,7 +487,8 @@ public actor NexusEngine {
     }
 
     func serviceList() async throws -> ServiceList {
-        let all = try await services()
+        let installed = await installer.installedRuntimes()
+        let all = try await services(installed: installed)
         let dnsProblem = await dnsNamesProblem()
         let state = await stateStore.current()
         let sites = resolvedSites(state).map(\.site)
@@ -530,15 +536,24 @@ public actor NexusEngine {
             lanAccess: state.lanAccess,
             newInstanceAccount: state.newInstanceAccount,
             build: build,
-            updateBuild: updateBuild
+            updateBuild: updateBuild,
+            installed: installed.map { "\($0.name) \($0.line) \($0.version)" }.sorted()
         )
     }
 
     // One runtime for each service. nginx and Apache use the newest installed version line.
-    func serviceRuntimes() async -> [InstalledRuntime] {
+    // The service list gives the runtimes that it read already. So it reads the folder one time.
+    func serviceRuntimes(of installed: [InstalledRuntime]? = nil) async -> [InstalledRuntime] {
         var byID: [String: InstalledRuntime] = [:]
+        let runtimes: [InstalledRuntime]
 
-        for runtime in await installer.installedRuntimes() {
+        if let installed {
+            runtimes = installed
+        } else {
+            runtimes = await installer.installedRuntimes()
+        }
+
+        for runtime in runtimes {
             guard let id = catalog.serviceID(for: runtime) else {
                 continue
             }
@@ -940,11 +955,15 @@ public actor NexusEngine {
 
         let folder = runtime.folder.path(percentEncoded: false)
 
+        // The list goes out after the mail receiver starts. So it shows the state of the receiver.
         guard let current else {
             let installed = "\(runtime.name) \(runtime.version) is installed in \(folder)"
-            return name == "mailpit" ? await receiveMail(after: installed) : installed
+            let message = name == "mailpit" ? await receiveMail(after: installed) : installed
+            servicesChanged()
+            return message
         }
 
+        servicesChanged()
         return "\(runtime.name) \(runtime.line) is updated from \(current.version) to \(runtime.version) in \(folder)"
     }
 
@@ -1058,6 +1077,7 @@ public actor NexusEngine {
         }
 
         try await installer.remove(name: name, line: line)
+        servicesChanged()
 
         if name == "mailpit", await mailRuntime() == nil {
             stopMailReceiver()
@@ -1253,7 +1273,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .turnOffMailPlugins: true
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .siteDatabases, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .turnOffMailPlugins: true
         default: false
         }
     }

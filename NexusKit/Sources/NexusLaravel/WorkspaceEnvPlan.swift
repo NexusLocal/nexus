@@ -344,21 +344,21 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
         isLocal(path, settings: settings) && port(path, settings: settings).map(ports.contains) ?? false
     }
 
-    private static func isLocal(_ path: String, settings: [String: ConfigSetting]) -> Bool {
+    static func isLocal(_ path: String, settings: [String: ConfigSetting]) -> Bool {
         value("host", at: path, settings: settings).map { localHosts.contains($0.description) } ?? true
     }
 
-    private static func port(_ path: String, settings: [String: ConfigSetting]) -> Int? {
+    static func port(_ path: String, settings: [String: ConfigSetting]) -> Int? {
         value("port", at: path, settings: settings).flatMap { Int($0.description) }
     }
 
     // For a write, Laravel puts the write settings over the settings of the connection. A write
     // host can be a list, and the configuration then has it as write.host.0.
-    private static func setting(_ name: String, at path: String, settings: [String: ConfigSetting]) -> ConfigSetting? {
+    static func setting(_ name: String, at path: String, settings: [String: ConfigSetting]) -> ConfigSetting? {
         ["\(path).write.\(name)", "\(path).write.\(name).0", "\(path).\(name)"].compactMap { settings[$0] }.first { $0.value != .null }
     }
 
-    private static func value(_ name: String, at path: String, settings: [String: ConfigSetting]) -> ConfigValue? {
+    static func value(_ name: String, at path: String, settings: [String: ConfigSetting]) -> ConfigValue? {
         setting(name, at: path, settings: settings)?.value
     }
 

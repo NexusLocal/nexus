@@ -63,6 +63,16 @@ struct WordPressConfigTests {
         #expect(url.host == "127.0.0.1:13307")
     }
 
+    @Test func anIPv6DatabaseURLKeepsTheBracketsOfTheAddress() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try file("ipv6/.env", "DATABASE_URL=mysql://wp:pw@[::1]:13307/blog\n")
+
+        let config = WordPressFiles.bedrockConfig(project: root.appending(path: "ipv6", directoryHint: .isDirectory))
+
+        #expect(config.host == "[::1]:13307")
+        #expect(DatabaseAddress(dbHost: try #require(config.host)) == .tcp(host: "::1", port: 13307))
+    }
+
     @Test func dbHostGetsTheNewValueAndKeepsTheOldLineAsAComment() {
         let text = "<?php\n// define('DB_HOST', 'old');\n\tdefine( 'DB_HOST', 'localhost' );\ndefine('DB_NAME', 'blog');\n"
         let twice = "<?php\nif ($local) {\n    define('DB_HOST', 'localhost');\n} else {\n    define('DB_HOST', 'db');\n}\n"

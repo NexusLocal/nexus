@@ -74,6 +74,42 @@ extension View {
     }
 }
 
+// The automatic style of a form gives a value without a width of its own about half of the row.
+// So a short value next to a button ended in "…" while the row had free width. This style gives
+// the value all the width that the label does not use. A long label, for example a long branch
+// name, ends in "…" before it pushes the buttons out of the row. A button is taller than a line of
+// text. The automatic style lets the button reach into the padding of the row, and so does this
+// style. So a row with a button keeps the height of the other rows.
+struct RowValueStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 16) {
+            configuration.label
+                .lineLimit(1)
+                .layoutPriority(1)
+
+            configuration.content
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.vertical, -2)
+        }
+    }
+}
+
+extension View {
+    // A button alone on a row of a form, for example "Add app…", sits at the right side. The
+    // buttons of the other rows are there too. Without the negative padding, the row was taller
+    // than a row with text.
+    func trailingInRow() -> some View {
+        frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.vertical, -4)
+    }
+}
+
+extension LabeledContentStyle where Self == RowValueStyle {
+    static var rowValue: RowValueStyle {
+        RowValueStyle()
+    }
+}
+
 // A field for a host, a command or an address: one line of monospaced text without corrections.
 struct CodeField: View {
     let title: String
@@ -463,7 +499,7 @@ nonisolated enum LogTail {
 
 // The database apps are the apps of Settings > Databases that open this kind (D36): the apps
 // that macOS knows for the link, and the apps that the user added. The primary action uses the
-// app of "Open with".
+// app of "Open with". With "None", or without an app, the button copies the URL.
 struct OpenDatabaseButton: View {
     @Environment(AppModel.self) private var model
     let kind: ServiceKind
@@ -475,8 +511,19 @@ struct OpenDatabaseButton: View {
 
     var body: some View {
         let apps = model.databaseApps(for: kind)
-        let primaryApp = apps.first { $0.name == chosenApp } ?? apps.first
 
+        if let primaryApp = apps.first(where: { $0.name == chosenApp }) {
+            openMenu(apps: apps, primaryApp: primaryApp)
+        } else {
+            Button("Copy URL") {
+                copyToPasteboard(url?.absoluteString ?? "")
+            }
+            .fixedSize()
+            .disabled(url == nil)
+        }
+    }
+
+    private func openMenu(apps: [AppChoice], primaryApp: AppChoice) -> some View {
         Menu("Open") {
             Section("Open with") {
                 ForEach(apps) { app in
@@ -494,9 +541,7 @@ struct OpenDatabaseButton: View {
 
             Text(url?.absoluteString ?? "")
         } primaryAction: {
-            if let primaryApp {
-                open(with: primaryApp)
-            }
+            open(with: primaryApp)
         }
         .fixedSize()
         .disabled(url == nil)

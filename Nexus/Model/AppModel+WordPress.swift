@@ -18,6 +18,31 @@ extension WordPressSiteInfo {
     }
 }
 
+// The database connections of a Laravel site. The sample data gives the state of the design "Site".
+extension AppModel {
+    func siteDatabases(of site: SiteItem) async -> Result<[SiteDatabase], SiteDatabasesProblem> {
+        guard isLive else {
+            return .success([
+                SiteDatabase(connection: "mysql", database: "shop", host: "127.0.0.1", port: 13306, instance: "mysql-8.0"),
+                SiteDatabase(connection: "cms", database: "shop_cms", host: "127.0.0.1", port: 13306, instance: "mysql-8.0"),
+            ])
+        }
+
+        switch await outcome(of: .siteDatabases(host: site.host)) {
+        case .answer(.siteDatabases(let databases)):
+            return .success(databases)
+        case .failure(let message):
+            return .failure(SiteDatabasesProblem(message: message))
+        default:
+            return .failure(SiteDatabasesProblem(message: "nexusd did not answer."))
+        }
+    }
+}
+
+struct SiteDatabasesProblem: Error {
+    let message: String
+}
+
 // The configuration and the database of a WordPress site (Phase 4, 3b). The sample data gives the
 // state of the design "Site · WordPress".
 extension AppModel {

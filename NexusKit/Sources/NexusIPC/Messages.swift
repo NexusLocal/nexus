@@ -569,14 +569,19 @@ public struct ServiceList: Codable, Sendable, Equatable {
     // the build of the app, the app does not restart nexusd. A nexusd of 0.1.1 and older does not
     // send it.
     public let updateBuild: String?
+    // The name, line and version of each installed package. Node, Composer and WP-CLI have no
+    // service. So without this list the app did not see a remove of them from the command line.
+    // An older nexusd does not send it.
+    public let installed: [String]?
 
-    public init(services: [ServiceInfo], stoppedByStopAll: [String], lanAccess: Bool? = nil, newInstanceAccount: DatabaseAccount? = nil, build: String? = nil, updateBuild: String? = nil) {
+    public init(services: [ServiceInfo], stoppedByStopAll: [String], lanAccess: Bool? = nil, newInstanceAccount: DatabaseAccount? = nil, build: String? = nil, updateBuild: String? = nil, installed: [String]? = nil) {
         self.services = services
         self.stoppedByStopAll = stoppedByStopAll
         self.lanAccess = lanAccess
         self.newInstanceAccount = newInstanceAccount
         self.build = build
         self.updateBuild = updateBuild
+        self.installed = installed
     }
 }
 
@@ -714,6 +719,8 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case probe(folder: String, php: String?)
     // What the .env of each workspace of this site gets, with {workspace} in the values.
     case workspaceEnv(host: String)
+    // The database connections of a Laravel site, for its Site screen.
+    case siteDatabases(host: String)
     // The configuration and the database of a WordPress site (Phase 4, 3b), and the three actions of
     // its Site screen.
     case wordPressSite(host: String)
@@ -893,6 +900,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     // Nexus has no package of the tool. A link in bin/ then runs the next program on the PATH.
     case toolNotInstalled(message: String)
     case configuration(LaravelConfiguration)
+    case siteDatabases([SiteDatabase])
     case wordPressSite(WordPressSiteInfo)
     case workspaceEnv([WorkspaceEnvKey])
     case workspaceSettings(WorkspaceSettings)

@@ -215,6 +215,7 @@ private struct ConfigFileRow: View {
                 }
             }
         }
+        .labeledContentStyle(.rowValue)
         .help(explanation)
     }
 
@@ -316,6 +317,7 @@ struct StateSection: View {
                         .rowValue()
                         .help(service.usedBy.joined(separator: "\n"))
                 }
+                .labeledContentStyle(.rowValue)
             }
 
             if [.mysql, .mariadb, .postgresql, .redis, .dns].contains(service.kind), let port = service.ports.first {
@@ -342,6 +344,7 @@ struct StateSection: View {
                         }
                     }
                 }
+                .labeledContentStyle(.rowValue)
             }
         } header: {
             Text(service.kind == .mail ? "Mail service" : service.name)
