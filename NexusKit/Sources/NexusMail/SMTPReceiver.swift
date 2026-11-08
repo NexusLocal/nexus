@@ -12,6 +12,7 @@ public final class SMTPReceiver: Sendable {
     private struct Listening: @unchecked Sendable {
         let descriptor: Int32
         let source: any DispatchSourceRead
+        let closed: DispatchSemaphore
     }
 
     private let requestedPort: Int
@@ -62,18 +63,28 @@ public final class SMTPReceiver: Sendable {
         source.setEventHandler { [weak self] in
             self?.acceptConnection(on: descriptor)
         }
+        let closed = DispatchSemaphore(value: 0)
         source.setCancelHandler {
             close(descriptor)
+            closed.signal()
         }
-        listening.withLock { $0 = Listening(descriptor: descriptor, source: source) }
+        listening.withLock { $0 = Listening(descriptor: descriptor, source: source, closed: closed) }
         source.resume()
     }
 
+    // The port is free when stop returns. So a removal or a port change can use it at once.
     public func stop() {
-        listening.withLock { current in
-            current?.source.cancel()
-            current = nil
+        let current = listening.withLock { listening in
+            defer { listening = nil }
+            return listening
         }
+
+        guard let current else {
+            return
+        }
+
+        current.source.cancel()
+        current.closed.wait()
     }
 
     private func acceptConnection(on descriptor: Int32) {
