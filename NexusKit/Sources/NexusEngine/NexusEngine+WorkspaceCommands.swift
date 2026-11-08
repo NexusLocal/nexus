@@ -24,7 +24,8 @@ extension NexusEngine {
         let host = workspace.hosts(of: sites, tld: state.tld).first ?? ""
         let databaseWord = database.map(WorkspaceKeys.shellWord)
         let finished = workspace.finishedCommands
-        let pending = Self.commands(of: sites).filter { !finished.contains($0) }
+        let seeding = workspace.databaseKind == .empty && sites.contains(where: \.runsWorkspaceSeeders)
+        let pending = Self.commands(of: sites, seeding: seeding).filter { !finished.contains($0) }
 
         guard !pending.isEmpty else {
             await endCommands(of: &workspace, key: key)
@@ -90,14 +91,20 @@ extension NexusEngine {
     }
 
     // A site without its own list follows the preset (D66). A clone has the schema of the main
-    // database, so a branch with a new migration needs this command.
-    static func commands(of sites: [Site]) -> [String] {
-        distinct(sites.flatMap { site in
+    // database, so a branch with a new migration needs this command. An empty database gets its
+    // tables from the same command. "Run the seeders" then fills them, after each command of the
+    // site, so a command that makes a table runs first.
+    static func commands(of sites: [Site], seeding: Bool = false) -> [String] {
+        let listed = sites.flatMap { site in
             site.workspaceCommands ?? (hasArtisanInWorktrees(site) ? [migrateCommand] : [])
-        })
+        }
+        let seeds = seeding && sites.contains(where: hasArtisanInWorktrees) ? [seedCommand] : []
+
+        return distinct(listed + seeds)
     }
 
     static let migrateCommand = "php artisan migrate --force"
+    static let seedCommand = "php artisan db:seed --force"
 
     // A repository in the public folder holds no application, so its worktrees have no artisan.
     private static func hasArtisanInWorktrees(_ site: Site) -> Bool {

@@ -35,7 +35,11 @@ extension SiteItem {
             projectCommand: info.projectCommand,
             framework: info.framework,
             app: info.app,
-            projectType: info.projectType
+            projectType: info.projectType,
+            workspaceDatabases: info.workspaceDatabases,
+            workspaceSeeders: info.workspaceSeeders ?? false,
+            migrationCommand: info.migrationCommand,
+            offersEmptyDatabases: info.offersEmptyDatabases
         )
     }
 }
@@ -221,7 +225,7 @@ extension AppModel {
     // when nexusd added the site or the folder. settings holds the kind, the command, the address and
     // the Node line.
     func addSite(folder: URL, host: String, aliases: [String], group: String?, server: WebServer, php: String?, settings: SiteChange) async -> String? {
-        let request = NexusRequest.addSite(folder: folder.path(percentEncoded: false), host: host, aliases: aliases, php: php, server: server, group: group, runsAs: settings.runsAs, command: settings.command, address: settings.address, node: settings.node)
+        let request = NexusRequest.addSite(folder: folder.path(percentEncoded: false), host: host, aliases: aliases, php: php, server: server, group: group, runsAs: settings.runsAs, command: settings.command, address: settings.address, node: settings.node, workspaceDatabases: settings.workspaceDatabases?.kind)
         let failure = await failureMessage(of: request)
 
         if failure == nil {

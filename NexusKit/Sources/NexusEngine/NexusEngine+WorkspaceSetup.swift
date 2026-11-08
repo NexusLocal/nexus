@@ -152,7 +152,8 @@ extension NexusEngine {
 
     // D40: this also works when the setting of the site is off and for a worktree from before the
     // site. A second call changes nothing. So a script can always run it before nexus workspace wait.
-    func createWorkspace(folder: String) async throws -> String {
+    // databases chooses for this workspace only. A workspace that exists keeps its databases.
+    func createWorkspace(folder: String, databases: WorkspaceDatabaseKind? = nil) async throws -> String {
         let state = await stateStore.current()
         let path = RealPath.of(URL(filePath: folder, directoryHint: .isDirectory))
 
@@ -187,6 +188,10 @@ extension NexusEngine {
 
         let key = ProjectFolder.workspaceKey(of: site)
 
+        if databases == .empty, Self.isWordPress(resolvedSites(state).map(\.site).filter { ProjectFolder.workspaceKey(of: $0) == key }) {
+            throw RuntimeError.unsupported("A WordPress site always gets a copy of its database, because WordPress has no migrations.")
+        }
+
         // The check and the change are one step, because a check of the worktrees can add the same
         // worktree in between. A new site gets the list that a first check gives it. Without that
         // list, each worktree that it has already would get a workspace. The check of the worktrees
@@ -197,7 +202,7 @@ extension NexusEngine {
             let folderName = (worktree as NSString).lastPathComponent
 
             if let known = record.workspaces.first(where: { $0.worktree == worktree }) {
-                return "The workspace \(known.name) exists already."
+                return databases == nil ? "The workspace \(known.name) exists already." : "The workspace \(known.name) exists already. It keeps its databases."
             }
 
             let isMoved = { (workspace: Workspace) in
@@ -210,7 +215,7 @@ extension NexusEngine {
 
             let name = Workspace.name(forFolder: folderName, taken: Set(record.workspaces.map(\.name)))
 
-            record.workspaces.append(Workspace(name: name, worktree: worktree, folder: worktree + repository.subfolder))
+            record.workspaces.append(Workspace(name: name, worktree: worktree, folder: worktree + repository.subfolder, databaseKind: databases))
             record.listed.insert(worktree)
             state.worktrees[key] = record
 
@@ -247,6 +252,7 @@ extension NexusEngine {
     private func setUp(_ workspace: Workspace, key: String) async -> Workspace {
         var workspace = workspace
         workspace.warnings = []
+        await chooseDatabaseKind(of: &workspace, key: key)
 
         // The setup reads the main checkout after this line. So a fix there during the setup counts.
         if let folders = await fileFolders(of: workspace, key: key) {
@@ -313,13 +319,14 @@ extension NexusEngine {
         }
 
         workspace.configurationDigest = Self.configurationDigest(of: written.folder, in: workspace.worktree)
+        let emptying = workspace.databaseKind == .empty
 
         for server in written.servers {
-            try await prepareServer(of: server.tools, port: server.port, databases: written.databases.filter { $0.port == server.mainPort }, workspace: workspace.name, key: key)
+            try await prepareServer(of: server.tools, port: server.port, databases: written.databases.filter { $0.port == server.mainPort }, workspace: workspace.name, key: key, emptying: emptying)
         }
 
         for file in written.sqliteFiles {
-            try await clone(file, in: written.folder, git: written.git, into: &workspace)
+            try await clone(file, in: written.folder, git: written.git, into: &workspace, empty: emptying)
         }
 
         return written
@@ -389,8 +396,9 @@ extension NexusEngine {
     // file later, so git must ignore that name too. A write-ahead file that stays there does not
     // belong to the new file. copyfile copies a symbolic link as a link, and the workspace would
     // then write into the file of the main site. A step before this one can take a moment, and git
-    // can remove or move the worktree in that time. A clone would make that folder again.
-    func clone(_ file: WorkspaceFile, in folder: String, git: URL, into workspace: inout Workspace) async throws {
+    // can remove or move the worktree in that time. A clone would make that folder again. With empty,
+    // the workspace gets an empty file, and SQLite treats an empty file as a new database.
+    func clone(_ file: WorkspaceFile, in folder: String, git: URL, into workspace: inout Workspace, empty: Bool = false) async throws {
         let manager = FileManager.default
 
         guard manager.fileExists(atPath: folder), manager.fileExists(atPath: file.from), !manager.fileExists(atPath: file.to) else {
@@ -413,6 +421,14 @@ extension NexusEngine {
 
         try? manager.removeItem(atPath: "\(file.to)-wal")
         try? manager.removeItem(atPath: "\(file.to)-shm")
+
+        guard !empty else {
+            guard manager.createFile(atPath: file.to, contents: nil) else {
+                throw RuntimeError.unsupported("Nexus cannot write \(file.to).")
+            }
+
+            return
+        }
 
         guard hasWriteAheadFile || hasJournal else {
             try await Self.cloneOutsideTheActor(source, to: file.to)

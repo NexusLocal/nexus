@@ -645,11 +645,14 @@ extension NexusEngine {
                 projectCommand: nodeProject?.command,
                 framework: nodeProject?.framework,
                 app: site.kind == .node ? appInfo(owner: Self.processOwner(key: key, workspace: nil), port: state.appPorts[key], host: site.host) : nil,
-                projectType: site.kind == .php ? siteLayout.projectType : nil
+                projectType: site.kind == .php ? siteLayout.projectType : nil,
+                workspaceDatabases: site.workspaceDatabases,
+                workspaceSeeders: site.runsWorkspaceSeeders,
+                migrationCommand: nodeProject?.migrationCommand
             ))
         }
 
-        return SiteList(sites: sites, layout: layout, parkedFolders: state.parked.map { Self.displayPath($0.folder) }, defaults: state.siteDefaults, tld: state.tld)
+        return SiteList(sites: sites, layout: layout, parkedFolders: state.parked.map { Self.displayPath($0.folder) }, defaults: state.siteDefaults, tld: state.tld, newWorkspaceDatabases: state.workspaceSettings.newWorkspaceDatabases)
     }
 
     // A site that the layout does not name yet comes at the end, in the order that the user added
@@ -751,6 +754,10 @@ extension NexusEngine {
 
         if let node = settings.node {
             site.node = try await nodeLine(node)
+        }
+
+        if let workspaceDatabases = settings.workspaceDatabases {
+            site.workspaceDatabases = workspaceDatabases.kind
         }
 
         let defaults = await wordPressDefaults(for: site)
@@ -866,6 +873,12 @@ extension NexusEngine {
         if let mainProcesses = change.mainProcesses {
             site.mainProcesses = mainProcesses
         }
+        if let workspaceDatabases = change.workspaceDatabases {
+            site.workspaceDatabases = workspaceDatabases.kind
+        }
+        if let workspaceSeeders = change.workspaceSeeders {
+            site.workspaceSeeders = workspaceSeeders
+        }
 
         try applyKind(change, to: &site, state: state)
 
@@ -888,7 +901,8 @@ extension NexusEngine {
         // The Node line, the command and the workspace settings change no server. So they need no
         // new web configuration.
         let changesProcesses = change.backgroundCommands != nil || change.workspaceProcesses != nil || change.mainProcesses != nil || change.command != nil
-        let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil || change.workspaceCommands != nil || changesProcesses
+        let changesDatabases = change.workspaceDatabases != nil || change.workspaceSeeders != nil
+        let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil || change.workspaceCommands != nil || changesProcesses || changesDatabases
         let changesServers = change.php != nil || change.server != nil || change.aliases != nil || change.address != nil || edited.kind != kindBefore
         let onlySettings = hasSetting && !changesServers
         var notes = onlySettings ? [] : try await changeWeb(.sites, store)
@@ -923,7 +937,19 @@ extension NexusEngine {
             notes.append(await workspaceNote(for: edited))
         }
 
+        if change.workspaceDatabases != nil {
+            notes.append(await workspaceDatabaseNote(for: edited))
+        }
+
         return await siteMessage(edited, warnings: notes)
+    }
+
+    private func workspaceDatabaseNote(for site: Site) async -> String {
+        let state = await stateStore.current()
+        let sites = resolvedSites(state).map(\.site).filter { ProjectFolder.workspaceKey(of: $0) == ProjectFolder.workspaceKey(of: site) }
+        let kind = Self.newWorkspaceDatabases(of: sites, settings: state.workspaceSettings)
+
+        return "A new workspace gets: \(kind.displayName.lowercased()). A workspace that exists keeps its databases."
     }
 
     private func workspaceNote(for site: Site) async -> String {

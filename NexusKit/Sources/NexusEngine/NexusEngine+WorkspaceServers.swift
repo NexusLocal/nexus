@@ -37,8 +37,9 @@ extension NexusEngine {
     }
 
     // A second setup keeps a finished clone, because that clone holds the data of the workspace. A
-    // clone that did not end is no use, so it gets a new run.
-    func prepareServer(of tools: DatabaseTools, port: Int, databases: [WorkspaceDatabase], workspace: String, key: String) async throws {
+    // clone that did not end is no use, so it gets a new run. With emptying, each database of the
+    // application on the clone is made again without tables, one time for each server.
+    func prepareServer(of tools: DatabaseTools, port: Int, databases: [WorkspaceDatabase], workspace: String, key: String, emptying: Bool = false) async throws {
         let record = await stateStore.current().worktrees[key]?.workspaces.first { $0.name == workspace }
         var server = record?.servers.first { $0.instance == tools.id }
 
@@ -76,6 +77,16 @@ extension NexusEngine {
 
         let (client, work) = try serverClient(tools, server)
         defer { try? FileManager.default.removeItem(at: work) }
+
+        guard !emptying else {
+            let emptied = await stateStore.current().worktrees[key]?.workspaces.first { $0.name == workspace }?.emptiedServers.contains(server.folder) == true
+
+            if !emptied {
+                try await emptyDatabases(databases.map(\.name), on: server, tools: tools, client: client, workspace: workspace, key: key)
+            }
+
+            return
+        }
 
         // A missing database of another connection does not matter, because the main site does not
         // have it either.

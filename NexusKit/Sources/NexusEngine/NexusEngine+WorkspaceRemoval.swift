@@ -365,6 +365,9 @@ extension NexusEngine {
 
         try await stateStore.update { $0.workspaceSettings = settings }
         removeOldDumps(after: settings.dumpDays)
+
+        // The Site screen shows the value of this setting for each site on Default.
+        publishSites()
         return "The settings of the workspaces are changed."
     }
 

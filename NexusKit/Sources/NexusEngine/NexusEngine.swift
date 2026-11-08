@@ -270,8 +270,8 @@ public actor NexusEngine {
                 return .done(message: try await uninstall())
             case .sites:
                 return .sites(await siteInfo())
-            case .addSite(let folder, let host, let aliases, let php, let server, let group, let runsAs, let command, let address, let node):
-                let settings = SiteChange(node: node, runsAs: runsAs, command: command, address: address)
+            case .addSite(let folder, let host, let aliases, let php, let server, let group, let runsAs, let command, let address, let node, let workspaceDatabases):
+                let settings = SiteChange(node: node, runsAs: runsAs, command: command, address: address, workspaceDatabases: WorkspaceDatabaseChoice(workspaceDatabases))
                 return .done(message: try await serialWeb { try await self.addSite(folder: folder, host: host, aliases: aliases, php: php, server: server, group: group, settings: settings) })
             case .createSite(let site):
                 // A new site runs for minutes, so it does not wait in the queue of the changes.
@@ -361,8 +361,8 @@ public actor NexusEngine {
                 return .backgroundPreset(try await backgroundPreset(host: host))
             case .retryWorkspace(let host, let name):
                 return .done(message: try await retryWorkspace(host: host, name: name))
-            case .createWorkspace(let folder):
-                return .done(message: try await createWorkspace(folder: folder))
+            case .createWorkspace(let folder, let databases):
+                return .done(message: try await createWorkspace(folder: folder, databases: databases))
             case .removeWorkspace(let host, let name, let force):
                 // A dump can take minutes. So it does not wait in the queue of the changes.
                 return .done(message: try await removeWorkspace(host: host, name: name, force: force))

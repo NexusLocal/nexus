@@ -453,6 +453,12 @@ private struct WorkspacesSettings: View {
             }
 
             Section {
+                Picker("Databases", selection: setting(\.newWorkspaceDatabases)) {
+                    ForEach(WorkspaceDatabaseKind.allCases, id: \.self) { kind in
+                        Text(kind.displayName).tag(kind)
+                    }
+                }
+
                 Toggle("Run composer install when composer.lock is different", isOn: setting(\.runsComposerInstall))
                     .toggleStyle(.switch)
 
@@ -461,7 +467,7 @@ private struct WorkspacesSettings: View {
             } header: {
                 Text("New workspaces")
             } footer: {
-                Text("Nexus clones vendor and node_modules from the main checkout. A clone uses no extra disk until a file changes.")
+                Text("With \"Empty database\", Nexus makes each database of the site again without tables, on the server of the workspace. Then the commands of the site make the tables, for example php artisan migrate. Each site can choose for itself on its own screen. A WordPress site always gets a copy, because WordPress has no migrations.\nNexus clones vendor and node_modules from the main checkout. A clone uses no extra disk until a file changes.")
             }
         }
         .formStyle(.grouped)

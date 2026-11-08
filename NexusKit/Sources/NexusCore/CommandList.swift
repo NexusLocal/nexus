@@ -32,7 +32,7 @@ extension CommandSection {
             CommandItem(command: "nexus site add . --php 8.4", help: "Adds the current folder as a site."),
             CommandItem(command: "nexus new laravel foo --kit react", help: "Makes a new site from a template: laravel, wordpress, next, nuxt, vite or astro."),
             CommandItem(command: "nexus import ~/Downloads/foo.wpress", help: "Makes a WordPress site from a backup of Local, Jetpack, Studio or All-in-One WP Migration, or from a folder with a dump."),
-            CommandItem(command: "nexus site edit shop.test --server apache", help: "Changes the kind, the PHP version, the Node version, the webserver, the aliases or the workspace setting."),
+            CommandItem(command: "nexus site edit shop.test --server apache", help: "Changes the kind, the PHP version, the Node version, the webserver, the aliases or the workspace settings. --workspace-databases empty gives new workspaces an empty database."),
             CommandItem(command: "nexus site remove shop.test", help: "Removes a site. The folder stays."),
             CommandItem(command: "nexus site defaults --php 8.4", help: "Changes the PHP version, the Node version or the webserver of a new site."),
             CommandItem(command: "nexus site probe .", help: "Shows which env key feeds each setting of a Laravel application."),
@@ -41,7 +41,7 @@ extension CommandSection {
             CommandItem(command: "nexus unpark ~/Sites", help: "Stops a folder of projects. Its folders stay."),
         ]),
         CommandSection(title: "Workspaces", commands: [
-            CommandItem(command: "nexus workspace create", help: "Makes a workspace for the current worktree."),
+            CommandItem(command: "nexus workspace create", help: "Makes a workspace for the current worktree. --databases empty gives it an empty database."),
             CommandItem(command: "nexus workspace wait", help: "Waits until the workspace is ready."),
             CommandItem(command: "nexus workspace info --json", help: "Gives the URL, the databases and the ports."),
             CommandItem(command: "nexus workspace list", help: "Lists the workspaces of the current site."),

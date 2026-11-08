@@ -31,7 +31,8 @@ public enum SiteKind: String, Codable, Sendable, CaseIterable {
 // backgroundCommands of nil follows the preset of the application (D52). workspaceProcesses of nil
 // is on, and mainProcesses of nil is off. A site from before D67 has no runsAs, and it is a PHP
 // site. A command of nil comes from package.json. A site keeps its PHP version, its command and its
-// address when it runs as another kind, so a change back restores them.
+// address when it runs as another kind, so a change back restores them. workspaceDatabases of nil
+// follows Settings > Workspaces. workspaceSeeders of nil is off.
 public struct Site: Codable, Sendable, Equatable {
     public static let commandFromProject = "project"
 
@@ -50,6 +51,8 @@ public struct Site: Codable, Sendable, Equatable {
     public var runsAs: SiteKind?
     public var command: String?
     public var address: String?
+    public var workspaceDatabases: WorkspaceDatabaseKind?
+    public var workspaceSeeders: Bool?
 
     public init(
         host: String,
@@ -66,7 +69,9 @@ public struct Site: Codable, Sendable, Equatable {
         mainProcesses: Bool? = nil,
         runsAs: SiteKind? = nil,
         command: String? = nil,
-        address: String? = nil
+        address: String? = nil,
+        workspaceDatabases: WorkspaceDatabaseKind? = nil,
+        workspaceSeeders: Bool? = nil
     ) {
         self.host = host
         self.folder = folder
@@ -83,6 +88,8 @@ public struct Site: Codable, Sendable, Equatable {
         self.runsAs = runsAs
         self.command = command
         self.address = address
+        self.workspaceDatabases = workspaceDatabases
+        self.workspaceSeeders = workspaceSeeders
     }
 
     public var kind: SiteKind {
@@ -110,6 +117,10 @@ public struct Site: Codable, Sendable, Equatable {
 
     public var runsMainProcesses: Bool {
         mainProcesses ?? false
+    }
+
+    public var runsWorkspaceSeeders: Bool {
+        workspaceSeeders ?? false
     }
 
     public var hosts: [String] {

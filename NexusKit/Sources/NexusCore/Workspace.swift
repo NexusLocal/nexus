@@ -87,11 +87,66 @@ public struct WorkspaceSettings: Codable, Sendable, Equatable {
     public var dumpDays: Int
     public var runsComposerInstall: Bool
     public var runsNpmInstall: Bool
+    // What a new workspace of a site on Default gets (step 3 of the order of the work).
+    public var newWorkspaceDatabases: WorkspaceDatabaseKind
 
-    public init(dumpDays: Int = 7, runsComposerInstall: Bool = true, runsNpmInstall: Bool = true) {
+    public init(dumpDays: Int = 7, runsComposerInstall: Bool = true, runsNpmInstall: Bool = true, newWorkspaceDatabases: WorkspaceDatabaseKind = .copy) {
         self.dumpDays = dumpDays
         self.runsComposerInstall = runsComposerInstall
         self.runsNpmInstall = runsNpmInstall
+        self.newWorkspaceDatabases = newWorkspaceDatabases
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case dumpDays, runsComposerInstall, runsNpmInstall, newWorkspaceDatabases
+    }
+
+    // The settings of an older nexusd have no choice of the databases. Their workspaces got a copy.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        dumpDays = try container.decodeIfPresent(Int.self, forKey: .dumpDays) ?? 7
+        runsComposerInstall = try container.decodeIfPresent(Bool.self, forKey: .runsComposerInstall) ?? true
+        runsNpmInstall = try container.decodeIfPresent(Bool.self, forKey: .runsNpmInstall) ?? true
+        newWorkspaceDatabases = try container.decodeIfPresent(WorkspaceDatabaseKind.self, forKey: .newWorkspaceDatabases) ?? .copy
+    }
+}
+
+// What the databases of a new workspace hold. copy is the clone of the instance (D66). empty has
+// each database of the application again without tables, on the server of the workspace. So the
+// migrations run from zero, and the workspace of an agent holds no data of customers.
+public enum WorkspaceDatabaseKind: String, Codable, Sendable, CaseIterable {
+    case copy
+    case empty
+
+    public var displayName: String {
+        switch self {
+        case .copy: "Copy of main database"
+        case .empty: "Empty database"
+        }
+    }
+}
+
+// The choice of a site. default follows Settings > Workspaces, also after a change of that setting.
+public enum WorkspaceDatabaseChoice: String, Codable, Sendable, CaseIterable {
+    case `default`
+    case copy
+    case empty
+
+    public init(_ kind: WorkspaceDatabaseKind?) {
+        switch kind {
+        case .copy: self = .copy
+        case .empty: self = .empty
+        case nil: self = .default
+        }
+    }
+
+    public var kind: WorkspaceDatabaseKind? {
+        switch self {
+        case .default: nil
+        case .copy: .copy
+        case .empty: .empty
+        }
     }
 }
 
@@ -165,6 +220,9 @@ public struct WorkspaceRedisIndex: Sendable, Hashable {
 // configurationDigest shows what the last setup checked (D48). A change of these files gives a new
 // setup. A record without a digest comes from before this check. mainConfigurationDigest shows the
 // same files of the main checkout. A change there gives a new setup when the workspace is not isolated.
+// databaseKind is what the first setup chose, and the workspace keeps it. A record without it comes
+// from before the choice and has a copy. emptiedServers holds the folder of each server whose
+// databases Nexus made again without tables. So a retry keeps the tables that the commands made.
 public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     public let name: String
     public var worktree: String
@@ -186,6 +244,8 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     public var mainConfigurationDigest: String?
     // The change of the links in the posts of a WordPress workspace (Phase 4, 3e).
     public var links: WorkspaceLinks?
+    public var databaseKind: WorkspaceDatabaseKind?
+    public var emptiedServers: [String]
 
     public var id: String { name }
 
@@ -214,7 +274,9 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         database: String? = nil,
         configurationDigest: String? = nil,
         mainConfigurationDigest: String? = nil,
-        links: WorkspaceLinks? = nil
+        links: WorkspaceLinks? = nil,
+        databaseKind: WorkspaceDatabaseKind? = nil,
+        emptiedServers: [String] = []
     ) {
         self.name = name
         self.worktree = worktree
@@ -235,10 +297,12 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         self.configurationDigest = configurationDigest
         self.mainConfigurationDigest = mainConfigurationDigest
         self.links = links
+        self.databaseKind = databaseKind
+        self.emptiedServers = emptiedServers
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, worktree, folder, branch, state, redisIndexes, redisInstances, ports, servers, databases, installedLockFiles, warnings, finishedCommands, commandsEnded, backgroundPreset, database, configurationDigest, mainConfigurationDigest, links
+        case name, worktree, folder, branch, state, redisIndexes, redisInstances, ports, servers, databases, installedLockFiles, warnings, finishedCommands, commandsEnded, backgroundPreset, database, configurationDigest, mainConfigurationDigest, links, databaseKind, emptiedServers
     }
 
     // A record of part 8b has no state. A record from before part 8f has Redis indexes without their
@@ -269,6 +333,8 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         configurationDigest = try container.decodeIfPresent(String.self, forKey: .configurationDigest)
         mainConfigurationDigest = try container.decodeIfPresent(String.self, forKey: .mainConfigurationDigest)
         links = try container.decodeIfPresent(WorkspaceLinks.self, forKey: .links)
+        databaseKind = try container.decodeIfPresent(WorkspaceDatabaseKind.self, forKey: .databaseKind)
+        emptiedServers = try container.decodeIfPresent([String].self, forKey: .emptiedServers) ?? []
     }
 
     public func databaseRemovals(site: String) -> [DatabaseRemoval] {

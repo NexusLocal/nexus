@@ -186,6 +186,11 @@ struct SiteItem: Identifiable, Hashable {
     var app: AppProcessInfo?
     // The type of a PHP site (Phase 4, 3a). A WordPress site has no .env.
     var projectType: PHPProjectType?
+    // The choice of the databases of new workspaces. nil follows Settings > Workspaces.
+    var workspaceDatabases: WorkspaceDatabaseKind?
+    var workspaceSeeders = false
+    var migrationCommand: String?
+    var offersEmptyDatabases = false
 
     var id: String { host }
 

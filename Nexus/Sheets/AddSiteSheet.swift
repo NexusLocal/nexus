@@ -31,6 +31,8 @@ struct AddSiteSheet: View {
     @State private var failure: String?
     @State private var errorReport: ErrorReport?
     @State private var wordPress: WordPressChoice?
+    @State private var projectType: PHPProjectType?
+    @State private var workspaceDatabases = WorkspaceDatabaseChoice.default
 
     let tld: String
 
@@ -226,6 +228,22 @@ struct AddSiteSheet: View {
                 CodeField(title: "Address", text: $address, prompt: "http://127.0.0.1:3000")
             }
         }
+
+        if offersEmptyDatabases {
+            Picker("Workspace databases", selection: $workspaceDatabases) {
+                Text("Default (\((model.siteList?.newWorkspaceDatabases ?? .copy).displayName.lowercased()))").tag(WorkspaceDatabaseChoice.default)
+                Divider()
+                ForEach(WorkspaceDatabaseKind.allCases, id: \.self) { kind in
+                    Text(kind.displayName).tag(WorkspaceDatabaseChoice(kind))
+                }
+            }
+        }
+    }
+
+    // A WordPress site always gets a copy, and a PHP site that is no Laravel application gets no
+    // databases in a workspace (D54).
+    private var offersEmptyDatabases: Bool {
+        kind == .node || (kind == .php && projectType == .laravel)
     }
 
     @ViewBuilder
@@ -291,12 +309,14 @@ struct AddSiteSheet: View {
         }
 
         wordPress = nil
+        projectType = nil
 
         guard folderType == .oneProject else {
             return
         }
 
         let type = PHPProject.type(of: Self.projectFolder(of: folder))
+        projectType = type
 
         guard type.isWordPress else {
             return
@@ -351,7 +371,8 @@ struct AddSiteSheet: View {
             node: kind == .node ? node : nil,
             runsAs: kind,
             command: kind == .node && typed != project?.command ? typed : nil,
-            address: kind == .proxy ? address.trimmingCharacters(in: .whitespaces) : nil
+            address: kind == .proxy ? address.trimmingCharacters(in: .whitespaces) : nil,
+            workspaceDatabases: offersEmptyDatabases ? workspaceDatabases : nil
         )
     }
 

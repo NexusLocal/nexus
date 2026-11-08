@@ -505,8 +505,10 @@ struct WorkspaceCommand: AsyncParsableCommand {
     struct Create: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Makes a workspace for the current worktree. This also works when the switch of the site is off.")
 
+        @Option(help: "copy or empty. The default is the choice of the site. A workspace that exists keeps its databases.") var databases: WorkspaceDatabaseKind?
+
         func run() async throws {
-            try finish(try await send(.createWorkspace(folder: WorkspaceCommand.currentFolder)))
+            try finish(try await send(.createWorkspace(folder: WorkspaceCommand.currentFolder, databases: databases)))
         }
     }
 
@@ -671,6 +673,10 @@ struct WorkspaceCommand: AsyncParsableCommand {
 extension WebServer: ExpressibleByArgument {}
 
 extension SiteKind: ExpressibleByArgument {}
+
+extension WorkspaceDatabaseKind: ExpressibleByArgument {}
+
+extension WorkspaceDatabaseChoice: ExpressibleByArgument {}
 
 extension WorkspaceEnvKey: ExpressibleByArgument {
     public init?(argument: String) {
@@ -1093,6 +1099,8 @@ struct SiteCommand: AsyncParsableCommand {
         @Flag(help: "Remove every background process.") var noBackgroundCommands = false
         @Option(name: .customLong("workspace-processes"), help: "on or off. With on, each workspace runs the background processes.") var workspaceProcesses: OnOff?
         @Option(name: .customLong("main-processes"), help: "on or off. With on, the main checkout runs the background processes.") var mainProcesses: OnOff?
+        @Option(name: .customLong("workspace-databases"), help: "default, copy or empty. What a new workspace gets: a copy of the main database or an empty database. default follows Settings > Workspaces. A WordPress site always gets a copy.") var workspaceDatabases: WorkspaceDatabaseChoice?
+        @Option(name: .customLong("workspace-seeders"), help: "on or off. With on, a Laravel site with an empty database runs php artisan db:seed in a new workspace.") var workspaceSeeders: OnOff?
 
         private var commandChange: [String]? {
             noWorkspaceCommands ? [] : (workspaceCommands.isEmpty ? nil : workspaceCommands)
@@ -1121,7 +1129,9 @@ struct SiteCommand: AsyncParsableCommand {
                 mainProcesses: mainProcesses.map { $0 == .on },
                 runsAs: runsAs,
                 command: command,
-                address: address
+                address: address,
+                workspaceDatabases: workspaceDatabases,
+                workspaceSeeders: workspaceSeeders.map { $0 == .on }
             )
 
             try finish(try await send(.editSite(host: host, change: change)))

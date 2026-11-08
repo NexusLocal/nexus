@@ -49,6 +49,11 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let app: AppProcessInfo?
     // The type of a PHP site (Phase 4, 3a). nexusd of 0.1.1 sends none.
     public let projectType: PHPProjectType?
+    // The choice of the databases of new workspaces. nil follows Settings > Workspaces.
+    public let workspaceDatabases: WorkspaceDatabaseKind?
+    public let workspaceSeeders: Bool?
+    // The command of the migrations of a Node.js app, for an empty database of a workspace.
+    public let migrationCommand: String?
 
     public init(
         hosts: [String],
@@ -78,7 +83,10 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         projectCommand: String? = nil,
         framework: NodeFramework? = nil,
         app: AppProcessInfo? = nil,
-        projectType: PHPProjectType? = nil
+        projectType: PHPProjectType? = nil,
+        workspaceDatabases: WorkspaceDatabaseKind? = nil,
+        workspaceSeeders: Bool? = nil,
+        migrationCommand: String? = nil
     ) {
         self.hosts = hosts
         self.folder = folder
@@ -108,6 +116,19 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         self.framework = framework
         self.app = app
         self.projectType = projectType
+        self.workspaceDatabases = workspaceDatabases
+        self.workspaceSeeders = workspaceSeeders
+        self.migrationCommand = migrationCommand
+    }
+
+    // A WordPress site always gets a copy, because WordPress has no migrations. A proxy site and a
+    // PHP site that is no Laravel application get no databases in a workspace (D54).
+    public var offersEmptyDatabases: Bool {
+        switch kind {
+        case .node: true
+        case .php: projectType == .laravel
+        case .proxy: false
+        }
     }
 
     public var node: String? {
@@ -288,13 +309,16 @@ public struct SiteList: Codable, Sendable, Equatable {
     public let parkedFolders: [String]
     public let defaults: SiteDefaults
     public let tld: String
+    // What a new workspace of a site on Default gets. nexusd from before this choice sends none.
+    public let newWorkspaceDatabases: WorkspaceDatabaseKind?
 
-    public init(sites: [SiteInfo], layout: [SiteLayoutEntry], parkedFolders: [String], defaults: SiteDefaults, tld: String) {
+    public init(sites: [SiteInfo], layout: [SiteLayoutEntry], parkedFolders: [String], defaults: SiteDefaults, tld: String, newWorkspaceDatabases: WorkspaceDatabaseKind? = nil) {
         self.sites = sites
         self.layout = layout
         self.parkedFolders = parkedFolders
         self.defaults = defaults
         self.tld = tld
+        self.newWorkspaceDatabases = newWorkspaceDatabases
     }
 }
 
@@ -348,6 +372,8 @@ public struct SiteChange: Codable, Sendable, Equatable {
     public var runsAs: SiteKind?
     public var command: String?
     public var address: String?
+    public var workspaceDatabases: WorkspaceDatabaseChoice?
+    public var workspaceSeeders: Bool?
 
     public init(
         php: String? = nil,
@@ -362,7 +388,9 @@ public struct SiteChange: Codable, Sendable, Equatable {
         mainProcesses: Bool? = nil,
         runsAs: SiteKind? = nil,
         command: String? = nil,
-        address: String? = nil
+        address: String? = nil,
+        workspaceDatabases: WorkspaceDatabaseChoice? = nil,
+        workspaceSeeders: Bool? = nil
     ) {
         self.php = php
         self.server = server
@@ -377,6 +405,8 @@ public struct SiteChange: Codable, Sendable, Equatable {
         self.runsAs = runsAs
         self.command = command
         self.address = address
+        self.workspaceDatabases = workspaceDatabases
+        self.workspaceSeeders = workspaceSeeders
     }
 }
 
@@ -778,7 +808,7 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case removeHost(String)
     case uninstall
     case sites
-    case addSite(folder: String, host: String?, aliases: [String], php: String?, server: WebServer?, group: String? = nil, runsAs: SiteKind? = nil, command: String? = nil, address: String? = nil, node: String? = nil)
+    case addSite(folder: String, host: String?, aliases: [String], php: String?, server: WebServer?, group: String? = nil, runsAs: SiteKind? = nil, command: String? = nil, address: String? = nil, node: String? = nil, workspaceDatabases: WorkspaceDatabaseKind? = nil)
     // A new site from a template (3i). The answer is siteCreated or siteNotCreated.
     case createSite(NewSite)
     // Moves the folder of a new site that failed to the Trash and drops its database. Only what
@@ -845,7 +875,7 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case backgroundPreset(host: String)
     case retryWorkspace(host: String, name: String)
     // Makes a workspace for the worktree that holds this folder (D40).
-    case createWorkspace(folder: String)
+    case createWorkspace(folder: String, databases: WorkspaceDatabaseKind? = nil)
     // Removes the worktree with git. The workspace then goes as for each removal (D53).
     case removeWorkspace(host: String, name: String, force: Bool)
     case workspaceSettings

@@ -26,6 +26,16 @@ public enum PackageManager: String, Codable, Sendable, CaseIterable {
     public func run(_ script: String) -> String {
         "\(rawValue) run \(script)"
     }
+
+    // Runs a program of a dependency, for example prisma.
+    public func exec(_ program: String) -> String {
+        switch self {
+        case .npm: "npx \(program)"
+        case .pnpm: "pnpm exec \(program)"
+        case .yarn: "yarn \(program)"
+        case .bun: "bunx \(program)"
+        }
+    }
 }
 
 // The framework of a Node.js app, from its dependencies. The order matters: a SvelteKit app also
@@ -140,6 +150,9 @@ public struct NodeProject: Sendable, Equatable {
     public let scriptText: String?
     // A dependency that connects to MySQL, PostgreSQL or Redis.
     public let usesDatabaseClient: Bool
+    // The program of the migrations, for example "prisma migrate deploy". An empty database of a
+    // workspace gets its tables from it.
+    public let migrationProgram: String?
 
     // The clients and the ORMs that connect to a server on this Mac.
     static let databaseClients: Set<String> = [
@@ -147,16 +160,28 @@ public struct NodeProject: Sendable, Equatable {
         "sequelize", "typeorm", "kysely", "@mikro-orm/core", "ioredis", "redis", "bullmq",
     ]
 
-    public init(script: String?, framework: NodeFramework?, packageManager: PackageManager, scriptText: String? = nil, usesDatabaseClient: Bool = false) {
+    // Prisma and Drizzle Kit apply the migrations of a project without a question.
+    static let migrationPrograms: [(dependency: String, program: String)] = [
+        ("prisma", "prisma migrate deploy"),
+        ("@prisma/client", "prisma migrate deploy"),
+        ("drizzle-kit", "drizzle-kit migrate"),
+    ]
+
+    public init(script: String?, framework: NodeFramework?, packageManager: PackageManager, scriptText: String? = nil, usesDatabaseClient: Bool = false, migrationProgram: String? = nil) {
         self.script = script
         self.framework = framework
         self.packageManager = packageManager
         self.scriptText = scriptText
         self.usesDatabaseClient = usesDatabaseClient
+        self.migrationProgram = migrationProgram
     }
 
     public var command: String? {
         script.map(packageManager.run)
+    }
+
+    public var migrationCommand: String? {
+        migrationProgram.map(packageManager.exec)
     }
 
     // A port in the script wins over PORT, and a second --port gives Vite two values. Only --port and
@@ -185,7 +210,8 @@ public struct NodeProject: Sendable, Equatable {
             framework: NodeFramework.allCases.first { dependencies[$0.dependency] != nil },
             packageManager: packageManager(of: folder, named: package["packageManager"] as? String),
             scriptText: script.flatMap { scripts[$0] as? String },
-            usesDatabaseClient: !databaseClients.isDisjoint(with: dependencies.keys)
+            usesDatabaseClient: !databaseClients.isDisjoint(with: dependencies.keys),
+            migrationProgram: migrationPrograms.first { dependencies[$0.dependency] != nil }?.program
         )
     }
 

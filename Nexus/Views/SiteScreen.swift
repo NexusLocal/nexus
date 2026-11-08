@@ -28,6 +28,8 @@ struct SiteScreen: View {
     @FocusState private var focusedKindField: KindField?
     @State private var wordPressInfo: WordPressSiteInfo?
     @State private var asksToAddWorkspaceLines = false
+    @State private var workspaceDatabases: WorkspaceDatabaseChoice
+    @State private var workspaceSeeders: Bool
 
     private enum KindField {
         case command
@@ -48,6 +50,17 @@ struct SiteScreen: View {
         _workspaceProcesses = State(initialValue: site.workspaceProcesses)
         _mainProcesses = State(initialValue: site.mainProcesses)
         _backgroundCommands = State(initialValue: site.backgroundCommands ?? [])
+        _workspaceDatabases = State(initialValue: WorkspaceDatabaseChoice(site.workspaceDatabases))
+        _workspaceSeeders = State(initialValue: site.workspaceSeeders)
+    }
+
+    // The value of Settings > Workspaces, which a site on Default follows.
+    private var defaultDatabases: WorkspaceDatabaseKind {
+        model.siteList?.newWorkspaceDatabases ?? .copy
+    }
+
+    private var newWorkspaceDatabases: WorkspaceDatabaseKind {
+        workspaceDatabases.kind ?? defaultDatabases
     }
 
     private var group: Binding<String> {
@@ -188,6 +201,11 @@ struct SiteScreen: View {
             if kind == .php {
                 phpSections
             }
+
+            // An empty database of a Node.js app gets its tables from a command of the migrations.
+            if kind == .node {
+                commandsSection
+            }
         }
         .formStyle(.grouped)
     }
@@ -324,6 +342,24 @@ struct SiteScreen: View {
         Section {
             Toggle("Create workspaces automatically", isOn: $automaticWorkspaces)
                 .toggleStyle(.switch)
+
+            if site.offersEmptyDatabases {
+                Picker(selection: $workspaceDatabases) {
+                    Text("Default (\(defaultDatabases.displayName.lowercased()))").tag(WorkspaceDatabaseChoice.default)
+                    Divider()
+                    ForEach(WorkspaceDatabaseKind.allCases, id: \.self) { kind in
+                        Text(kind.displayName).tag(WorkspaceDatabaseChoice(kind))
+                    }
+                } label: {
+                    Text("Databases")
+                    Text(workspaceDatabases == .default ? "This site follows Settings > Workspaces. When you change that setting, this site changes too." : "This site keeps its own choice. Settings > Workspaces does not change it.")
+                }
+
+                if site.projectType == .laravel, newWorkspaceDatabases == .empty {
+                    Toggle("Run the seeders", isOn: $workspaceSeeders)
+                        .toggleStyle(.switch)
+                }
+            }
 
             if isWordPress, let lines = wordPressInfo?.workspaceLines {
                 workspaceLinesRow(lines)
@@ -519,15 +555,48 @@ struct SiteScreen: View {
         }
     }
 
-    @ViewBuilder
-    private var workspaceSetupSections: some View {
+    // The design of the suggestion is "Site Workspaces Section · Empty database" in nexus.pen.
+    private var commandsSection: some View {
         Section {
-            CommandRows(commands: $commands, saved: site.workspaceCommands, focusedRow: $focusedCommand, prompt: "php artisan tenant:domain shop-{workspace}.test", save: saveCommands)
+            if let suggestion = migrationSuggestion {
+                HStack {
+                    Label("This app uses \(suggestion.contains("prisma") ? "Prisma" : "Drizzle Kit"). An empty database gets its tables from \(suggestion).", systemImage: "lightbulb")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Button("Add") {
+                        commands = completeCommands + [suggestion]
+                        saveCommands()
+                    }
+                }
+            }
+
+            CommandRows(commands: $commands, saved: site.workspaceCommands, focusedRow: $focusedCommand, prompt: kind == .node ? "npx prisma migrate deploy" : "php artisan tenant:domain shop-{workspace}.test", save: saveCommands)
         } header: {
             Text("Commands after database clone")
         } footer: {
-            Text("Nexus runs these commands in a new workspace after it clones the databases. A change saves when you press Return or click outside the field. Existing workspaces do not run the change. The commands can use {workspace}, {host}, {database} and {port:<name>}. Nexus adds the quotes that {database} needs. A database has the same name as on the main site. So a command that connects itself needs {port:database}, the port of the database server of the workspace.")
+            VStack(alignment: .leading, spacing: 6) {
+                if migrationSuggestion != nil {
+                    Text("Without such a command, the databases of a new workspace stay without tables.")
+                }
+
+                Text("Nexus runs these commands in a new workspace after it clones the databases. A change saves when you press Return or click outside the field. Existing workspaces do not run the change. The commands can use {workspace}, {host}, {database} and {port:<name>}. Nexus adds the quotes that {database} needs. A database has the same name as on the main site. So a command that connects itself needs {port:database}, the port of the database server of the workspace.")
+            }
         }
+    }
+
+    // A Node.js app with Prisma or Drizzle Kit and an empty database (step 3 of the order of the work).
+    private var migrationSuggestion: String? {
+        guard kind == .node, newWorkspaceDatabases == .empty, let command = site.migrationCommand, !site.workspaceCommands.contains(command) else {
+            return nil
+        }
+
+        return command
+    }
+
+    @ViewBuilder
+    private var workspaceSetupSections: some View {
+        commandsSection
 
         Section {
             ForEach(nexusKeys.filter { entry in !ownKeys.contains { $0.key == entry.key } }, id: \.key) { entry in
@@ -654,6 +723,22 @@ struct SiteScreen: View {
             automaticWorkspaces = site.automaticWorkspaces
             workspaceProcesses = site.workspaceProcesses
             mainProcesses = site.mainProcesses
+            workspaceDatabases = WorkspaceDatabaseChoice(site.workspaceDatabases)
+            workspaceSeeders = site.workspaceSeeders
+        }
+        .onChange(of: workspaceDatabases) {
+            guard workspaceDatabases != WorkspaceDatabaseChoice(site.workspaceDatabases) else {
+                return
+            }
+
+            change(SiteChange(workspaceDatabases: workspaceDatabases)) { workspaceDatabases = WorkspaceDatabaseChoice(site.workspaceDatabases) }
+        }
+        .onChange(of: workspaceSeeders) {
+            guard workspaceSeeders != site.workspaceSeeders else {
+                return
+            }
+
+            change(SiteChange(workspaceSeeders: workspaceSeeders)) { workspaceSeeders = site.workspaceSeeders }
         }
         // A move to the next field saves, and the answer of nexusd comes while the user types
         // there. So a list with the focus keeps the text of the user.

@@ -789,6 +789,56 @@ extension NexusEngineTests {
         #expect(NexusEngine.commands(of: [Site(host: "shop.test", folder: shop, php: "8.5")]) == [NexusEngine.migrateCommand])
     }
 
+    @Test func theSeedersRunAfterTheCommandsOfALaravelSite() throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = root.appending(path: "shop", directoryHint: .isDirectory)
+        let other = root.appending(path: "other", directoryHint: .isDirectory)
+        try writeFile("", to: "artisan", in: shop)
+        try writeFile(Self.bootstrapApp, to: "bootstrap/app.php", in: shop)
+        try writeFile("hello", to: "index.html", in: other)
+        let laravel = Site(host: "shop.test", folder: shop, php: "8.5", workspaceCommands: ["php artisan tenant:domain {host}", NexusEngine.migrateCommand])
+
+        #expect(NexusEngine.commands(of: [laravel], seeding: true) == ["php artisan tenant:domain {host}", NexusEngine.migrateCommand, NexusEngine.seedCommand])
+        #expect(NexusEngine.commands(of: [laravel]) == ["php artisan tenant:domain {host}", NexusEngine.migrateCommand])
+        #expect(NexusEngine.commands(of: [Site(host: "other.test", folder: other, php: "8.5")], seeding: true).isEmpty)
+    }
+
+    @Test func aNewWorkspaceGetsTheChoiceOfItsSiteAndAWordPressSiteAlwaysACopy() throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = root.appending(path: "shop", directoryHint: .isDirectory)
+        let blog = root.appending(path: "blog", directoryHint: .isDirectory)
+        try writeFile("", to: "artisan", in: shop)
+        try writeFile("<?php", to: "wp-load.php", in: blog)
+        let empty = WorkspaceSettings(newWorkspaceDatabases: .empty)
+
+        #expect(NexusEngine.newWorkspaceDatabases(of: [Site(host: "shop.test", folder: shop, php: "8.5")], settings: WorkspaceSettings()) == .copy)
+        #expect(NexusEngine.newWorkspaceDatabases(of: [Site(host: "shop.test", folder: shop, php: "8.5")], settings: empty) == .empty)
+        #expect(NexusEngine.newWorkspaceDatabases(of: [Site(host: "shop.test", folder: shop, php: "8.5", workspaceDatabases: .copy)], settings: empty) == .copy)
+        #expect(NexusEngine.newWorkspaceDatabases(of: [Site(host: "blog.test", folder: blog, php: "8.5", workspaceDatabases: .empty)], settings: empty) == .copy)
+    }
+
+    @Test func anEmptyDatabaseKeepsItsCharacterSetAndSkipsAStrangeValue() {
+        #expect(EmptyDatabase.statements("shop", kind: .mysql, settings: ["utf8mb4", "utf8mb4_unicode_ci"]) == ["SET SESSION lock_wait_timeout = 60; DROP DATABASE IF EXISTS `shop`; CREATE DATABASE `shop` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"])
+        #expect(EmptyDatabase.statements("shop", kind: .mariadb, settings: []) == ["SET SESSION lock_wait_timeout = 60; DROP DATABASE IF EXISTS `shop`; CREATE DATABASE `shop`"])
+        #expect(EmptyDatabase.statements("shop", kind: .postgresql, settings: ["UTF8", "en_US.UTF-8", "x'; DROP"]) == [
+            "DROP DATABASE IF EXISTS \"shop\" WITH (FORCE)",
+            "CREATE DATABASE \"shop\" TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'en_US.UTF-8'",
+        ])
+    }
+
+    @Test func settingsAndRecordsFromBeforeTheChoiceHaveACopy() throws {
+        let settings = try JSONDecoder().decode(WorkspaceSettings.self, from: Data(#"{"dumpDays":3,"runsComposerInstall":false,"runsNpmInstall":true}"#.utf8))
+        let workspace = try JSONDecoder().decode(Workspace.self, from: Data(#"{"name":"ticket-1","worktree":"/w","folder":"/w","state":{"ready":{}}}"#.utf8))
+
+        #expect(settings == WorkspaceSettings(dumpDays: 3, runsComposerInstall: false))
+        #expect(workspace.databaseKind == nil)
+        #expect(workspace.emptiedServers.isEmpty)
+        #expect(WorkspaceDatabaseChoice(nil) == .default)
+        #expect(WorkspaceDatabaseChoice.empty.kind == .empty)
+    }
+
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealFixAboveARepositoryInThePublicFolderNeedsNoRetry() async throws {
         let root = workspaceRoot()
