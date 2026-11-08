@@ -111,8 +111,41 @@ extension NexusEngine {
             configHomeFile: Self.literalHome(of: config) == nil ? nil : target.homeFile.map { Self.displayPath($0) },
             urlPlan: urlPlan(of: target, config: config, check: database, in: state),
             urlChange: urlChange(of: target.site.host, database: config.database, instance: database.instance, in: state),
-            copyInstance: database.copyInstance
+            copyInstance: database.copyInstance,
+            workspaceLines: await workspaceLines(of: target),
+            network: Self.network(count: database.blogCount, blogs: database.blogs, site: target.site, configName: target.configName, tld: state.tld)
         )
+    }
+
+    // The kind of a network comes from its configuration, as for nginx (3g). A second site on a
+    // subdomain of the main site without that kind means that Nexus cannot read SUBDOMAIN_INSTALL.
+    // The example has no port, as the address bar shows it.
+    static func network(count: Int?, blogs: [[String]]?, site: Site, configName: String, tld: String) -> WordPressNetwork? {
+        let sites = (blogs ?? []).compactMap { $0.count == 2 ? (domain: Self.withoutPort($0[0]), path: $0[1]) : nil }
+
+        guard let count, let main = sites.first else {
+            return nil
+        }
+
+        let second = sites.dropFirst().first
+        let layout = SiteLayout(of: site)
+        let onSubdomain = second.map { $0.domain.hasSuffix(".\(main.domain)") } ?? false
+        let subdomains = layout.subdomainNetwork || onSubdomain
+        let served = layout.hosts(of: site, tld: tld).contains("*.\(site.host)")
+        let example = second.map { subdomains ? $0.domain : $0.domain + ($0.path.hasSuffix("/") ? String($0.path.dropLast()) : $0.path) }
+        var problem: String?
+
+        if subdomains, !served {
+            problem = site.host.hasSuffix(".\(tld)")
+                ? "The sites of this network are on subdomains, but Nexus cannot read SUBDOMAIN_INSTALL in \(configName) as plain text. Add *.\(site.host) as an alias of this site."
+                : "The sites of this network need the names below \(site.host). Only a name in the dev domain .\(tld) can have them. Give the site a host in .\(tld)."
+        }
+
+        return WordPressNetwork(host: site.host, subdomains: subdomains, sites: count, example: example, problem: problem)
+    }
+
+    private static func withoutPort(_ domain: String) -> String {
+        domain.split(separator: ":").first.map(String.init) ?? domain
     }
 
     // A classic site without wp-config.php gets a new database with a free name on MySQL 8.4, or
@@ -267,20 +300,32 @@ extension NexusEngine {
         return "Nexus changed \(EnglishList.joined(changed)) of \(host). \(old)"
     }
 
-    // All files or none: a failed write puts back the files that this call wrote already.
+    // All files or none: a failed write puts back the files that this call wrote already. A file
+    // that was not there goes again, for example a new .gitignore (3e).
     static func writeAll(_ texts: [URL: String]) throws {
-        var written: [(URL, String)] = []
+        var written: [(URL, String?)] = []
 
         for (file, text) in texts {
             let path = file.path(percentEncoded: false)
 
             do {
-                let old = try String(contentsOf: file, encoding: .utf8)
-                try write(text, to: path)
+                let old = FileManager.default.fileExists(atPath: path) ? try String(contentsOf: file, encoding: .utf8) : nil
+
+                if old == nil {
+                    try Data(text.utf8).write(to: file, options: .atomic)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path)
+                } else {
+                    try write(text, to: path)
+                }
+
                 written.append((file, old))
             } catch {
                 for (writtenFile, old) in written {
-                    try? write(old, to: writtenFile.path(percentEncoded: false))
+                    if let old {
+                        try? write(old, to: writtenFile.path(percentEncoded: false))
+                    } else {
+                        try? FileManager.default.removeItem(at: writtenFile)
+                    }
                 }
 
                 throw RuntimeError.unsupported("Nexus could not write \(file.lastPathComponent). \(error) Nexus changed nothing.")
@@ -324,13 +369,18 @@ extension NexusEngine {
     }
 
     // The command comes before a change, so a missing WP-CLI stops the set-up before the database.
-    // The closure gives the output of WP-CLI.
-    func wpCLICommand(in core: URL, failure: String) async throws -> @Sendable ([String]) async throws -> String {
+    // The closure gives the output of WP-CLI. A worktree is no site of Nexus. So the setup of its
+    // workspace gives the PHP version of the site.
+    func wpCLICommand(in core: URL, failure: String, php line: String? = nil) async throws -> @Sendable ([String]) async throws -> String {
         let folder = core.path(percentEncoded: false)
         let tool: ToolCommand
 
         do {
-            tool = try await toolCommand(.wp, folder: folder)
+            if let line {
+                tool = try await wpCLITool(php: line)
+            } else {
+                tool = try await toolCommand(.wp, folder: folder)
+            }
         } catch let missing as ToolNotInstalled {
             throw RuntimeError.unsupported(missing.description)
         }
@@ -363,6 +413,10 @@ extension NexusEngine {
         var problem: String?
         var suggestedDBHost: String?
         var copyInstance: String?
+        // The number of sites of a network, and the domain and the path of its first two sites, from
+        // wp_blogs (3g).
+        var blogCount: Int?
+        var blogs: [[String]]?
     }
 
     func mysqlInstances() async -> [DatabaseInstance] {
@@ -425,6 +479,11 @@ extension NexusEngine {
 
             let options = (try? await client.rows("SELECT option_name, option_value FROM \(Self.sqlName(name)).\(Self.sqlName("\(prefix)options")) WHERE option_name IN ('home', 'siteurl')")) ?? []
             let values = Dictionary(options.compactMap { $0.count == 2 ? ($0[0], $0[1]) : nil }) { first, _ in first }
+            // A site that is no network has no table of sites (3g). The row needs the number and two
+            // sites.
+            let blogTable = "\(Self.sqlName(name)).\(Self.sqlName("\(prefix)blogs"))"
+            let blogCount = (try? await client.query("SELECT COUNT(*) FROM \(blogTable)")).flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            let blogs = blogCount == nil ? nil : try? await client.rows("SELECT domain, path FROM \(blogTable) ORDER BY blog_id LIMIT 2")
 
             // A copy from MAMP PRO keeps its account in wp-config.php, also when DB_HOST is right.
             guard await logsIn(config, on: instance) else {
@@ -434,11 +493,13 @@ extension NexusEngine {
                     home: values["home"],
                     siteURL: values["siteurl"],
                     problem: "WordPress cannot log in to \(instance.id) with DB_USER and DB_PASSWORD of the configuration. Set them to the account of \(instance.id).",
-                    suggestedDBHost: "127.0.0.1:\(instance.port)"
+                    suggestedDBHost: "127.0.0.1:\(instance.port)",
+                    blogCount: blogCount,
+                    blogs: blogs
                 )
             }
 
-            return DatabaseCheck(instance: instance.id, exists: true, home: values["home"], siteURL: values["siteurl"])
+            return DatabaseCheck(instance: instance.id, exists: true, home: values["home"], siteURL: values["siteurl"], blogCount: blogCount, blogs: blogs)
         } catch {
             return DatabaseCheck(instance: instance.id, problem: "Nexus cannot read the databases of \(instance.id). \(error)")
         }

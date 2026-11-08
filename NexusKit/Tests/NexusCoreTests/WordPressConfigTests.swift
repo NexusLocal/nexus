@@ -87,6 +87,15 @@ struct WordPressConfigTests {
         #expect(WordPressFiles.settingConstant("DB_HOST", to: "127.0.0.1:13307", in: "<?php\ndefine('DB_HOST', 'localhost'); // the socket\n") != nil)
     }
 
+    @Test func aDefineWithTheGuardOfTheWorkspaceLinesKeepsItsGuardAndItsLineEnd() throws {
+        let text = "<?php\r\ndefined( 'DB_HOST' ) || define( 'DB_HOST', 'localhost' );\r\n"
+
+        let changed = try #require(WordPressFiles.settingConstant("DB_HOST", to: "127.0.0.1:13307", in: text))
+
+        #expect(changed == "<?php\r\n// Before Nexus: defined( 'DB_HOST' ) || define( 'DB_HOST', 'localhost' );\r\ndefined( 'DB_HOST' ) || define( 'DB_HOST', '127.0.0.1:13307' );\r\n")
+        #expect(WordPressFiles.restoringConstant("DB_HOST", in: changed) == text)
+    }
+
     @Test func aTablePrefixWithOtherCharactersIsNotSafe() {
         #expect(WordPressConfig(tablePrefix: "wp_2_").safeTablePrefix == "wp_2_")
         #expect(WordPressConfig(tablePrefix: "wp`;DROP").safeTablePrefix == nil)

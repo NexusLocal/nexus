@@ -170,6 +170,20 @@ public struct AppProcessInfo: Codable, Sendable, Hashable {
     }
 }
 
+// The change of the links in the posts of a WordPress workspace that did not end yet (Phase 4, 3e).
+// progress goes from 0 to 1.
+public struct WorkspaceLinkInfo: Codable, Sendable, Hashable {
+    public let from: [String]
+    public let to: String
+    public let progress: Double
+
+    public init(from: [String], to: String, progress: Double) {
+        self.from = from
+        self.to = to
+        self.progress = progress
+    }
+}
+
 // A workspace as the app and nexus workspace list show it. url is nil for a workspace that does
 // not run. The problem then says why. A nexusd of part 8b sends only name, worktree, folder and
 // branch. An app of part 8b cannot read the sites without worktree, so nexusd always sends it.
@@ -187,6 +201,7 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
     public let redisIndexes: [String: Int]?
     public let ports: [String: Int]?
     public let app: AppProcessInfo?
+    public let links: WorkspaceLinkInfo?
 
     public var id: String { name }
 
@@ -203,7 +218,8 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         databases: [WorkspaceDatabaseInfo]? = nil,
         redisIndexes: [String: Int]? = nil,
         ports: [String: Int]? = nil,
-        app: AppProcessInfo? = nil
+        app: AppProcessInfo? = nil,
+        links: WorkspaceLinkInfo? = nil
     ) {
         self.name = name
         self.worktree = worktree
@@ -218,6 +234,7 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         self.redisIndexes = redisIndexes
         self.ports = ports
         self.app = app
+        self.links = links
     }
 
     public var isolationProblem: String? {
@@ -737,6 +754,8 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case wordPressCopySource(host: String)
     // The plugins that the user confirmed (Phase 4, 3h).
     case turnOffMailPlugins(host: String, folders: [String])
+    // The lines for workspaces in a tracked wp-config.php that the user confirmed (Phase 4, 3e).
+    case addWordPressWorkspaceLines(host: String, lines: WordPressWorkspaceLines)
     // The background processes of a site that the user did not change (D52).
     case backgroundPreset(host: String)
     case retryWorkspace(host: String, name: String)
@@ -927,6 +946,8 @@ public enum NexusResponse: Codable, Sendable, Equatable {
 // configHome is WP_HOME of the configuration, from configHomeFile. urlPlan is what "Change the
 // URLs" changes, and urlChange is the last change that "Undo…" can put back (3d). copyInstance is the Nexus instance
 // that "Copy to Nexus…" copies the database to, when it is on a server that Nexus did not make.
+// workspaceLines is set when git tracks wp-config.php and that file does not load
+// wp-config-nexus.php, or when the lines are there but not committed (3e).
 public struct WordPressSiteInfo: Codable, Sendable, Equatable {
     public let type: PHPProjectType
     public let version: String?
@@ -949,8 +970,12 @@ public struct WordPressSiteInfo: Codable, Sendable, Equatable {
     public let urlPlan: WordPressURLPlan?
     public let urlChange: WordPressURLChange?
     public let copyInstance: String?
+    public let workspaceLines: WordPressWorkspaceLines?
+    public let network: WordPressNetwork?
 
-    public init(type: PHPProjectType, version: String? = nil, configFile: String? = nil, database: String? = nil, dbHost: String? = nil, instance: String? = nil, databaseExists: Bool? = nil, home: String? = nil, siteURL: String? = nil, problem: String? = nil, setUpDatabase: String? = nil, setUpInstance: String? = nil, suggestedDBHost: String? = nil, suggestedUser: String? = nil, url: String? = nil, configHome: String? = nil, configHomeFile: String? = nil, urlPlan: WordPressURLPlan? = nil, urlChange: WordPressURLChange? = nil, copyInstance: String? = nil) {
+    public init(type: PHPProjectType, version: String? = nil, configFile: String? = nil, database: String? = nil, dbHost: String? = nil, instance: String? = nil, databaseExists: Bool? = nil, home: String? = nil, siteURL: String? = nil, problem: String? = nil, setUpDatabase: String? = nil, setUpInstance: String? = nil, suggestedDBHost: String? = nil, suggestedUser: String? = nil, url: String? = nil, configHome: String? = nil, configHomeFile: String? = nil, urlPlan: WordPressURLPlan? = nil, urlChange: WordPressURLChange? = nil, copyInstance: String? = nil, workspaceLines: WordPressWorkspaceLines? = nil, network: WordPressNetwork? = nil) {
+        self.workspaceLines = workspaceLines
+        self.network = network
         self.setUpDatabase = setUpDatabase
         self.setUpInstance = setUpInstance
         self.suggestedDBHost = suggestedDBHost
@@ -971,6 +996,70 @@ public struct WordPressSiteInfo: Codable, Sendable, Equatable {
         self.home = home
         self.siteURL = siteURL
         self.problem = problem
+    }
+}
+
+// The lines for workspaces in a wp-config.php that git tracks (Phase 4, 3e). missing: the file
+// does not load wp-config-nexus.php. changes holds the change for the sheet. It is empty when only
+// the line in .gitignore is missing. ignoreFile is the file that gets the line
+// wp-config-nexus.php, or nil when git ignores that name already. uncommitted: the lines are there,
+// but the last commit does not have them.
+public struct WordPressWorkspaceLines: Codable, Sendable, Equatable {
+    public enum State: String, Codable, Sendable {
+        case missing
+        case uncommitted
+    }
+
+    public let state: State
+    public let configFile: String
+    public let changes: [TextChangeLine]
+    public let ignoreFile: String?
+
+    public init(state: State, configFile: String, changes: [TextChangeLine] = [], ignoreFile: String? = nil) {
+        self.state = state
+        self.configFile = configFile
+        self.changes = changes
+        self.ignoreFile = ignoreFile
+    }
+}
+
+// A WordPress network (Phase 4, 3g). host is the host of the site in Nexus. sites is the number of
+// its sites. example is the name of its second site, as in blog.shop.test or shop.test/blog.
+// problem says why Nexus does not serve the names below the host of a network on subdomains.
+public struct WordPressNetwork: Codable, Sendable, Equatable {
+    public let host: String
+    public let subdomains: Bool
+    public let sites: Int
+    public let example: String?
+    public let problem: String?
+
+    public init(host: String, subdomains: Bool, sites: Int, example: String? = nil, problem: String? = nil) {
+        self.host = host
+        self.subdomains = subdomains
+        self.sites = sites
+        self.example = example
+        self.problem = problem
+    }
+
+    // The value of the row "Network" in the app and in nexus site wordpress.
+    public var summary: String {
+        let count = sites == 1 ? "1 site" : "\(sites) sites"
+        let kind = subdomains ? "on subdomains" : "in subfolders"
+
+        return example.map { "\(count) \(kind), for example \($0)" } ?? "\(count) \(kind)"
+    }
+
+    // The label of the example below the host, as blog in blog.shop.test.
+    public var exampleLabel: String {
+        example.flatMap { $0.hasSuffix(".\(host)") ? String($0.dropLast(host.count + 1)) : nil } ?? "blog"
+    }
+
+    public var servedText: String? {
+        guard subdomains, problem == nil else {
+            return nil
+        }
+
+        return "Nexus serves each name below \(host) with HTTPS, for example \(exampleLabel).\(host)."
     }
 }
 

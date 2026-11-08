@@ -130,7 +130,7 @@ extension NexusEngine {
         let tool: ToolCommand?
 
         do {
-            tool = try await toolCommand(.php, folder: folder)
+            tool = try await toolCommand(.php, folder: folder, inSetup: true)
         } catch {
             writeToLog(of: log, "\(error)\n")
             tool = nil

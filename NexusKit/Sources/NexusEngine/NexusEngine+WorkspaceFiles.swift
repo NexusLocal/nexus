@@ -148,8 +148,17 @@ extension NexusEngine {
     private func cloneEntries(in folders: FileFolders, git: URL, leavingOut leftOut: [String]) async throws -> [String] {
         let exists = { (path: String) in (try? FileManager.default.attributesOfItem(atPath: path)) != nil }
         let worktree = folders.worktree
-        let entries = WorkspaceFiles.clonable(try await GitTool.ignoredEntries(in: folders.main, git: git))
-            .filter { entry in !exists("\(worktree)/\(entry)") && !leftOut.contains { entry.hasPrefix($0) } }
+        let ignoredInMain = try await GitTool.ignoredEntries(in: folders.main, git: git)
+        let isWordPress = PHPProject.type(of: URL(filePath: folders.application, directoryHint: .isDirectory)).isWordPress
+        // A folder that git ignores can hold worktrees, for example .claude/worktrees. A clone of it
+        // would copy each worktree. It would also copy the new worktree into itself.
+        let worktrees = try await WorktreeList.read(repository: folders.repository, git: git).map(\.path)
+        let holdsWorktree = { (entry: String) in
+            let path = "\(folders.main)/\(RealPath.trimmed(entry))"
+            return worktrees.contains { $0 == path || $0.hasPrefix("\(path)/") }
+        }
+        let entries = (isWordPress ? WorkspaceFiles.clonableForWordPress(ignoredInMain) : WorkspaceFiles.clonable(ignoredInMain))
+            .filter { entry in !exists("\(worktree)/\(entry)") && !leftOut.contains { entry.hasPrefix($0) } && !holdsWorktree(entry) }
         let ignored = try await GitTool.ignored(entries.filter { !Self.isBehindLink($0, in: worktree) }, in: worktree, git: git)
         var warnings = Self.warning(for: entries.filter { !ignored.contains($0) })
 
@@ -240,7 +249,7 @@ extension NexusEngine {
                 return "\(installer.folder) does not fit \(lockFile), and git does not ignore \(installer.folder)/ in this worktree. So Nexus runs no install."
             }
 
-            let tool = try await toolCommand(installer.tool, folder: folders.worktree)
+            let tool = try await toolCommand(installer.tool, folder: folders.worktree, inSetup: true)
             let command = Command(
                 executable: URL(filePath: tool.executable),
                 arguments: tool.arguments + installer.arguments,

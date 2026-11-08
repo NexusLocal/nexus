@@ -8,18 +8,28 @@ import NexusRuntime
 // the folder. Outside a site, the defaults for a new site apply. nexusd only says what to run. The
 // nexus command runs it in the terminal. The program then gets the terminal and the exit code.
 // Without a package of the tool, a link in bin/ runs the next program on the PATH. The refusal in
-// a workspace of WordPress comes first. So that program does not run there either. php and
-// Composer are refused there too, because php wp-cron.php or a Composer script can load WordPress.
+// a workspace of WordPress that is not Ready comes first. So that program does not run there
+// either. php and Composer are refused there too, because php wp-cron.php or a Composer script can
+// load WordPress. The setup of that workspace runs these tools after it wrote the values of the
+// workspace (Phase 4, 3e).
 extension NexusEngine {
-    func toolCommand(_ tool: ProjectTool, folder path: String) async throws -> ToolCommand {
+    func toolCommand(_ tool: ProjectTool, folder path: String, inSetup: Bool = false) async throws -> ToolCommand {
         let folder = URL(filePath: path, directoryHint: .isDirectory)
         let state = await stateStore.current()
         let sites = resolvedSites(state).map(\.site)
         let location = ProjectFolder.locate(folder, in: sites)
         let installed = await installer.installedRuntimes()
 
-        if [.php, .composer, .wp].contains(tool), let workspace = Self.wordPressWorkspace(holding: folder, location: location, sites: sites, state: state) {
-            throw RuntimeError.unsupported("nexus \(tool.rawValue) does not run in the workspace \(workspace.name). \(Self.wordPressWorkspaceReason)")
+        if !inSetup, [.php, .composer, .wp].contains(tool), let workspace = Self.wordPressWorkspace(holding: folder, location: location, sites: sites, state: state), workspace.worktree != runningSetupWorktree {
+            // A Ready record without a digest comes from before 3e. It waits for its setup.
+            switch workspace.state {
+            case .ready where workspace.configurationDigest != nil:
+                break
+            case .notIsolated(let reason):
+                throw RuntimeError.unsupported("nexus \(tool.rawValue) does not run in the workspace \(workspace.name), because it is not isolated. \(reason)")
+            default:
+                throw RuntimeError.unsupported("nexus \(tool.rawValue) does not run in the workspace \(workspace.name) yet, because Nexus still sets it up. Try again when it is ready.")
+            }
         }
 
         do {
@@ -73,6 +83,14 @@ extension NexusEngine {
         }
 
         return try Self.phpLine(nil, installed: installed, defaults: state.siteDefaults)
+    }
+
+    // WP-CLI with a PHP version of its own, for a worktree that is no site of Nexus.
+    func wpCLITool(php line: String) async throws -> ToolCommand {
+        let installed = await installer.installedRuntimes()
+        let php = try installedPHP(line, in: installed)
+
+        return try await phpCommand(php, script: try Self.pathWithoutSpaces(for: try phar("wp-cli", title: "WP-CLI", in: installed), in: paths.pharLinks), settingsFolder: try wpCLISettings())
     }
 
     private func phar(_ name: String, title: String, in installed: [InstalledRuntime]) throws -> URL {

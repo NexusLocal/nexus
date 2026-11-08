@@ -96,7 +96,14 @@ public actor NexusEngine {
     var settingUpWorkspaces = false
     var setupAgain = false
     var runningSetupKey: String?
+    // The worktree of the setup that runs now. Its commands can call wp and composer through the
+    // links in bin/. nexusd must not refuse them (Phase 4, 3e).
+    var runningSetupWorktree: String?
     var setupIsOutdated = false
+    // The change of the links in the posts of a WordPress workspace after Ready, with its progress
+    // from 0 to 1. The key is the owner of the processes of that workspace (Phase 4, 3e).
+    var linkChanges: [String: Task<Void, Never>] = [:]
+    var linkProgress: [String: Double] = [:]
     var runningCommand: (worktree: String, task: Task<CommandOutput, Error>)?
     // The background processes that nexusd started, the run of the sync that changes them, and what
     // stops one of them. An entry in processProblems has the owner of the process as its key.
@@ -132,6 +139,9 @@ public actor NexusEngine {
     var knownHosts: Set<String>?
     var configurationWatcher: FolderWatcher?
     var watchedConfigurations: Set<String> = []
+    // The folders with the network settings of the WordPress sites (Phase 4, 3g).
+    var wordPressWatcher: FolderWatcher?
+    var watchedWordPressFolders: Set<String> = []
     var removingWorktrees: Set<String> = []
     var checkingWorktrees: Set<String> = []
     var recheckWorktrees: Set<String> = []
@@ -329,6 +339,8 @@ public actor NexusEngine {
                 return .wordPressCopySource(try await wordPressCopySource(host: host))
             case .turnOffMailPlugins(let host, let folders):
                 return .done(message: try await turnOffMailPlugins(host: host, folders: folders))
+            case .addWordPressWorkspaceLines(let host, let lines):
+                return .done(message: try await addWordPressWorkspaceLines(host: host, lines: lines))
             case .backgroundPreset(let host):
                 return .backgroundPreset(try await backgroundPreset(host: host))
             case .retryWorkspace(let host, let name):
@@ -1279,7 +1291,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .siteDatabases, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins: true
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .siteDatabases, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines: true
         default: false
         }
     }

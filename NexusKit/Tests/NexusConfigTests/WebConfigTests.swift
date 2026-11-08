@@ -133,6 +133,36 @@ struct WebConfigTests {
         #expect(NginxConfig.origins(of: ["shop.test"], settings: settings) == ["https://shop.test", "http://shop.test"])
     }
 
+    @Test func aSiteOfANetworkInSubfoldersUsesTheFilesOfWordPress() throws {
+        let base = site(.nginx)
+        let network = { (project: PHPProjectType) in
+            WebSite(hosts: base.hosts, backend: base.backend, certificate: base.certificate, key: base.key, accessLog: base.accessLog, project: project, network: .subfolders)
+        }
+        let classic = try NginxConfig.render(sites: [network(.wordpress)], settings: nginxSettings())
+        let bedrock = try NginxConfig.render(sites: [network(.bedrock)], settings: nginxSettings())
+
+        #expect(classic.contains("if (!-e $request_filename) {\n            rewrite ^/[^/]+/wp-admin$ $scheme://$http_host$uri/ permanent;\n            rewrite ^/[^/]+(/wp-.*)$ $1 last;\n            rewrite ^/[^/]+(/.*\\.php)$ $1 last;\n        }"))
+        #expect(bedrock.contains("rewrite ^/[^/]+/wp(/.*)$ /wp$1 last;\n            rewrite ^/[^/]+(/wp-.*)$ /wp$1 last;"))
+    }
+
+    @Test func aNameWithAStarGivesAnOriginForEachNameBelowIt() {
+        #expect(NginxConfig.origins(of: ["*.shop.test"], settings: nginxSettings()) == ["~^https://[^./]+\\.shop\\.test:8443$", "~^http://[^./]+\\.shop\\.test:8080$"])
+    }
+
+    @Test func apacheTakesASiteWithAStarNameLast() throws {
+        let settings = ApacheSettings(port: 8081, runtime: URL(filePath: "/Nexus/runtimes/httpd/2.4"), runFolder: run, modules: [])
+        let base = site(.apache)
+        let network = WebSite(hosts: ["shop.test", "*.shop.test"], backend: base.backend, certificate: base.certificate, key: base.key, accessLog: base.accessLog)
+        let below = WebSite(hosts: ["zz.shop.test"], backend: base.backend, certificate: base.certificate, key: base.key, accessLog: base.accessLog)
+
+        let config = try ApacheConfig.render(sites: [network, below], settings: settings)
+
+        let first = try #require(config.range(of: "ServerName zz.shop.test"))
+        let second = try #require(config.range(of: "ServerName shop.test"))
+        #expect(first.lowerBound < second.lowerBound)
+        #expect(config.contains("ServerAlias *.shop.test"))
+    }
+
     @Test func apacheGetsNoProxySite() throws {
         let settings = ApacheSettings(port: 8081, runtime: URL(filePath: "/Nexus/runtimes/httpd/2.4"), runFolder: run, modules: [])
 

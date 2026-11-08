@@ -26,6 +26,8 @@ struct SiteScreen: View {
     @State private var appCommand: String
     @State private var address: String
     @FocusState private var focusedKindField: KindField?
+    @State private var wordPressInfo: WordPressSiteInfo?
+    @State private var asksToAddWorkspaceLines = false
 
     private enum KindField {
         case command
@@ -170,7 +172,7 @@ struct SiteScreen: View {
                 }
 
                 if isWordPress {
-                    SiteWordPressSection(site: site)
+                    SiteWordPressSection(site: site, info: $wordPressInfo)
                 }
             case .node:
                 appSection
@@ -316,10 +318,16 @@ struct SiteScreen: View {
         }
     }
 
+    // The design of a WordPress site is "Site Workspaces Section · WordPress" and "Site Workspaces
+    // Section · wp-config.php" in nexus.pen (Phase 4, 3e).
     private var workspacesSection: some View {
         Section {
             Toggle("Create workspaces automatically", isOn: $automaticWorkspaces)
                 .toggleStyle(.switch)
+
+            if isWordPress, let lines = wordPressInfo?.workspaceLines {
+                workspaceLinesRow(lines)
+            }
 
             ForEach(site.workspaces) { workspace in
                 LabeledContent {
@@ -328,10 +336,14 @@ struct SiteScreen: View {
                             .foregroundStyle(.secondary)
                             .rowValue(.middle)
 
-                        Text(stateText(of: workspace))
-                            .foregroundStyle(workspace.isolationProblem == nil ? Color.secondary : Color.orangeText)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .id(stateText(of: workspace))
+                        if let links = workspace.links, workspace.isolationProblem == nil {
+                            linkProgress(links)
+                        } else {
+                            Text(stateText(of: workspace))
+                                .foregroundStyle(workspace.isolationProblem == nil ? Color.secondary : Color.orangeText)
+                                .fixedSize(horizontal: true, vertical: false)
+                                .id(stateText(of: workspace))
+                        }
 
                         if workspace.isolationProblem != nil || !(workspace.warnings ?? []).isEmpty {
                             Button("Retry") {
@@ -363,26 +375,114 @@ struct SiteScreen: View {
                     MessageText(problem)
                 }
 
-                ForEach(site.workspaces.compactMap(\.isolationMessage), id: \.self) { message in
-                    Text(message)
-                        .foregroundStyle(Color.orangeText)
+                // A reason or a warning can name a failed program with its details in errors.log.
+                ForEach(site.workspaces) { workspace in
+                    if let message = workspace.isolationMessage {
+                        MessageText(message, title: "The workspace \(workspace.name) of \(site.host) is not isolated")
+                    }
+
+                    ForEach(workspace.warnings ?? [], id: \.self) { warning in
+                        MessageText("\(workspace.name): \(warning)", title: "A warning of the workspace \(workspace.name) of \(site.host)")
+                    }
                 }
 
-                ForEach(site.workspaces) { workspace in
-                    ForEach(workspace.warnings ?? [], id: \.self) { warning in
-                        Text("\(workspace.name): \(warning)")
-                            .foregroundStyle(Color.orangeText)
-                    }
+                ForEach(site.workspaces.filter { $0.links != nil && $0.isolationProblem == nil }) { workspace in
+                    Text(linksText(of: workspace))
+                }
+
+                if isWordPress, wordPressInfo?.workspaceLines?.state == .missing {
+                    Text("\"Add the lines for workspaces…\" changes \(workspaceLinesFiles) of the main checkout. Commit the change. A worktree of a branch with this commit gets its own database.")
                 }
 
                 Text(workspacesNote)
             }
         }
+        .sheet(isPresented: $asksToAddWorkspaceLines) {
+            if let lines = wordPressInfo?.workspaceLines {
+                AddWorkspaceLinesSheet(host: site.host, lines: lines) {
+                    Task {
+                        if await model.addWordPressWorkspaceLines(site, lines: lines) {
+                            wordPressInfo = await model.wordPressSite(of: site)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // A tracked wp-config.php needs lines that load wp-config-nexus.php (Phase 4, 3e).
+    @ViewBuilder
+    private func workspaceLinesRow(_ lines: WordPressWorkspaceLines) -> some View {
+        LabeledContent(lines.configFile) {
+            HStack {
+                switch lines.state {
+                case .missing:
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Color.statusOrange)
+
+                        Text(lines.changes.isEmpty ? "wp-config-nexus.php is not in .gitignore" : "Has no lines for workspaces")
+                            .foregroundStyle(Color.orangeText)
+                    }
+                    .rowValue()
+
+                    Button("Add the lines for workspaces…") {
+                        asksToAddWorkspaceLines = true
+                    }
+                    .fixedSize()
+                case .uncommitted:
+                    Text("The lines for workspaces are not committed yet")
+                        .foregroundStyle(.secondary)
+                        .rowValue()
+                }
+            }
+        }
+        .labeledContentStyle(.rowValue)
+    }
+
+    private var workspaceLinesFiles: String {
+        guard let lines = wordPressInfo?.workspaceLines else {
+            return "wp-config.php"
+        }
+
+        return EnglishList.joined([lines.configFile] + (lines.ignoreFile.map { [$0] } ?? []))
+    }
+
+    private func linkProgress(_ links: WorkspaceLinkInfo) -> some View {
+        HStack(spacing: 8) {
+            Text("Changing links")
+                .foregroundStyle(.secondary)
+
+            ProgressView(value: links.progress)
+                .frame(width: 80)
+
+            Text(links.progress, format: .percent.precision(.fractionLength(0)))
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+        .fixedSize()
+    }
+
+    // A network waits in Preparing for the change of its links. Another site is Ready first.
+    private func linksText(of workspace: WorkspaceInfo) -> String {
+        guard let links = workspace.links else {
+            return ""
+        }
+
+        let from = EnglishList.joined(links.from)
+
+        guard workspace.state == .ready else {
+            return "Nexus changes the links in the posts of \(workspace.name) from \(from) to \(links.to). A network waits for this change, because WordPress finds its sites by their domain."
+        }
+
+        return "\(workspace.name) is ready. Nexus still changes the links in its posts from \(from) to \(links.to). Until then, a link in a post can go to the main site."
     }
 
     private var workspacesNote: String {
         guard kind == .node else {
-            return "When git adds a worktree to this site, Nexus makes a workspace for it. This works for every tool that uses git worktrees. When git no longer lists the worktree, Nexus removes the workspace and keeps a dump of its databases in the trash."
+            let note = "When git adds a worktree to this site, Nexus makes a workspace for it. This works for every tool that uses git worktrees. When git no longer lists the worktree, Nexus removes the workspace and keeps a dump of its databases in the trash."
+
+            return isWordPress ? "\(note) Each workspace gets its own copy of the database server and its own domain in WordPress. Its plugins and WP-Cron write only into that copy." : note
         }
 
         return "When git adds a worktree to this site, Nexus makes a workspace for it. Each workspace runs its own copy of the app on its own port and domain."
@@ -882,7 +982,7 @@ struct EditAliasesSheet: View {
                 .font(.system(.body, design: .monospaced))
                 .plainTextInput()
 
-            Text("Separate the names with a comma or a space, for example www.\(site.host), \(site.host.split(separator: ".").first ?? "site").local. A name outside the dev domain gets a line in /etc/hosts.")
+            Text("Separate the names with a comma or a space, for example www.\(site.host), \(site.host.split(separator: ".").first ?? "site").local. A name that starts with *. covers each name below it, for example *.\(site.host). It works only in the dev domain. A name outside the dev domain gets a line in /etc/hosts.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

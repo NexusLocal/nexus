@@ -701,10 +701,11 @@ struct SiteCommand: AsyncParsableCommand {
         @Flag(name: .customLong("copy-database"), help: "Copies the database from the server that DB_HOST names to a Nexus instance. Nexus only reads the other server.") var copyDatabase = false
         @Flag(name: .customLong("change-urls"), help: "Changes the URLs in the database and WP_HOME to the URL of Nexus. A dump of the database goes to the trash first.") var changeURLs = false
         @Flag(name: .customLong("undo-url-change"), help: "Puts back the database from the dump of the last URL change, and the old WP_HOME.") var undoURLChange = false
+        @Flag(name: .customLong("add-workspace-lines"), help: "Adds the lines that load wp-config-nexus.php to a wp-config.php that git tracks, and that name to .gitignore. Commit the change. Each workspace then gets its own database.") var addWorkspaceLines = false
 
         func validate() throws {
-            if [setUp, createDatabase, setDBHost, copyDatabase, changeURLs, undoURLChange].filter({ $0 }).count > 1 {
-                throw ValidationError("Use one of --set-up, --create-database, --set-db-host, --copy-database, --change-urls and --undo-url-change.")
+            if [setUp, createDatabase, setDBHost, copyDatabase, changeURLs, undoURLChange, addWorkspaceLines].filter({ $0 }).count > 1 {
+                throw ValidationError("Use one of --set-up, --create-database, --set-db-host, --copy-database, --change-urls, --undo-url-change and --add-workspace-lines.")
             }
         }
 
@@ -773,6 +774,16 @@ struct SiteCommand: AsyncParsableCommand {
                 return
             }
 
+            if addWorkspaceLines {
+                guard let lines = info.workspaceLines, lines.state == .missing else {
+                    print(info.workspaceLines == nil ? "wp-config.php of \(host) needs no lines for workspaces. Nexus changes nothing." : "wp-config.php of \(host) has the lines for workspaces. Commit the change.")
+                    return
+                }
+
+                try finish(try await send(.addWordPressWorkspaceLines(host: host, lines: lines)))
+                return
+            }
+
             let database = info.database.map { name in
                 let place = info.instance.map { " on \($0)" } ?? ""
                 let state = info.databaseExists.map { $0 ? "" : " (it does not exist)" } ?? ""
@@ -786,7 +797,7 @@ struct SiteCommand: AsyncParsableCommand {
                 ("DB_HOST", info.dbHost ?? "not found"),
                 ("Home", info.home ?? "-"),
                 ("Site URL", info.siteURL ?? "-"),
-            ] + (info.configHome.map { [("WP_HOME", $0)] } ?? []) + [
+            ] + (info.configHome.map { [("WP_HOME", $0)] } ?? []) + (info.network.map { [("Network", $0.summary)] } ?? []) + [
                 ("Nexus URL", info.url ?? "-"),
             ]
 
@@ -819,6 +830,21 @@ struct SiteCommand: AsyncParsableCommand {
                 print("nexus site wordpress \(host) --change-urls changes the URLs to \(plan.to).")
             } else if let change = info.urlChange {
                 print("nexus site wordpress \(host) --undo-url-change puts back the URLs of before \(change.date.formatted(date: .abbreviated, time: .shortened)).")
+            }
+
+            if let text = info.network?.problem ?? info.network?.servedText {
+                print(text)
+            }
+
+            switch info.workspaceLines?.state {
+            case .missing where info.workspaceLines?.changes.isEmpty == true:
+                print("git does not ignore wp-config-nexus.php. nexus site wordpress \(host) --add-workspace-lines adds it to .gitignore.")
+            case .missing:
+                print("git tracks \(info.workspaceLines?.configFile ?? "wp-config.php"), and it has no lines for workspaces. nexus site wordpress \(host) --add-workspace-lines adds them.")
+            case .uncommitted:
+                print("The lines for workspaces in \(info.workspaceLines?.configFile ?? "wp-config.php") are not committed yet.")
+            case nil:
+                break
             }
         }
     }

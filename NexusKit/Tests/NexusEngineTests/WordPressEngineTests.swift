@@ -1,6 +1,7 @@
 import Foundation
 import NexusCore
 import NexusIPC
+import NexusRuntime
 import NexusSupervisor
 import Testing
 @testable import NexusEngine
@@ -44,7 +45,7 @@ extension NexusEngineTests {
         }
     }
 
-    @Test func aWorkspaceOfAWordPressSiteIsNotIsolatedAndRunsNoPHP() async throws {
+    @Test func aWorkspaceOfAWordPressSiteThatIsNotIsolatedRunsNoPHP() async throws {
         let root = wordPressRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await wordPressRepository(in: root)
@@ -66,12 +67,20 @@ extension NexusEngineTests {
         let npm = await engine.handle(.tool(.npm, folder: worktree.path(percentEncoded: false)))
         let inMain = await engine.handle(.tool(.wp, folder: shop.path(percentEncoded: false)))
 
-        #expect(workspace.state == NexusEngine.wordPressWorkspaceState)
+        guard case .notIsolated(let reason) = workspace.state else {
+            Issue.record("The workspace is \(workspace.state), not Not isolated.")
+            return
+        }
+
+        #expect(workspace.configurationDigest != nil)
         #expect(hosts == ["shop-fix.test"])
-        #expect(inWorktree == .failure(message: "nexus wp does not run in the workspace fix. \(NexusEngine.wordPressWorkspaceReason)"))
-        #expect(php == .failure(message: "nexus php does not run in the workspace fix. \(NexusEngine.wordPressWorkspaceReason)"))
-        #expect(composer == .failure(message: "nexus composer does not run in the workspace fix. \(NexusEngine.wordPressWorkspaceReason)"))
-        #expect(npm != .failure(message: "nexus npm does not run in the workspace fix. \(NexusEngine.wordPressWorkspaceReason)"))
+        #expect(inWorktree == .failure(message: "nexus wp does not run in the workspace fix, because it is not isolated. \(reason)"))
+        #expect(php == .failure(message: "nexus php does not run in the workspace fix, because it is not isolated. \(reason)"))
+        #expect(composer == .failure(message: "nexus composer does not run in the workspace fix, because it is not isolated. \(reason)"))
+
+        if case .failure(let message) = npm {
+            #expect(!message.contains("does not run in the workspace fix"))
+        }
 
         guard case .tool = inMain else {
             Issue.record("nexus wp refused the main checkout: \(inMain)")
@@ -95,10 +104,16 @@ extension NexusEngineTests {
         let inWorktree = await engine.handle(.tool(.wp, folder: worktree.path(percentEncoded: false)))
 
         #expect(await engine.stateStore.current().worktrees[RealPath.of(shop)]?.workspaces.map(\.name) == ["fix"])
-        #expect(inWorktree == .failure(message: "nexus wp does not run in the workspace fix. \(NexusEngine.wordPressWorkspaceReason)"))
+
+        guard case .failure(let message) = inWorktree else {
+            Issue.record("nexus wp ran in the workspace: \(inWorktree)")
+            return
+        }
+
+        #expect(message.hasPrefix("nexus wp does not run in the workspace fix, because it is not isolated."))
     }
 
-    @Test func aWorkspaceThatAnOlderNexusSetToReadyRunsNoPHPEither() async throws {
+    @Test func aReadyWorkspaceOfAWordPressSiteRunsPHP() async throws {
         let root = wordPressRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await wordPressRepository(in: root)
@@ -114,15 +129,162 @@ extension NexusEngineTests {
         }
 
         let current = await engine.stateStore.current()
-        let info = await engine.siteInfo().first { $0.hosts == ["shop.test"] }?.workspaces?.first
         let inWorktree = await engine.handle(.tool(.wp, folder: worktree.path(percentEncoded: false)))
-        let inMain = await engine.handle(.tool(.wp, folder: shop.path(percentEncoded: false)))
 
-        #expect(current.worktrees[RealPath.of(shop)]?.workspaces.first?.state == .ready)
-        #expect(await engine.workspaceSites(current).noticeHosts == ["shop-fix.test"])
-        #expect(info?.state == NexusEngine.wordPressWorkspaceState)
-        #expect(inWorktree == .failure(message: "nexus wp does not run in the workspace fix. \(NexusEngine.wordPressWorkspaceReason)"))
-        #expect(inMain == .toolNotInstalled(message: "WP-CLI is not installed. Run: nexus install wp-cli 2"))
+        #expect(await engine.workspaceSites(current).noticeHosts.isEmpty)
+
+        if case .failure(let message) = inWorktree {
+            #expect(!message.contains("does not run in the workspace"))
+        }
+    }
+
+    @Test func aWorkspaceOfAWordPressSiteFromBeforeItsSetupGetsTheSetup() async throws {
+        let root = wordPressRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await wordPressRepository(in: root)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.4")]
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("php", "8.4")])
+        try await settleWorkspaces(engine)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        try await runGit("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settleWorkspaces(engine)
+        try await engine.stateStore.update { state in
+            state.worktrees[RealPath.of(shop)]?.workspaces[0].state = .ready
+            state.worktrees[RealPath.of(shop)]?.workspaces[0].configurationDigest = nil
+        }
+
+        try await settleWorkspaces(engine)
+
+        let workspace = await engine.stateStore.current().worktrees[RealPath.of(shop)]?.workspaces.first
+
+        #expect(workspace?.state.isNotIsolated == true)
+        #expect(workspace?.configurationDigest != nil)
+    }
+
+    private func write(network: (from: String, to: String)? = nil, redisIndex: Int? = nil) -> NexusEngine.WordPressWrite {
+        let runtime = InstalledRuntime(name: "mysql", line: "8.4", version: "8.4.0", revision: 1, sha256: "", installedAt: .now, folder: URL(filePath: "/tmp/mysql"))
+
+        return NexusEngine.WordPressWrite(
+            core: URL(filePath: "/w/fix", directoryHint: .isDirectory),
+            php: "8.4",
+            tools: DatabaseTools(id: "mysql-8.4", kind: .mysql, runtime: runtime),
+            serverPort: 20001,
+            mainPort: 13307,
+            url: "https://blog-fix.test",
+            mainURL: "https://blog.test",
+            network: network,
+            database: "blog",
+            tablePrefix: "wp_",
+            redisIndex: redisIndex,
+            isBedrock: false,
+            configName: "wp-config.php"
+        )
+    }
+
+    @Test func theCheckAcceptsAWorkspaceOnItsOwnServerAndURL() {
+        let answer = NexusEngine.WorkspaceCheck(host: "127.0.0.1:20001", home: "https://blog-fix.test/", network: nil, redis: 17, storedHome: "https://blog.test")
+
+        #expect(NexusEngine.workspaceCheckProblems(answer, write: write(redisIndex: 17)).isEmpty)
+    }
+
+    @Test func theCheckRefusesTheServerTheURLAndTheRedisIndexOfTheMainSite() {
+        let answer = NexusEngine.WorkspaceCheck(host: "127.0.0.1:13307", home: "https://blog.test", network: nil, redis: nil, storedHome: "https://blog.test")
+
+        #expect(NexusEngine.workspaceCheckProblems(answer, write: write(redisIndex: 17)) == [
+            "WordPress in this workspace connects to 127.0.0.1:13307. That is the server of the main site, not the server of the workspace.",
+            "WordPress in this workspace uses the URL https://blog.test, not the URL https://blog-fix.test of the workspace.",
+            "WordPress in this workspace uses the Redis database 0, not the database 17 of the workspace.",
+        ])
+    }
+
+    @Test func aNetworkMustHaveTheDomainOfTheWorkspace() {
+        let moved = NexusEngine.WorkspaceCheck(host: "127.0.0.1:20001", home: "https://blog.test", network: "blog-fix.test", redis: nil, storedHome: "https://blog.test")
+        let notMoved = NexusEngine.WorkspaceCheck(host: "127.0.0.1:20001", home: "https://blog.test", network: "blog.test", redis: nil, storedHome: "https://blog.test")
+
+        #expect(NexusEngine.workspaceCheckProblems(moved, write: write(network: ("blog.test", "blog-fix.test"))).isEmpty)
+        #expect(NexusEngine.workspaceCheckProblems(notMoved, write: write(network: ("blog.test", "blog-fix.test"))) == ["The network in this workspace has the domain blog.test, not the domain blog-fix.test of the workspace."])
+        #expect(NexusEngine.workspaceCheckProblems(notMoved, write: write()) == ["This site is a network, but Nexus cannot read MULTISITE in wp-config.php as plain text. So the network keeps the domain blog.test in this workspace."])
+    }
+
+    @Test(arguments: [
+        ("127.0.0.1:13307", [String]()),
+        ("localhost", ["DB_HOST of the main site is localhost. PHP then uses a socket, and a socket ignores the port of the server of the workspace. Use \"Set DB_HOST…\" in the section WordPress."]),
+        ("db.example.com", ["DB_HOST names db.example.com. Nexus did not make that server, so it cannot give this workspace its own copy."]),
+        ("127.0.0.1:8889", ["DB_HOST names 127.0.0.1:8889. Nexus did not make that server, so it cannot give this workspace its own copy."]),
+    ])
+    func dbHostMustNameANexusInstanceWithItsPort(dbHost: String, problems: [String]) {
+        #expect(NexusEngine.dbHostProblems(WordPressConfig(host: dbHost), file: "wp-config.php", mysqlPorts: [13307]) == problems)
+    }
+
+    @Test func aNetworkMovesFromItsDomainToTheDomainOfTheWorkspace() {
+        let classic = NexusEngine.networkDomains(of: WordPressConfig(multisite: true, domainCurrentSite: "shop.test"), type: .wordpress, mainURL: "https://shop.test", url: "https://shop-fix.test:8443")
+        let bedrock = NexusEngine.networkDomains(of: WordPressConfig(domainCurrentSite: "shop.test"), type: .bedrock, mainURL: "https://shop.test", url: "https://shop-fix.test")
+
+        #expect(classic?.from == "shop.test")
+        #expect(classic?.to == "shop-fix.test:8443")
+        #expect(bedrock?.to == "shop-fix.test")
+        #expect(NexusEngine.networkDomains(of: WordPressConfig(domainCurrentSite: "shop.test"), type: .wordpress, mainURL: "https://shop.test", url: "https://shop-fix.test") == nil)
+    }
+
+    @Test func aWorkspaceGetsTheAccountOfTheMainSiteWithItsServer() {
+        let config = WordPressConfig(database: "blog", user: "root", password: "secret")
+        let site = NexusEngine.workspaceValues(config: config, databaseHost: "127.0.0.1:20001", url: "https://blog-fix.test", siteURL: "https://blog-fix.test/wp", network: nil, redisIndex: 16)
+        let network = NexusEngine.workspaceValues(config: WordPressConfig(database: "blog"), databaseHost: "127.0.0.1:20001", url: "https://blog-fix.test", siteURL: "https://blog-fix.test", network: ("blog.test", "blog-fix.test"), redisIndex: nil)
+
+        #expect(site.map(\.name) == ["DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST", "WP_HOME", "WP_SITEURL", "WP_REDIS_DATABASE"])
+        #expect(site.map(\.value) == ["blog", "root", "secret", "127.0.0.1:20001", "https://blog-fix.test", "https://blog-fix.test/wp", "16"])
+        #expect(network.map(\.name) == ["DB_NAME", "DB_HOST", "DOMAIN_CURRENT_SITE"])
+    }
+
+    @Test func theNetworkRowNamesTheKindTheNumberAndASecondSite() throws {
+        let root = wordPressRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try file("<?php\ndefine( 'MULTISITE', true );\ndefine( 'SUBDOMAIN_INSTALL', true );\n", at: "wp-config.php", in: root.appending(path: "sub"))
+        try file("<?php", at: "wp-load.php", in: root.appending(path: "sub"))
+        try file("<?php\ndefine( 'MULTISITE', true );\n", at: "wp-config.php", in: root.appending(path: "folders"))
+        try file("<?php", at: "wp-load.php", in: root.appending(path: "folders"))
+        let sub = Site(host: "shop.test", folder: root.appending(path: "sub"), php: "8.4")
+        let folders = Site(host: "shop.test", folder: root.appending(path: "folders"), php: "8.4")
+        let local = Site(host: "shop.local", folder: root.appending(path: "sub"), php: "8.4")
+        let network = { (count: Int?, blogs: [[String]]?, site: Site) in NexusEngine.network(count: count, blogs: blogs, site: site, configName: "wp-config.php", tld: "test") }
+
+        let subdomains = try #require(network(3, [["shop.test:8443", "/"], ["blog.shop.test:8443", "/"]], sub))
+        let subfolders = try #require(network(2, [["shop.test", "/"], ["shop.test", "/blog/"]], folders))
+        let unread = try #require(network(2, [["shop.test", "/"], ["blog.shop.test", "/"]], folders))
+        let outside = try #require(network(2, [["shop.local", "/"], ["blog.shop.local", "/"]], local))
+
+        #expect(subdomains == WordPressNetwork(host: "shop.test", subdomains: true, sites: 3, example: "blog.shop.test"))
+        #expect(subdomains.summary == "3 sites on subdomains, for example blog.shop.test")
+        #expect(subdomains.servedText == "Nexus serves each name below shop.test with HTTPS, for example blog.shop.test.")
+        #expect(subfolders.summary == "2 sites in subfolders, for example shop.test/blog")
+        #expect(subfolders.servedText == nil)
+        #expect(unread.problem?.hasPrefix("The sites of this network are on subdomains, but Nexus cannot read SUBDOMAIN_INSTALL") == true)
+        #expect(outside.problem?.hasPrefix("The sites of this network need the names below shop.local.") == true)
+        #expect(network(1, [["shop.test", "/"]], sub)?.summary == "1 site on subdomains")
+        #expect(network(nil, nil, sub) == nil)
+    }
+
+    @Test func eachSiteOfASubdomainNetworkMovesWithTheDomainOfTheNetwork() {
+        let moves = NexusEngine.subsiteMoves(of: ["example.com", "blog.example.com", "brand.test", "news.example.com"], from: "example.com", to: "shop.test:8443")
+
+        #expect(moves == [
+            WorkspaceLinks.Move(from: "https://blog.example.com", to: "https://blog.shop.test:8443"),
+            WorkspaceLinks.Move(from: "https://news.example.com", to: "https://news.shop.test:8443"),
+        ])
+    }
+
+    @Test func onlyAWordPressRecordWithoutADigestGetsANewSetup() {
+        let old = Workspace(name: "old", worktree: "/w/old", folder: "/w/old", state: .ready)
+        let checked = Workspace(name: "checked", worktree: "/w/checked", folder: "/w/checked", state: .ready, configurationDigest: "digest")
+        let waiting = Workspace(name: "waiting", worktree: "/w/waiting", folder: "/w/waiting")
+        let worktrees = ["/shop": SiteWorktrees(listed: [], workspaces: [old, checked, waiting]), "/app": SiteWorktrees(listed: [], workspaces: [old])]
+
+        let changed = NexusEngine.settingUpOldWordPressWorkspaces(of: worktrees, keys: ["/shop"])
+
+        #expect(changed?["/shop"]?.workspaces.map(\.state) == [.preparing, .ready, .preparing])
+        #expect(changed?["/app"]?.workspaces.map(\.state) == [.ready])
+        #expect(NexusEngine.settingUpOldWordPressWorkspaces(of: worktrees, keys: []) == nil)
     }
 
     @Test func nginxIsWrittenAgainWhenASiteBecomesWordPressOrGetsTheNotice() throws {

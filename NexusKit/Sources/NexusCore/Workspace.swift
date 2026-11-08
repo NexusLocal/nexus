@@ -95,6 +95,52 @@ public struct WorkspaceSettings: Codable, Sendable, Equatable {
     }
 }
 
+// The links in the posts of the database clone of a WordPress workspace (Phase 4, 3e). from holds
+// the URLs of the main site. to holds the URL of the workspace. A network waits for the change in
+// its setup, because WordPress finds its sites by their domain. Another site is Ready first. Its
+// change runs after that (open decision 2). done is true after the last pass. A stop of nexusd
+// before that pass gives the change again at the next start.
+public struct WorkspaceLinks: Codable, Sendable, Hashable {
+    // The URL of one subsite of a subdomain network, before and after the move to the workspace.
+    public struct Move: Codable, Sendable, Hashable {
+        public let from: String
+        public let to: String
+
+        public init(from: String, to: String) {
+            self.from = from
+            self.to = to
+        }
+    }
+
+    public let from: [String]
+    public let to: String
+    public let network: Bool
+    public var done: Bool
+    public let subsites: [Move]
+
+    public init(from: [String], to: String, network: Bool, done: Bool = false, subsites: [Move] = []) {
+        self.from = from
+        self.to = to
+        self.network = network
+        self.done = done
+        self.subsites = subsites
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case from, to, network, done, subsites
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        from = try container.decode([String].self, forKey: .from)
+        to = try container.decode(String.self, forKey: .to)
+        network = try container.decode(Bool.self, forKey: .network)
+        done = try container.decode(Bool.self, forKey: .done)
+        subsites = try container.decodeIfPresent([Move].self, forKey: .subsites) ?? []
+    }
+}
+
 // One Redis index on one instance.
 public struct WorkspaceRedisIndex: Sendable, Hashable {
     public let instance: String
@@ -138,6 +184,8 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     public var database: String?
     public var configurationDigest: String?
     public var mainConfigurationDigest: String?
+    // The change of the links in the posts of a WordPress workspace (Phase 4, 3e).
+    public var links: WorkspaceLinks?
 
     public var id: String { name }
 
@@ -165,7 +213,8 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         backgroundPreset: [String]? = nil,
         database: String? = nil,
         configurationDigest: String? = nil,
-        mainConfigurationDigest: String? = nil
+        mainConfigurationDigest: String? = nil,
+        links: WorkspaceLinks? = nil
     ) {
         self.name = name
         self.worktree = worktree
@@ -185,10 +234,11 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         self.database = database
         self.configurationDigest = configurationDigest
         self.mainConfigurationDigest = mainConfigurationDigest
+        self.links = links
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, worktree, folder, branch, state, redisIndexes, redisInstances, ports, servers, databases, installedLockFiles, warnings, finishedCommands, commandsEnded, backgroundPreset, database, configurationDigest, mainConfigurationDigest
+        case name, worktree, folder, branch, state, redisIndexes, redisInstances, ports, servers, databases, installedLockFiles, warnings, finishedCommands, commandsEnded, backgroundPreset, database, configurationDigest, mainConfigurationDigest, links
     }
 
     // A record of part 8b has no state. A record from before part 8f has Redis indexes without their
@@ -218,6 +268,7 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         database = try container.decodeIfPresent(String.self, forKey: .database)
         configurationDigest = try container.decodeIfPresent(String.self, forKey: .configurationDigest)
         mainConfigurationDigest = try container.decodeIfPresent(String.self, forKey: .mainConfigurationDigest)
+        links = try container.decodeIfPresent(WorkspaceLinks.self, forKey: .links)
     }
 
     public func databaseRemovals(site: String) -> [DatabaseRemoval] {

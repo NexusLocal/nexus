@@ -29,6 +29,28 @@ public enum WorkspaceFiles {
         }
     }
 
+    // A WordPress repository often ignores the core, the plugins or both (Phase 4, 3e). So each
+    // ignored path of the project counts. The configuration of the workspace comes from Nexus, and
+    // a cache of the main site holds its URLs.
+    private static let wordPressLeftOutNames: Set<String> = ["wp-config.php", WordPressWorkspaceConfig.includeFile, ".env", ".env.local", "debug.log"]
+    private static let wordPressLeftOutFolders = [["wp-content", "cache"], ["wp-content", "upgrade"], ["app", "cache"], ["app", "upgrade"]]
+
+    public static func clonableForWordPress(_ entries: [String]) -> [String] {
+        let foldersAbovePaths = Set(entries.map { "\((RealPath.trimmed($0) as NSString).deletingLastPathComponent)/" })
+
+        return entries.filter { entry in
+            let parts = RealPath.trimmed(entry).split(separator: "/").map(String.init)
+
+            guard !foldersAbovePaths.contains(entry), let name = parts.last, !wordPressLeftOutNames.contains(name) else {
+                return false
+            }
+
+            return !wordPressLeftOutFolders.contains { folder in
+                parts.indices.dropLast(folder.count - 1).contains { Array(parts[$0..<$0 + folder.count]) == folder }
+            }
+        }
+    }
+
     // A folder that git ignores as a whole is one entry. So the list cannot leave out a path in it,
     // and the clone holds the links of that folder as they are. path is the place of the folder in
     // the application. A link outside the repository keeps its place, because the main site uses

@@ -29,15 +29,42 @@ public enum PHPProjectType: String, Codable, Sendable, CaseIterable {
 public struct SiteLayout: Sendable, Equatable {
     public let projectType: PHPProjectType
     public let documentRoot: URL
+    // The kind of a WordPress network, or nil for a site that is no network (Phase 4, 3g).
+    public let network: WordPressNetworkKind?
 
     public init(of site: Site) {
+        let folder = URL(filePath: ProjectFolder.projectFolder(of: site), directoryHint: .isDirectory)
+
         projectType = PHPProject.type(of: site)
         documentRoot = site.documentRoot
+        network = projectType.isWordPress ? PHPProject.network(in: folder, type: projectType) : nil
     }
 
     public static func of(_ sites: [Site]) -> [String: SiteLayout] {
         Dictionary(sites.map { ($0.host, SiteLayout(of: $0)) }) { first, _ in first }
     }
+
+    public var subdomainNetwork: Bool {
+        network == .subdomains
+    }
+
+    // The names that nginx, Apache and the certificate get. A network on subdomains gets each name
+    // below its host without a step of the user (owner, 2026-11-07). Only the DNS server of Nexus
+    // answers such names. So this works only for a host in the dev TLD.
+    public func hosts(of site: Site, tld: String) -> [String] {
+        let wildcard = "*.\(site.host)"
+
+        guard subdomainNetwork, site.host.hasSuffix(".\(tld)"), !site.hosts.contains(wildcard) else {
+            return site.hosts
+        }
+
+        return site.hosts + [wildcard]
+    }
+}
+
+public enum WordPressNetworkKind: String, Codable, Sendable {
+    case subdomains
+    case subfolders
 }
 
 // The one place that finds WordPress. nexus wp uses it for the core folder too (Phase 4, 3c).
@@ -97,6 +124,41 @@ public enum PHPProject {
 
         return found.count == 1 ? found[0] : nil
     }
+
+    // WordPress is a network with MULTISITE. SUBDOMAIN_INSTALL gives its kind. An old network has
+    // VHOST. A classic site has them in wp-config.php. Bedrock has them in config/application.php
+    // or in its .env files. The files do not run. So only a plain true on a line that is no comment
+    // counts. A classic site has wp-config.php in its folder in most cases. So that file comes first,
+    // before a search for the folder of WordPress.
+    public static func network(in folder: URL, type: PHPProjectType) -> WordPressNetworkKind? {
+        let configFiles: [URL]
+
+        if type == .bedrock {
+            configFiles = ["config/application.php", "config/environments/development.php"].map { folder.appending(path: $0) }
+        } else if exists(folder.appending(path: "wp-config.php")) {
+            configFiles = [folder.appending(path: "wp-config.php")]
+        } else {
+            configFiles = wordPressFolder(in: folder).flatMap(WordPressFiles.configFile(core:)).map { [$0] } ?? []
+        }
+
+        let code = configFiles.compactMap(text(of:)).flatMap { $0.components(separatedBy: "\n") }.filter { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            return !["//", "#", "*", "/*"].contains { trimmed.hasPrefix($0) }
+        }
+        let env = EnvFile.values(of: folder.appending(path: ".env")).merging(EnvFile.values(of: folder.appending(path: ".env.local"))) { _, local in local }
+        let isOn = { (key: String) in ["true", "1"].contains(env[key]?.lowercased() ?? "") }
+
+        guard code.contains(where: { $0.contains(multisiteDefine) }) || isOn("MULTISITE") else {
+            return nil
+        }
+
+        let subdomains = code.contains { $0.contains(subdomainDefine) || $0.contains(vhostDefine) } || isOn("SUBDOMAIN_INSTALL")
+        return subdomains ? .subdomains : .subfolders
+    }
+
+    nonisolated(unsafe) private static let multisiteDefine = /['"]MULTISITE['"]\s*,\s*(?i:true|1)\s*\)/
+    nonisolated(unsafe) private static let subdomainDefine = /['"]SUBDOMAIN_INSTALL['"]\s*,\s*(?i:true|1|'1'|"1")\s*\)/
+    nonisolated(unsafe) private static let vhostDefine = /['"]VHOST['"]\s*,\s*['"]yes['"]\s*\)/
 
     public static func hasWordPress(_ folder: URL) -> Bool {
         exists(folder.appending(path: coreFile))

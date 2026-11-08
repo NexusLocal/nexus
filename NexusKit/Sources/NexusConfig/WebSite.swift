@@ -35,14 +35,17 @@ public struct WebSite: Sendable, Equatable {
     public let key: URL
     public let accessLog: URL
     public let project: PHPProjectType
+    // A WordPress network in subfolders needs the rewrites of WordPress in nginx (Phase 4, 3g).
+    public let network: WordPressNetworkKind?
 
-    public init(hosts: [String], backend: WebBackend, certificate: URL, key: URL, accessLog: URL, project: PHPProjectType = .other) {
+    public init(hosts: [String], backend: WebBackend, certificate: URL, key: URL, accessLog: URL, project: PHPProjectType = .other, network: WordPressNetworkKind? = nil) {
         self.hosts = hosts
         self.backend = backend
         self.certificate = certificate
         self.key = key
         self.accessLog = accessLog
         self.project = project
+        self.network = network
     }
 
     public var isWordPress: Bool {

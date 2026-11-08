@@ -135,12 +135,22 @@ public enum NginxConfig {
         return lines
     }
 
+    // A name with *. becomes a regular expression of the map. It covers one label below its host,
+    // as the certificate does (Phase 4, 3g).
     static func origins(of hosts: [String], settings: NginxSettings) -> [String] {
         hosts.flatMap { host in
-            [
-                settings.httpsPort == 443 ? "https://\(host)" : "https://\(host):\(settings.httpsPort)",
-                settings.httpPort == 80 ? "http://\(host)" : "http://\(host):\(settings.httpPort)",
-            ]
+            guard host.hasPrefix("*.") else {
+                return [
+                    settings.httpsPort == 443 ? "https://\(host)" : "https://\(host):\(settings.httpsPort)",
+                    settings.httpPort == 80 ? "http://\(host)" : "http://\(host):\(settings.httpPort)",
+                ]
+            }
+
+            let below = host.dropFirst(2).replacingOccurrences(of: ".", with: "\\.")
+            let https = settings.httpsPort == 443 ? "" : ":\(settings.httpsPort)"
+            let http = settings.httpPort == 80 ? "" : ":\(settings.httpPort)"
+
+            return ["~^https://[^./]+\\.\(below)\(https)$", "~^http://[^./]+\\.\(below)\(http)$"]
         }
     }
 
@@ -173,6 +183,7 @@ public enum NginxConfig {
             ]
             lines += site.project == .bedrock ? bedrockRules + [""] : []
             lines += site.isWordPress ? wordPressRules + [""] : []
+            lines += site.network == .subfolders ? subfolderNetworkRules(bedrock: site.project == .bedrock) + [""] : []
             lines += [
                 "    location ~ \\.php(/|$) {",
                 "        fastcgi_split_path_info ^(.+?\\.php)(/.*)$;",
@@ -239,6 +250,18 @@ public enum NginxConfig {
     static let bedrockRules = [
         "    rewrite ^/(wp-[^/]+\\.php)$ /wp/$1 last;",
     ]
+
+    // A site of a network in subfolders, such as /blog/, uses the files of WordPress itself. So
+    // /blog/wp-login.php and /blog/wp-admin/ go to the files in the root, as the rules of WordPress
+    // for nginx do it. Bedrock keeps these files in /wp. A subsite of Bedrock can also name /wp in
+    // its URLs, as in /blog/wp/wp-admin/. Only a path that is no file gets a rewrite.
+    static func subfolderNetworkRules(bedrock: Bool) -> [String] {
+        let core = bedrock ? "/wp" : ""
+
+        return ["    if (!-e $request_filename) {", "        rewrite ^/[^/]+/wp-admin$ $scheme://$http_host$uri/ permanent;"]
+            + (bedrock ? ["        rewrite ^/[^/]+/wp(/.*)$ /wp$1 last;"] : [])
+            + ["        rewrite ^/[^/]+(/wp-.*)$ \(core)$1 last;", "        rewrite ^/[^/]+(/.*\\.php)$ \(core)$1 last;", "    }"]
+    }
 
     // nginx reads a $ in the text as a variable. So the text has none.
     static func noticePage(title: String, text: String) -> [String] {

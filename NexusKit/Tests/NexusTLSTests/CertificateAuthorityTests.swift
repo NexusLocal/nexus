@@ -70,6 +70,21 @@ struct CertificateAuthorityTests {
         #expect(try !macOSAccepts(certificate, for: "other.test", root: root))
     }
 
+    @Test func macOSAcceptsAWildcardNameForEachSubdomain() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let authority = authority
+
+        let root = try authority.root()
+        let certificate = try authority.hostCertificate(for: ["shop.test", "*.shop.test"], root: root, allowingWildcards: true)
+
+        #expect(certificate.hosts == ["shop.test", "*.shop.test"])
+        #expect(try macOSAccepts(certificate, for: "blog.shop.test", root: root))
+        #expect(try !macOSAccepts(certificate, for: "a.blog.shop.test", root: root))
+        #expect(throws: HostNameError.self) { try authority.hostCertificate(for: ["shop.test", "*.shop.test"]) }
+        #expect(throws: HostNameError.self) { try authority.hostCertificate(for: ["*.shop.test", "shop.test"], root: root, allowingWildcards: true) }
+        #expect(throws: HostNameError.self) { try authority.hostCertificate(for: ["shop.test", "*.test"], root: root, allowingWildcards: true) }
+    }
+
     @Test func theKeyFileIsOnlyReadableByTheUser() throws {
         defer { try? FileManager.default.removeItem(at: root) }
 

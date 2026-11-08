@@ -35,6 +35,37 @@ struct WorkspaceFilesTests {
         #expect(WorkspaceFiles.clonable(entries).isEmpty)
     }
 
+    @Test func aWordPressWorkspaceGetsEachIgnoredPathButNotTheConfigurationAndNotACache() {
+        let kept = [
+            "wp-admin/",
+            "wp-includes/",
+            "wp-load.php",
+            "wp-content/plugins/",
+            "wp-content/uploads/",
+            "wp-content/object-cache.php",
+            "web/wp/",
+            "web/app/plugins/",
+            "web/app/mu-plugins/akismet/",
+            "web/app/uploads/",
+            "vendor/",
+            ".htaccess",
+        ]
+        let leftOut = [
+            "wp-config.php",
+            "wordpress/wp-config.php",
+            "wp-config-nexus.php",
+            ".env",
+            ".env.local",
+            "wp-content/debug.log",
+            "wp-content/cache/",
+            "wp-content/upgrade/",
+            "web/app/cache/",
+            "wordpress/wp-content/cache/page.html",
+        ]
+
+        #expect(WorkspaceFiles.clonableForWordPress(kept + leftOut) == kept)
+    }
+
     @Test(arguments: [
         ("/main/storage/app/public", "public/storage", "../storage/app/public"),
         ("/main/storage/app/public", "public/media/storage", "../../storage/app/public"),

@@ -144,13 +144,19 @@ public struct CertificateAuthority: Sendable {
         try hostCertificate(for: hosts, root: root())
     }
 
-    // For many hosts at once: the caller reads the root from the keychain one time.
-    public func hostCertificate(for hosts: [String], root: RootCertificate) throws -> HostCertificate {
+    // For many hosts at once: the caller reads the root from the keychain one time. A site can have
+    // a name that starts with *. after its host (Phase 4, 3g). nexus cert gives no such name.
+    public func hostCertificate(for hosts: [String], root: RootCertificate, allowingWildcards: Bool = false) throws -> HostCertificate {
         var seen: Set<String> = []
-        let hosts = try hosts.map(HostName.validated).filter { seen.insert($0).inserted }
+        let validated = allowingWildcards ? HostName.validatedAllowingWildcard : HostName.validated
+        let hosts = try hosts.map(validated).filter { seen.insert($0).inserted }
 
         guard let primary = hosts.first else {
             throw TLSError.noHosts
+        }
+
+        guard !primary.hasPrefix("*.") else {
+            throw HostNameError.invalidHost(primary)
         }
 
         let certificateFile = folder.appending(path: "\(primary).crt", directoryHint: .notDirectory)

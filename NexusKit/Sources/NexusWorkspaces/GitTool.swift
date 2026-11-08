@@ -27,6 +27,27 @@ public enum GitTool {
         }
     }
 
+    // True for a file in the index of git. git ls-files exits with 1 for a file that is not there.
+    public static func tracks(_ file: String, in folder: String, git: URL) async throws -> Bool {
+        do {
+            try await CommandRunner.run(Command(executable: git, arguments: ["-C", folder, "ls-files", "--error-unmatch", "--", file]))
+            return true
+        } catch CommandError.failed(_, let status, _) where status == 1 {
+            return false
+        }
+    }
+
+    // The text of a file in the last commit, or nil when the commit does not have it.
+    public static func committedText(_ file: String, in folder: String, git: URL) async -> String? {
+        try? await CommandRunner.run(Command(executable: git, arguments: ["-C", folder, "show", "HEAD:\(file)"])).standardOutput
+    }
+
+    // True when one of these files has a change that is not committed.
+    public static func hasChanges(_ files: [String], in folder: String, git: URL) async throws -> Bool {
+        let output = try await CommandRunner.run(Command(executable: git, arguments: ["-C", folder, "status", "--porcelain", "--"] + files))
+        return !output.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     // The files and folders that git ignores in a folder. A folder that git ignores as a whole is
     // one entry, with a slash at its end. The list also holds the ignored files in a folder with a
     // tracked .gitignore.

@@ -100,6 +100,10 @@ extension AppModel {
         }
     }
 
+    func addWordPressWorkspaceLines(_ site: SiteItem, lines: WordPressWorkspaceLines) async -> Bool {
+        await sendWordPressChange(.addWordPressWorkspaceLines(host: site.host, lines: lines), failure: "Nexus did not add the lines for workspaces to \(lines.configFile)")
+    }
+
     func turnOffMailPlugins(_ site: SiteItem, folders: [String]) async -> Bool {
         await sendWordPressChange(.turnOffMailPlugins(host: site.host, folders: folders), failure: "Nexus did not turn off the mail plugins of \(site.host)")
     }

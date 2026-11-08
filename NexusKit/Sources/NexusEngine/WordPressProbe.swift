@@ -79,7 +79,7 @@ struct WordPressProbe: Sendable {
         return $found;
     }
 
-    $constants = ['DB_NAME', 'DB_USER', 'DB_PASSWORD', 'DB_HOST', 'WP_HOME', 'WP_SITEURL', 'MULTISITE', 'SUBDOMAIN_INSTALL', 'DOMAIN_CURRENT_SITE'];
+    $constants = ['DB_NAME', 'DB_USER', 'DB_PASSWORD', 'DB_HOST', 'WP_HOME', 'WP_SITEURL', 'MULTISITE', 'SUBDOMAIN_INSTALL', 'DOMAIN_CURRENT_SITE', 'WP_REDIS_HOST', 'WP_REDIS_PORT', 'WP_REDIS_DATABASE'];
     $config = $argv[1] === '' ? [] : nexus_read($argv[1], $constants, ['table_prefix']);
     $version = nexus_read($argv[2], [], ['wp_version']);
 
@@ -148,7 +148,10 @@ private extension [String: ConfigValue] {
             siteURL: text("WP_SITEURL"),
             multisite: flag("MULTISITE"),
             subdomainInstall: flag("SUBDOMAIN_INSTALL"),
-            domainCurrentSite: text("DOMAIN_CURRENT_SITE")
+            domainCurrentSite: text("DOMAIN_CURRENT_SITE"),
+            redisHost: text("WP_REDIS_HOST"),
+            redisPort: text("WP_REDIS_PORT").flatMap { Int($0) },
+            redisDatabase: text("WP_REDIS_DATABASE").flatMap { Int($0) }
         )
     }
 

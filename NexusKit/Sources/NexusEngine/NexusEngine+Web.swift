@@ -135,7 +135,7 @@ extension NexusEngine {
 
     private static func hostProblem(of site: Site) -> String? {
         do {
-            _ = try site.hosts.map(HostName.validated)
+            _ = try site.hosts.map(HostName.validatedAllowingWildcard)
         } catch {
             return String(describing: error)
         }
@@ -156,7 +156,7 @@ extension NexusEngine {
             case .proxy: "proxy \(site.address ?? "")"
             }
 
-            return "\(site.hosts.joined(separator: " ")) \(backend)"
+            return "\(site.hosts.joined(separator: " ")) \(backend)\(layout.network.map { " \($0.rawValue)" } ?? "")"
         }
     }
 
@@ -271,14 +271,16 @@ extension NexusEngine {
                 continue
             }
 
-            let certificate = try certificateAuthority.hostCertificate(for: site.hosts, root: root)
+            let hosts = layout.hosts(of: site, tld: state.tld)
+            let certificate = try certificateAuthority.hostCertificate(for: hosts, root: root, allowingWildcards: true)
             plan.sites.append(WebSite(
-                hosts: site.hosts,
+                hosts: hosts,
                 backend: backend,
                 certificate: certificate.certificateFile,
                 key: certificate.keyFile,
                 accessLog: paths.siteLog(site.host),
-                project: layout.projectType
+                project: layout.projectType,
+                network: layout.network
             ))
 
             if site.kind == .php, !runsNoPHP {
@@ -744,7 +746,7 @@ extension NexusEngine {
             throw RuntimeError.unsupported("\(host) exists already. Change it with: nexus site edit \(host)")
         }
 
-        var site = Site(host: host, folder: folder, aliases: try aliases.map(HostName.validated), php: "", server: server ?? state.siteDefaults.server, node: await defaultNodeLine(), runsAs: SiteKind.detected(in: folder))
+        var site = Site(host: host, folder: folder, aliases: try aliases.map { try HostName.validatedAlias($0, tld: state.tld) }, php: "", server: server ?? state.siteDefaults.server, node: await defaultNodeLine(), runsAs: SiteKind.detected(in: folder))
         try applyKind(settings, to: &site, state: state)
 
         if let node = settings.node {
@@ -837,7 +839,7 @@ extension NexusEngine {
             site.server = server
         }
         if let aliases = change.aliases {
-            site.aliases = try aliases.map(HostName.validated)
+            site.aliases = try aliases.map { try HostName.validatedAlias($0, tld: state.tld) }
         }
         if let node = change.node {
             site.node = try await nodeLine(node)

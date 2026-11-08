@@ -108,7 +108,7 @@ extension AppModel {
         site.projectType = .wordpress
         site.backgroundCommands = []
         site.workspaces = [
-            WorkspaceInfo(name: "fix", worktree: "~/Development/blog-fix", folder: "~/Development/blog-fix", branch: "fix", hosts: ["blog-fix.test"], state: .notIsolated("Nexus cannot isolate a WordPress site yet. The plugins and WP-Cron of this workspace would write into the database of the main site. So Nexus runs no PHP here. The page of the workspace says why.")),
+            WorkspaceInfo(name: "fix", worktree: "~/Development/blog-fix", folder: "~/Development/blog-fix", branch: "fix", hosts: ["blog-fix.test"], url: "https://blog-fix.test", state: .ready),
         ]
         return site
     }

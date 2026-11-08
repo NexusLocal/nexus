@@ -53,6 +53,16 @@ struct SiteTests {
         #expect(HostName.label(from: String(repeating: "a", count: 80)).count == 63)
     }
 
+    @Test func anAliasWithAStarWorksOnlyInTheDevDomain() throws {
+        #expect(try HostName.validatedAlias("*.Shop.test", tld: "test") == "*.shop.test")
+        #expect(try HostName.validatedAlias("www.shop.test", tld: "test") == "www.shop.test")
+        #expect(throws: HostNameError.wildcardOutsideDevTLD("*.shop.local", tld: "test")) { try HostName.validatedAlias("*.shop.local", tld: "test") }
+        #expect(throws: HostNameError.invalidHost("test")) { try HostName.validatedAlias("*.test", tld: "test") }
+        #expect(throws: HostNameError.self) { try HostName.validatedAlias("a.*.shop.test", tld: "test") }
+        #expect(throws: HostNameError.self) { try HostName.validated("*.shop.test") }
+        #expect(HostName.workspaceHost("*.shop.test", workspace: "fix", tld: "test") == "*.shop-fix.test")
+    }
+
     @Test func aNewTLDChangesOnlyTheNamesInTheOldTLD() {
         let site = Site(host: "shop.test", folder: root, aliases: ["www.shop.test", "shop.local", "test.local"], php: "8.5")
 

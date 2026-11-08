@@ -15,6 +15,10 @@ public struct WordPressConfig: Codable, Sendable, Equatable {
     public var multisite: Bool?
     public var subdomainInstall: Bool?
     public var domainCurrentSite: String?
+    // The settings of the Redis object cache of the plugin Redis Object Cache (3e).
+    public var redisHost: String?
+    public var redisPort: Int?
+    public var redisDatabase: Int?
 
     public init(
         database: String? = nil,
@@ -26,7 +30,10 @@ public struct WordPressConfig: Codable, Sendable, Equatable {
         siteURL: String? = nil,
         multisite: Bool? = nil,
         subdomainInstall: Bool? = nil,
-        domainCurrentSite: String? = nil
+        domainCurrentSite: String? = nil,
+        redisHost: String? = nil,
+        redisPort: Int? = nil,
+        redisDatabase: Int? = nil
     ) {
         self.database = database
         self.user = user
@@ -38,6 +45,9 @@ public struct WordPressConfig: Codable, Sendable, Equatable {
         self.multisite = multisite
         self.subdomainInstall = subdomainInstall
         self.domainCurrentSite = domainCurrentSite
+        self.redisHost = redisHost
+        self.redisPort = redisPort
+        self.redisDatabase = redisDatabase
     }
 
     // WordPress accepts only these characters in the prefix of its tables. Nexus puts the prefix
@@ -135,7 +145,11 @@ public enum WordPressFiles {
             host: env["DB_HOST"] ?? "localhost",
             tablePrefix: env["DB_PREFIX"] ?? "wp_",
             home: home,
-            siteURL: env["WP_SITEURL"].map { siteURL in home.map { siteURL.replacingOccurrences(of: "${WP_HOME}", with: $0) } ?? siteURL }
+            siteURL: env["WP_SITEURL"].map { siteURL in home.map { siteURL.replacingOccurrences(of: "${WP_HOME}", with: $0) } ?? siteURL },
+            domainCurrentSite: env["DOMAIN_CURRENT_SITE"],
+            redisHost: env["WP_REDIS_HOST"],
+            redisPort: env["WP_REDIS_PORT"].flatMap { Int($0) },
+            redisDatabase: env["WP_REDIS_DATABASE"].flatMap { Int($0) }
         )
 
         if let url = env["DATABASE_URL"].flatMap(URLComponents.init(string:)), let host = url.host {
@@ -175,8 +189,10 @@ public enum WordPressFiles {
 
         let old = lines[index]
         let indent = String(old.prefix { $0 == " " || $0 == "\t" })
-        lines[index] = "\(indent)define( '\(name)', '\(value)' );"
-        lines.insert("\(indent)\(beforeNexus)\(old.trimmingCharacters(in: .whitespaces))", at: index)
+        let lineEnd = old.hasSuffix("\r") ? "\r" : ""
+        let guardText = define.hasGuard(old) ? "defined( '\(name)' ) || " : ""
+        lines[index] = "\(indent)\(guardText)define( '\(name)', '\(value)' );\(lineEnd)"
+        lines.insert("\(indent)\(beforeNexus)\(old.trimmingCharacters(in: .whitespacesAndNewlines))\(lineEnd)", at: index)
         return lines.joined(separator: "\n")
     }
 
@@ -208,15 +224,27 @@ public enum WordPressFiles {
         let start: Regex<AnyRegexOutput>
         let whole: Regex<AnyRegexOutput>
 
+        let guarded: Regex<AnyRegexOutput>
+
+        // The lines for workspaces give a define a guard, as in defined( 'DB_HOST' ) || define(...)
+        // (3e). Such a line counts too. A new value keeps the guard.
         init?(_ name: String) {
+            let guardPart = #"(?:defined\s*\(\s*['"]\#(name)['"]\s*\)\s*(?:\|\||or)\s*)?"#
+
             guard name.wholeMatch(of: /[A-Z_][A-Z0-9_]*/) != nil,
-                  let start = try? Regex(#"^\s*\\?define\s*\(\s*['"]\#(name)['"]"#),
-                  let whole = try? Regex(#"\s*\\?define\s*\(\s*['"]\#(name)['"]\s*,[^;]*\)\s*;\s*(\/\/.*|#.*)?"#) else {
+                  let start = try? Regex(#"^\s*"# + guardPart + #"\\?define\s*\(\s*['"]\#(name)['"]"#),
+                  let whole = try? Regex(#"\s*"# + guardPart + #"\\?define\s*\(\s*['"]\#(name)['"]\s*,[^;]*\)\s*;\s*(\/\/.*|#.*)?"#),
+                  let guarded = try? Regex(#"^\s*defined\s*\(\s*['"]\#(name)['"]\s*\)"#) else {
                 return nil
             }
 
             self.start = start
             self.whole = whole
+            self.guarded = guarded
+        }
+
+        func hasGuard(_ line: String) -> Bool {
+            line.contains(guarded)
         }
 
         func starts(_ line: String) -> Bool {

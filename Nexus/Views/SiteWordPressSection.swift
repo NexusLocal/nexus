@@ -4,11 +4,11 @@ import SwiftUI
 
 // The configuration and the database of a WordPress site (Phase 4, 3b). The design is "Site
 // WordPress Section" in nexus.pen, with four states. Nexus changes a file or makes a database only
-// after a click.
+// after a click. The section Workspaces reads the same info for the lines of wp-config.php (3e).
 struct SiteWordPressSection: View {
     @Environment(AppModel.self) private var model
     let site: SiteItem
-    @State private var info: WordPressSiteInfo?
+    @Binding var info: WordPressSiteInfo?
     @State private var checked = false
     @State private var changing = false
     @State private var asksToSetUp = false
@@ -39,6 +39,16 @@ struct SiteWordPressSection: View {
 
                 if let configHome = info.configHome {
                     urlRow("WP_HOME in \(homeFileName(info))", value: configHome, warns: info.urlPlan?.configFrom != nil)
+                }
+
+                // The design is "Site WordPress Network States" in nexus.pen (Phase 4, 3g).
+                if let network = info.network {
+                    LabeledContent("Network") {
+                        Text(network.summary)
+                            .foregroundStyle(.secondary)
+                            .rowValue()
+                    }
+                    .labeledContentStyle(.rowValue)
                 }
             }
         } header: {
@@ -253,6 +263,10 @@ struct SiteWordPressSection: View {
                 .foregroundStyle(Color.orangeText)
         } else if let info, let urlChange = info.urlChange {
             Text(doneText(info, urlChange))
+        } else if let info, let problem = info.network?.problem {
+            MessageText(problem)
+        } else if let info, let network = info.network, let served = network.servedText {
+            Text("\(served) A workspace gets the same names below its own domain, for example \(network.exampleLabel).\(HostName.workspaceHost(site.host, workspace: "fix", tld: model.settings.tld)).")
         } else if let info, info.type == .bedrock {
             Text("Nexus reads \(info.configText). The site URL comes from the options table of the database.")
         } else if let info {
@@ -460,5 +474,95 @@ struct SetDBHostSheet: View {
             Text(verbatim: key)
                 .font(.system(.body, design: .monospaced))
         }
+    }
+}
+
+// "Add the lines for workspaces…" shows the change first (open decision 3). The design is "Sheet
+// Add Workspace Lines" in nexus.pen (Phase 4, 3e).
+struct AddWorkspaceLinesSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let host: String
+    let lines: WordPressWorkspaceLines
+    let add: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add the lines for workspaces to \(lines.configFile) of \(host)?")
+                .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(lines.changes.isEmpty
+                ? "\(lines.configFile) loads wp-config-nexus.php already. That file gives each workspace its own database server and domain. Git must ignore it. So Nexus adds this line to .gitignore."
+                : "Git tracks \(lines.configFile). So Nexus does not change this file in a workspace. With these lines, each workspace loads wp-config-nexus.php. That file gives the workspace its own database server and domain. The main site works as before, because it has no wp-config-nexus.php.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                if !lines.changes.isEmpty {
+                    fileName(lines.configFile)
+
+                    ForEach(Array(lines.changes.enumerated()), id: \.offset) { _, line in
+                        changeLine(line)
+                    }
+                }
+
+                if let ignoreFile = lines.ignoreFile {
+                    fileName(ignoreFile)
+                        .padding(.top, lines.changes.isEmpty ? 0 : 8)
+
+                    changeLine(TextChangeLine(.added, WordPressWorkspaceConfig.includeFile))
+                }
+            }
+            .font(.system(.callout, design: .monospaced))
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.5), in: .rect(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
+
+            Text("Commit \(lines.ignoreFile == nil ? "the change" : "both files"). A worktree of a branch with this commit then gets its own database. Git keeps the old version, so Nexus adds no comment line here.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Spacer()
+
+                Button("Cancel", role: .cancel) {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button("Add the lines") {
+                    dismiss()
+                    add()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 560)
+    }
+
+    private func fileName(_ name: String) -> some View {
+        Text(verbatim: name)
+            .fontWeight(.semibold)
+    }
+
+    private func changeLine(_ line: TextChangeLine) -> some View {
+        let mark = switch line.kind {
+        case .same: "  "
+        case .added: "+ "
+        case .removed: "- "
+        }
+        let color: Color = switch line.kind {
+        case .same: .secondary
+        case .added: .greenText
+        case .removed: .redText
+        }
+
+        return Text(verbatim: mark + line.text)
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .truncationMode(.tail)
     }
 }

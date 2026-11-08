@@ -90,7 +90,11 @@ public enum ApacheConfig {
             "</Files>",
         ]
 
-        for site in sites {
+        // Apache takes the first VirtualHost with a matching name, also a name with *. So a site
+        // with such a name comes last. Another site below its host then keeps its requests (3g).
+        let hasWildcard = { (site: WebSite) in site.hosts.contains { $0.hasPrefix("*.") } }
+
+        for site in sites.filter({ !hasWildcard($0) }) + sites.filter(hasWildcard) {
             guard case .php(.apache, let documentRoot, let socket) = site.backend else {
                 continue
             }

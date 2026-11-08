@@ -119,6 +119,14 @@ extension NexusEngine {
                 replacements += try await replaceURLs(from: from, to: plan.to, network: networkDomain != nil, with: wpCLI)
             }
 
+            if let changedDomain, let newDomain, let prefix = config.safeTablePrefix {
+                let domains = try await Self.networkDomains(in: name, prefix: prefix, with: client)
+
+                for move in Self.subsiteMoves(of: domains, from: changedDomain, to: newDomain) {
+                    replacements += try await replaceURLs(from: move.from, to: move.to, network: true, with: wpCLI)
+                }
+            }
+
             // WordPress finds a network by DOMAIN_CURRENT_SITE and wp_site. So the domain changes
             // last, after the last run of WP-CLI.
             if let changedDomain, let newDomain, let prefix = config.safeTablePrefix {
@@ -225,9 +233,22 @@ extension NexusEngine {
         return count
     }
 
+    // Each site of a subdomain network keeps its own URL in its options. Its domain moves with the
+    // domain of the network. So each one needs its own change of the URLs (3d, 3e, 3g).
+    static func subsiteMoves(of domains: [String], from old: String, to new: String) -> [WorkspaceLinks.Move] {
+        domains.filter { $0.hasSuffix(".\(old)") }.sorted().map { domain in
+            WorkspaceLinks.Move(from: "https://\(domain)", to: "https://\(domain.dropLast(old.count))\(new)")
+        }
+    }
+
+    static func networkDomains(in database: String, prefix: String, with client: DatabaseClient) async throws -> [String] {
+        let blogs = "\(sqlName(database)).\(sqlName("\(prefix)blogs"))"
+        return try await client.rows("SELECT DISTINCT domain FROM \(blogs)").compactMap(\.first)
+    }
+
     // The domain of the network, and the domain of each site of a subdomain network. These columns
     // hold a plain domain, so SQL changes them without WordPress.
-    private func changeNetworkDomain(from old: String, to new: String, database: String, prefix: String, with client: DatabaseClient) async throws {
+    func changeNetworkDomain(from old: String, to new: String, database: String, prefix: String, with client: DatabaseClient) async throws {
         let blogs = "\(Self.sqlName(database)).\(Self.sqlName("\(prefix)blogs"))"
         let site = "\(Self.sqlName(database)).\(Self.sqlName("\(prefix)site"))"
         let oldText = Self.sqlText(old)
@@ -238,7 +259,7 @@ extension NexusEngine {
         try await client.query("UPDATE \(site) SET domain = \(newText) WHERE domain = \(oldText)")
     }
 
-    private func searchReplace(_ pass: TextReplacement, options: [String], with wpCLI: WPCLI) async throws -> Int {
+    func searchReplace(_ pass: TextReplacement, options: [String], with wpCLI: WPCLI) async throws -> Int {
         let output = try await wpCLI(["search-replace", pass.search, pass.replace] + options + ["--skip-plugins", "--skip-themes", "--format=count"])
         let count = output.split(whereSeparator: \.isNewline).last.flatMap { Int($0.trimmingCharacters(in: .whitespaces)) } ?? 0
 

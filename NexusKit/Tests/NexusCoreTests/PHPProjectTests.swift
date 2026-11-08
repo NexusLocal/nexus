@@ -88,6 +88,29 @@ struct PHPProjectTests {
         #expect(ProjectFolder.projectFolder(of: otherSite) == RealPath.of(other.appending(path: "web")))
     }
 
+    @Test func aNetworkOnSubdomainsGetsEachNameBelowItsHost() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let subdomains = try folder("subdomains", files: ["wp-load.php": "<?php", "wp-config.php": "<?php\ndefine( 'MULTISITE', true );\ndefine( 'SUBDOMAIN_INSTALL', true );\n"])
+        let subfolders = try folder("subfolders", files: ["wp-load.php": "<?php", "wp-config.php": "<?php\ndefine( 'MULTISITE', true );\n// define( 'SUBDOMAIN_INSTALL', true );\ndefine( 'SUBDOMAIN_INSTALL', false );\n"])
+        let setup = try folder("setup", files: ["wp-load.php": "<?php", "wp-config.php": "<?php\ndefine( 'WP_ALLOW_MULTISITE', true );\ndefine( 'SUBDOMAIN_INSTALL', true );\n"])
+        let bedrock = try folder("bedrock", files: [
+            "composer.json": #"{"require": {"roots/bedrock-autoloader": "^1.0"}}"#,
+            "config/application.php": "<?php\nConfig::define('MULTISITE', true);\nConfig::define('SUBDOMAIN_INSTALL', env('SUBDOMAIN_INSTALL'));\n",
+            ".env": "SUBDOMAIN_INSTALL=true\n",
+        ])
+        let site = Site(host: "shop.test", folder: subdomains, aliases: ["www.shop.test"], php: "8.4")
+        let local = Site(host: "shop.local", folder: subdomains, php: "8.4")
+        let blog = Site(host: "blog.test", folder: subfolders, php: "8.4")
+
+        #expect(PHPProject.network(in: subdomains, type: .wordpress) == .subdomains)
+        #expect(PHPProject.network(in: subfolders, type: .wordpress) == .subfolders)
+        #expect(PHPProject.network(in: setup, type: .wordpress) == nil)
+        #expect(PHPProject.network(in: bedrock, type: .bedrock) == .subdomains)
+        #expect(SiteLayout(of: site).hosts(of: site, tld: "test") == ["shop.test", "www.shop.test", "*.shop.test"])
+        #expect(SiteLayout(of: local).hosts(of: local, tld: "test") == ["shop.local"])
+        #expect(SiteLayout(of: blog).hosts(of: blog, tld: "test") == ["blog.test"])
+    }
+
     @Test func wordPressWithAPackageFileIsAPHPSite() throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let theme = try folder("theme", files: ["wp-load.php": "<?php", "package.json": #"{"scripts": {"dev": "vite"}}"#])

@@ -133,25 +133,9 @@ extension NexusEngine {
     }
 
     private func generalMailCheck(_ wpCLI: @escaping @Sendable ([String]) async throws -> String) async throws -> GeneralMailCheck {
-        let output = try await withThrowingTaskGroup(of: String?.self) { group in
-            group.addTask { try await wpCLI(["--exec=\(Self.mailCheckSetup)", "eval", Self.mailCheckSource]) }
-            group.addTask {
-                try await Task.sleep(for: Self.mailCheckTimeout)
-                return nil
-            }
+        let output = try await Self.evalAnswer(wpCLI, arguments: ["--exec=\(Self.mailCheckSetup)", "eval", Self.mailCheckSource], separator: Self.mailCheckSeparator, failure: "WP-CLI did not load the site")
 
-            defer { group.cancelAll() }
-
-            guard let finished = try await group.next(), let output = finished else {
-                throw RuntimeError.unsupported("WP-CLI did not load the site in \(Int(Self.mailCheckTimeout.components.seconds)) seconds.")
-            }
-
-            return output
-        }
-
-        guard let close = output.range(of: Self.mailCheckSeparator, options: .backwards),
-              let open = output.range(of: Self.mailCheckSeparator, options: .backwards, range: output.startIndex..<close.lowerBound),
-              let answer = try? JSONDecoder().decode(GeneralMailCheck.self, from: Data(output[open.upperBound..<close.lowerBound].utf8)) else {
+        guard let answer = try? JSONDecoder().decode(GeneralMailCheck.self, from: Data(output.utf8)) else {
             throw RuntimeError.unsupported("Nexus cannot read the answer of WP-CLI.")
         }
 

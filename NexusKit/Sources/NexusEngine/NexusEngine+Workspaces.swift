@@ -15,6 +15,8 @@ extension NexusEngine {
         runningCommand?.task.cancel()
         worktreeWatchers = [:]
         configurationWatcher = nil
+        wordPressWatcher?.stop()
+        wordPressWatcher = nil
         stopDumps()
     }
 
@@ -31,8 +33,45 @@ extension NexusEngine {
             watch(repositories, plainFolders: plainFolders)
         }
 
+        watchWordPressSettings(of: sites)
         startTrashChecks()
         await reconcileWorkspaces()
+    }
+
+    // wp-config.php or the files of Bedrock give the kind of a WordPress network (Phase 4, 3g). A
+    // network on subdomains needs the names below its host in nginx at once. FSEvents names the
+    // folder of a change. So only these folders count.
+    private func watchWordPressSettings(of sites: [Site]) {
+        let folders = Set(sites.filter { PHPProject.type(of: $0).isWordPress }.flatMap(Self.wordPressSettingFolders))
+
+        guard folders != watchedWordPressFolders else {
+            return
+        }
+
+        wordPressWatcher?.stop()
+        watchedWordPressFolders = folders
+        wordPressWatcher = folders.isEmpty ? nil : FolderWatcher(folders: folders.map { URL(filePath: $0, directoryHint: .isDirectory) }) { [weak self] changed in
+            guard changed.map(RealPath.trimmed).contains(where: folders.contains) else {
+                return
+            }
+
+            Task {
+                if await self?.applyWorkspaceSites() == true {
+                    await self?.publishSites()
+                }
+            }
+        }
+    }
+
+    private static func wordPressSettingFolders(of site: Site) -> [String] {
+        let project = URL(filePath: ProjectFolder.projectFolder(of: site), directoryHint: .isDirectory)
+
+        guard PHPProject.type(of: site) != .bedrock else {
+            return [RealPath.of(project), RealPath.of(project.appending(path: "config", directoryHint: .isDirectory))]
+        }
+
+        let config = PHPProject.wordPressFolder(in: project).flatMap(WordPressFiles.configFile(core:))
+        return [RealPath.of(config?.deletingLastPathComponent() ?? project)]
     }
 
     // A site without a repository can get one later. git init then changes the folder itself. A
@@ -175,7 +214,7 @@ extension NexusEngine {
     // whose host is taken is left out with a warning, because two server blocks with one name
     // make nginx use only one of them. Two sites of one project share a block. A workspace of a
     // proxy site is left out, because it would go to the server of the main checkout. A workspace
-    // of a WordPress site gets a notice page in nginx (noticeHosts).
+    // of a WordPress site that is not Ready gets a notice page in nginx (noticeHosts).
     func workspaceSites(_ state: EngineState, resolved: [Site]? = nil) -> (sites: [Site], conflicts: [Workspace: String], sitesOfRecord: [String: [Site]], noticeHosts: Set<String>) {
         let resolved = resolved ?? resolvedSites(state).map(\.site)
         let sitesOfRecord = Dictionary(grouping: resolved, by: ProjectFolder.workspaceKey(of:))
@@ -186,7 +225,7 @@ extension NexusEngine {
 
         for (key, sitesOfProject) in sitesOfRecord.sorted(by: { $0.key < $1.key }) {
             let workspaces = state.worktrees[key]?.workspaces ?? []
-            let runsNoPHP = !workspaces.isEmpty && Self.isWordPress(sitesOfProject)
+            let isWordPress = !workspaces.isEmpty && Self.isWordPress(sitesOfProject)
 
             for workspace in workspaces {
                 guard let site = workspace.site(of: sitesOfProject, tld: state.tld) else {
@@ -206,7 +245,7 @@ extension NexusEngine {
                 claimed.formUnion(site.hosts)
                 sites.append(site)
 
-                if runsNoPHP {
+                if isWordPress, workspace.state != .ready || workspace.configurationDigest == nil {
                     noticeHosts.formUnion(site.hosts)
                 }
             }
@@ -215,15 +254,11 @@ extension NexusEngine {
         return (sites, conflicts, sitesOfRecord, noticeHosts)
     }
 
-    // Nexus cannot isolate a workspace of a WordPress site yet (Phase 4, 3a). Its plugins and
-    // WP-Cron would write into the database of the main site. So it runs no PHP and no background
-    // process. nginx gives a page with the reason. The type of the project decides this and not the
-    // state of the record. An older Nexus could set such a record to Ready. That record gets no new
-    // setup. Part 3e isolates these workspaces.
-    static let wordPressWorkspaceTitle = "This workspace runs no PHP"
-    static let wordPressIsolation = "Nexus cannot isolate a WordPress site yet. The plugins and WP-Cron of this workspace would write into the database of the main site."
-    static let wordPressWorkspaceReason = "\(wordPressIsolation) So Nexus runs no PHP here."
-    static let wordPressWorkspaceState = WorkspaceState.notIsolated("\(wordPressIsolation) So Nexus runs no PHP here. The page of the workspace says why.")
+    // A workspace of a WordPress site runs PHP only when it is Ready (Phase 4, 3a and 3e). Before
+    // that, its plugins and WP-Cron could write into the database of the main site. So nginx gives a
+    // page with this text. The Site screen says why.
+    static let wordPressWorkspaceTitle = "This workspace runs no PHP yet"
+    static let wordPressWorkspaceReason = "Nexus did not isolate this workspace yet. Its plugins and WP-Cron could write into the database of the main site. The section Workspaces of the site in Nexus says why."
 
     // The sites of one workspace record. layouts can hold the types that a list read already.
     static func isWordPress(_ sitesOfProject: [Site], layouts: [String: SiteLayout] = [:]) -> Bool {
@@ -233,10 +268,13 @@ extension NexusEngine {
     func workspaceInfo(key: String, sitesOfRecord: [String: [Site]], conflicts: [Workspace: String], noticeHosts: Set<String>, layouts: [String: SiteLayout], installed: [InstalledRuntime], state: EngineState, appPorts: [String: Int]) -> [WorkspaceInfo] {
         let sites = sitesOfRecord[key] ?? []
         let workspaces = state.worktrees[key]?.workspaces ?? []
-        let isWordPress = !workspaces.isEmpty && Self.isWordPress(sites, layouts: layouts)
 
         return workspaces.map { workspace in
             let site = workspace.site(of: sites, tld: state.tld)
+            let owner = Self.processOwner(key: key, workspace: workspace.name)
+            let links = workspace.links.flatMap { links in
+                links.done ? nil : WorkspaceLinkInfo(from: links.from, to: links.to, progress: linkProgress[owner] ?? 0)
+            }
             let problem = conflicts[workspace] ?? site.flatMap { workspaceSite in
                 let layout = SiteLayout(of: workspaceSite)
                 return Self.problem(of: workspaceSite, installed: installed, layout: layout) ?? applyProblem(of: workspaceSite, appPorts: appPorts, noticeHosts: noticeHosts, layout: layout)
@@ -251,16 +289,36 @@ extension NexusEngine {
                 hosts: site?.hosts ?? [],
                 url: problem == nil ? site.map { Self.url(for: $0.host, in: state) } : nil,
                 problem: problem,
-                state: isWordPress && workspace.state == .ready ? Self.wordPressWorkspaceState : workspace.state,
-                warnings: workspace.warnings + (processProblems[Self.processOwner(key: key, workspace: workspace.name)] ?? []),
+                state: workspace.state,
+                warnings: workspace.warnings + (processProblems[owner] ?? []),
                 databases: workspace.databases.map { database in
                     WorkspaceDatabaseInfo(name: database.name, instance: database.instance, port: workspace.servers.first { $0.instance == database.instance }?.port)
                 },
                 redisIndexes: workspace.redisIndexes,
                 ports: workspace.ports,
-                app: app
+                app: app,
+                links: links
             )
         }
+    }
+
+    // A workspace of a WordPress site from before Phase 4, 3e has no digest. It was Not isolated, or
+    // an older Nexus set it to Ready. It gets its setup now. A setup of 3e always gives a digest.
+    // Returns nil when no record changes.
+    static func settingUpOldWordPressWorkspaces(of worktrees: [String: SiteWorktrees], keys: Set<String>) -> [String: SiteWorktrees]? {
+        var changed = worktrees
+
+        for key in keys {
+            for index in changed[key]?.workspaces.indices ?? 0..<0 {
+                let workspace = changed[key]!.workspaces[index]
+
+                if workspace.configurationDigest == nil, workspace.state != .preparing {
+                    changed[key]?.workspaces[index].state = .preparing
+                }
+            }
+        }
+
+        return changed == worktrees ? nil : changed
     }
 
     // Before Phase 4, 3a the key of a Bedrock site on web/ ended in /web. Its workspaces move to the
@@ -314,6 +372,16 @@ extension NexusEngine {
 
         if Self.movingOldKeys(of: current, sites: sites) != current {
             try? await stateStore.update { $0.worktrees = Self.movingOldKeys(of: $0.worktrees, sites: sites) }
+        }
+
+        let wordPressKeys = Set(sitesOfRecord.filter { Self.isWordPress($0.value) }.keys)
+
+        if Self.settingUpOldWordPressWorkspaces(of: await stateStore.current().worktrees, keys: wordPressKeys) != nil {
+            try? await stateStore.update { state in
+                state.worktrees = Self.settingUpOldWordPressWorkspaces(of: state.worktrees, keys: wordPressKeys) ?? state.worktrees
+            }
+
+            applySitesSoon()
         }
 
         return try? await stateStore.updateWorktrees { known in

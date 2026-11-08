@@ -20,11 +20,33 @@ extension NexusEngine {
         // The other env files of a Node.js app count only when they are there. So the digest of a
         // Laravel application stays the same as before D67.
         let nodeEnvFiles = NodeEnvFile.names.filter { $0 != ".env" && FileManager.default.fileExists(atPath: "\(folder)/\($0)") }
-        let files = [".env", "artisan", "bootstrap/app.php", "bootstrap/cache/config.php"] + configFiles.map { "config/\($0)" } + nodeEnvFiles
+        let files = [".env", "artisan", "bootstrap/app.php", "bootstrap/cache/config.php"] + configFiles.map { "config/\($0)" } + nodeEnvFiles + wordPressFiles(in: folder)
         let digests = files.map { file in "\(file) \(digest(of: file, in: folder) ?? "")" }
         let ignoreFiles = foldersWithIgnoreFiles(of: folder, in: root).map { "\($0)/.gitignore \(digest(of: ".gitignore", in: $0) ?? "")" }
 
         return FileChecksum.sha256(of: Data((digests + ignoreFiles).joined(separator: "\n").utf8))
+    }
+
+    // What WordPress reads for a workspace (Phase 4, 3e). wp-config.php can be in the folder of
+    // WordPress one level down. These files count only when they are there, as the env files of a
+    // Node.js app. .env.local of Bedrock is in the list of a Node.js app already.
+    private static func wordPressFiles(in folder: String) -> [String] {
+        let children = ((try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
+        let names = ["wp-config.php", WordPressWorkspaceConfig.includeFile, "wp-content/object-cache.php"]
+        let candidates = names + ["web/app/object-cache.php"] + children.flatMap { child in names.map { "\(child)/\($0)" } }
+
+        return candidates.filter { FileManager.default.fileExists(atPath: "\(folder)/\($0)") }
+    }
+
+    // FSEvents names the folder of a change. wp-config.php and the object cache of WordPress can be
+    // in a folder one level down, in wp-content or in web/app of Bedrock.
+    private static func holdsWordPressFiles(_ path: String, of folder: String) -> Bool {
+        guard path.hasPrefix("\(folder)/") else {
+            return false
+        }
+
+        let parts = path.dropFirst(folder.count + 1).split(separator: "/")
+        return parts.count == 1 || parts.last == "wp-content" || parts == ["web", "app"]
     }
 
     // The application can be in a subfolder of its root. git reads the .gitignore of each folder
@@ -104,6 +126,7 @@ extension NexusEngine {
         }
 
         publishSites()
+        applySitesSoon()
         startWorkspaceSetups()
         _ = syncBackgroundProcesses()
     }
@@ -125,6 +148,7 @@ extension NexusEngine {
         foldersWithIgnoreFiles(of: folder, in: root).contains(path)
             || ["\(folder)/bootstrap", "\(folder)/bootstrap/cache"].contains(path)
             || RealPath.contains("\(folder)/config", path)
+            || holdsWordPressFiles(path, of: folder)
     }
 
     // One watch for all worktrees, also for a worktree without a program. The main checkout has logs

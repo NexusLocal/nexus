@@ -87,8 +87,7 @@ struct SiteMailSection: View {
             }
         } footer: {
             if let warning = mail?.warning {
-                Text(warning)
-                    .foregroundStyle(Color.orangeText)
+                MessageText(warning, title: "The mail of \(site.host)")
             } else if let problem = mail?.problem {
                 MessageText("Nexus cannot read the mail settings of this site. \(problem)", title: "Nexus cannot read the mail settings of \(site.host)")
             } else {

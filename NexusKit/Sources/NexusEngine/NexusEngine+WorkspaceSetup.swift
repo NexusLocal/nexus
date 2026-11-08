@@ -35,6 +35,7 @@ extension NexusEngine {
 
             while !watchingStopped, let next = await nextPreparingWorkspace() {
                 runningSetupKey = next.key
+                runningSetupWorktree = next.workspace.worktree
 
                 // A worker reads the .env one time. So a worker that runs during a setup keeps the old
                 // values. The workspace is in Preparing now, so the sync stops its programs.
@@ -44,11 +45,13 @@ extension NexusEngine {
                 // that time. A clone for a record that is gone would stay for ever.
                 guard !watchingStopped, let workspace = await preparingRecord(like: next.workspace, key: next.key) else {
                     runningSetupKey = nil
+                    runningSetupWorktree = nil
                     continue
                 }
 
                 let finished = await setUp(workspace, key: next.key)
                 runningSetupKey = nil
+                runningSetupWorktree = nil
 
                 // A stop of nexusd also stops the database servers of a running setup. That failure
                 // says nothing about the workspace. So the workspace stays in Preparing for the next
@@ -64,19 +67,24 @@ extension NexusEngine {
                 await checkConfigurations()
                 await syncBackgroundProcesses().value
             }
+
+            await startLinkChanges()
         } while setupAgain
     }
 
     // A record without a site or without its folders waits, for example while its disk is not
-    // connected. A folder that is not there says nothing about the application in it.
+    // connected. A folder that is not there says nothing about the application in it. A workspace
+    // that changes its links waits for that change, because both use its database. The end of the
+    // change starts the setups again (Phase 4, 3e).
     private func nextPreparingWorkspace() async -> (key: String, workspace: Workspace)? {
         let state = await stateStore.current()
         let exists = { (path: String) in FileManager.default.fileExists(atPath: path) }
         let sites = resolvedSites(state).map(\.site).filter { exists(ProjectFolder.projectFolder(of: $0)) }
         let keys = Set(sites.map(ProjectFolder.workspaceKey(of:)))
+        let waits = { (key: String, workspace: Workspace) in self.linkChanges[Self.processOwner(key: key, workspace: workspace.name)] != nil }
 
         for key in keys.sorted() {
-            if let workspace = state.worktrees[key]?.workspaces.first(where: { $0.state == .preparing && exists($0.worktree) }) {
+            if let workspace = state.worktrees[key]?.workspaces.first(where: { $0.state == .preparing && exists($0.worktree) && !waits(key, $0) }) {
                 return (key, workspace)
             }
         }
@@ -116,6 +124,7 @@ extension NexusEngine {
                 state.worktrees[key]?.workspaces[index].database = finished.database
                 state.worktrees[key]?.workspaces[index].configurationDigest = finished.configurationDigest
                 state.worktrees[key]?.workspaces[index].mainConfigurationDigest = finished.mainConfigurationDigest
+                state.worktrees[key]?.workspaces[index].links = finished.links
             }
             return true
         } catch {
@@ -137,6 +146,7 @@ extension NexusEngine {
             }
         }
 
+        applySitesSoon()
         startWorkspaceSetups()
     }
 
@@ -229,6 +239,7 @@ extension NexusEngine {
             }
         }
 
+        applySitesSoon()
         startWorkspaceSetups()
         return "Nexus sets up the workspace \(name) again."
     }
@@ -247,15 +258,16 @@ extension NexusEngine {
 
             // A script of an install can use the database of the main site. The branch can need the
             // packages of that install to load its configuration, so a failed probe here says
-            // nothing. The check after the install decides then.
+            // nothing. The check after the install decides then. WordPress loads only in the last
+            // check, because Bedrock has WordPress itself in its packages.
             await cloneFiles(into: &workspace, key: key) { workspace in
-                if let written {
-                    try? await checkConfiguration(of: written, in: &workspace)
+                if let written, written.wordPress == nil {
+                    try? await checkConfiguration(of: written, in: &workspace, key: key)
                 }
             }
 
             if let written {
-                try await checkConfiguration(of: written, in: &workspace)
+                try await checkConfiguration(of: written, in: &workspace, key: key)
             }
 
             await runCommands(of: &workspace, database: written?.database, key: key)
@@ -268,7 +280,7 @@ extension NexusEngine {
                workspace.state == .preparing,
                Self.configurationDigest(of: written.folder, in: workspace.worktree) != workspace.configurationDigest,
                let rewritten = try await writeEnvAndCopyData(of: &workspace, key: key) {
-                try await checkConfiguration(of: rewritten, in: &workspace)
+                try await checkConfiguration(of: rewritten, in: &workspace, key: key)
             }
 
             workspace.warnings += (written?.warnings ?? []).filter { !workspace.warnings.contains($0) }
@@ -317,8 +329,13 @@ extension NexusEngine {
     // moment. The application in the worktree reads the configuration of its branch. That branch can
     // have a fixed name, or a key that the plan does not know (D48). A repository in the public
     // folder holds no application, so its worktree has no configuration to check.
-    private func checkConfiguration(of written: WrittenEnv, in workspace: inout Workspace) async throws {
+    private func checkConfiguration(of written: WrittenEnv, in workspace: inout Workspace, key: String) async throws {
         guard !watchingStopped, workspace.state == .preparing else {
+            return
+        }
+
+        if let wordPress = written.wordPress {
+            try await checkWordPressWorkspace(wordPress, folder: written.folder, in: &workspace, key: key)
             return
         }
 
@@ -424,6 +441,8 @@ extension NexusEngine {
         // What the workspace shares with the main site without a Not isolated state. The setup
         // adds it after the commands, because a warning before them means a failed command.
         var warnings: [String] = []
+        // What the check of a WordPress workspace needs (Phase 4, 3e).
+        var wordPress: WordPressWrite?
     }
 
     // Returns nil when the workspace has no .env, so nothing after this step applies to it.
@@ -437,6 +456,10 @@ extension NexusEngine {
 
         if site.kind == .node {
             return try await writeNodeEnvFiles(of: &workspace, site: site, sites: sites, key: key, state: state)
+        }
+
+        if Self.isWordPress(sites) {
+            return try await writeWordPressConfig(of: &workspace, site: site, sites: sites, key: key, state: state)
         }
 
         // A site that is no Laravel application gets no .env, but its commands can use a port.
@@ -454,10 +477,6 @@ extension NexusEngine {
             workspace.configurationDigest = nil
             workspace.mainConfigurationDigest = nil
             workspace.ports = workspacePorts(for: Self.textsWithPorts(of: sites, preset: []), of: workspace, state: state)
-
-            if Self.isWordPress(sites) {
-                workspace.state = Self.wordPressWorkspaceState
-            }
 
             try await recordAssignments(of: workspace, key: key)
             return nil

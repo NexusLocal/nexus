@@ -4,11 +4,14 @@ public enum HostNameError: Error, Equatable, CustomStringConvertible {
     case invalidHost(String)
     case publicHost(String)
     case unsupportedTLD(String)
+    case wildcardOutsideDevTLD(String, tld: String)
 
     public var description: String {
         switch self {
         case .invalidHost(let host):
             "\(host) is not a valid host name. Use letters, digits, hyphens and dots, for example shop.test."
+        case .wildcardOutsideDevTLD(let host, let tld):
+            "\(host) starts with *. Such a name works only in the dev domain .\(tld), because /etc/hosts has no such names. Use for example *.shop.\(tld)."
         case .publicHost(let host):
             "\(host) can be a real name in public DNS, so Nexus does not use it. Use a name that ends in \(HostName.privateSuffixes.sorted().map { ".\($0)" }.joined(separator: ", "))."
         case .unsupportedTLD(let tld):
@@ -50,6 +53,29 @@ public enum HostName {
         }
 
         return host
+    }
+
+    // A name that starts with *. covers each name below it, for example the sites of a WordPress
+    // network on subdomains (Phase 4, 3g). nginx, Apache and the certificate accept it. Below the
+    // *. there must be at least two labels, so *.test is no name.
+    public static func validatedAllowingWildcard(_ host: String) throws -> String {
+        guard host.hasPrefix("*.") else {
+            return try validated(host)
+        }
+
+        return "*.\(try validated(String(host.dropFirst(2))))"
+    }
+
+    // An alias with *. works only in the dev TLD. The DNS server of Nexus answers each name there,
+    // and /etc/hosts has no such names.
+    public static func validatedAlias(_ alias: String, tld: String) throws -> String {
+        let name = try validatedAllowingWildcard(alias)
+
+        guard !name.hasPrefix("*.") || name.hasSuffix(".\(tld)") else {
+            throw HostNameError.wildcardOutsideDevTLD(name, tld: tld)
+        }
+
+        return name
     }
 
     // A name in the old dev TLD gets the new one: shop.test becomes shop.internal. Another name,
