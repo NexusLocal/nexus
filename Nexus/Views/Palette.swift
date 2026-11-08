@@ -6,6 +6,7 @@ import SwiftUI
 extension Color {
     static let accentText = pair(light: 0x7A3CF0, dark: 0xB48CFF)
     static let accentSoft = pair(light: 0x7A3CF0, lightAlpha: 0.08, dark: 0xB48CFF, darkAlpha: 0.12)
+    static let accentSelection = pair(light: 0x7A3CF0, lightAlpha: 0.12, dark: 0xB48CFF, darkAlpha: 0.18)
     static let statusGreen = pair(light: 0x30C25A, dark: 0x32D35E)
     static let statusOrange = pair(light: 0xF59A0A, dark: 0xFFA51F)
     static let statusRed = pair(light: 0xF0443A, dark: 0xFF5A50)

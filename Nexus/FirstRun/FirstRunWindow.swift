@@ -255,13 +255,71 @@ struct FirstRunWindow: View {
     }
 }
 
-// The rules of the Packages step (D56). Every site needs nginx and PHP. Workspaces need
-// Composer. The mail service is picked too, but the user can leave it out (Phase 3, 3a). An
-// installed package stays picked, because the first run removes nothing.
+// The kinds of projects of the Packages step (owner, 2026-11-06). A kind picks the packages that
+// it needs. Laravel is picked when the step opens.
+enum FirstRunProjectType: String, CaseIterable, Identifiable {
+    case laravel
+    case wordpress
+    case node
+
+    static let preselected: [FirstRunProjectType] = [.laravel]
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .laravel: "Laravel"
+        case .wordpress: "WordPress"
+        case .node: "Node.js"
+        }
+    }
+
+    // WordPress gets PHP 8.4, because many plugins are not tested on PHP 8.5 yet. MySQL 8.4 is
+    // what most hosts run. WordPress gets Apache for the rules that plugins write into .htaccess.
+    // (owner, 2026-11-06)
+    var requirements: [FirstRunRequirement] {
+        switch self {
+        case .laravel: [FirstRunRequirement("php"), FirstRunRequirement("composer"), FirstRunRequirement("node"), FirstRunRequirement("mysql", line: "8.4"), FirstRunRequirement("redis")]
+        case .wordpress: [FirstRunRequirement("php", line: "8.4"), FirstRunRequirement("wp-cli"), FirstRunRequirement("mysql", line: "8.4"), FirstRunRequirement("httpd")]
+        case .node: [FirstRunRequirement("node")]
+        }
+    }
+
+    var summary: String {
+        requirements.map { AppModel.packageTitle($0.package) }.joined(separator: ", ")
+    }
+}
+
+// A package that a kind of project needs. Without a version line, any version of the package
+// counts. So an installed Node 24 counts for Laravel, and the first run does not add Node 26.
+struct FirstRunRequirement: Hashable {
+    let package: String
+    let line: String?
+
+    init(_ package: String, line: String? = nil) {
+        self.package = package
+        self.line = line
+    }
+}
+
+struct FirstRunCategory: Hashable {
+    let title: String
+    let packages: [String]
+}
+
+// The rules of the Packages step (D56). Every site runs behind nginx. So only nginx is required
+// (owner, 2026-11-06). The mail service is picked too, but the user can leave it out (Phase 3,
+// 3a). An installed package stays picked, because the first run removes nothing.
 struct FirstRunPackages {
-    static let required = ["nginx", "php", "composer"]
-    static let preselected = required + ["mailpit"]
-    static let columns = [["nginx", "php", "composer", "httpd"], ["mysql", "mariadb", "node"], ["postgresql", "redis", "mailpit"]]
+    static let required = ["nginx"]
+    static let alwaysPicked = required + ["mailpit"]
+    static let layout = [
+        FirstRunCategory(title: "Web servers", packages: ["nginx", "httpd"]),
+        FirstRunCategory(title: "Languages", packages: ["php", "node"]),
+        FirstRunCategory(title: "Tools", packages: ["composer", "wp-cli"]),
+        FirstRunCategory(title: "Databases", packages: ["mysql", "mariadb", "postgresql"]),
+        FirstRunCategory(title: "Services", packages: ["redis", "mailpit"]),
+    ]
 
     let packages: [PackageItem]
     private let rowsByName: [String: [PackageItem]]
@@ -279,12 +337,80 @@ struct FirstRunPackages {
         rowsByName[name] ?? []
     }
 
-    // nginx, the newest PHP, Composer and Mailpit, when no version of it is installed (D56).
+    // The step offers every package of the manifest. A package that the layout does not know yet
+    // goes into the category Other at the end.
+    var categories: [FirstRunCategory] {
+        let known = Set(Self.layout.flatMap(\.packages))
+        let others = rowsByName.keys.filter { !known.contains($0) }.sorted()
+        let categories = Self.layout + (others.isEmpty ? [] : [FirstRunCategory(title: "Other", packages: others)])
+
+        return categories.compactMap { category in
+            let offered = category.packages.filter { !rows(of: $0).isEmpty }
+            return offered.isEmpty ? nil : FirstRunCategory(title: category.title, packages: offered)
+        }
+    }
+
+    // The version line of the requirement when the manifest has it. Else the newest long-term
+    // support version, or else the newest version.
+    func row(for requirement: FirstRunRequirement) -> PackageItem? {
+        let rows = rows(of: requirement.package)
+
+        if let line = requirement.line, let row = rows.first(where: { $0.line == line }) {
+            return row
+        }
+
+        return rows.first(where: \.lts) ?? rows.first
+    }
+
+    func isMet(_ requirement: FirstRunRequirement, by isChosen: (PackageItem) -> Bool) -> Bool {
+        guard requirement.line != nil, let row = row(for: requirement) else {
+            return rows(of: requirement.package).contains(where: isChosen)
+        }
+
+        return isChosen(row)
+    }
+
+    // nginx, Mailpit and the packages of Laravel, when they are not installed.
     var preselection: Set<String> {
-        Set(Self.preselected.compactMap { name in
-            let rows = rows(of: name)
-            return rows.contains(where: isKept) ? nil : rows.first?.id
-        })
+        let requirements = Self.alwaysPicked.map { FirstRunRequirement($0) } + FirstRunProjectType.preselected.flatMap(\.requirements)
+        return picking(requirements, in: [])
+    }
+
+    func isOn(_ type: FirstRunProjectType, picked: Set<String>) -> Bool {
+        let offered = offered(type)
+        return !offered.isEmpty && offered.allSatisfy { isMet($0) { isPicked($0, in: picked) } }
+    }
+
+    func isInstalled(_ type: FirstRunProjectType) -> Bool {
+        let offered = offered(type)
+        return !offered.isEmpty && offered.allSatisfy { isMet($0, by: isKept) }
+    }
+
+    func picking(_ type: FirstRunProjectType, in picked: Set<String>) -> Set<String> {
+        picking(type.requirements, in: picked)
+    }
+
+    // The versions of the kind go. Each other picked kind then gets back what it needs. An
+    // installed version stays, because the first run removes nothing.
+    func dropping(_ type: FirstRunProjectType, from picked: Set<String>) -> Set<String> {
+        let others = FirstRunProjectType.allCases.filter { $0 != type && isOn($0, picked: picked) }
+        let dropped = type.requirements.flatMap { requirement in
+            requirement.line == nil ? rows(of: requirement.package).map(\.id) : [row(for: requirement)?.id].compactMap { $0 }
+        }
+
+        return picking(others.flatMap(\.requirements), in: picked.subtracting(dropped))
+    }
+
+    private func offered(_ type: FirstRunProjectType) -> [FirstRunRequirement] {
+        type.requirements.filter { !rows(of: $0.package).isEmpty }
+    }
+
+    private func picking(_ requirements: [FirstRunRequirement], in picked: Set<String>) -> Set<String> {
+        let added = requirements.compactMap { requirement in
+            isMet(requirement) { isPicked($0, in: picked) } ? nil : row(for: requirement)?.id
+        }
+
+        return picked.union(added)
     }
 
     func isKept(_ package: PackageItem) -> Bool {
@@ -392,24 +518,23 @@ private struct PackagesStep: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("What to install?")
+            Text("What do you build?")
                 .font(.largeTitle.weight(.semibold))
-            Text("Pick the versions you need. You can add or remove versions later in Packages.")
+            Text("Pick one or more. Nexus then selects their packages. Change any version below.")
                 .foregroundStyle(.secondary)
                 .padding(.bottom, 8)
 
             if loaded {
-                ScrollView {
-                    HStack(alignment: .top, spacing: 12) {
-                        ForEach(FirstRunPackages.columns, id: \.self) { column in
-                            VStack(alignment: .leading, spacing: 12) {
-                                ForEach(column, id: \.self) { name in
-                                    PackageChoiceGroup(name: name, choice: choice, picked: $picked)
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
+                HStack(spacing: 10) {
+                    ForEach(FirstRunProjectType.allCases) { type in
+                        ProjectTypeChoice(type: type, isInstalled: choice.isInstalled(type), isOn: binding(for: type))
                     }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 4)
+
+                ScrollView {
+                    PackageChoiceList(choice: choice, picked: $picked)
                 }
                 .scrollBounceBehavior(.basedOnSize)
             } else if let problem {
@@ -434,6 +559,15 @@ private struct PackagesStep: View {
         }
     }
 
+    private func binding(for type: FirstRunProjectType) -> Binding<Bool> {
+        Binding(
+            get: { choice.isOn(type, picked: picked) },
+            set: { isOn in
+                picked = isOn ? choice.picking(type, in: picked) : choice.dropping(type, from: picked)
+            }
+        )
+    }
+
     private var problem: String? {
         if let problem = model.nexusdProblem {
             return problem.firstRunText
@@ -447,60 +581,147 @@ private struct PackagesStep: View {
     }
 }
 
-private struct PackageChoiceGroup: View {
-    let name: String
-    let choice: FirstRunPackages
-    @Binding var picked: Set<String>
+// A kind of project is a checkbox in a box. The box names the packages that the kind picks. When
+// every package of the kind is installed, the first run cannot turn it off. So the box then says
+// Installed and has no checkbox.
+private struct ProjectTypeChoice: View {
+    let type: FirstRunProjectType
+    let isInstalled: Bool
+    @Binding var isOn: Bool
 
-    private var requirement: String? {
-        switch name {
-        case "nginx", "composer": "Required"
-        case "php": "At least one"
-        default: nil
+    var body: some View {
+        Group {
+            if isInstalled {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.statusGreen)
+                    text("Installed")
+                }
+                .accessibilityElement(children: .combine)
+            } else {
+                Toggle(isOn: $isOn) {
+                    text(type.summary)
+                }
+                .toggleStyle(.checkbox)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(isOn && !isInstalled ? AnyShapeStyle(Color.accentSoft) : AnyShapeStyle(.fill.quaternary), in: .rect(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(isOn && !isInstalled ? Color.accentColor : Color(nsColor: .separatorColor))
         }
     }
 
-    var body: some View {
-        let rows = choice.rows(of: name)
+    private func text(_ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(type.title)
+                .fontWeight(.semibold)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
 
-        if !rows.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text(AppModel.packageTitle(name))
-                        .fontWeight(.semibold)
-                    Spacer()
-                    if let requirement {
-                        Text(requirement)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+// One row for each package in its category. A new version adds a button to its row. A new
+// package adds a row. So the list stays in order when the manifest grows.
+private struct PackageChoiceList: View {
+    let choice: FirstRunPackages
+    @Binding var picked: Set<String>
+
+    var body: some View {
+        let categories = choice.categories
+
+        VStack(spacing: 0) {
+            ForEach(Array(categories.enumerated()), id: \.element) { index, category in
+                if index > 0 {
+                    Divider()
                 }
 
-                RowGroup {
-                    ForEach(rows) { package in
-                        HStack(spacing: 6) {
-                            Toggle(isOn: binding(for: package)) {
-                                Text(verbatim: "\(AppModel.packageTitle(package.package)) \(package.version)")
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.9)
+                HStack(alignment: .top, spacing: 0) {
+                    Text(category.title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 92, height: 34, alignment: .leading)
+                        .padding(.leading, 12)
+
+                    VStack(spacing: 0) {
+                        ForEach(Array(category.packages.enumerated()), id: \.element) { packageIndex, name in
+                            if packageIndex > 0 {
+                                Divider()
                             }
-                            .disabled(choice.isLocked(package, in: picked))
-                            .layoutPriority(1)
 
-                            Spacer(minLength: 0)
-
-                            badge(for: package)
+                            PackageChoiceRow(name: name, choice: choice, picked: $picked)
                         }
                     }
                 }
             }
         }
+        .background(.fill.quaternary, in: .rect(cornerRadius: 10))
+    }
+}
+
+private struct PackageChoiceRow: View {
+    let name: String
+    let choice: FirstRunPackages
+    @Binding var picked: Set<String>
+
+    var body: some View {
+        let rows = choice.rows(of: name)
+
+        HStack(spacing: 10) {
+            Text(AppModel.packageTitle(name))
+                .fontWeight(.semibold)
+                .frame(width: 84, alignment: .leading)
+
+            FlowLayout(spacing: 6) {
+                ForEach(rows) { package in
+                    VersionChoice(
+                        package: package,
+                        label: label(of: package, onlyLine: rows.count == 1),
+                        isFixed: choice.isLocked(package, in: picked),
+                        isOn: binding(for: package)
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if FirstRunPackages.required.contains(name) {
+                Text("Required")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.trailing, 12)
+        .frame(minHeight: 34)
+    }
+
+    // A package with one version line shows its version. Else each button shows its line, for
+    // example 8.5. The newest Redis 8 shows 8.10.
+    private func label(of package: PackageItem, onlyLine: Bool) -> String {
+        if onlyLine {
+            return package.version
+        }
+
+        let title = AppModel.packageTitle(package.package)
+        return package.name.hasPrefix("\(title) ") ? String(package.name.dropFirst(title.count + 1)) : package.line
     }
 
     private func binding(for package: PackageItem) -> Binding<Bool> {
         Binding(
             get: { choice.isPicked(package, in: picked) },
             set: { isOn in
+                guard !choice.isLocked(package, in: picked) else {
+                    return
+                }
+
                 if isOn {
                     picked.insert(package.id)
                 } else {
@@ -509,40 +730,138 @@ private struct PackageChoiceGroup: View {
             }
         )
     }
+}
 
-    @ViewBuilder
-    private func badge(for package: PackageItem) -> some View {
-        if package.isInstalled {
-            Text("Installed")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        } else if package.isDownloading {
-            Text("Downloading")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        } else if package.securityEnded {
-            Badge(text: "No fixes", color: .orangeText, background: .warningBackground)
-        } else if let end = package.securityEnd {
-            Badge(text: "Ends \(end.prefix(4))", color: .orangeText, background: .warningBackground)
-        } else if package.lts {
-            Badge(text: "LTS", color: .accentText, background: .accentSoft)
+// Three looks: gray when the user did not pick the version, solid purple when Nexus downloads it,
+// and light purple with a check mark when it is installed. An installed version cannot change.
+// So it is a label and not a button. The last version of a required package stays a button that
+// is on, but it does not react to a click. Disabled buttons looked faded, as if they did not work.
+private struct VersionChoice: View {
+    let package: PackageItem
+    let label: String
+    let isFixed: Bool
+    @Binding var isOn: Bool
+
+    // The end of the security fixes is a day in UTC, such as 2026-11-12. The label is English,
+    // so the month is English too.
+    private static let monthAndYear = Date.FormatStyle(locale: Locale(identifier: "en_US"), timeZone: .gmt).month(.abbreviated).year()
+    private static let day = Date.FormatStyle(date: .long, time: .omitted, locale: Locale(identifier: "en_US"), timeZone: .gmt)
+
+    var body: some View {
+        Group {
+            if isInstalled {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                    content(onSolid: false)
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(Color.accentText)
+                .padding(.horizontal, 7)
+                .frame(height: 20)
+                .background(Color.accentSelection, in: .rect(cornerRadius: 5))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(verbatim: "\(AppModel.packageTitle(package.package)) \(label), installed"))
+            } else {
+                Toggle(isOn: $isOn) {
+                    content(onSolid: isOn)
+                }
+                .toggleStyle(.button)
+                .controlSize(.small)
+                .allowsHitTesting(!isFixed)
+                .accessibilityLabel(Text(verbatim: "\(AppModel.packageTitle(package.package)) \(label)"))
+            }
         }
+        .help(help)
+    }
+
+    private func content(onSolid: Bool) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+
+            if let tag {
+                Text(tag.text)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(onSolid ? Color.white.opacity(0.8) : tag.color)
+            }
+        }
+    }
+
+    private var isInstalled: Bool {
+        package.isInstalled || package.isDownloading
+    }
+
+    private var endDate: Date? {
+        package.securityEnd.flatMap { try? Date($0, strategy: .iso8601.year().month().day()) }
+    }
+
+    // A version past its end shows only EOL. A version whose end comes within six months shows
+    // the month. The tooltip gives the day.
+    private var tag: (text: String, color: Color)? {
+        if package.securityEnded {
+            return ("EOL", .orangeText)
+        }
+
+        if let endDate {
+            return ("Until \(endDate.formatted(Self.monthAndYear))", .orangeText)
+        }
+
+        return package.lts ? ("LTS", .accentText) : nil
+    }
+
+    private var help: String {
+        let name = "\(AppModel.packageTitle(package.package)) \(package.version)"
+        let line = "\(AppModel.packageTitle(package.package)) \(package.line)"
+        let state = package.isInstalled ? "\(name) is installed." : package.isDownloading ? "\(name) downloads now." : name
+
+        guard let endDate else {
+            return state
+        }
+
+        let end = endDate.formatted(Self.day)
+        return package.securityEnded
+            ? "\(state) \(line) gets no security fixes since \(end)."
+            : "\(state) Security fixes of \(line) end on \(end)."
     }
 }
 
-private struct Badge: View {
-    let text: String
-    let color: Color
-    let background: Color
+// Puts its views in a row and starts a new row where the width ends.
+private struct FlowLayout: Layout {
+    let spacing: CGFloat
 
-    var body: some View {
-        Text(text)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(background, in: .rect(cornerRadius: 4))
-            .fixedSize()
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let available = proposal.width ?? .infinity
+        let frames = frames(of: subviews, width: available)
+        let used = frames.map(\.maxX).max() ?? 0
+
+        return CGSize(width: available.isFinite ? available : used, height: frames.map(\.maxY).max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for (subview, frame) in zip(subviews, frames(of: subviews, width: bounds.width)) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), proposal: ProposedViewSize(frame.size))
+        }
+    }
+
+    private func frames(of subviews: Subviews, width: CGFloat) -> [CGRect] {
+        var frames: [CGRect] = []
+        var origin = CGPoint.zero
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+
+            if origin.x > 0, origin.x + size.width > width {
+                origin = CGPoint(x: 0, y: origin.y + rowHeight + spacing)
+                rowHeight = 0
+            }
+
+            frames.append(CGRect(origin: origin, size: size))
+            origin.x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+
+        return frames
     }
 }
 
