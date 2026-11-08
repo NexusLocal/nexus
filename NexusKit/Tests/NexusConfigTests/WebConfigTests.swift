@@ -94,15 +94,29 @@ struct WebConfigTests {
         #expect(config.contains("proxy_set_header X-Forwarded-Proto $scheme;"))
         #expect(config.contains("proxy_set_header Host $http_host;"))
         #expect(config.contains("location ~ /\\.(?!well-known) {\n            deny all;"))
-        #expect(config.contains("proxy_redirect https://$http_host/ $scheme://$http_host/;"))
+        #expect(!config.contains("proxy_redirect"))
         #expect(!config.contains("fastcgi_pass"))
+    }
+
+    @Test func aRequestOnTheHTTPPortOfAnApacheSiteGoesToHTTPSFirst() throws {
+        let development = try NginxConfig.render(sites: [site(.apache)], settings: nginxSettings())
+        let standard = try NginxConfig.render(sites: [site(.apache)], settings: NginxSettings(httpPort: 80, httpsPort: 443, apachePort: 8081, lanAccess: false, runtime: runtime, runFolder: run, modules: []))
+
+        #expect(development.contains("if ($scheme = http) {\n            return 301 https://$host:8443$request_uri;\n        }"))
+        #expect(standard.contains("return 301 https://$host$request_uri;"))
+    }
+
+    @Test func aRequestOnTheHTTPPortOfAnNginxSiteStaysOnHTTP() throws {
+        let config = try NginxConfig.render(sites: [site(.nginx)], settings: nginxSettings())
+
+        #expect(!config.contains("if ($scheme = http)"))
     }
 
     @Test func onlyAnApacheSiteGoesOverTLSToItsServer() throws {
         let config = try NginxConfig.render(sites: [site(.proxy(address: "http://127.0.0.1:3000"))], settings: nginxSettings())
 
         #expect(!config.contains("proxy_ssl_server_name"))
-        #expect(!config.contains("proxy_redirect"))
+        #expect(!config.contains("if ($scheme = http)"))
     }
 
     @Test func aProxySiteGoesToItsAddressAndKeepsFoldersWithADot() throws {

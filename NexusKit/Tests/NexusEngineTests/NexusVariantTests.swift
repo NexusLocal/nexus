@@ -45,6 +45,15 @@ struct NexusVariantTests {
         #expect(dev.port(10053) == 40053)
         #expect(dev.firstAppPort == 41000)
         #expect(dev.firstWorkspacePort == 42000)
+        #expect(ResolverFile.marker(for: dev) == "# Written by Nexus Dev. Nexus Dev removes this file when you remove Nexus Dev.")
+    }
+
+    @Test func neitherVariantTakesTheResolverFileOfTheOtherForItsOwn() {
+        let release = ResolverFile.marker(for: .release)
+        let dev = ResolverFile.marker(for: .dev)
+
+        #expect(!release.hasPrefix(dev))
+        #expect(!dev.hasPrefix(release))
     }
 
     @Test func theNamesOfTheInstalledNexusStayTheSameAsIn020() {
@@ -58,6 +67,7 @@ struct NexusVariantTests {
         #expect(DNSServer.defaultPort == 10053)
         #expect(NexusEngine.firstAppPort == 19000)
         #expect(NexusEngine.firstWorkspacePort == 20000)
+        #expect(SystemDNSFiles.resolverMarker == "# Written by Nexus. Nexus removes this file when you remove Nexus.")
         #expect(SystemDNSFiles.hostsBegin == "# Nexus begin")
         #expect(SystemDNSFiles.hostsEnd == "# Nexus end")
         #expect(ShellPathLine.marker == "# Added by Nexus (Settings > General > Add Nexus to PATH)")

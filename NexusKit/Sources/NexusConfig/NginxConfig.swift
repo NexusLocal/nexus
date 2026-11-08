@@ -200,7 +200,12 @@ public enum NginxConfig {
                 "    }",
             ]
         case .php(.apache, _, _):
+            let httpsPort = settings.httpsPort == 443 ? "" : ":\(settings.httpsPort)"
             lines += [
+                "    if ($scheme = http) {",
+                "        return 301 https://$host\(httpsPort)$request_uri;",
+                "    }",
+                "",
                 "    location ~ /\\.(?!well-known) {",
                 "        deny all;",
                 "    }",
@@ -296,13 +301,12 @@ public enum NginxConfig {
 
     // nginx sends a request to Apache over TLS, with the name of the site for the certificate. So
     // a .htaccess rule that checks %{HTTPS} or %{SERVER_PORT} sees HTTPS, as in production, and
-    // does not send each request to https again (D23). Apache then also sees TLS for a request on
-    // the HTTP port. So a redirect of Apache, for example of a folder without a slash such as
-    // /wp-admin, names https://. The redirect line gives such an address the scheme of the request.
+    // does not send each request to https again (D23). Apache cannot tell a request on the HTTP
+    // port from one on the HTTPS port. So nginx sends a request on the HTTP port to https first.
+    // Otherwise such a rule sends http to https, and the request comes back on http without end.
     private static let apacheTLS = [
         "        proxy_ssl_server_name on;",
         "        proxy_ssl_name $host;",
-        "        proxy_redirect https://$http_host/ $scheme://$http_host/;",
     ]
 
     private static func proxyLocation(to address: String, origin: String? = nil, extra: [String] = []) -> [String] {

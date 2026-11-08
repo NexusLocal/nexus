@@ -72,6 +72,17 @@ struct SystemDNSFilesTests {
         }
     }
 
+    @Test func theResolverFileOfNexusDevIsTheFileOfAnotherApp() throws {
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let devFile = "\(ResolverFile.marker(for: .dev))\nnameserver 127.0.0.1\nport 40053\n"
+        try FileManager.default.createDirectory(at: files.resolverFolder, withIntermediateDirectories: true)
+        try Data(devFile.utf8).write(to: files.resolverFolder.appending(path: "internal"))
+
+        #expect(files.nexusResolvers.isEmpty)
+        #expect(try files.removeResolver(tld: "internal") == false)
+        #expect(try resolver("internal") == devFile)
+    }
+
     @Test func removeResolverRemovesTheFileOfNexus() throws {
         defer { try? FileManager.default.removeItem(at: folder) }
         try files.setResolver(tld: "test", port: 10053)
