@@ -154,6 +154,7 @@ public actor NexusEngine {
     // only these. The folders that a new site makes now, so a second one with that name waits.
     var siteLeftovers: [String: SiteLeftovers] = [:]
     var creatingSites: Set<String> = []
+    var lastBackupRead: BackupRead?
     // Two new Laravel sites share one install of laravel/installer.
     var laravelInstallerInstall: Task<Void, Error>?
     // The databases that a copy writes now, as "<instance> <name>". nexusd refuses a second copy
@@ -277,6 +278,10 @@ public actor NexusEngine {
                 return .siteCreated(try await createSite(site))
             case .removeSiteLeftovers(let id):
                 return .done(message: try await removeSiteLeftovers(id: id))
+            case .inspectBackup(let path):
+                return .backup(try await inspectBackup(path: path))
+            case .importSite(let site):
+                return .siteCreated(try await importSite(site))
             case .removeSite(let host):
                 return .done(message: try await serialWeb { try await self.removeSite(host) })
             case .editSite(let host, let change):

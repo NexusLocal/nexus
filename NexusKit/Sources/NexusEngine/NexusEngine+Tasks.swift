@@ -17,6 +17,8 @@ final class TaskProgress: Sendable {
         var logFile: URL?
         // Text that the log view never shows, such as the password of a new WordPress site.
         var secrets: [String] = []
+        // A step that knows its progress itself, such as the import of a dump, sets its detail.
+        var stepDetail: String?
     }
 
     // The end of the log, read again only when the file grows.
@@ -38,6 +40,7 @@ final class TaskProgress: Sendable {
             values.endRunningStep(as: .done)
             values.steps?[index].state = .running
             values.stepStarted = .now
+            values.stepDetail = nil
         }
     }
 
@@ -60,7 +63,7 @@ final class TaskProgress: Sendable {
         let log = logTail(of: file, lines: lines).map { line in
             values.secrets.reduce(line) { $0.replacingOccurrences(of: $1, with: "…") }
         }
-        let activity = TerminalOutput.activity(in: log)
+        let activity = values.stepDetail ?? TerminalOutput.activity(in: log)
         let steps = values.steps?.map { step in
             var step = step
             if step.state == .running {

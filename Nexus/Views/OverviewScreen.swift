@@ -129,7 +129,7 @@ private struct DropArea: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Drop a project folder here to add a site")
                     .fontWeight(.semibold)
-                Text("Drop a folder of projects to park it. Each project in it becomes a site.")
+                Text("Drop a folder of projects to park it, or a WordPress backup to import it.")
                     .foregroundStyle(.secondary)
             }
 
@@ -145,21 +145,27 @@ private struct DropArea: View {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(Color.accentText.opacity(targeted ? 1 : 0.6), lineWidth: 1.5)
         }
-        .onDrop(of: [.fileURL], delegate: FolderDropDelegate(targeted: $targeted, pointerInside: $pointerInside) { folder in
+        .onDrop(of: [.fileURL], delegate: FolderDropDelegate(targeted: $targeted, pointerInside: $pointerInside, onFolder: { folder in
             Task {
                 let manyProjects = await Task.detached { ProjectFolder.holdsManyProjects(folder) }.value
                 model.sheet = .addSite(folder: folder, manyProjects: manyProjects)
             }
-        })
+        }, onBackup: { backup in
+            model.sheet = .importSite(backup: backup)
+        }))
     }
 }
 
-// Accepts one folder. It refuses files and apps while the pointer is still over the area.
-// The item provider is read before each await, because the drop info is not valid after the drop.
+// Accepts one folder, or one backup of WordPress (3f). It refuses other files and apps while the
+// pointer is still over the area. The item provider is read before each await, because the drop
+// info is not valid after the drop.
 private struct FolderDropDelegate: DropDelegate {
+    static let backupSuffixes = [".zip", ".wpress", ".tar.gz", ".tgz", ".tar"]
+
     @Binding var targeted: Bool
     @Binding var pointerInside: Bool
     let onFolder: (URL) -> Void
+    var onBackup: (URL) -> Void = { _ in }
 
     func validateDrop(info: DropInfo) -> Bool {
         info.itemProviders(for: [.fileURL]).count == 1
@@ -173,8 +179,8 @@ private struct FolderDropDelegate: DropDelegate {
         }
 
         Task {
-            let isFolder = await folder(from: provider) != nil
-            targeted = pointerInside && isFolder
+            let accepted = await item(from: provider) != nil
+            targeted = pointerInside && accepted
         }
     }
 
@@ -197,21 +203,37 @@ private struct FolderDropDelegate: DropDelegate {
         targeted = false
 
         Task {
-            if let url = await folder(from: provider) {
+            switch await item(from: provider) {
+            case .folder(let url):
                 onFolder(url)
+            case .backup(let url):
+                onBackup(url)
+            case nil:
+                break
             }
         }
 
         return true
     }
 
-    private func folder(from provider: NSItemProvider) async -> URL? {
+    private enum Item {
+        case folder(URL)
+        case backup(URL)
+    }
+
+    private func item(from provider: NSItemProvider) async -> Item? {
         guard let url = try? await provider.loadFileURL() else {
             return nil
         }
 
         let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
-        return values?.isDirectory == true && values?.isPackage != true ? url : nil
+
+        if values?.isDirectory == true {
+            return values?.isPackage == true ? nil : .folder(url)
+        }
+
+        let name = url.lastPathComponent.lowercased()
+        return Self.backupSuffixes.contains(where: name.hasSuffix) ? .backup(url) : nil
     }
 }
 

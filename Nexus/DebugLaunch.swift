@@ -47,6 +47,14 @@ enum DebugLaunch {
                 let template = value(of: "--template").flatMap(SiteTemplate.init(rawValue:)) ?? .vite
                 model.startNewSite(NewSite(template: template, name: name, parent: folder, database: value(of: "--database"), locale: value(of: "--locale") ?? WordPressLocale.english))
             }
+        case "import-site":
+            let backup = value(of: "--backup").map { URL(filePath: $0) }
+            model.sheet = .importSite(backup: backup)
+
+            // --import foo --folder /path starts the import at once, for a check without clicks.
+            if let backup, let name = value(of: "--import"), let folder = value(of: "--folder") {
+                model.startImport(SiteImport(backup: backup.path(percentEncoded: false), name: name, parent: folder, database: value(of: "--database")), format: nil)
+            }
         case "add-site": model.sheet = .addSite(folder: value(of: "--folder").map { URL(filePath: $0, directoryHint: .isDirectory) } ?? URL(filePath: NSHomeDirectory()).appending(path: "Documents/clients/foo"), manyProjects: false)
         case "import": model.sheet = .importDatabase(instance: "mysql-8.0")
         case "port":

@@ -80,7 +80,7 @@ struct NexusCommand: AsyncParsableCommand {
         subcommands: [
             Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Installed.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
-            SiteCommand.self, WorkspaceCommand.self, New.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
+            SiteCommand.self, WorkspaceCommand.self, New.self, Import.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
             Database.self, PHP.self, Composer.self, Node.self, NPM.self, WP.self, MailCommand.self, Sendmail.self,
         ]
     )
@@ -1198,15 +1198,19 @@ struct New: AsyncParsableCommand {
                 print("Nexus does not keep this password. Copy it now.")
             }
         case .siteNotCreated(let failure):
-            var lines = [withLogHint(failure.message), ""]
-            lines += failure.steps.map { "\(Self.mark($0.state)) \($0.title)" }
-            lines += ["", "The end of the log:"] + failure.log.map { "  \($0)" }
-            lines += ["", "Nexus kept \(failure.folder)\(failure.database.map { " and the database \($0)" } ?? ""), so you can look at them. The log is \(failure.logFile)"]
-            FileHandle.standardError.write(Data((lines.joined(separator: "\n") + "\n").utf8))
-            throw ExitCode.failure
+            Self.reportFailure(failure)
         default:
             try finish(response)
         }
+    }
+
+    static func reportFailure(_ failure: SiteCreationFailure) -> Never {
+        var lines = [withLogHint(failure.message), ""]
+        lines += failure.steps.map { "\(mark($0.state)) \($0.title)" }
+        lines += ["", "The end of the log:"] + failure.log.map { "  \($0)" }
+        lines += ["", "Nexus kept \(failure.site.map { "the site \($0), " } ?? "")\(failure.folder)\(failure.database.map { " and the database \($0)" } ?? ""), so you can look at them. The log is \(failure.logFile)"]
+        FileHandle.standardError.write(Data((lines.joined(separator: "\n") + "\n").utf8))
+        Foundation.exit(ExitCode.failure.rawValue)
     }
 
     private static func mark(_ state: TaskStepState) -> String {
@@ -1215,6 +1219,60 @@ struct New: AsyncParsableCommand {
         case .failed: "failed "
         case .running: "running"
         case .waiting: "-      "
+        }
+    }
+}
+
+// A WordPress site from a backup (Phase 4, 3f). nexusd reads the backup first and the command shows
+// what it found.
+struct Import: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Makes a WordPress site from a backup, for example: nexus import ~/Downloads/foo.wpress")
+
+    @Argument(help: "A zip of Local, Jetpack or Studio, a .wpress file, or a folder with wp-content and a .sql or .sql.gz dump.") var backup: String
+    @Option(help: "The name of the site. The default comes from the name of the backup.") var name: String?
+    @Option(help: "The folder that gets the new site. The default is the current folder.") var folder: String = "."
+    @Option(help: "The database instance, for example mysql-8.4. The default is MySQL 8.4 or the newest MySQL that runs.") var database: String?
+    @Flag(inversion: .prefixedNo, help: "Makes a git repository with a first commit. It ignores wp-config.php and the uploads.") var git = true
+
+    func run() async throws {
+        let path = absolutePath(backup)
+        let inspected = try await send(.inspectBackup(path: path))
+
+        guard case .backup(let info) = inspected else {
+            try finish(inspected)
+            return
+        }
+
+        if let problem = info.problem {
+            FileHandle.standardError.write(Data("\(problem)\n".utf8))
+            throw ExitCode.failure
+        }
+
+        let found = [
+            info.format.map { "Format: \($0.displayName)" },
+            "WordPress: \(BackupText.wordPress(info))",
+            info.dump.map { "Dump: \($0)" },
+            "Table prefix: \(info.tablePrefix ?? "as in wp-config.php")",
+            info.siteURL.map { "Site URL: \($0)" },
+        ].compactMap { $0 }
+
+        print(found.joined(separator: "\n"))
+
+        if info.format == .localSiteFolder {
+            print("Local writes this dump when the site stops. So it can be older than the site. For a current copy, use Export in Local.")
+        }
+
+        let siteName = name ?? info.suggestedName
+        print("Nexus imports the site as \(siteName). This can take some minutes. The log is \(NexusPaths.standard.log("new-site-\(siteName)").path(percentEncoded: false))")
+        let response = try await send(.importSite(SiteImport(backup: path, name: siteName, parent: absolutePath(folder), database: database, git: git)))
+
+        switch response {
+        case .siteCreated(let created):
+            print(created.message)
+        case .siteNotCreated(let failure):
+            New.reportFailure(failure)
+        default:
+            try finish(response)
         }
     }
 }

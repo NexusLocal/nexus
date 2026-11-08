@@ -16,6 +16,7 @@ enum SidebarItem: Hashable {
 
 enum SheetKind: Identifiable {
     case newSite
+    case importSite(backup: URL?)
     case addSite(folder: URL?, manyProjects: Bool)
     case editAliases(host: String)
     // source holds the server of a WordPress site for "Copy to Nexus…" (Phase 4, 3d).
@@ -25,6 +26,7 @@ enum SheetKind: Identifiable {
     var id: String {
         switch self {
         case .newSite: "new-site"
+        case .importSite: "import-site"
         case .addSite: "add-site"
         case .editAliases(let host): "aliases-\(host)"
         case .importDatabase(let instance, _): "import-\(instance)"

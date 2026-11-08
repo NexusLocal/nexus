@@ -18,6 +18,7 @@ extension NexusRequest {
         case .stopTask(let id): "stopTask \(id)"
         case .createSite(let site): "createSite \(site.template.rawValue) \(site.name)"
         case .removeSiteLeftovers(let id): "removeSiteLeftovers \(id)"
+        case .importSite(let site): "importSite \(site.name)"
         default: Mirror(reflecting: self).children.first?.label ?? "\(self)"
         }
     }
@@ -27,7 +28,7 @@ extension NexusRequest {
         switch self {
         case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules,
              .customSettings, .databases, .databaseSizes, .sourceDatabases, .workspaceEnv, .siteDatabases, .wordPressSite, .backgroundPreset,
-             .workspaceSettings, .dumps, .probe, .tool:
+             .workspaceSettings, .dumps, .probe, .tool, .inspectBackup:
             true
         case .lan(let enabled):
             enabled == nil

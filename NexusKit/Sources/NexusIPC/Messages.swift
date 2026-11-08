@@ -623,6 +623,7 @@ public enum TaskWork: Codable, Sendable, Equatable {
     case copyDatabase(database: String, instance: String, name: String)
     case dumpDatabase(name: String, instance: String)
     case createSite(name: String, template: SiteTemplate)
+    case importSite(name: String)
 }
 
 public enum TaskStepState: String, Codable, Sendable {
@@ -727,8 +728,10 @@ public struct SiteCreationFailure: Codable, Sendable, Equatable {
     public let logFile: String
     public let folder: String
     public let database: String?
+    // The host of a site that is in Nexus already. "Move to trash" removes it too.
+    public let site: String?
 
-    public init(id: String, message: String, steps: [TaskStep], log: [String], logFile: String, folder: String, database: String?) {
+    public init(id: String, message: String, steps: [TaskStep], log: [String], logFile: String, folder: String, database: String?, site: String? = nil) {
         self.id = id
         self.message = message
         self.steps = steps
@@ -736,6 +739,7 @@ public struct SiteCreationFailure: Codable, Sendable, Equatable {
         self.logFile = logFile
         self.folder = folder
         self.database = database
+        self.site = site
     }
 }
 
@@ -780,6 +784,10 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     // Moves the folder of a new site that failed to the Trash and drops its database. Only what
     // that task made goes.
     case removeSiteLeftovers(id: String)
+    // A backup of WordPress (3f). The answer to inspect is backup, and an import answers as
+    // createSite does.
+    case inspectBackup(path: String)
+    case importSite(SiteImport)
     case removeSite(host: String)
     case editSite(host: String, change: SiteChange)
     // Starts the Node.js app of the main checkout again, or of the workspace with this name (D67).
@@ -1014,6 +1022,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case siteMail(SiteMail)
     case siteCreated(CreatedSite)
     case siteNotCreated(SiteCreationFailure)
+    case backup(BackupInfo)
 }
 
 // What the Site screen of a WordPress site shows (Phase 4, 3b). configFile is nil without a

@@ -12,28 +12,100 @@ struct NewSiteSheet: View {
 
     @Environment(AppModel.self) private var model
 
+    // The import of a backup (3f) uses this sheet with its own form and its own end.
+    var importing = false
+    var backup: URL?
+
     var body: some View {
         Group {
-            switch model.newSiteRun?.result {
+            let run = model.newSiteRun
+
+            switch run?.result {
             case .created(let created):
-                NewSiteDoneView(created: created)
+                if run?.importing != nil {
+                    ImportDoneView(created: created)
+                } else {
+                    NewSiteDoneView(created: created)
+                }
             case .failed(let failure):
                 NewSiteFailedView(failure: failure)
             case .refused(let message):
-                NewSiteForm(refusal: message, site: model.newSiteRun?.site)
+                form(refusal: message, run: run)
             case .stopped:
-                NewSiteForm(refusal: nil, site: model.newSiteRun?.site)
+                form(refusal: nil, run: run)
             case nil:
-                if let run = model.newSiteRun {
-                    NewSiteProgressView(site: run.site)
+                if let run {
+                    NewSiteProgressView(run: run)
                 } else {
-                    NewSiteForm(refusal: nil, site: nil)
+                    form(refusal: nil, run: nil)
                 }
             }
         }
         .padding(20)
         .frame(width: 600)
+        .onAppear(perform: endOtherRun)
     }
+
+    // The kind of the sheet chooses the form. The values of a stopped or refused run come back only
+    // in a form of its own kind, and for an import only with its own backup.
+    @ViewBuilder
+    private func form(refusal: String?, run: NewSiteRun?) -> some View {
+        let own = run.flatMap(isOwn)
+
+        if importing {
+            ImportSiteForm(refusal: own == nil ? nil : refusal, request: own?.importing, backup: backup)
+        } else {
+            NewSiteForm(refusal: own == nil ? nil : refusal, site: own?.site)
+        }
+    }
+
+    private func isOwn(_ run: NewSiteRun) -> NewSiteRun? {
+        guard (run.importing != nil) == importing else {
+            return nil
+        }
+
+        guard let backup, let request = run.importing else {
+            return run
+        }
+
+        return URL(filePath: request.backup).standardizedFileURL.pathComponents == backup.standardizedFileURL.pathComponents ? run : nil
+    }
+
+    private func endOtherRun() {
+        guard let run = model.newSiteRun, isOwn(run) == nil else {
+            return
+        }
+
+        switch run.result {
+        case .stopped, .refused:
+            model.newSiteRun = nil
+        default:
+            break
+        }
+    }
+}
+
+// A name that is no valid name of a new site, or whose folder exists already.
+func newSiteNameProblem(_ name: String, in folder: URL?) -> String? {
+    guard !name.isEmpty else {
+        return nil
+    }
+
+    do {
+        _ = try NewSiteName.validated(name)
+    } catch {
+        return String(describing: error)
+    }
+
+    if let target = folder?.appending(path: name, directoryHint: .isDirectory), FileManager.default.fileExists(atPath: target.path(percentEncoded: false)) {
+        return "\(shortPath(target)) exists. Choose another name or another folder."
+    }
+
+    return nil
+}
+
+func shortPath(_ url: URL) -> String {
+    (url.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
 }
 
 private struct NewSiteForm: View {
@@ -122,7 +194,7 @@ private struct NewSiteForm: View {
 
                     LabeledContent("Folder") {
                         HStack {
-                            PathText(folder.map(Self.shortPath) ?? "")
+                            PathText(folder.map(shortPath) ?? "")
                             Button("Choose…", action: chooseFolder)
                         }
                     }
@@ -331,25 +403,11 @@ private struct NewSiteForm: View {
     }
 
     private var nameProblem: String? {
-        guard !name.isEmpty else {
-            return nil
-        }
-
-        do {
-            _ = try NewSiteName.validated(name)
-        } catch {
-            return String(describing: error)
-        }
-
-        if let finalFolder, FileManager.default.fileExists(atPath: finalFolder.path(percentEncoded: false)) {
-            return "\(Self.shortPath(finalFolder)) exists. Choose another name or another folder."
-        }
-
-        return nil
+        newSiteNameProblem(name, in: folder)
     }
 
     private var siteFooter: String {
-        let place = finalFolder.map(Self.shortPath) ?? "the folder"
+        let place = finalFolder.map(shortPath) ?? "the folder"
         let opens = "Nexus makes the folder \(place) and opens the site on \(model.newSiteURL(host: host))."
 
         guard git else {
@@ -492,10 +550,6 @@ private struct NewSiteForm: View {
             packageManager: packageManager
         ))
     }
-
-    static func shortPath(_ url: URL) -> String {
-        (url.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
-    }
 }
 
 private struct TemplateCard: View {
@@ -536,16 +590,18 @@ private struct TemplateCard: View {
 
 private struct NewSiteProgressView: View {
     @Environment(AppModel.self) private var model
-    let site: NewSite
+    let run: NewSiteRun
 
     var body: some View {
         let task = model.newSiteTask
+        let site = run.site
+        let place = shortPath(URL(filePath: site.parent).appending(path: site.name))
 
         VStack(alignment: .leading, spacing: 12) {
-            Text("Creating \(site.name)")
+            Text(run.importing == nil ? "Creating \(site.name)" : "Importing \(site.name)")
                 .font(.headline)
 
-            Text("\(NewSiteDescription.text(site)) in \(NewSiteForm.shortPath(URL(filePath: site.parent).appending(path: site.name)))")
+            Text(run.importing == nil ? "\(NewSiteDescription.text(site)) in \(place)" : "\(run.format?.displayName ?? "Backup") in \(place)")
 
             if let steps = task?.steps {
                 StepList(steps: steps)
@@ -598,9 +654,10 @@ private struct NewSiteFailedView: View {
     var body: some View {
         let parts = ErrorDetails.split(failure.message)
         let name = model.newSiteRun?.site.name ?? ""
+        let title = model.newSiteRun?.importing == nil ? "Nexus could not create \(name)" : "Nexus could not import \(name)"
 
         VStack(alignment: .leading, spacing: 12) {
-            Text("Nexus could not create \(name)")
+            Text(title)
                 .font(.headline)
 
             Text(parts.text)
@@ -632,7 +689,7 @@ private struct NewSiteFailedView: View {
 
                 if parts.id != nil {
                     Button("Send report…") {
-                        errorReport = ErrorReport(message: failure.message, title: "Nexus could not create \(name)", place: .window)
+                        errorReport = ErrorReport(message: failure.message, title: title, place: .window)
                     }
                 }
 
@@ -648,11 +705,13 @@ private struct NewSiteFailedView: View {
     }
 
     private var keptText: String {
-        let folder = NewSiteForm.shortPath(URL(filePath: failure.folder))
+        let folder = shortPath(URL(filePath: failure.folder))
+        let site = failure.site.map { "the site \($0), " } ?? ""
         let database = failure.database.map { " and the database \($0)" } ?? ""
+        let removesSite = failure.site == nil ? "" : "removes the site, "
         let removes = failure.database == nil ? "moves the folder to the Trash" : "moves the folder to the Trash and removes the database"
 
-        return "Nexus keeps the folder \(folder)\(database), so you can look at them. \"Move to trash\" \(removes)."
+        return "Nexus keeps \(site)the folder \(folder)\(database), so you can look at them. \"Move to trash\" \(removesSite)\(removes)."
     }
 }
 

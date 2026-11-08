@@ -4,6 +4,9 @@ import NexusIPC
 
 struct NewSiteRun {
     let site: NewSite
+    // A site from a backup (3f) has the values of the import sheet and the format that nexusd found.
+    var importing: SiteImport?
+    var format: BackupFormat?
     var result: NewSiteResult?
     var trashing = false
     var trashProblem: String?
@@ -26,50 +29,78 @@ extension AppModel {
         newSiteRun = NewSiteRun(site: site)
 
         Task {
-            let outcome = await outcome(of: .createSite(site))
-
-            switch outcome {
-            case .answer(.siteCreated(let created)):
-                finishNewSite(created, template: site.template)
-            case .answer(.siteNotCreated(let failure)):
-                newSiteRun?.result = .failed(failure)
-                sheet = .newSite
-            case .answer(.stopped):
-                newSiteRun?.result = .stopped
-            case .failure(let message):
-                newSiteRun?.result = .refused(message)
-                sheet = .newSite
-            case .portInUse(let conflict):
-                newSiteRun?.result = .refused(conflict.description)
-                sheet = .newSite
-            default:
-                newSiteRun = nil
-            }
+            await finish(await outcome(of: .createSite(site)), sheet: .newSite)
         }
     }
 
-    private func finishNewSite(_ created: CreatedSite, template: SiteTemplate) {
+    // An import shows its end in the sheet, also without a password, because the user logs in with
+    // an account of the original site.
+    func startImport(_ request: SiteImport, format: BackupFormat?) {
+        newSiteRun = NewSiteRun(site: NewSite(template: .wordpress, name: request.name, parent: request.parent, git: request.git, database: request.database), importing: request, format: format)
+
+        Task {
+            await finish(await outcome(of: .importSite(request)), sheet: .importSite(backup: URL(filePath: request.backup)))
+        }
+    }
+
+    private func finish(_ outcome: RequestOutcome?, sheet kind: SheetKind) async {
+        switch outcome {
+        case .answer(.siteCreated(let created)):
+            finishNewSite(created, sheet: kind)
+        case .answer(.siteNotCreated(let failure)):
+            newSiteRun?.result = .failed(failure)
+            sheet = kind
+        case .answer(.stopped):
+            newSiteRun?.result = .stopped
+        case .failure(let message):
+            newSiteRun?.result = .refused(message)
+            sheet = kind
+        case .portInUse(let conflict):
+            newSiteRun?.result = .refused(conflict.description)
+            sheet = kind
+        default:
+            newSiteRun = nil
+        }
+    }
+
+    // The answer to the import sheet before an import: what nexusd found in the backup.
+    func inspectBackup(_ backup: URL) async -> Result<BackupInfo, ImportProblem> {
+        switch await outcome(of: .inspectBackup(path: backup.path(percentEncoded: false))) {
+        case .answer(.backup(let info)):
+            .success(info)
+        case .failure(let message):
+            .failure(ImportProblem(message: message))
+        default:
+            .failure(ImportProblem(message: "Nexus cannot read the backup now."))
+        }
+    }
+
+    private func finishNewSite(_ created: CreatedSite, sheet kind: SheetKind) {
         selection = .site(created.host)
 
-        guard template == .wordpress else {
-            newSiteRun = nil
-            if case .newSite = sheet {
-                sheet = nil
-            }
-            openInBrowser(created.url)
+        // WordPress shows its password, and an import says how to log in. Both stay in the sheet.
+        guard newSiteRun?.site.template != .wordpress else {
+            newSiteRun?.result = .created(created)
+            sheet = kind
             return
         }
 
-        newSiteRun?.result = .created(created)
-        sheet = .newSite
+        newSiteRun = nil
+
+        if case .newSite = sheet {
+            sheet = nil
+        }
+
+        openInBrowser(created.url)
     }
 
     var newSiteTask: TaskInfo? {
-        guard let site = newSiteRun?.site else {
+        guard let run = newSiteRun else {
             return nil
         }
 
-        return tasks.first { $0.work == .createSite(name: site.name, template: site.template) }
+        let work: TaskWork = run.importing == nil ? .createSite(name: run.site.name, template: run.site.template) : .importSite(name: run.site.name)
+        return tasks.first { $0.work == work }
     }
 
     func endNewSite() {

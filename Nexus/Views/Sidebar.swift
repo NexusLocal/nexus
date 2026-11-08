@@ -290,6 +290,10 @@ struct AddMenuItems: View {
             present(.importDatabase(instance: model.databaseInstances.first?.id ?? ""))
         }
 
+        Button("Import WordPress site…", systemImage: "arrow.down.doc") {
+            present(.importSite(backup: nil))
+        }
+
         Button("Install packages…", systemImage: "shippingbox") {
             model.selection = .packages
             openWindow(id: MainWindow.id)

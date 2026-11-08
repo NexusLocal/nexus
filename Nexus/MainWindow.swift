@@ -48,6 +48,8 @@ struct MainWindow: View {
             switch sheet {
             case .newSite:
                 NewSiteSheet()
+            case .importSite(let backup):
+                NewSiteSheet(importing: true, backup: backup)
             case .addSite(let folder, let manyProjects):
                 AddSiteSheet(folder: folder, manyProjects: manyProjects, tld: model.settings.tld)
             case .editAliases(let host):

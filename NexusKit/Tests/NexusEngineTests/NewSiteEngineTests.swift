@@ -1,8 +1,13 @@
 import Foundation
+import NexusConfig
 import NexusCore
 import NexusIPC
 import Testing
 @testable import NexusEngine
+
+private enum DatabaseConfigFilter {
+    static let mariadb = DatabaseConfig.mariadbToMySQLFilter
+}
 
 // A new site from a template (Phase 4, 3i). The tools need the network, so these tests check what
 // nexusd refuses before a tool runs, and the files that it writes itself.
@@ -109,6 +114,54 @@ extension NexusEngineTests {
         #expect(steps?.map(\.state) == [.done, .running])
         #expect(steps?[0].seconds == 1)
         #expect(lines == [" ⠶ Installing...", "admin_password: …"])
+    }
+
+    @Test func anImportStaysInItsOwnDatabaseAndGetsItsPrefixBack() throws {
+        let filter = NexusEngine.importFilter(prefix: "shop_", toMySQL: false)
+        let lines = [
+            "USE `production`;",
+            "  use production;",
+            "CREATE DATABASE /*!32312 IF NOT EXISTS*/ `production` /*!40100 DEFAULT CHARACTER SET utf8mb4 */;",
+            "/*!40000 DROP DATABASE IF EXISTS `production`*/;",
+            "drop schema production;",
+            "INSERT INTO `SERVMASK_PREFIX_options` VALUES (1,'SERVMASK_PREFIX_user_roles','a','yes');",
+        ]
+        let sed = Process()
+        sed.executableURL = URL(filePath: "/usr/bin/sed")
+        sed.arguments = ["-E", filter]
+        let input = Pipe()
+        let output = Pipe()
+        sed.standardInput = input
+        sed.standardOutput = output
+        try sed.run()
+        try input.fileHandleForWriting.write(contentsOf: Data((lines.joined(separator: "\n") + "\n").utf8))
+        try input.fileHandleForWriting.close()
+        sed.waitUntilExit()
+        let result = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+
+        #expect(result == "INSERT INTO `shop_options` VALUES (1,'shop_user_roles','a','yes');\n")
+        #expect(NexusEngine.importFilter(prefix: nil, toMySQL: true).hasSuffix(DatabaseConfigFilter.mariadb))
+        #expect(NexusEngine.wordPressVersion(in: "<?php\n$wp_version = '7.1.4';\n") == "7.1.4")
+        #expect(NexusEngine.safePrefix("wp_; DROP") == nil)
+    }
+
+    @Test func aFolderBackupIsCopiedWithoutItsRepositoryNodeModulesAndDumps() throws {
+        let root = siteTestRoot()
+        let source = root.appending(path: "backup", directoryHint: .isDirectory)
+        let target = root.appending(path: "site", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for file in ["wp-content/themes/foo/style.css", "wp-content/themes/foo/.git/HEAD", "wp-content/plugins/bar/node_modules/x.js", "sql/wp_options.sql", "meta.json", "wp-config.php"] {
+            let url = source.appending(path: file)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: url)
+        }
+
+        let layout = BackupLayout(format: .studio, siteRoot: "", dumps: ["sql/wp_options.sql"], hasCore: false, hasConfig: true, metaFile: "meta.json")
+        try NexusEngine.copyFolder(source, to: target, skipping: NexusEngine.backupFilesInSite(layout))
+
+        let copied = Set(try #require(FileManager.default.subpaths(atPath: target.path(percentEncoded: false))))
+        #expect(copied == ["wp-config.php", "wp-content", "wp-content/themes", "wp-content/themes/foo", "wp-content/themes/foo/style.css", "wp-content/plugins", "wp-content/plugins/bar"])
     }
 
     @Test func thePasswordGoesFromTheLog() throws {

@@ -13,9 +13,11 @@ struct DatabaseLeftover: Sendable, Equatable {
     let name: String
 }
 
+// host is set when the site is in Nexus already, for example when the URL step of an import fails.
 struct SiteLeftovers: Sendable, Equatable {
     var folder: URL
     var database: DatabaseLeftover?
+    var host: String?
 }
 
 struct SiteCreationFailed: Error {
@@ -40,12 +42,12 @@ final class NewSiteMade: Sendable {
     }
 }
 
-private struct NewSiteStep: Sendable {
+struct NewSiteStep: Sendable {
     let title: String
     let run: @Sendable () async throws -> Void
 }
 
-private struct NewSiteDatabase: Sendable {
+struct NewSiteDatabase: Sendable {
     let instance: DatabaseInstance
     let name: String
     let account: DatabaseAccount
@@ -57,7 +59,7 @@ private struct NewSiteDatabase: Sendable {
 
 // The values that each step of one new site uses. project is the folder of the tool inside the
 // hidden work folder. final is the folder of the site after the last step.
-private struct NewSiteContext: Sendable {
+struct NewSiteContext: Sendable {
     let site: NewSite
     let host: String
     let url: String
@@ -70,6 +72,8 @@ private struct NewSiteContext: Sendable {
     let node: InstalledRuntime?
     let database: NewSiteDatabase?
     let made: NewSiteMade
+    let progress: TaskProgress
+    let notes = NewSiteNotes()
 }
 
 // A new site from a template (Phase 4, 3i to 3l). The tool runs in a hidden folder next to the new
@@ -77,7 +81,8 @@ private struct NewSiteContext: Sendable {
 // show in the app. A failed site keeps its folder, its database and its log. Nexus never removes a
 // folder or a database that it did not make.
 extension NexusEngine {
-    func createSite(_ request: NewSite) async throws -> CreatedSite {
+    // With a backup, the files and the database come from that backup (3f).
+    func createSite(_ request: NewSite, importing backup: SiteBackupPlan? = nil) async throws -> CreatedSite {
         var site = request
         site.name = try NewSiteName.validated(request.name)
 
@@ -108,7 +113,7 @@ extension NexusEngine {
 
         defer { creatingSites.remove(host) }
 
-        if site.template == .wordpress {
+        if site.template == .wordpress, backup == nil {
             site.adminUser = try Self.validatedAdminUser(site.adminUser)
             site.adminEmail = try Self.validatedAdminEmail(site.adminEmail, host: host)
         }
@@ -141,16 +146,24 @@ extension NexusEngine {
             php: php,
             node: node,
             database: database,
-            made: NewSiteMade(folder: work)
+            made: NewSiteMade(folder: work),
+            progress: TaskProgress()
         )
 
         let password = Self.newPassword()
-        let steps = try await newSiteSteps(context, password: password, installed: installed)
-        let progress = TaskProgress()
+        let steps: [NewSiteStep]
+
+        if let backup {
+            steps = try await importSteps(context, plan: backup)
+        } else {
+            steps = try await newSiteSteps(context, password: password, installed: installed)
+        }
+        let progress = context.progress
         progress.update { values in
             values.steps = steps.map { TaskStep(title: $0.title) }
             values.logFile = log
-            values.secrets = [password]
+            // A short password of an instance, such as root, would hide the user name too.
+            values.secrets = [password] + (database.map { [$0.account.password] } ?? []).filter { $0.count >= 6 }
         }
 
         do {
@@ -158,7 +171,9 @@ extension NexusEngine {
 
             let name = site.name
 
-            try await runTask(.createSite(name: name, template: site.template), id: id, progress: progress, stopped: {
+            let work: TaskWork = backup == nil ? .createSite(name: name, template: site.template) : .importSite(name: name)
+
+            try await runTask(work, id: id, progress: progress, stopped: {
                 "The new site \(name) stopped. Nexus removed what it made."
             }) { progress in
                 do {
@@ -198,8 +213,13 @@ extension NexusEngine {
                 log: lines ?? [],
                 logFile: log.path(percentEncoded: false),
                 folder: made.folder.path(percentEncoded: false),
-                database: made.database.map { "\($0.name) on \($0.instance)" }
+                database: made.database.map { "\($0.name) on \($0.instance)" },
+                site: made.host
             ))
+        }
+
+        if backup != nil {
+            return CreatedSite(host: host, url: context.url, folder: final.path(percentEncoded: false), message: "\(context.url) shows the site of the backup. \(context.notes.text)")
         }
 
         let wordPress = site.template == .wordpress
@@ -225,15 +245,26 @@ extension NexusEngine {
         }
 
         siteLeftovers[id] = nil
+        let site = leftovers.host.map { "removed the site \($0), " } ?? ""
         let database = leftovers.database.map { " and dropped the database \($0.name) on \($0.instance)" } ?? ""
 
-        return "Nexus moved \(Self.shortPath(leftovers.folder)) to the Trash\(database)."
+        return "Nexus \(site)moved \(Self.shortPath(leftovers.folder)) to the Trash\(database)."
     }
 
     // Removes only what the new site made: its folder goes to the Trash, so the user can get it
-    // back. The database is new and empty but for the migrations of the tool.
+    // back. The database is new and empty but for the migrations of the tool or the dump of an
+    // import. A site in Nexus goes first, so it never serves a folder in the Trash.
     private func removeLeftovers(_ leftovers: SiteLeftovers) async -> [String] {
         var problems: [String] = []
+
+        // A second "Move to trash" after a problem with the folder finds the site removed already.
+        if let host = leftovers.host, await stateStore.current().sites.contains(where: { $0.host == host }) {
+            do {
+                _ = try await serialWeb { try await self.removeSite(host) }
+            } catch {
+                return ["Nexus could not remove the site \(host): \(error)"]
+            }
+        }
 
         if FileManager.default.fileExists(atPath: leftovers.folder.path(percentEncoded: false)) {
             do {
@@ -323,7 +354,7 @@ extension NexusEngine {
         return steps
     }
 
-    private func databaseSteps(_ context: NewSiteContext) -> [NewSiteStep] {
+    func databaseSteps(_ context: NewSiteContext) -> [NewSiteStep] {
         guard let database = context.database else {
             return []
         }
@@ -333,7 +364,7 @@ extension NexusEngine {
         }]
     }
 
-    private func createNewSiteDatabase(_ database: NewSiteDatabase, context: NewSiteContext) async throws {
+    func createNewSiteDatabase(_ database: NewSiteDatabase, context: NewSiteContext) async throws {
         let (tools, client, work) = try await runningClient(database.instance.id)
         defer { try? FileManager.default.removeItem(at: work) }
 
@@ -442,7 +473,7 @@ extension NexusEngine {
         try Data(EnvRewrite.apply(to: text, hosts: [], keys: keys).utf8).write(to: file, options: .atomic)
     }
 
-    private func runWP(_ arguments: [String], wpCLI: ToolCommand, context: NewSiteContext, input: Data? = nil, display: String? = nil) async throws {
+    func runWP(_ arguments: [String], wpCLI: ToolCommand, context: NewSiteContext, input: Data? = nil, display: String? = nil) async throws {
         let environment = context.environment.merging(wpCLI.environment) { _, new in new }
 
         try await runLogged(Command(executable: URL(filePath: wpCLI.executable), arguments: wpCLI.arguments + arguments, environment: environment, workingDirectory: context.work, name: "WP-CLI"), display: display ?? "wp \(arguments.joined(separator: " "))", context: context, input: input)
@@ -493,7 +524,7 @@ extension NexusEngine {
     // Workspaces need git (open decision 5). The first commit skips the hooks and the signature of
     // the user, because nexusd cannot answer a prompt. A user without a name in git gets the name
     // of the Mac account in this one commit.
-    private func makeRepository(_ context: NewSiteContext) async throws {
+    func makeRepository(_ context: NewSiteContext) async throws {
         guard let git = await GitTool.executable() else {
             throw RuntimeError.unsupported("Nexus needs git for the repository. Run: xcode-select --install")
         }
@@ -524,7 +555,7 @@ extension NexusEngine {
         try Data((existing + separator + SiteTemplateCommands.wordPressIgnore).utf8).write(to: file, options: .atomic)
     }
 
-    private func addNewSite(_ context: NewSiteContext) async throws {
+    func addNewSite(_ context: NewSiteContext) async throws {
         try FileManager.default.moveItem(at: context.project, to: context.final)
         context.made.update { $0.folder = context.final }
         try? FileManager.default.removeItem(at: context.work)
@@ -536,6 +567,7 @@ extension NexusEngine {
             try await self.addSite(folder: context.final.path(percentEncoded: false), host: context.host, aliases: [], php: php, server: nil, settings: settings)
         }
 
+        context.made.update { $0.host = context.host }
         Self.appendToLog("\(message)\n", context.log)
     }
 
@@ -656,7 +688,8 @@ extension NexusEngine {
             throw RuntimeError.unsupported("WordPress needs MySQL or MariaDB. \(id) is \(instance.kind.displayName).")
         }
 
-        if !instance.running {
+        // An instance that starts now is active. runningClient waits for its port.
+        if await supervisor.state(of: id)?.isActive != true {
             _ = try await serialWeb { try await self.start(id) }
         }
 
@@ -667,8 +700,9 @@ extension NexusEngine {
         return NewSiteDatabase(instance: instance, name: name, account: try await account(of: tools))
     }
 
-    // WordPress without a choice gets the instance of "Set up WordPress": MySQL 8.4 when it runs,
-    // else the newest MySQL or MariaDB that runs (owner, 2026-11-06), else one that is installed.
+    // WordPress without a choice gets MySQL 8.4 (owner, 2026-11-06). Without it, the newest MySQL
+    // or MariaDB that runs, else one that is installed. MySQL 8.4 counts also while it starts, for
+    // example just after a start of nexusd. A stopped instance starts in newSiteDatabase.
     private func newSiteInstance(_ site: NewSite) async throws -> String? {
         if let id = site.database {
             return id
@@ -680,7 +714,7 @@ extension NexusEngine {
 
         let instances = await mysqlInstances()
 
-        guard let instance = Self.instanceForNewDatabase(in: instances) ?? instances.first(where: { $0.id == "mysql-8.4" }) ?? instances.first else {
+        guard let instance = instances.first(where: { $0.id == "mysql-8.4" }) ?? Self.instanceForNewDatabase(in: instances) ?? instances.first else {
             throw RuntimeError.unsupported("WordPress needs MySQL or MariaDB. Run: nexus install mysql 8.4")
         }
 
@@ -692,7 +726,7 @@ extension NexusEngine {
         return "\(instance.kind.displayName) \(line)"
     }
 
-    private func runLogged(_ command: Command, display: String, context: NewSiteContext, input: Data? = nil) async throws {
+    func runLogged(_ command: Command, display: String, context: NewSiteContext, input: Data? = nil) async throws {
         Self.appendToLog("$ \(display)\n", context.log)
         try await CommandRunner.run(command, appendingTo: context.log, input: input)
     }
@@ -716,7 +750,7 @@ extension NexusEngine {
         try? Data(text.replacingOccurrences(of: secret, with: "…").utf8).write(to: log, options: .atomic)
     }
 
-    private static func phpBinary(_ php: InstalledRuntime) -> URL {
+    static func phpBinary(_ php: InstalledRuntime) -> URL {
         php.folder.appending(path: "bin/php")
     }
 

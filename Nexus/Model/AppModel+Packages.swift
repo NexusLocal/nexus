@@ -345,6 +345,8 @@ extension AppModel {
             return "Saving a dump of \(name)"
         case .createSite(let name, let template):
             return "Creating \(name) with \(template.displayName)"
+        case .importSite(let name):
+            return "Importing \(name) from a backup"
         }
     }
 
@@ -358,6 +360,8 @@ extension AppModel {
             title(of: task)
         case .createSite(let name, _):
             "Creating \(name)"
+        case .importSite(let name):
+            "Importing \(name)"
         }
     }
 
