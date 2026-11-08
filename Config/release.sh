@@ -16,9 +16,16 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d)"
 BUILD="$(git -C "$ROOT" rev-list --count HEAD)"
 DMG="$WORK/release/Nexus.dmg"
+# The GitHub page of the release and the update window of the app show these notes.
+NOTES="$ROOT/Config/ReleaseNotes/$VERSION.md"
 
 if [ -n "$MODE" ] && [ "$MODE" != "--test" ]; then
     echo "Unknown option $MODE. The only option is --test."
+    exit 1
+fi
+
+if [ ! -f "$NOTES" ]; then
+    echo "Write the release notes first: $NOTES"
     exit 1
 fi
 
@@ -57,8 +64,22 @@ codesign --sign "Developer ID Application" --timestamp "$DMG"
 xcrun notarytool submit "$DMG" --keychain-profile nexus-notary --wait
 xcrun stapler staple "$DMG"
 
+# A crash report in Sentry shows files and lines only with the debug symbols of this build. The
+# token is the Keychain item "nexus-sentry". Without it, the release goes on without the upload.
+SENTRY_TOKEN="$(security find-generic-password -s nexus-sentry -w 2>/dev/null || true)"
+
+if [ -n "$SENTRY_TOKEN" ] && command -v sentry-cli > /dev/null; then
+    SENTRY_AUTH_TOKEN="$SENTRY_TOKEN" sentry-cli debug-files upload --org nexuslocal --project nexus "$WORK/Nexus.xcarchive/dSYMs"
+else
+    echo "Warning: no upload of the debug symbols to Sentry. Install sentry-cli and add the Keychain item nexus-sentry."
+fi
+
+# generate_appcast takes the release notes from a file with the name of the archive.
+cp "$NOTES" "$WORK/release/Nexus.md"
+
 "$WORK/derived/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast" \
     --download-url-prefix "https://github.com/$REPOSITORY/releases/download/v$VERSION/" \
+    --embed-release-notes \
     "$WORK/release"
 
 if [ "$MODE" = "--test" ]; then
@@ -69,6 +90,6 @@ fi
 gh release create "v$VERSION" "$DMG" "$WORK/release/appcast.xml" \
     --repo "$REPOSITORY" \
     --title "Nexus $VERSION" \
-    --generate-notes
+    --notes-file "$NOTES"
 
 echo "Published https://github.com/$REPOSITORY/releases/tag/v$VERSION"
