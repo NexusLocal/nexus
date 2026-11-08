@@ -17,27 +17,36 @@ public enum ConfigError: Error, Equatable, CustomStringConvertible {
 
 // What answers the requests of a site. PHP runs in nginx through php-fpm, or in Apache behind
 // nginx. A Node.js app that Nexus starts listens on a port of this Mac. A proxy site gets its
-// requests from nginx at its address.
+// requests from nginx at its address. A notice is a page of nginx that says why the site runs no
+// PHP, for example a workspace of WordPress that Nexus cannot isolate yet (Phase 4, 3a).
 public enum WebBackend: Sendable, Equatable {
     case php(server: WebServer, documentRoot: URL, socket: URL)
     case app(port: Int, framework: NodeFramework?)
     case proxy(address: String)
+    case notice(title: String, text: String)
 }
 
-// A site as the web servers see it: every name, the backend and the files that it needs.
+// A site as the web servers see it: every name, the backend and the files that it needs. A
+// WordPress site gets the rules of WordPress in nginx.
 public struct WebSite: Sendable, Equatable {
     public let hosts: [String]
     public let backend: WebBackend
     public let certificate: URL
     public let key: URL
     public let accessLog: URL
+    public let project: PHPProjectType
 
-    public init(hosts: [String], backend: WebBackend, certificate: URL, key: URL, accessLog: URL) {
+    public init(hosts: [String], backend: WebBackend, certificate: URL, key: URL, accessLog: URL, project: PHPProjectType = .other) {
         self.hosts = hosts
         self.backend = backend
         self.certificate = certificate
         self.key = key
         self.accessLog = accessLog
+        self.project = project
+    }
+
+    public var isWordPress: Bool {
+        project.isWordPress
     }
 
     public var usesApache: Bool {

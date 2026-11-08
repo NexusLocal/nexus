@@ -2,9 +2,13 @@ import Foundation
 
 public struct NexusPaths: Sendable, Equatable {
     public let root: URL
+    // The folder for a link to a phar without a space in its path (nexus wp). nexusd and the nexus
+    // command run as the same user. So they have the same temporary folder.
+    public let pharLinks: URL
 
-    public init(root: URL) {
+    public init(root: URL, pharLinks: URL = FileManager.default.temporaryDirectory) {
         self.root = root
+        self.pharLinks = pharLinks
     }
 
     public static var standard: NexusPaths {
@@ -71,6 +75,11 @@ public struct NexusPaths: Sendable, Equatable {
 
     public func phpConfigFolder(line: String) -> URL {
         config.appending(path: "php/\(line)", directoryHint: .isDirectory)
+    }
+
+    // The PHP settings that only nexus wp reads, after the conf.d folder of the PHP version.
+    public var wpCLIConfigFolder: URL {
+        config.appending(path: "wp-cli/conf.d", directoryHint: .isDirectory)
     }
 
     public func phpSocket(line: String) -> URL {

@@ -454,6 +454,11 @@ extension NexusEngine {
             workspace.configurationDigest = nil
             workspace.mainConfigurationDigest = nil
             workspace.ports = workspacePorts(for: Self.textsWithPorts(of: sites, preset: []), of: workspace, state: state)
+
+            if Self.isWordPress(sites) {
+                workspace.state = Self.wordPressWorkspaceState
+            }
+
             try await recordAssignments(of: workspace, key: key)
             return nil
         }
@@ -591,8 +596,11 @@ extension NexusEngine {
         return text
     }
 
+    // attributesOfItem reads a symbolic link itself, which has 0755. The file behind the link has the
+    // permissions that count.
     static func permissions(of file: String) -> Int {
-        (try? FileManager.default.attributesOfItem(atPath: file))?[.posixPermissions] as? Int ?? 0o600
+        let target = URL(filePath: file).resolvingSymlinksInPath().path(percentEncoded: false)
+        return (try? FileManager.default.attributesOfItem(atPath: target))?[.posixPermissions] as? Int ?? 0o600
     }
 
     func configuration(of site: Site, folder: String) async throws -> LaravelConfiguration {

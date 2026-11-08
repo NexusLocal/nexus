@@ -166,7 +166,7 @@ private struct GeneralSettings: View {
                         .padding(.bottom, 4)
                     }
 
-                    Text("Nexus adds one line at the end of ~/.zshrc. php, composer, node and npm in your terminal then use the versions of the site in the current folder. Turn it off to remove the line.")
+                    Text("Nexus adds one line at the end of ~/.zshrc. php, composer, node, npm and wp in your terminal then use the versions of the site in the current folder. Turn it off to remove the line.")
 
                     if model.pathSetting == .notLast {
                         Text("Another line comes after the line of Nexus in ~/.zshrc. That line can put another PHP first on the PATH. Turn the setting off and on to move the line of Nexus to the end.")
@@ -326,11 +326,58 @@ private struct SitesSettings: View {
             } header: {
                 Text("Defaults for new sites")
             } footer: {
-                Text("A new site starts with these values. A change here does not change the sites that you already have.")
+                Text("A new Laravel site or another new site starts with these values. A change here does not change the sites that you already have.")
+            }
+
+            Section {
+                Picker("Webserver", selection: wordPressServer) {
+                    Text("nginx").tag(WebServer.nginx.rawValue)
+                    Text("Apache").tag(WebServer.apache.rawValue)
+                }
+
+                Picker("PHP", selection: wordPressPHP) {
+                    Text("Newest installed").tag("newest")
+                    ForEach(wordPressPHPChoices, id: \.self) { line in
+                        Text(model.installedPHPVersions.contains(line) ? "PHP \(line)" : "PHP \(line) (not installed)").tag(line)
+                    }
+                }
+            } header: {
+                Text("WordPress")
+            } footer: {
+                Text("A new WordPress site starts with these values. Plugins write their rules into .htaccess, which only Apache reads. Many plugins are not tested on PHP 8.5 yet.")
             }
         }
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // A new WordPress site gets its own webserver and PHP version (owner, 2026-11-06). A PHP version
+    // that is not installed stays in the list. nexusd then gives the PHP version of a new site.
+    private var wordPressServer: Binding<String> {
+        Binding(
+            get: { model.siteDefaults.forWordPress.server.rawValue },
+            set: { value in
+                var defaults = model.siteDefaults
+                defaults.wordPress = WordPressDefaults(server: WebServer(rawValue: value) ?? .apache, php: defaults.forWordPress.php)
+                model.setSiteDefaults(defaults)
+            }
+        )
+    }
+
+    private var wordPressPHP: Binding<String> {
+        Binding(
+            get: { model.siteDefaults.forWordPress.php ?? "newest" },
+            set: { value in
+                var defaults = model.siteDefaults
+                defaults.wordPress = WordPressDefaults(server: defaults.forWordPress.server, php: value == "newest" ? nil : value)
+                model.setSiteDefaults(defaults)
+            }
+        )
+    }
+
+    private var wordPressPHPChoices: [String] {
+        let chosen = model.siteDefaults.forWordPress.php.map { [$0] } ?? []
+        return Array(Set(model.installedPHPVersions + chosen)).sorted { $0.compare($1, options: .numeric) == .orderedAscending }
     }
 }
 

@@ -308,6 +308,16 @@ public actor NexusEngine {
                 return .configuration(try await probeConfiguration(folder: folder, php: php))
             case .workspaceEnv(let host):
                 return .workspaceEnv(try await workspaceEnvPreview(host: host))
+            case .wordPressSite(let host):
+                return .wordPressSite(try await wordPressSite(host: host))
+            case .setUpWordPress(let host, let database, let instance):
+                return .done(message: try await setUpWordPress(host: host, database: database, instance: instance))
+            case .createWordPressDatabase(let host):
+                return .done(message: try await createWordPressDatabase(host: host))
+            case .setWordPressDBHost(let host, let value):
+                return .done(message: try await setWordPressDBHost(host: host, value: value))
+            case .turnOffMailPlugins(let host, let folders):
+                return .done(message: try await turnOffMailPlugins(host: host, folders: folders))
             case .backgroundPreset(let host):
                 return .backgroundPreset(try await backgroundPreset(host: host))
             case .retryWorkspace(let host, let name):
@@ -350,6 +360,8 @@ public actor NexusEngine {
             return .invalidSettings(settings)
         } catch let stopped as TaskStopped {
             return .stopped(message: stopped.description)
+        } catch let missing as ToolNotInstalled {
+            return .toolNotInstalled(message: missing.description)
         } catch {
             return .failure(message: String(describing: error))
         }
@@ -1241,7 +1253,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings: true
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .turnOffMailPlugins: true
         default: false
         }
     }

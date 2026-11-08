@@ -13,6 +13,26 @@ struct SiteMailSection: View {
     @State private var changing = false
     @State private var asksToSend = false
     @State private var asksToRestore = false
+    @State private var asksToTurnOff = false
+
+    // The design of a WordPress site is "Site Mail Section · WordPress" in nexus.pen (Phase 4, 3h).
+    private var pluginsToTurnOff: [WordPressMailPlugin] {
+        mail?.mailPlugins.filter(\.canTurnOff) ?? []
+    }
+
+    private var pluginNames: String {
+        EnglishList.joined(pluginsToTurnOff.map(\.name))
+    }
+
+    // A theme or a file that also sends mail stays on after the click.
+    private var turnOffText: String {
+        let rest = (mail?.mailPlugins ?? []).filter { !$0.canTurnOff }
+        let after = rest.isEmpty
+            ? " WordPress then gives each mail to PHP. Nexus catches it there."
+            : " \(EnglishList.joined(rest.map(\.description)).prefix(1).uppercased())\(EnglishList.joined(rest.map(\.description)).dropFirst()) can still send mail itself."
+
+        return "WP-CLI turns off the \(pluginsToTurnOff.count == 1 ? "plugin" : "plugins") in this copy of the site.\(after) The live site does not change."
+    }
 
     var body: some View {
         Section {
@@ -46,6 +66,15 @@ struct SiteMailSection: View {
                         .fixedSize()
                         .disabled(changing)
                     }
+
+                    if !pluginsToTurnOff.isEmpty {
+                        Button("Turn off \(pluginNames)…") {
+                            asksToTurnOff = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .fixedSize()
+                        .disabled(changing)
+                    }
                 }
             }
         } header: {
@@ -67,7 +96,7 @@ struct SiteMailSection: View {
                 Text(footer)
             }
         }
-        .task(id: "\(site.host) \(site.php) \(site.kind.rawValue)") {
+        .task(id: "\(site.host) \(site.php) \(site.kind.rawValue) \(model.wordPressChanges)") {
             await load()
         }
         .sheet(isPresented: $asksToSend) {
@@ -82,6 +111,15 @@ struct SiteMailSection: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Nexus puts back the old values from the comment lines in the .env. It removes the keys that it added. The mail of this site then goes where it went before Nexus.")
+        }
+        .alert("Turn off \(pluginNames) in this copy of \(site.host)?", isPresented: $asksToTurnOff) {
+            Button("Turn off") {
+                let folders = pluginsToTurnOff.map(\.folder)
+                change { await model.turnOffMailPlugins(site, folders: folders) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(turnOffText)
         }
     }
 
@@ -105,7 +143,13 @@ struct SiteMailSection: View {
         return site.kind == .node ? "No SMTP keys in the env files" : "Not the inbox of Nexus"
     }
 
+    // A workspace of a WordPress site runs no PHP until it is isolated (Phase 4, 3e). So it sends no
+    // mail yet.
     private var footer: String {
+        if site.isWordPress {
+            return "WordPress gives each mail to PHP. PHP gives it to Nexus. Each mail gets the tag \(site.host) in the inbox."
+        }
+
         let oldSettings = mail?.canRestore == true ? " The .env keeps the old mail settings as comment lines." : ""
         return "Each mail of this site gets the tag \(site.host) in the inbox.\(oldSettings) A workspace of this site always sends its mail to Nexus, with the host of the workspace as its tag."
     }

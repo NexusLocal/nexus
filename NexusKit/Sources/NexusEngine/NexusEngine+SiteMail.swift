@@ -29,6 +29,10 @@ extension NexusEngine {
                 return SiteMail(sendsToNexus: route == .nexus, warning: route?.warning, destination: route?.destination)
             }
 
+            if site.kind == .php, PHPProject.type(of: site).isWordPress {
+                return await wordPressMail(host: site.host)
+            }
+
             guard site.kind == .php, let root = laravelRoot(of: site) else {
                 return SiteMail(sendsToNexus: site.kind == .php)
             }
@@ -137,10 +141,13 @@ extension NexusEngine {
         return file
     }
 
-    private static func write(_ text: String, to file: String) throws {
-        let permissions = permissions(of: file)
-        try Data(text.utf8).write(to: URL(filePath: file), options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: file)
+    // The file keeps its permissions. wp-config.php often has 0600 or 0640. A symbolic link stays a
+    // link, and the change goes into the file that it points to.
+    static func write(_ text: String, to file: String) throws {
+        let target = URL(filePath: file).resolvingSymlinksInPath().path(percentEncoded: false)
+        let permissions = permissions(of: target)
+        try Data(text.utf8).write(to: URL(filePath: target), options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: target)
     }
 
     private func laravelRoot(of site: Site) -> URL? {

@@ -302,7 +302,7 @@ extension NexusEngine {
             return [:]
         }
 
-        let (_, conflicts, sitesOfRecord) = workspaceSites(state)
+        let (_, conflicts, sitesOfRecord, _) = workspaceSites(state)
         var wanted = await workspaceServerProcesses(state)
 
         let hasMainSwitch = { (key: String) in sitesOfRecord[key]?.contains(where: \.runsMainProcesses) == true }
@@ -332,7 +332,7 @@ extension NexusEngine {
     // sites holds each site of the project, so {host} and the log are the same as in the setup.
     // running holds the sites with their switch on.
     private func backgroundProcesses(of workspace: Workspace, sites: [Site], running: [Site], key: String, tld: String) async -> [BackgroundProcess] {
-        guard workspace.state == .ready, let preset = workspace.backgroundPreset, FileManager.default.fileExists(atPath: "\(workspace.worktree)/.git") else {
+        guard workspace.state == .ready, !Self.isWordPress(sites), let preset = workspace.backgroundPreset, FileManager.default.fileExists(atPath: "\(workspace.worktree)/.git") else {
             return []
         }
 

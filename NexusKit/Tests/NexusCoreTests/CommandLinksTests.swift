@@ -13,7 +13,7 @@ struct CommandLinksTests {
 
         try CommandLinks.write(in: bin, command: command)
 
-        for name in ["nexus", "php", "composer", "node", "npm"] {
+        for name in ["nexus", "php", "composer", "node", "npm", "wp"] {
             #expect(try FileManager.default.destinationOfSymbolicLink(atPath: bin.appending(path: name).path(percentEncoded: false)) == command.path(percentEncoded: false))
         }
     }

@@ -88,20 +88,21 @@ extension AppModel {
 
         let installed = Dictionary(installedRuntimes.map { ("\($0.name)-\($0.line)", $0) }, uniquingKeysWith: { first, _ in first })
         let offered = Set(manifestPackages.map(\.id))
-        let installedPHP = installedRuntimes.filter { $0.name == "php" }.count
 
         var items = manifestPackages.map { package in
-            packageItem(name: package.name, line: package.line, offered: package, installed: installed[package.id], installedPHP: installedPHP)
+            packageItem(name: package.name, line: package.line, offered: package, installed: installed[package.id])
         }
 
         for runtime in installedRuntimes where !offered.contains("\(runtime.name)-\(runtime.line)") {
-            items.append(packageItem(name: runtime.name, line: runtime.line, offered: nil, installed: runtime, installedPHP: installedPHP))
+            items.append(packageItem(name: runtime.name, line: runtime.line, offered: nil, installed: runtime))
         }
 
         packages = items
     }
 
-    private func packageItem(name: String, line: String, offered: ManifestPackage?, installed: InstalledRuntime?, installedPHP: Int) -> PackageItem {
+    // Only nginx is required, because every site runs behind it (D56). A user of only Node.js needs
+    // no PHP and no Composer. nexusd refuses to remove a PHP version that a site uses.
+    private func packageItem(name: String, line: String, offered: ManifestPackage?, installed: InstalledRuntime?) -> PackageItem {
         let version = installed?.version ?? offered?.version ?? ""
         let task = tasks.first { task in
             guard case .install(let taskName, let taskLine, _, _) = task.work else {
@@ -132,7 +133,7 @@ extension AppModel {
             version: version,
             state: state,
             lts: offered?.lts ?? false,
-            required: name == "nginx" || name == "composer" || name == "php" && installed != nil && installedPHP == 1,
+            required: name == "nginx",
             taskID: task?.id,
             downloadSize: offered?.size
         )
@@ -154,7 +155,7 @@ extension AppModel {
         case "postgresql": "PostgreSQL"
         case "redis": "Redis"
         case "mailpit": "Mail"
-        case "node", "composer": "Node and Composer"
+        case "node", "composer", "wp-cli": "Tools"
         default: "Other"
         }
     }
@@ -166,6 +167,7 @@ extension AppModel {
         case "composer": "Composer"
         case "node": "Node"
         case "mailpit": "Mailpit"
+        case "wp-cli": "WP-CLI"
         default: ServiceKind(package: name)?.title ?? name
         }
     }
@@ -175,7 +177,7 @@ extension AppModel {
     static func packageName(_ name: String, line: String, version: String = "") -> String {
         switch name {
         case "redis" where line == "8" && !version.isEmpty: "Redis \(version.split(separator: ".").prefix(2).joined(separator: "."))"
-        case "composer": "Composer"
+        case "composer", "wp-cli": packageTitle(name)
         default: "\(packageTitle(name)) \(line)"
         }
     }

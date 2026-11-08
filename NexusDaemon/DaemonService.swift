@@ -43,7 +43,7 @@ final class DaemonService: NSObject, NSXPCListenerDelegate, NexusDaemonXPCServic
                     activity.write("request", "\(decoded.activitySummary): \(response.activitySummary)")
                 }
             } else {
-                response = .failure(message: "nexusd could not read the request.")
+                response = .unreadableRequest
             }
 
             reply((try? NexusMessageCoding.encode(response)) ?? Data())

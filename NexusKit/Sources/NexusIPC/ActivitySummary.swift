@@ -24,7 +24,7 @@ extension NexusRequest {
     public var onlyReads: Bool {
         switch self {
         case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules,
-             .customSettings, .databases, .databaseSizes, .sourceDatabases, .workspaceEnv, .backgroundPreset,
+             .customSettings, .databases, .databaseSizes, .sourceDatabases, .workspaceEnv, .wordPressSite, .backgroundPreset,
              .workspaceSettings, .dumps, .probe, .tool:
             true
         case .lan(let enabled):

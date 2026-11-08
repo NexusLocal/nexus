@@ -74,14 +74,14 @@ extension NexusEngine {
     }
 
     // Why a site does not run, or nil when it can run. Only a PHP site needs PHP (D67).
-    static func problem(of site: Site, installed: [InstalledRuntime], checksNginx: Bool = true) -> String? {
+    static func problem(of site: Site, installed: [InstalledRuntime], checksNginx: Bool = true, layout: SiteLayout? = nil) -> String? {
         if checksNginx, !installed.contains(where: { $0.name == "nginx" }) {
             return "Every site needs nginx, and nginx is not installed. Run: nexus install nginx 1.30"
         }
 
         switch site.kind {
         case .php:
-            return phpProblem(of: site, installed: installed)
+            return phpProblem(of: site, installed: installed, documentRoot: layout?.documentRoot ?? site.documentRoot)
         case .node:
             return nodeProblem(of: site, installed: installed)
         case .proxy:
@@ -93,7 +93,7 @@ extension NexusEngine {
         }
     }
 
-    private static func phpProblem(of site: Site, installed: [InstalledRuntime]) -> String? {
+    private static func phpProblem(of site: Site, installed: [InstalledRuntime], documentRoot: URL) -> String? {
         guard installed.contains(where: { $0.name == "php" && $0.line == site.php }) else {
             return "PHP \(site.php) is not installed. Run: nexus install php \(site.php)"
         }
@@ -107,7 +107,7 @@ extension NexusEngine {
         }
 
         do {
-            try WebConfigPath.validate(site.documentRoot)
+            try WebConfigPath.validate(documentRoot)
         } catch {
             return String(describing: error)
         }
@@ -145,10 +145,13 @@ extension NexusEngine {
 
     // What the configuration of nginx and Apache takes from the sites. A new public folder in a
     // project changes its document root. appPorts holds the port of each Node.js app by its host.
-    static func signature(of sites: [Site], appPorts: [String: Int]) -> [String] {
+    // The type of a PHP project gives the rules of WordPress in nginx.
+    static func signature(of sites: [Site], appPorts: [String: Int], noticeHosts: Set<String>, layouts: [String: SiteLayout]) -> [String] {
         sites.map { site in
+            let layout = layouts[site.host] ?? SiteLayout(of: site)
             let backend = switch site.kind {
-            case .php: "\(site.documentRoot.path(percentEncoded: false)) \(site.php) \(site.server.rawValue)"
+            case .php where noticeHosts.contains(site.host): "notice"
+            case .php: "\(layout.documentRoot.path(percentEncoded: false)) \(site.php) \(site.server.rawValue) \(layout.projectType.rawValue)"
             case .node: "node \(appPorts[site.host].map(String.init) ?? "")"
             case .proxy: "proxy \(site.address ?? "")"
             }
@@ -223,10 +226,10 @@ extension NexusEngine {
         return port == 443 ? "https://\(host)" : "https://\(host):\(port)"
     }
 
-    private func webBackend(of site: Site, appPort: Int?) -> WebBackend? {
+    private func webBackend(of site: Site, appPort: Int?, documentRoot: URL) -> WebBackend? {
         switch site.kind {
         case .php:
-            .php(server: site.server, documentRoot: site.documentRoot, socket: paths.phpSocket(line: site.php))
+            .php(server: site.server, documentRoot: documentRoot, socket: paths.phpSocket(line: site.php))
         case .node:
             appPort.map { .app(port: $0, framework: site.nodeProject?.framework) }
         case .proxy:
@@ -246,19 +249,25 @@ extension NexusEngine {
         let appPorts = appPortsByHost(state, sites: ownSites)
         let installed = await installer.installedRuntimes()
         let apache = await newestRuntime(named: "httpd")
-        var plan = WebPlan(warnings: resolved.conflicts + workspaces.conflicts.values.sorted(), siteSignature: Self.signature(of: sites, appPorts: appPorts))
+        let layouts = SiteLayout.of(sites)
+        var plan = WebPlan(warnings: resolved.conflicts + workspaces.conflicts.values.sorted(), siteSignature: Self.signature(of: sites, appPorts: appPorts, noticeHosts: workspaces.noticeHosts, layouts: layouts))
         let root = sites.isEmpty ? nil : try certificateAuthority.root()
 
         // A site that cannot run is left out with a warning, so it does not stop the others.
         // Without nginx no site runs. The check below the loop says that. A workspace of a Node.js
         // app gets its port in its setup, and it waits for that port.
         for site in sites {
-            if let problem = Self.problem(of: site, installed: installed, checksNginx: false) {
+            let layout = layouts[site.host] ?? SiteLayout(of: site)
+
+            if let problem = Self.problem(of: site, installed: installed, checksNginx: false, layout: layout) {
                 plan.warnings.append("\(site.host) does not run. \(problem)")
                 continue
             }
 
-            guard let root, let backend = webBackend(of: site, appPort: appPorts[site.host]) else {
+            let runsNoPHP = workspaces.noticeHosts.contains(site.host)
+            let notice = WebBackend.notice(title: Self.wordPressWorkspaceTitle, text: Self.wordPressWorkspaceReason)
+
+            guard let root, let backend = runsNoPHP ? notice : webBackend(of: site, appPort: appPorts[site.host], documentRoot: layout.documentRoot) else {
                 continue
             }
 
@@ -268,10 +277,11 @@ extension NexusEngine {
                 backend: backend,
                 certificate: certificate.certificateFile,
                 key: certificate.keyFile,
-                accessLog: paths.siteLog(site.host)
+                accessLog: paths.siteLog(site.host),
+                project: layout.projectType
             ))
 
-            if site.kind == .php {
+            if site.kind == .php, !runsNoPHP {
                 plan.phpLines.insert(site.php)
             }
         }
@@ -597,40 +607,43 @@ extension NexusEngine {
         let git = hasRepositories ? await GitTool.executable() : nil
         let workspaces = workspaceSites(state, resolved: resolved.map(\.site))
         let appPorts = appPortsByHost(state, sites: resolved.map(\.site))
+        let layouts = SiteLayout.of(resolved.map(\.site))
         var sites: [SiteInfo] = []
 
         for (site, parked) in resolved {
             let key = ProjectFolder.workspaceKey(of: site)
             let nodeProject = site.kind == .node ? site.nodeProject : nil
+            let siteLayout = layouts[site.host] ?? SiteLayout(of: site)
 
             sites.append(SiteInfo(
                 hosts: site.hosts,
                 folder: Self.displayPath(site.folder),
-                documentRoot: Self.displayPath(site.documentRoot),
+                documentRoot: Self.displayPath(siteLayout.documentRoot),
                 php: site.php,
                 server: site.server,
                 parked: parked,
                 url: Self.url(for: site.host, in: state),
                 group: groups[site.host],
                 parkedFolder: Self.parkedFolder(of: site, in: state.parked).map { Self.displayPath($0.folder) },
-                problem: Self.problem(of: site, installed: installed) ?? applyProblem(of: site, appPorts: appPorts),
+                problem: Self.problem(of: site, installed: installed, layout: siteLayout) ?? applyProblem(of: site, appPorts: appPorts, noticeHosts: [], layout: siteLayout),
                 projectNode: site.node == nil ? NodeLines.choose(hint: nodeHint(of: site.folder), installed: nodeLines) : nil,
                 nodeSetting: site.node,
                 automaticWorkspaces: site.automaticWorkspaces ?? true,
-                workspaces: workspaceInfo(key: key, sitesOfRecord: workspaces.sitesOfRecord, conflicts: workspaces.conflicts, installed: installed, state: state, appPorts: appPorts),
-                workspaceProblem: ProjectFolder.repository(of: site) != nil && git == nil ? GitTool.missing : databaseRemovalProblem(ofSite: ProjectFolder.workspaceKey(of: site), in: state),
+                workspaces: workspaceInfo(key: key, sitesOfRecord: workspaces.sitesOfRecord, conflicts: workspaces.conflicts, noticeHosts: workspaces.noticeHosts, layouts: layouts, installed: installed, state: state, appPorts: appPorts),
+                workspaceProblem: ProjectFolder.repository(of: site) != nil && git == nil ? GitTool.missing : databaseRemovalProblem(ofSite: key, in: state),
                 workspaceKeys: site.workspaceKeys,
                 workspaceCommands: Self.commands(of: [site]),
                 backgroundCommands: site.backgroundCommands,
                 workspaceProcesses: site.runsWorkspaceProcesses,
                 mainProcesses: site.runsMainProcesses,
-                processProblems: processProblems[Self.processOwner(key: ProjectFolder.workspaceKey(of: site), workspace: nil)],
+                processProblems: processProblems[Self.processOwner(key: key, workspace: nil)],
                 runsAs: site.kind,
                 command: site.command,
                 address: site.address,
                 projectCommand: nodeProject?.command,
                 framework: nodeProject?.framework,
-                app: site.kind == .node ? appInfo(owner: Self.processOwner(key: key, workspace: nil), port: state.appPorts[key], host: site.host) : nil
+                app: site.kind == .node ? appInfo(owner: Self.processOwner(key: key, workspace: nil), port: state.appPorts[key], host: site.host) : nil,
+                projectType: site.kind == .php ? siteLayout.projectType : nil
             ))
         }
 
@@ -709,6 +722,12 @@ extension NexusEngine {
             defaults.node = try await nodeLine(node)
         }
 
+        if let php = defaults.wordPress?.php, php != current.forWordPress.php {
+            guard await runtime(named: "php", line: php) != nil else {
+                throw RuntimeError.unsupported("PHP \(php) is not installed. Run: nexus install php \(php)")
+            }
+        }
+
         try await stateStore.update { $0.siteDefaults = defaults }
         return "\(defaults.summary) The sites that exist do not change."
     }
@@ -731,7 +750,10 @@ extension NexusEngine {
         if let node = settings.node {
             site.node = try await nodeLine(node)
         }
-        site.php = try await phpLine(php, for: site.kind)
+
+        let defaults = await wordPressDefaults(for: site)
+        site.server = server ?? defaults.server ?? site.server
+        site.php = try await phpLine(php ?? defaults.php, for: site.kind)
         try checkUnique(site, in: state)
 
         let added = site
@@ -997,8 +1019,8 @@ extension NexusEngine {
     }
 
     // Nobody waits for an automatic change. So a failure shows at the site that it left out.
-    func applyProblem(of site: Site, appPorts: [String: Int]) -> String? {
-        guard let automaticWebFailure, appliedSites?.contains(Self.signature(of: [site], appPorts: appPorts)[0]) != true else {
+    func applyProblem(of site: Site, appPorts: [String: Int], noticeHosts: Set<String>, layout: SiteLayout?) -> String? {
+        guard let automaticWebFailure, appliedSites?.contains(Self.signature(of: [site], appPorts: appPorts, noticeHosts: noticeHosts, layouts: layout.map { [site.host: $0] } ?? [:])[0]) != true else {
             return nil
         }
 
@@ -1007,7 +1029,9 @@ extension NexusEngine {
 
     private func webSignature(_ state: EngineState) -> [String] {
         let ownSites = resolvedSites(state).map(\.site)
-        return Self.signature(of: ownSites + workspaceSites(state, resolved: ownSites).sites, appPorts: appPortsByHost(state, sites: ownSites))
+        let workspaces = workspaceSites(state, resolved: ownSites)
+        let sites = ownSites + workspaces.sites
+        return Self.signature(of: sites, appPorts: appPortsByHost(state, sites: ownSites), noticeHosts: workspaces.noticeHosts, layouts: SiteLayout.of(sites))
     }
 
     func lan(_ enabled: Bool?) async throws -> String {
@@ -1032,6 +1056,21 @@ extension NexusEngine {
         }
 
         return ([summary] + warnings).joined(separator: "\n")
+    }
+
+    // A new WordPress site gets the WordPress values of Settings > Sites, by default Apache and
+    // PHP 8.4, when they are installed (owner, 2026-11-06). A choice in the request wins.
+    func wordPressDefaults(for site: Site) async -> (server: WebServer?, php: String?) {
+        guard PHPProject.type(of: site).isWordPress else {
+            return (nil, nil)
+        }
+
+        let installed = await installer.installedRuntimes()
+
+        return await stateStore.current().siteDefaults.forWordPress.installed(
+            phpLines: installed.filter { $0.name == "php" }.map(\.line),
+            hasApache: Self.newest("httpd", in: installed) != nil
+        )
     }
 
     // A Node.js app or a proxy site keeps a PHP version for a later change to a PHP site. It needs no

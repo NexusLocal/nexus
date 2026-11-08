@@ -47,6 +47,8 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let projectCommand: String?
     public let framework: NodeFramework?
     public let app: AppProcessInfo?
+    // The type of a PHP site (Phase 4, 3a). nexusd of 0.1.1 sends none.
+    public let projectType: PHPProjectType?
 
     public init(
         hosts: [String],
@@ -75,7 +77,8 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         address: String? = nil,
         projectCommand: String? = nil,
         framework: NodeFramework? = nil,
-        app: AppProcessInfo? = nil
+        app: AppProcessInfo? = nil,
+        projectType: PHPProjectType? = nil
     ) {
         self.hosts = hosts
         self.folder = folder
@@ -104,6 +107,7 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         self.projectCommand = projectCommand
         self.framework = framework
         self.app = app
+        self.projectType = projectType
     }
 
     public var node: String? {
@@ -246,12 +250,16 @@ public struct ToolCommand: Codable, Sendable, Equatable {
     public let arguments: [String]
     public let environment: [String: String]
     public let path: [String]
+    // The core folder of WordPress for nexus wp. The nexus command adds it as --path, because only
+    // the nexus command sees the arguments of the user (Phase 4, 3c).
+    public var wordPressCore: String?
 
-    public init(executable: String, arguments: [String] = [], environment: [String: String] = [:], path: [String] = []) {
+    public init(executable: String, arguments: [String] = [], environment: [String: String] = [:], path: [String] = [], wordPressCore: String? = nil) {
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
         self.path = path
+        self.wordPressCore = wordPressCore
     }
 }
 
@@ -706,6 +714,15 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case probe(folder: String, php: String?)
     // What the .env of each workspace of this site gets, with {workspace} in the values.
     case workspaceEnv(host: String)
+    // The configuration and the database of a WordPress site (Phase 4, 3b), and the three actions of
+    // its Site screen.
+    case wordPressSite(host: String)
+    // The values that the user confirmed. nexusd refuses when they are not true any more.
+    case setUpWordPress(host: String, database: String, instance: String)
+    case createWordPressDatabase(host: String)
+    case setWordPressDBHost(host: String, value: String)
+    // The plugins that the user confirmed (Phase 4, 3h).
+    case turnOffMailPlugins(host: String, folders: [String])
     // The background processes of a site that the user did not change (D52).
     case backgroundPreset(host: String)
     case retryWorkspace(host: String, name: String)
@@ -748,8 +765,10 @@ public struct SiteMail: Codable, Sendable, Equatable {
     public let destination: String?
     public let changes: [EnvKeyChange]
     public let canRestore: Bool
+    // The active plugins of a WordPress site that send the mail themselves (Phase 4, 3h).
+    public let mailPlugins: [WordPressMailPlugin]
 
-    public init(sendsToNexus: Bool, warning: String? = nil, canSendToNexus: Bool = false, problem: String? = nil, destination: String? = nil, changes: [EnvKeyChange] = [], canRestore: Bool = false) {
+    public init(sendsToNexus: Bool, warning: String? = nil, canSendToNexus: Bool = false, problem: String? = nil, destination: String? = nil, changes: [EnvKeyChange] = [], canRestore: Bool = false, mailPlugins: [WordPressMailPlugin] = []) {
         self.sendsToNexus = sendsToNexus
         self.warning = warning
         self.canSendToNexus = canSendToNexus
@@ -757,6 +776,7 @@ public struct SiteMail: Codable, Sendable, Equatable {
         self.destination = destination
         self.changes = changes
         self.canRestore = canRestore
+        self.mailPlugins = mailPlugins
     }
 
     // A nexusd of an older build sends no changes and no canRestore until it restarts.
@@ -769,6 +789,40 @@ public struct SiteMail: Codable, Sendable, Equatable {
         destination = try container.decodeIfPresent(String.self, forKey: .destination)
         changes = try container.decodeIfPresent([EnvKeyChange].self, forKey: .changes) ?? []
         canRestore = try container.decodeIfPresent(Bool.self, forKey: .canRestore) ?? false
+        mailPlugins = try container.decodeIfPresent([WordPressMailPlugin].self, forKey: .mailPlugins) ?? []
+    }
+}
+
+// A plugin, a mu-plugin, a theme or another file that can send the mail of WordPress itself. certain
+// is false for code that only answers pre_wp_mail. Such code can also block each mail, as a plugin
+// for a staging site does. WP-CLI can turn off only a plugin. A network plugin of a multisite needs
+// --network.
+public struct WordPressMailPlugin: Codable, Sendable, Hashable {
+    public let folder: String
+    public let name: String
+    public let kind: WordPressMailPlugins.SourceKind
+    public let certain: Bool
+
+    public init(folder: String, name: String, kind: WordPressMailPlugins.SourceKind, certain: Bool = true) {
+        self.folder = folder
+        self.name = name
+        self.kind = kind
+        self.certain = certain
+    }
+
+    public var canTurnOff: Bool {
+        certain && (kind == .plugin || kind == .networkPlugin)
+    }
+
+    // "the plugin WP Mail SMTP", "the theme shop", "the file mailer in mu-plugins" or "the file
+    // vendor/mailer.php".
+    public var description: String {
+        switch kind {
+        case .plugin, .networkPlugin: "the plugin \(name)"
+        case .mustUse: "the file \(name) in mu-plugins"
+        case .theme: "the theme \(name)"
+        case .other: "the file \(name)"
+        }
     }
 }
 
@@ -836,13 +890,60 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case stopped(message: String)
     case failure(message: String)
     case tool(ToolCommand)
+    // Nexus has no package of the tool. A link in bin/ then runs the next program on the PATH.
+    case toolNotInstalled(message: String)
     case configuration(LaravelConfiguration)
+    case wordPressSite(WordPressSiteInfo)
     case workspaceEnv([WorkspaceEnvKey])
     case workspaceSettings(WorkspaceSettings)
     case dumps([DatabaseDump])
     case backgroundPreset([String])
     case mailStatus(MailStatus)
     case siteMail(SiteMail)
+}
+
+// What the Site screen of a WordPress site shows (Phase 4, 3b). configFile is nil without a
+// wp-config.php, and for Bedrock it names the .env. instance is the Nexus instance that DB_HOST
+// names. databaseExists is nil when Nexus cannot check it, for example on a stopped instance. home
+// and siteURL come from the options table of the database. The password is not in it. Without a
+// wp-config.php, setUpDatabase and setUpInstance say what "Set up WordPress" makes.
+// suggestedDBHost is the value that "Set DB_HOST" writes.
+public struct WordPressSiteInfo: Codable, Sendable, Equatable {
+    public let type: PHPProjectType
+    public let version: String?
+    public let configFile: String?
+    public let database: String?
+    public let dbHost: String?
+    public let instance: String?
+    public let databaseExists: Bool?
+    public let home: String?
+    public let siteURL: String?
+    public let problem: String?
+    public let setUpDatabase: String?
+    public let setUpInstance: String?
+    public let suggestedDBHost: String?
+
+    public init(type: PHPProjectType, version: String? = nil, configFile: String? = nil, database: String? = nil, dbHost: String? = nil, instance: String? = nil, databaseExists: Bool? = nil, home: String? = nil, siteURL: String? = nil, problem: String? = nil, setUpDatabase: String? = nil, setUpInstance: String? = nil, suggestedDBHost: String? = nil) {
+        self.setUpDatabase = setUpDatabase
+        self.setUpInstance = setUpInstance
+        self.suggestedDBHost = suggestedDBHost
+        self.type = type
+        self.version = version
+        self.configFile = configFile
+        self.database = database
+        self.dbHost = dbHost
+        self.instance = instance
+        self.databaseExists = databaseExists
+        self.home = home
+        self.siteURL = siteURL
+        self.problem = problem
+    }
+}
+
+extension NexusResponse {
+    // nexusd sends this when it cannot read a request. An example is nexus wp to the nexusd of
+    // 0.1.1 after an update, until the app starts the new nexusd. Keep the text the same.
+    public static let unreadableRequest = NexusResponse.failure(message: "nexusd could not read the request.")
 }
 
 public enum NexusMessageCoding {

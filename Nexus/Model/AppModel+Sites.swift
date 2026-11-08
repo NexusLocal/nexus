@@ -34,7 +34,8 @@ extension SiteItem {
             address: info.address,
             projectCommand: info.projectCommand,
             framework: info.framework,
-            app: info.app
+            app: info.app,
+            projectType: info.projectType
         )
     }
 }
@@ -95,7 +96,8 @@ extension AppModel {
         siteList?.defaults ?? SiteDefaults(
             server: WebServer(rawValue: settings.defaultServer) ?? .nginx,
             php: settings.defaultPHP == "newest" ? nil : settings.defaultPHP,
-            node: settings.defaultNode
+            node: settings.defaultNode,
+            wordPress: settings.defaultWordPress
         )
     }
 
@@ -105,6 +107,7 @@ extension AppModel {
             settings.defaultServer = defaults.server.rawValue
             settings.defaultPHP = defaults.php ?? "newest"
             settings.defaultNode = defaults.node
+            settings.defaultWordPress = defaults.forWordPress
             return
         }
 

@@ -184,8 +184,14 @@ struct SiteItem: Identifiable, Hashable {
     var projectCommand: String?
     var framework: NodeFramework?
     var app: AppProcessInfo?
+    // The type of a PHP site (Phase 4, 3a). A WordPress site has no .env.
+    var projectType: PHPProjectType?
 
     var id: String { host }
+
+    var isWordPress: Bool {
+        kind == .php && projectType?.isWordPress == true
+    }
 
     var node: String? {
         nodeSetting ?? projectNode?.line

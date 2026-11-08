@@ -1,6 +1,6 @@
 import Foundation
 
-// The site that holds a folder, for nexus php, composer, node and npm (D38). root is the project
+// The site that holds a folder, for nexus php, composer, node, npm and wp (D38). root is the project
 // folder of the site in the checkout of that folder. In a git worktree, root is in the worktree,
 // because the worktree has its own files such as .nvmrc.
 public struct ProjectLocation: Sendable, Equatable {
@@ -65,24 +65,38 @@ public enum ProjectFolder {
         projectFolder(ofSiteFolder: site.folder)
     }
 
+    // A Bedrock site points at web/. Its project folder holds composer.json and wp-cli.yml one
+    // folder up (Phase 4, 3a).
     public static func projectFolder(ofSiteFolder folder: URL) -> String {
         let path = RealPath.of(folder)
+        let parent = (path as NSString).deletingLastPathComponent
 
-        guard (path as NSString).lastPathComponent == "public" else {
+        switch (path as NSString).lastPathComponent {
+        case "public":
+            let hasComposerFile = FileManager.default.fileExists(atPath: (parent as NSString).appendingPathComponent("composer.json"))
+            return hasComposerFile ? parent : path
+        case "web":
+            return PHPProject.isBedrock(URL(filePath: parent, directoryHint: .isDirectory)) ? parent : path
+        default:
             return path
         }
-
-        let parent = (path as NSString).deletingLastPathComponent
-        let hasComposerFile = FileManager.default.fileExists(atPath: (parent as NSString).appendingPathComponent("composer.json"))
-
-        return hasComposerFile ? parent : path
     }
 
     // The key of the workspace record of a site. It leaves out /public. So the key stays the same
-    // when composer.json comes or goes, and the sites of one project share a record.
+    // when composer.json comes or goes, and the sites of one project share a record. The web/
+    // folder of Bedrock is left out too.
     public static func workspaceKey(of site: Site) -> String {
         let path = RealPath.of(site.folder)
-        return (path as NSString).lastPathComponent == "public" ? (path as NSString).deletingLastPathComponent : path
+        let parent = (path as NSString).deletingLastPathComponent
+
+        switch (path as NSString).lastPathComponent {
+        case "public":
+            return parent
+        case "web" where PHPProject.isBedrock(URL(filePath: parent, directoryHint: .isDirectory)):
+            return parent
+        default:
+            return path
+        }
     }
 
     // The main checkout that holds a folder. A .git file means a worktree or a submodule. Their

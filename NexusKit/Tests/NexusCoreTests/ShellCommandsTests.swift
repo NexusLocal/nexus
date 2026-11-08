@@ -55,6 +55,6 @@ struct ShellCommandsTests {
     }
 
     @Test func theScriptAsksForEachTool() {
-        #expect(ShellCommands.script == "print -r -- nexus-shell-check; whence -v -- php composer node npm; true")
+        #expect(ShellCommands.script == "print -r -- nexus-shell-check; whence -v -- php composer node npm wp; true")
     }
 }

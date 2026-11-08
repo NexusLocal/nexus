@@ -74,7 +74,7 @@ extension AppModel {
         )
     }
 
-    private static func site(_ host: String, folder: String, server: String = "nginx", php: String = "8.4", aliases: [String] = [], group: String? = nil) -> SiteItem {
+    private static func site(_ host: String, folder: String, documentRoot: String? = nil, server: String = "nginx", php: String = "8.4", aliases: [String] = [], group: String? = nil) -> SiteItem {
         let parent = (folder as NSString).deletingLastPathComponent
         let parked = parent == "~/Sites"
         return SiteItem(
@@ -82,13 +82,14 @@ extension AppModel {
             aliases: aliases,
             group: group,
             folder: folder,
-            documentRoot: "\(folder)/public",
+            documentRoot: documentRoot ?? "\(folder)/public",
             server: server,
             php: php,
             url: "https://\(host):8443",
             parkedFolder: parked ? parent : nil,
             hasOwnSettings: !parked,
-            projectNode: NodeChoice(line: "22", reason: "from .nvmrc")
+            projectNode: NodeChoice(line: "22", reason: "from .nvmrc"),
+            projectType: .laravel
         )
     }
 
@@ -99,6 +100,16 @@ extension AppModel {
         site.projectCommand = "npm run dev"
         site.projectNode = NodeChoice(line: "24", reason: "from .nvmrc")
         site.app = AppProcessInfo(port: 19000, command: "npm run dev", state: .running(pid: 4242, since: .now.addingTimeInterval(-3600)), log: "~/Library/Application Support/Nexus/logs/app-store.test.log")
+        return site
+    }
+
+    private static var sampleWordPress: SiteItem {
+        var site = site("blog.test", folder: "~/Development/blog", documentRoot: "~/Development/blog", server: "apache", aliases: ["blog.local"])
+        site.projectType = .wordpress
+        site.backgroundCommands = []
+        site.workspaces = [
+            WorkspaceInfo(name: "fix", worktree: "~/Development/blog-fix", folder: "~/Development/blog-fix", branch: "fix", hosts: ["blog-fix.test"], state: .notIsolated("Nexus cannot isolate a WordPress site yet. The plugins and WP-Cron of this workspace would write into the database of the main site. So Nexus runs no PHP here. The page of the workspace says why.")),
+        ]
         return site
     }
 
@@ -122,7 +133,7 @@ extension AppModel {
             ])),
             .site(site("shop.test", folder: "~/Development/shop", aliases: ["www.shop.test"])),
             .site(site("crm.test", folder: "~/Development/crm", php: "8.5")),
-            .site(site("blog.test", folder: "~/Development/blog", aliases: ["blog.local"])),
+            .site(sampleWordPress),
             .site(sampleNodeApp),
             .site(sampleProxy),
             .parked(ParkedFolder(path: "~/Sites", sites: [
@@ -400,10 +411,12 @@ extension AppModel {
             package("Redis", "Redis 7.2", "7.2.11"),
             package("Redis", "Redis 8.2", "8.2.3", .installed),
             package("Redis", "Redis 8.10", "8.10.0"),
-            package("Node and Composer", "Node 22", "22.21.1", lts: true),
-            package("Node and Composer", "Node 24", "24.11.0", .update("24.11.1"), lts: true),
-            package("Node and Composer", "Node 26", "26.1.0"),
-            package("Node and Composer", "Composer", "2.9.2", .installed, required: true),
+            package("Mail", "Mailpit 1", "1.33.0", .installed),
+            package("Tools", "Node 22", "22.21.1", lts: true),
+            package("Tools", "Node 24", "24.11.0", .update("24.11.1"), lts: true),
+            package("Tools", "Node 26", "26.1.0"),
+            package("Tools", "Composer", "2.9.2", .installed),
+            package("Tools", "WP-CLI", "2.12.0"),
         ]
     }
 

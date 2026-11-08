@@ -1,0 +1,75 @@
+import Foundation
+import NexusCore
+import NexusIPC
+
+// Bedrock can set DB_HOST in .env.local. A .env reads as a file of Laravel. So a text names the
+// Bedrock project with it.
+extension WordPressSiteInfo {
+    var configName: String {
+        configFile.map { ($0 as NSString).lastPathComponent } ?? (type == .bedrock ? ".env" : "wp-config.php")
+    }
+
+    var configText: String {
+        type == .bedrock ? "the \(configName) of this Bedrock project" : configName
+    }
+
+    var configTextAtStart: String {
+        type == .bedrock ? "The \(configName) of this Bedrock project" : configName
+    }
+}
+
+// The configuration and the database of a WordPress site (Phase 4, 3b). The sample data gives the
+// state of the design "Site · WordPress".
+extension AppModel {
+    func wordPressSite(of site: SiteItem) async -> WordPressSiteInfo? {
+        guard isLive else {
+            return WordPressSiteInfo(
+                type: .wordpress,
+                version: "7.1.4",
+                configFile: "\(site.folder)/wp-config.php",
+                database: "blog",
+                dbHost: "127.0.0.1:13307",
+                instance: "mysql-8.4",
+                databaseExists: true,
+                home: site.url,
+                siteURL: site.url
+            )
+        }
+
+        guard case .answer(.wordPressSite(let info))? = await outcome(of: .wordPressSite(host: site.host)) else {
+            return nil
+        }
+
+        return info
+    }
+
+    func setUpWordPress(_ site: SiteItem, database: String, instance: String) async -> Bool {
+        await sendWordPressChange(.setUpWordPress(host: site.host, database: database, instance: instance), failure: "Nexus did not set up WordPress for \(site.host)")
+    }
+
+    func createWordPressDatabase(_ site: SiteItem) async -> Bool {
+        await sendWordPressChange(.createWordPressDatabase(host: site.host), failure: "Nexus did not make the database of \(site.host)")
+    }
+
+    func setWordPressDBHost(_ site: SiteItem, value: String) async -> Bool {
+        await sendWordPressChange(.setWordPressDBHost(host: site.host, value: value), failure: "DB_HOST of \(site.host) did not change")
+    }
+
+    func turnOffMailPlugins(_ site: SiteItem, folders: [String]) async -> Bool {
+        await sendWordPressChange(.turnOffMailPlugins(host: site.host, folders: folders), failure: "Nexus did not turn off the mail plugins of \(site.host)")
+    }
+
+    private func sendWordPressChange(_ request: NexusRequest, failure: String) async -> Bool {
+        guard isLive else {
+            return true
+        }
+
+        let changed = await perform(request, failure: failure, place: .window) != nil
+
+        if changed {
+            wordPressChanges += 1
+        }
+
+        return changed
+    }
+}

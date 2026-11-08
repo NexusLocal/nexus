@@ -170,6 +170,10 @@ public enum NginxConfig {
                 "        try_files $uri $uri/ /index.php?$query_string;",
                 "    }",
                 "",
+            ]
+            lines += site.project == .bedrock ? bedrockRules + [""] : []
+            lines += site.isWordPress ? wordPressRules + [""] : []
+            lines += [
                 "    location ~ \\.php(/|$) {",
                 "        fastcgi_split_path_info ^(.+?\\.php)(/.*)$;",
                 "        try_files $fastcgi_script_name =404;",
@@ -191,7 +195,10 @@ public enum NginxConfig {
                 "    }",
                 "",
             ]
-            lines += proxyLocation(to: "http://127.0.0.1:\(settings.apachePort)")
+            lines += site.isWordPress ? uploadsRule + [""] : []
+            lines += proxyLocation(to: "http://127.0.0.1:\(settings.apachePort)", redirect: "        proxy_redirect http://$http_host/ $scheme://$http_host/;")
+        case .notice(let title, let text):
+            lines += noticePage(title: title, text: text)
         // A dev server serves files in folders with a dot, for example node_modules/.vite. So
         // these sites get no rule for such folders.
         case .app(_, let framework):
@@ -203,6 +210,49 @@ public enum NginxConfig {
 
         lines.append("}")
         return lines
+    }
+
+    // A PHP file in the uploads must not run. A plugin with a bug can let a visitor upload one
+    // (A.0). PHP also runs the file of a path such as /uploads/shell.php/x. So the rule uses the
+    // pattern of the PHP location. nginx sits in front of Apache. So an Apache site gets this rule
+    // too. The uploads are in /wp-content/uploads, in /app/uploads of Bedrock and in /files of a
+    // multisite. A plugin can have a folder files with PHP of its own.
+    static let uploadsPattern = "^/(?:wp-content/uploads|app/uploads|(?:[^/]+/)?files)/.+\\.php(/|$)"
+
+    static let uploadsRule = [
+        "    location ~* \(uploadsPattern) {",
+        "        deny all;",
+        "    }",
+    ]
+
+    // WordPress links to /wp-admin/. Its pages break without the slash.
+    static let wordPressRules = [
+        "    location = /wp-admin {",
+        "        return 301 /wp-admin/;",
+        "    }",
+        "",
+    ] + uploadsRule
+
+    // Bedrock and Radicle keep WordPress in /wp. Apache gives a request for /wp-login.php to
+    // WordPress, which sends it on to /wp. nginx gives a missing PHP file a 404. So nginx sends
+    // these files to /wp itself.
+    static let bedrockRules = [
+        "    rewrite ^/(wp-[^/]+\\.php)$ /wp/$1 last;",
+    ]
+
+    // nginx reads a $ in the text as a variable. So the text has none.
+    static func noticePage(title: String, text: String) -> [String] {
+        let escaped = { (value: String) in
+            value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "$", with: "")
+        }
+
+        return [
+            "    location / {",
+            "        default_type text/html;",
+            "        add_header Cache-Control no-store always;",
+            "        return 503 \"<!doctype html><meta charset='utf-8'><title>\(escaped(title))</title><h1 style='font-family: -apple-system, sans-serif; font-size: 20px'>\(escaped(title))</h1><p style='font-family: -apple-system, sans-serif'>\(escaped(text))</p>\";",
+            "    }",
+        ]
     }
 
     // A Node.js app does not answer while it starts or after a crash, and Nexus starts it again.
@@ -221,8 +271,12 @@ public enum NginxConfig {
         "    }",
     ]
 
-    private static func proxyLocation(to address: String, origin: String? = nil) -> [String] {
+    // Apache sees plain HTTP from nginx. So a redirect of Apache, for example of a folder without
+    // a slash such as /wp-admin, names http:// with the HTTPS port. The redirect line of an Apache
+    // site gives such an address the scheme of the request.
+    private static func proxyLocation(to address: String, origin: String? = nil, redirect: String? = nil) -> [String] {
         let originLine = origin.map { ["        proxy_set_header Origin \($0);"] } ?? []
+        let redirectLine = redirect.map { [$0] } ?? []
 
         return [
             "    location / {",
@@ -234,7 +288,7 @@ public enum NginxConfig {
             "        proxy_set_header X-Forwarded-Port $server_port;",
             "        proxy_set_header Upgrade $http_upgrade;",
             "        proxy_set_header Connection $connection_upgrade;",
-        ] + originLine + [
+        ] + originLine + redirectLine + [
             "        proxy_read_timeout 300;",
             "    }",
         ]

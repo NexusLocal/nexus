@@ -123,35 +123,95 @@ public struct Site: Codable, Sendable, Equatable {
         return site
     }
 
-    // The document root is public/ when the folder has one, else the folder itself (D33).
+    // The document root is public/ when the folder has one, else the folder itself (D33). Radicle
+    // serves public/ too. Bedrock serves web/. A classic WordPress site without an index.php of
+    // its own serves the folder below it that holds WordPress (Phase 4, 3a).
     public var documentRoot: URL {
         let publicFolder = folder.appending(path: "public", directoryHint: .isDirectory)
-        var isDirectory: ObjCBool = false
+        let webFolder = folder.appending(path: "web", directoryHint: .isDirectory)
 
-        if FileManager.default.fileExists(atPath: publicFolder.path(percentEncoded: false), isDirectory: &isDirectory), isDirectory.boolValue {
+        if Self.isFolder(publicFolder) {
             return publicFolder
+        }
+
+        if PHPProject.isBedrock(folder), Self.isFolder(webFolder) {
+            return webFolder
+        }
+
+        if !Self.hasIndex(folder), let wordPress = PHPProject.wordPressFolder(in: folder), Self.hasIndex(wordPress) {
+            return wordPress
         }
 
         return folder
     }
+
+    private static func isFolder(_ folder: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: folder.path(percentEncoded: false), isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
+    private static func hasIndex(_ folder: URL) -> Bool {
+        FileManager.default.fileExists(atPath: folder.appending(path: "index.php").path(percentEncoded: false))
+    }
 }
 
 // The webserver, the PHP version and the Node version of a new site (D59). A PHP version of nil
-// is the newest installed one. A Node version of nil comes from the files of the project.
+// is the newest installed one. A Node version of nil comes from the files of the project. A new
+// WordPress site has its own webserver and PHP version. A state from before 2026-11-06 has none,
+// so it gets the values of WordPressDefaults.
 public struct SiteDefaults: Codable, Sendable, Equatable {
     public var server: WebServer
     public var php: String?
     public var node: String?
+    public var wordPress: WordPressDefaults?
 
-    public init(server: WebServer = .nginx, php: String? = nil, node: String? = nil) {
+    public init(server: WebServer = .nginx, php: String? = nil, node: String? = nil, wordPress: WordPressDefaults? = nil) {
         self.server = server
         self.php = php
         self.node = node
+        self.wordPress = wordPress
+    }
+
+    public var forWordPress: WordPressDefaults {
+        wordPress ?? WordPressDefaults()
     }
 
     public var summary: String {
         let node = node.map { "It gets Node \($0)." } ?? "Its Node version comes from the project."
-        return "A new site gets \(server.displayName) and \(php.map { "PHP \($0)" } ?? "the newest installed PHP version"). \(node)"
+        let wordPress = forWordPress
+        return "A new site gets \(server.displayName) and \(Self.phpText(php)). \(node) A new WordPress site gets \(wordPress.server.displayName) and \(Self.phpText(wordPress.php))."
+    }
+
+    private static func phpText(_ php: String?) -> String {
+        php.map { "PHP \($0)" } ?? "the newest installed PHP version"
+    }
+}
+
+// The webserver and the PHP version of a new WordPress site (owner, 2026-11-06). Plugins write
+// their rules into .htaccess, which only Apache reads. Many plugins are not tested on PHP 8.5 yet.
+// A PHP version of nil is the newest installed one. A value that is not installed gives the
+// value of a new site.
+public struct WordPressDefaults: Codable, Sendable, Equatable {
+    public static let php = "8.4"
+
+    public var server: WebServer
+    public var php: String?
+
+    public init(server: WebServer = .apache, php: String? = WordPressDefaults.php) {
+        self.server = server
+        self.php = php
+    }
+
+    // nexusd and the Add Site sheet use this rule. A value that is not installed gives nil. The site
+    // then gets the value of a new site.
+    public func installed(phpLines: [String], hasApache: Bool) -> (server: WebServer?, php: String?) {
+        let installedServer: WebServer? = server == .apache && !hasApache ? nil : server
+
+        guard let php else {
+            return (installedServer, VersionLine.newest(phpLines))
+        }
+
+        return (installedServer, phpLines.contains(php) ? php : nil)
     }
 }
 

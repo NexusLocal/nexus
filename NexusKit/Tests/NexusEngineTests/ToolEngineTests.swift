@@ -5,7 +5,7 @@ import NexusSupervisor
 import Testing
 @testable import NexusEngine
 
-// nexus php, composer, node and npm, and the Node version of a site (step 7). The roots are in
+// nexus php, composer, node, npm and wp, and the Node version of a site (step 7). The roots are in
 // /tmp, because the path of a PHP socket has a limit of 103 bytes.
 extension NexusEngineTests {
     private static let realToolRuntimes = ProcessInfo.processInfo.environment["NEXUS_REAL_RUNTIMES"]
@@ -101,6 +101,79 @@ extension NexusEngineTests {
         #expect(command.environment["PHPRC"] != nil)
     }
 
+    @Test func wpRunsWPCLIWithThePHPOfTheSiteAndTheCoreFolderOfTheCheckout() async throws {
+        let root = toolRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try project("shop", in: root)
+        let worktree = try project("shop-fix", in: root)
+        for folder in [shop, worktree] {
+            try FileManager.default.createDirectory(at: folder.appending(path: "wordpress"), withIntermediateDirectories: true)
+            try Data("<?php\n".utf8).write(to: folder.appending(path: "wordpress/wp-load.php"))
+        }
+        let gitDir = shop.appending(path: ".git/worktrees/shop-fix", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: gitDir, withIntermediateDirectories: true)
+        try Data("../..\n".utf8).write(to: gitDir.appending(path: "commondir"))
+        try Data("gitdir: \(gitDir.path(percentEncoded: false))\n".utf8).write(to: worktree.appending(path: ".git"))
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.4")]
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("php", "8.4"), ("php", "8.5"), ("wp-cli", "2")])
+        let phar = await runtimePath(engine, "wp-cli", "2", "wp-cli.phar")
+        let paths = await engine.paths
+        let scanFolders = [paths.phpConfigFolder(line: "8.4").appending(path: "conf.d"), paths.wpCLIConfigFolder].map { $0.path(percentEncoded: false) }
+
+        let inSite = try await toolCommand(engine, .wp, in: shop.appending(path: "app"))
+        let inWorktree = try await toolCommand(engine, .wp, in: worktree)
+        let inCore = try await toolCommand(engine, .wp, in: shop.appending(path: "wordpress"))
+
+        let script = try #require(inSite.arguments.first)
+
+        #expect(inSite.executable == (await runtimePath(engine, "php", "8.4", "bin/php")))
+        #expect(inSite.arguments.count == 1)
+        #expect(try linkTarget(script) == phar)
+        #expect(inSite.wordPressCore == "\(RealPath.of(shop))/wordpress")
+        #expect(inSite.environment["PHP_INI_SCAN_DIR"] == scanFolders.joined(separator: ":"))
+        #expect(try String(contentsOf: paths.wpCLIConfigFolder.appending(path: WordPressCore.phpSettingsFileName), encoding: .utf8) == WordPressCore.phpSettings)
+        #expect(inWorktree.wordPressCore == "\(RealPath.of(worktree))/wordpress")
+        #expect(inCore.arguments == inSite.arguments)
+        #expect(inCore.wordPressCore == nil)
+    }
+
+    private func linkTarget(_ path: String) throws -> String {
+        let target = URL(filePath: try FileManager.default.destinationOfSymbolicLink(atPath: path))
+        return RealPath.of(target.deletingLastPathComponent()) + "/" + target.lastPathComponent
+    }
+
+    @Test func wpCLIGetsAPathWithoutSpaces() throws {
+        let root = toolRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let phar = root.appending(path: "Application Support/Nexus/runtimes/wp-cli/2/wp-cli.phar")
+        let links = root.appending(path: "links", directoryHint: .isDirectory)
+        let spaced = root.appending(path: "With Space", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: links, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: spaced, withIntermediateDirectories: true)
+
+        let first = try NexusEngine.pathWithoutSpaces(for: phar, in: links)
+        let again = try NexusEngine.pathWithoutSpaces(for: phar, in: links)
+        let inFolderWithSpace = try NexusEngine.pathWithoutSpaces(for: phar, in: spaced)
+
+        #expect(!first.path(percentEncoded: false).contains(" "))
+        #expect(first == again)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: first.path(percentEncoded: false)) == phar.path(percentEncoded: false))
+        #expect(inFolderWithSpace == phar)
+    }
+
+    @Test func aPharThatAnOldNexusInstalledKeepsItsOldName() async throws {
+        let root = toolRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try makeSiteEngine(root: root, runtimes: [("php", "8.5"), ("wp-cli", "2")])
+        try Data("<?php\n".utf8).write(to: await engine.paths.runtime("wp-cli", line: "2").appending(path: "composer.phar"))
+
+        let command = try await toolCommand(engine, .wp, in: root)
+        let script = try #require(command.arguments.first)
+
+        #expect(try linkTarget(script) == (await runtimePath(engine, "wp-cli", "2", "composer.phar")))
+    }
+
     @Test func npmUsesTheNodeOfTheProjectUnlessTheSiteHasALine() async throws {
         let root = toolRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -130,10 +203,12 @@ extension NexusEngineTests {
         let node = await engine.handle(.tool(.npm, folder: shop.path(percentEncoded: false)))
         let php = await engine.handle(.tool(.php, folder: shop.path(percentEncoded: false)))
         let composer = await engine.handle(.tool(.composer, folder: root.path(percentEncoded: false)))
+        let wp = await engine.handle(.tool(.wp, folder: root.path(percentEncoded: false)))
 
-        #expect(node == .failure(message: "Node 22 is not installed (.nvmrc asks for 20.10.0). Run: nexus install node 22"))
+        #expect(node == .toolNotInstalled(message: "Node 22 is not installed (.nvmrc asks for 20.10.0). Run: nexus install node 22"))
         #expect(php == .failure(message: "PHP 8.3 is not installed. Run: nexus install php 8.3"))
-        #expect(composer == .failure(message: "Composer is not installed. Run: nexus install composer 2"))
+        #expect(composer == .toolNotInstalled(message: "Composer is not installed. Run: nexus install composer 2"))
+        #expect(wp == .toolNotInstalled(message: "WP-CLI is not installed. Run: nexus install wp-cli 2"))
     }
 
     @Test func theSiteListShowsTheNodeOfTheProjectAndTheChosenLine() async throws {
@@ -192,7 +267,7 @@ extension NexusEngineTests {
         let set = await engine.handle(.setSiteDefaults(SiteDefaults(node: "22")))
 
         #expect(missing == .failure(message: "Node 24 is not installed. Run: nexus install node 24"))
-        #expect(set == .done(message: "A new site gets nginx and the newest installed PHP version. It gets Node 22. The sites that exist do not change."))
+        #expect(set == .done(message: "A new site gets nginx and the newest installed PHP version. It gets Node 22. A new WordPress site gets Apache and PHP 8.4. The sites that exist do not change."))
         #expect(await engine.defaultNodeLine() == "22")
     }
 }

@@ -25,6 +25,24 @@ public struct InstalledRuntime: Codable, Sendable, Equatable {
         version == package.version && revision == package.revision && sha256 == package.sha256
     }
 
+    public static func pharFileName(of name: String) -> String {
+        "\(name).phar"
+    }
+
+    // Nexus 0.1.1 and older wrote each phar package as composer.phar. Such a version can install
+    // the WP-CLI of a newer manifest. Its file then keeps that name until the next update.
+    public var pharFile: URL {
+        let file = folder.appending(path: Self.pharFileName(of: name))
+        let oldFile = folder.appending(path: Self.pharFileName(of: "composer"))
+
+        guard !FileManager.default.fileExists(atPath: file.path(percentEncoded: false)),
+              FileManager.default.fileExists(atPath: oldFile.path(percentEncoded: false)) else {
+            return file
+        }
+
+        return oldFile
+    }
+
     enum CodingKeys: String, CodingKey {
         case name, line, version, revision, sha256, installedAt
     }

@@ -31,6 +31,9 @@ struct FirstRunWindow: View {
     // Nil until the user changes the preselection. Until then the preselection follows the list
     // of packages.
     @State private var picked: Set<String>?
+    // The kinds that the user picks. Two kinds can need the same package. So a package that is
+    // picked does not say which kind the user wants.
+    @State private var types = Set(FirstRunProjectType.preselected)
     @State private var started: [String] = []
     @State private var resolverOwner = ResolverFileOwner.missing
     @State private var startAtLogin = true
@@ -104,7 +107,7 @@ struct FirstRunWindow: View {
                 case .permissions:
                     PermissionsStep()
                 case .packages:
-                    PackagesStep(choice: choice, picked: Binding(get: { pickedPackages }, set: { picked = $0 }), loaded: packagesLoaded)
+                    PackagesStep(choice: choice, picked: Binding(get: { pickedPackages }, set: { picked = $0 }), types: $types, loaded: packagesLoaded)
                 case .settings:
                     SettingsStep(startAtLogin: $startAtLogin, addToPath: $addToPath, resolverOwner: $resolverOwner, helperReady: helperReady, started: started)
                 }
@@ -376,29 +379,37 @@ struct FirstRunPackages {
         return picking(requirements, in: [])
     }
 
-    func isOn(_ type: FirstRunProjectType, picked: Set<String>) -> Bool {
-        let offered = offered(type)
-        return !offered.isEmpty && offered.allSatisfy { isMet($0) { isPicked($0, in: picked) } }
-    }
-
     func isInstalled(_ type: FirstRunProjectType) -> Bool {
         let offered = offered(type)
         return !offered.isEmpty && offered.allSatisfy { isMet($0, by: isKept) }
+    }
+
+    // A kind is on when the user picked it and its packages are picked. A package that the user
+    // turns off in the list turns its kind off.
+    func isOn(_ type: FirstRunProjectType, picked: Set<String>, types: Set<FirstRunProjectType>) -> Bool {
+        let offered = offered(type)
+        return types.contains(type) && !offered.isEmpty && offered.allSatisfy { isMet($0) { isPicked($0, in: picked) } }
     }
 
     func picking(_ type: FirstRunProjectType, in picked: Set<String>) -> Set<String> {
         picking(type.requirements, in: picked)
     }
 
-    // The versions of the kind go. Each other picked kind then gets back what it needs. An
-    // installed version stays, because the first run removes nothing.
-    func dropping(_ type: FirstRunProjectType, from picked: Set<String>) -> Set<String> {
-        let others = FirstRunProjectType.allCases.filter { $0 != type && isOn($0, picked: picked) }
-        let dropped = type.requirements.flatMap { requirement in
-            requirement.line == nil ? rows(of: requirement.package).map(\.id) : [row(for: requirement)?.id].compactMap { $0 }
+    // The versions of the kind go. A version that another kind of the user needs stays. A package
+    // that the user turned off in the list does not come back. An installed version stays, because
+    // the first run removes nothing.
+    func dropping(_ type: FirstRunProjectType, from picked: Set<String>, keeping others: Set<FirstRunProjectType>) -> Set<String> {
+        var kept = picked.subtracting(type.requirements.flatMap(rowIDs(of:)))
+
+        for requirement in others.subtracting([type]).flatMap(\.requirements) where !isMet(requirement, by: { isPicked($0, in: kept) }) {
+            kept.formUnion(rowIDs(of: requirement).filter(picked.contains))
         }
 
-        return picking(others.flatMap(\.requirements), in: picked.subtracting(dropped))
+        return kept
+    }
+
+    private func rowIDs(of requirement: FirstRunRequirement) -> [String] {
+        requirement.line == nil ? rows(of: requirement.package).map(\.id) : [row(for: requirement)?.id].compactMap { $0 }
     }
 
     private func offered(_ type: FirstRunProjectType) -> [FirstRunRequirement] {
@@ -514,6 +525,7 @@ private struct PackagesStep: View {
     @Environment(AppModel.self) private var model
     let choice: FirstRunPackages
     @Binding var picked: Set<String>
+    @Binding var types: Set<FirstRunProjectType>
     let loaded: Bool
 
     var body: some View {
@@ -561,9 +573,16 @@ private struct PackagesStep: View {
 
     private func binding(for type: FirstRunProjectType) -> Binding<Bool> {
         Binding(
-            get: { choice.isOn(type, picked: picked) },
+            get: { choice.isOn(type, picked: picked, types: types) },
             set: { isOn in
-                picked = isOn ? choice.picking(type, in: picked) : choice.dropping(type, from: picked)
+                if isOn {
+                    types.insert(type)
+                    picked = choice.picking(type, in: picked)
+                    return
+                }
+
+                types.remove(type)
+                picked = choice.dropping(type, from: picked, keeping: types)
             }
         )
     }
@@ -734,7 +753,8 @@ private struct PackageChoiceRow: View {
 
 // Three looks: gray when the user did not pick the version, solid purple when Nexus downloads it,
 // and light purple with a check mark when it is installed. An installed version cannot change.
-// So it is a label and not a button. The last version of a required package stays a button that
+// So it is a label and not a button. A version that downloads now cannot change either. Its label
+// has an arrow and not a check mark. The last version of a required package stays a button that
 // is on, but it does not react to a click. Disabled buttons looked faded, as if they did not work.
 private struct VersionChoice: View {
     let package: PackageItem
@@ -749,9 +769,9 @@ private struct VersionChoice: View {
 
     var body: some View {
         Group {
-            if isInstalled {
+            if package.isInstalled || package.isDownloading {
                 HStack(spacing: 4) {
-                    Image(systemName: "checkmark")
+                    Image(systemName: package.isDownloading ? "arrow.down" : "checkmark")
                         .font(.system(size: 9, weight: .bold))
                     content(onSolid: false)
                 }
@@ -761,7 +781,7 @@ private struct VersionChoice: View {
                 .frame(height: 20)
                 .background(Color.accentSelection, in: .rect(cornerRadius: 5))
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(Text(verbatim: "\(AppModel.packageTitle(package.package)) \(label), installed"))
+                .accessibilityLabel(Text(verbatim: "\(AppModel.packageTitle(package.package)) \(label), \(package.isDownloading ? "downloads now" : "installed")"))
             } else {
                 Toggle(isOn: $isOn) {
                     content(onSolid: isOn)
@@ -785,10 +805,6 @@ private struct VersionChoice: View {
                     .foregroundStyle(onSolid ? Color.white.opacity(0.8) : tag.color)
             }
         }
-    }
-
-    private var isInstalled: Bool {
-        package.isInstalled || package.isDownloading
     }
 
     private var endDate: Date? {
@@ -1165,7 +1181,7 @@ private struct SettingsStep: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("\"Add Nexus to PATH\" adds one line to the end of ~/.zshrc. Then php, composer, node and npm in your terminal use the Nexus versions. Turn it off to remove the line.")
+                    Text("\"Add Nexus to PATH\" adds one line to the end of ~/.zshrc. Then php, composer, node, npm and wp in your terminal use the Nexus versions. Turn it off to remove the line.")
                     Text("Domain: .test, .internal or .localhost. Other endings can send real traffic of this Mac to Nexus.")
                 }
                 .font(.callout)

@@ -81,12 +81,12 @@ struct NexusCommand: AsyncParsableCommand {
             Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Installed.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
             SiteCommand.self, WorkspaceCommand.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
-            Database.self, PHP.self, Composer.self, Node.self, NPM.self, MailCommand.self, Sendmail.self,
+            Database.self, PHP.self, Composer.self, Node.self, NPM.self, WP.self, MailCommand.self, Sendmail.self,
         ]
     )
 }
 
-// nexus php, composer, node and npm (D38). NexusCLI.main runs them before the parser. These
+// nexus php, composer, node, npm and wp (D38). NexusCLI.main runs them before the parser. These
 // commands put them in nexus --help.
 struct PHP: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -135,32 +135,79 @@ struct NPM: AsyncParsableCommand {
     }
 }
 
+struct WP: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "wp",
+        abstract: "Runs WP-CLI with the PHP of the site in the current folder, for example: nexus wp option get siteurl",
+        discussion: "WP-CLI looks for WordPress from the current folder up. When the site holds WordPress in a subfolder, Nexus gives WP-CLI that folder with --path. Nexus gives no --path with an alias such as @prod, with --path, --ssh or --http of your own, and for wp core download."
+    )
+
+    @Argument(parsing: .captureForPassthrough, help: "The arguments for WP-CLI.") var arguments: [String] = []
+
+    func run() async throws {
+        try await runTool(.wp, arguments)
+    }
+}
+
 // nexusd says what to run. The nexus command then becomes that program. So the program gets the
 // terminal, the signals and the exit code. The current folder is the real path, as getcwd gives
 // it. When nexusd does not answer, a link in bin/ runs the next program with its name on the
-// PATH. A terminal with the PATH setting then keeps a working php.
+// PATH. A terminal with the PATH setting then keeps a working php. A link also runs the next
+// program when nexusd says that Nexus has no package of the tool. So wp runs the WP-CLI of the
+// user until Nexus has WP-CLI too. An older nexusd that cannot read the request gives the next
+// program too. nexusd answers first, because it refuses php, Composer and wp in a workspace that
+// it cannot isolate. The search on the PATH runs only for the next program.
 private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bool = false) async throws {
     let response: NexusResponse
     let environment = ProcessInfo.processInfo.environment
     let path = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+    let nexus = Bundle.main.executableURL.map(RealPath.of)
+
+    func nextProgram() -> (file: String, nexus: String)? {
+        guard throughLink, let nexus, let file = NexusCLI.nextProgram(named: tool.rawValue, path: path, nexus: nexus) else {
+            return nil
+        }
+
+        return (file, nexus)
+    }
+
+    func run(_ other: (file: String, nexus: String)) throws -> Never {
+        var otherEnvironment = environment
+        otherEnvironment["PATH"] = NexusCLI.path(path, without: other.nexus)
+        try execute(other.file, [other.file] + arguments, environment: otherEnvironment)
+    }
+
+    func fail(_ message: String) throws -> Never {
+        FileHandle.standardError.write(Data("\(message)\n".utf8))
+        throw ExitCode.failure
+    }
 
     do {
         response = try await NexusClient().send(.tool(tool, folder: FileManager.default.currentDirectoryPath))
-    } catch let error as NexusClientError where throughLink {
-        guard let nexus = Bundle.main.executableURL.map(RealPath.of),
-              let other = NexusCLI.nextProgram(named: tool.rawValue, path: path, nexus: nexus) else {
-            FileHandle.standardError.write(Data("\(error)\n".utf8))
-            throw ExitCode.failure
+    } catch let error as NexusClientError {
+        guard let other = nextProgram() else {
+            try fail("\(error)")
         }
 
-        var otherEnvironment = environment
-        otherEnvironment["PATH"] = NexusCLI.path(path, without: nexus)
-
-        FileHandle.standardError.write(Data("nexusd does not answer. This \(tool.rawValue) is \(other), the next one on the PATH. Open the Nexus app to use the versions of the site.\n".utf8))
-        try execute(other, [other] + arguments, environment: otherEnvironment)
+        FileHandle.standardError.write(Data("nexusd does not answer. This \(tool.rawValue) is \(other.file), the next one on the PATH. Open the Nexus app to use the versions of the site.\n".utf8))
+        try run(other)
     } catch {
-        FileHandle.standardError.write(Data("\(error)\n".utf8))
-        throw ExitCode.failure
+        try fail("\(error)")
+    }
+
+    switch response {
+    case .toolNotInstalled(let message):
+        guard let other = nextProgram() else {
+            try fail(message)
+        }
+
+        try run(other)
+    case NexusResponse.unreadableRequest:
+        if let other = nextProgram() {
+            try run(other)
+        }
+    default:
+        break
     }
 
     guard case .tool(let command) = response else {
@@ -170,7 +217,8 @@ private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bo
 
     var toolEnvironment = environment.merging(command.environment) { _, new in new }
     toolEnvironment["PATH"] = (command.path + [path]).joined(separator: ":")
-    try execute(command.executable, [command.executable] + command.arguments + arguments, environment: toolEnvironment)
+    let toolArguments = WordPressCore.arguments(arguments, core: command.wordPressCore, environment: environment, home: FileManager.default.homeDirectoryForCurrentUser)
+    try execute(command.executable, [command.executable] + command.arguments + toolArguments, environment: toolEnvironment)
 }
 
 // The nexus command becomes the program. This throws when the program cannot start.
@@ -638,22 +686,108 @@ struct SiteCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "site",
         abstract: "Adds, lists, changes and removes sites.",
-        subcommands: [List.self, Add.self, Edit.self, Remove.self, Defaults.self, Probe.self, Mail.self],
+        subcommands: [List.self, Add.self, Edit.self, Remove.self, Defaults.self, Probe.self, Mail.self, WordPress.self],
         defaultSubcommand: List.self
     )
+
+    // The configuration and the database of a WordPress site (Phase 4, 3b).
+    struct WordPress: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(commandName: "wordpress", abstract: "Shows the WordPress version, the database and the site URL of a WordPress site, for example: nexus site wordpress blog.test")
+
+        @Argument(help: "The host of the site, for example blog.test.") var host: String
+        @Flag(help: "Without a wp-config.php: makes a database on MySQL 8.4 and writes wp-config.php.") var setUp = false
+        @Flag(help: "Makes the database that wp-config.php names, empty, when it does not exist.") var createDatabase = false
+        @Flag(name: .customLong("set-db-host"), help: "Sets DB_HOST to the port of the Nexus instance. The old line stays as a comment line.") var setDBHost = false
+
+        func validate() throws {
+            if [setUp, createDatabase, setDBHost].filter({ $0 }).count > 1 {
+                throw ValidationError("Use one of --set-up, --create-database and --set-db-host.")
+            }
+        }
+
+        func run() async throws {
+            if createDatabase {
+                try finish(try await send(.createWordPressDatabase(host: host)))
+                return
+            }
+
+            let response = try await send(.wordPressSite(host: host))
+
+            guard case .wordPressSite(let info) = response else {
+                try finish(response)
+                return
+            }
+
+            if setUp {
+                guard let database = info.setUpDatabase, let instance = info.setUpInstance else {
+                    FileHandle.standardError.write(Data("\(info.problem ?? "Nexus cannot set up \(host). It needs a classic WordPress site without wp-config.php and a running MySQL or MariaDB.")\n".utf8))
+                    throw ExitCode.failure
+                }
+
+                try finish(try await send(.setUpWordPress(host: host, database: database, instance: instance)))
+                return
+            }
+
+            if setDBHost {
+                guard let value = info.suggestedDBHost else {
+                    print("DB_HOST of \(host) needs no change. Nexus changes nothing.")
+                    return
+                }
+
+                try finish(try await send(.setWordPressDBHost(host: host, value: value)))
+                return
+            }
+
+            let database = info.database.map { name in
+                let place = info.instance.map { " on \($0)" } ?? ""
+                let state = info.databaseExists.map { $0 ? "" : " (it does not exist)" } ?? ""
+                return "\(name)\(place)\(state)"
+            }
+            let rows = [
+                ("Type", info.type.displayName),
+                ("Version", info.version ?? "not found"),
+                ("Configuration", info.configFile ?? (info.type == .bedrock ? "no .env" : "no wp-config.php")),
+                ("Database", database ?? "not found"),
+                ("DB_HOST", info.dbHost ?? "not found"),
+                ("Home", info.home ?? "-"),
+                ("Site URL", info.siteURL ?? "-"),
+            ]
+
+            for (label, value) in rows {
+                print("\(label.padding(to: 14)) \(value)")
+            }
+
+            if let problem = info.problem {
+                print(problem)
+            }
+
+            if let database = info.setUpDatabase, let instance = info.setUpInstance {
+                print("nexus site wordpress \(host) --set-up makes the database \(database) on \(instance) and writes wp-config.php.")
+            }
+
+            if info.suggestedDBHost != nil {
+                print("nexus site wordpress \(host) --set-db-host changes DB_HOST.")
+            }
+
+            if info.databaseExists == false, info.suggestedDBHost == nil {
+                print("nexus site wordpress \(host) --create-database makes the database.")
+            }
+        }
+    }
 
     // Where the main checkout sends its mail (Phase 3, 3c). Nexus changes its .env only with
     // --send-to-nexus or --restore (D44).
     struct Mail: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Shows where a site sends its mail. --send-to-nexus sends the mail of a Laravel site to the mail service of Nexus. --restore puts the old mail settings back.")
+        static let configuration = CommandConfiguration(abstract: "Shows where a site sends its mail. --send-to-nexus sends the mail of a Laravel site to the mail service of Nexus. --restore puts the old mail settings back. --turn-off-plugins turns off the mail plugins of a WordPress site.")
 
         @Argument(help: "The host of the site, for example shop.test.") var host: String
         @Flag(help: "Changes the mail keys in the .env of the main checkout. The old values stay there as comment lines.") var sendToNexus = false
         @Flag(help: "Puts back the old mail settings from the comment lines of Nexus in the .env.") var restore = false
+        @Flag(help: "Turns off the plugins of a WordPress site that send the mail themselves. The live site does not change.") var turnOffPlugins = false
 
         func validate() throws {
-            if sendToNexus, restore {
-                throw ValidationError("Use --send-to-nexus or --restore, not both.")
+            if [sendToNexus, restore, turnOffPlugins].filter({ $0 }).count > 1 {
+                throw ValidationError("Use one of --send-to-nexus, --restore and --turn-off-plugins.")
             }
         }
 
@@ -675,6 +809,18 @@ struct SiteCommand: AsyncParsableCommand {
                 return
             }
 
+            if turnOffPlugins {
+                let folders = mail.mailPlugins.filter(\.canTurnOff).map(\.folder)
+
+                guard !folders.isEmpty else {
+                    print("\(host) has no plugin that Nexus can turn off for its mail.")
+                    return
+                }
+
+                try finish(try await send(.turnOffMailPlugins(host: host, folders: folders)))
+                return
+            }
+
             if let problem = mail.problem {
                 FileHandle.standardError.write(Data("Nexus cannot read the mail settings of \(host). \(problem)\n".utf8))
                 throw ExitCode.failure
@@ -693,6 +839,10 @@ struct SiteCommand: AsyncParsableCommand {
 
             if mail.canRestore {
                 print("Put the old mail settings back with: nexus site mail \(host) --restore")
+            }
+
+            if mail.mailPlugins.contains(where: \.canTurnOff) {
+                print("Turn off these plugins in this copy with: nexus site mail \(host) --turn-off-plugins")
             }
         }
     }
@@ -799,11 +949,13 @@ struct SiteCommand: AsyncParsableCommand {
     }
 
     struct Defaults: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Shows or changes the webserver, the PHP version and the Node version of a new site, for example: nexus site defaults --php 8.4")
+        static let configuration = CommandConfiguration(abstract: "Shows or changes the webserver, the PHP version and the Node version of a new site, for example: nexus site defaults --php 8.4 --wordpress-server apache")
 
         @Option(help: "The PHP version line of a new site, or newest for the newest installed one.") var php: String?
         @Option(help: "nginx or apache.") var server: WebServer?
         @Option(help: "The Node version line of a new site, or project for the version that the files of the project name.") var node: String?
+        @Option(name: .customLong("wordpress-php"), help: "The PHP version line of a new WordPress site, or newest for the newest installed one.") var wordPressPHP: String?
+        @Option(name: .customLong("wordpress-server"), help: "nginx or apache for a new WordPress site.") var wordPressServer: WebServer?
 
         func run() async throws {
             let response = try await send(.siteDefaults)
@@ -813,10 +965,22 @@ struct SiteCommand: AsyncParsableCommand {
                 return
             }
 
-            guard php != nil || server != nil || node != nil else {
+            guard php != nil || server != nil || node != nil || wordPressPHP != nil || wordPressServer != nil else {
                 print(defaults.summary)
                 return
             }
+
+            var wordPress = defaults.forWordPress
+
+            if let wordPressPHP {
+                wordPress.php = wordPressPHP == "newest" ? nil : wordPressPHP
+            }
+
+            if let wordPressServer {
+                wordPress.server = wordPressServer
+            }
+
+            defaults.wordPress = wordPress
 
             if let php {
                 defaults.php = php == "newest" ? nil : php
@@ -1212,7 +1376,7 @@ func finish(_ response: NexusResponse) throws {
     switch response {
     case .done(let message):
         print(message)
-    case .failure(let message):
+    case .failure(let message), .toolNotInstalled(let message):
         FileHandle.standardError.write(Data("\(message)\n".utf8))
         throw ExitCode.failure
     case .portInUse(let conflict):

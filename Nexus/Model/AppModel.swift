@@ -154,6 +154,7 @@ struct AppSettings {
     var defaultServer = "nginx"
     var defaultPHP = "newest"
     var defaultNode: String?
+    var defaultWordPress = WordPressDefaults()
     var newInstanceAccount = DatabaseAccount.newInstance
     var databaseApps: [AppChoice] = []
     var mysqlApp = ""
@@ -202,6 +203,8 @@ final class AppModel {
     }
     @ObservationIgnored private var pendingStarts: Set<String> = []
     @ObservationIgnored private var versionCheck = NexusdVersionCheck(appBuild: NexusVersion.build(), lastRestartBuild: UserDefaults.standard.string(forKey: AppPreference.nexusdRestartBuild))
+    // Grows after each change to a WordPress site. The Mail section then checks the site again.
+    var wordPressChanges = 0
     var failure: ActionFailure? {
         didSet {
             if let failure {
@@ -781,7 +784,7 @@ final class AppModel {
 
         do {
             switch try await client.send(request) {
-            case .failure(let message):
+            case .failure(let message), .toolNotInstalled(let message):
                 return .failure(message)
             case .portInUse(let conflict):
                 return .portInUse(conflict)

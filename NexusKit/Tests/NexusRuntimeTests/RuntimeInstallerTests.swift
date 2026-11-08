@@ -76,6 +76,18 @@ struct RuntimeInstallerTests {
         #expect(await installer.installed(name: "demo", line: "1.0")?.version == "1.0.1")
     }
 
+    @Test func aPharGetsTheNameOfItsPackage() async throws {
+        let installer = RuntimeInstaller(paths: paths, downloader: LocalFileDownloader())
+        let file = workspace.appending(path: "wp-cli-2.12.0.phar")
+        try Data("<?php\n".utf8).write(to: file)
+        let package = ManifestPackage(name: "wp-cli", version: "2.12.0", line: "2", revision: 1, url: file, sha256: try FileChecksum.sha256(of: file), format: .phar)
+
+        let runtime = try await installer.install(package)
+
+        #expect(runtime.pharFile == paths.runtime("wp-cli", line: "2").appending(path: "wp-cli.phar"))
+        #expect(FileManager.default.fileExists(atPath: runtime.pharFile.path(percentEncoded: false)))
+    }
+
     @Test func aWrongChecksumInstallsNothing() async throws {
         let installer = RuntimeInstaller(paths: paths, downloader: LocalFileDownloader())
         let good = try makePackage(version: "1.0.1")

@@ -16,6 +16,18 @@ struct ToolInvocationTests {
         #expect(invocation == NexusCLI.ToolInvocation(tool: .composer, arguments: ["--help", "install"], throughLink: false))
     }
 
+    @Test func nexusWpAndTheLinkWpRunWPCLI() {
+        let command = NexusCLI.toolInvocation(["/Applications/Nexus.app/Contents/Helpers/nexus", "wp", "option", "get", "siteurl"])
+        let link = NexusCLI.toolInvocation(["/Users/me/Library/Application Support/Nexus/bin/wp", "--info"])
+
+        #expect(command == NexusCLI.ToolInvocation(tool: .wp, arguments: ["option", "get", "siteurl"], throughLink: false))
+        #expect(link == NexusCLI.ToolInvocation(tool: .wp, arguments: ["--info"], throughLink: true))
+    }
+
+    @Test func eachToolNamesThePackageThatHoldsIt() {
+        #expect(ProjectTool.allCases.map(\.package) == ["php", "composer", "node", "node", "wp-cli"])
+    }
+
     @Test func anotherCommandGoesToTheParser() {
         #expect(NexusCLI.toolInvocation(["/Applications/Nexus.app/Contents/Helpers/nexus", "status"]) == nil)
         #expect(NexusCLI.toolInvocation(["nexus"]) == nil)

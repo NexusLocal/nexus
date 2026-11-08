@@ -174,16 +174,21 @@ extension NexusEngine {
     // Each workspace runs as a site with its own hosts. A site claims its hosts first. A workspace
     // whose host is taken is left out with a warning, because two server blocks with one name
     // make nginx use only one of them. Two sites of one project share a block. A workspace of a
-    // proxy site is left out, because it would go to the server of the main checkout.
-    func workspaceSites(_ state: EngineState, resolved: [Site]? = nil) -> (sites: [Site], conflicts: [Workspace: String], sitesOfRecord: [String: [Site]]) {
+    // proxy site is left out, because it would go to the server of the main checkout. A workspace
+    // of a WordPress site gets a notice page in nginx (noticeHosts).
+    func workspaceSites(_ state: EngineState, resolved: [Site]? = nil) -> (sites: [Site], conflicts: [Workspace: String], sitesOfRecord: [String: [Site]], noticeHosts: Set<String>) {
         let resolved = resolved ?? resolvedSites(state).map(\.site)
         let sitesOfRecord = Dictionary(grouping: resolved, by: ProjectFolder.workspaceKey(of:))
         var claimed = Set(resolved.flatMap(\.hosts))
         var sites: [Site] = []
         var conflicts: [Workspace: String] = [:]
+        var noticeHosts: Set<String> = []
 
         for (key, sitesOfProject) in sitesOfRecord.sorted(by: { $0.key < $1.key }) {
-            for workspace in state.worktrees[key]?.workspaces ?? [] {
+            let workspaces = state.worktrees[key]?.workspaces ?? []
+            let runsNoPHP = !workspaces.isEmpty && Self.isWordPress(sitesOfProject)
+
+            for workspace in workspaces {
                 guard let site = workspace.site(of: sitesOfProject, tld: state.tld) else {
                     continue
                 }
@@ -200,18 +205,42 @@ extension NexusEngine {
 
                 claimed.formUnion(site.hosts)
                 sites.append(site)
+
+                if runsNoPHP {
+                    noticeHosts.formUnion(site.hosts)
+                }
             }
         }
 
-        return (sites, conflicts, sitesOfRecord)
+        return (sites, conflicts, sitesOfRecord, noticeHosts)
     }
 
-    func workspaceInfo(key: String, sitesOfRecord: [String: [Site]], conflicts: [Workspace: String], installed: [InstalledRuntime], state: EngineState, appPorts: [String: Int]) -> [WorkspaceInfo] {
-        let sites = sitesOfRecord[key] ?? []
+    // Nexus cannot isolate a workspace of a WordPress site yet (Phase 4, 3a). Its plugins and
+    // WP-Cron would write into the database of the main site. So it runs no PHP and no background
+    // process. nginx gives a page with the reason. The type of the project decides this and not the
+    // state of the record. An older Nexus could set such a record to Ready. That record gets no new
+    // setup. Part 3e isolates these workspaces.
+    static let wordPressWorkspaceTitle = "This workspace runs no PHP"
+    static let wordPressIsolation = "Nexus cannot isolate a WordPress site yet. The plugins and WP-Cron of this workspace would write into the database of the main site."
+    static let wordPressWorkspaceReason = "\(wordPressIsolation) So Nexus runs no PHP here."
+    static let wordPressWorkspaceState = WorkspaceState.notIsolated("\(wordPressIsolation) So Nexus runs no PHP here. The page of the workspace says why.")
 
-        return (state.worktrees[key]?.workspaces ?? []).map { workspace in
+    // The sites of one workspace record. layouts can hold the types that a list read already.
+    static func isWordPress(_ sitesOfProject: [Site], layouts: [String: SiteLayout] = [:]) -> Bool {
+        sitesOfProject.contains { (layouts[$0.host]?.projectType ?? PHPProject.type(of: $0)).isWordPress }
+    }
+
+    func workspaceInfo(key: String, sitesOfRecord: [String: [Site]], conflicts: [Workspace: String], noticeHosts: Set<String>, layouts: [String: SiteLayout], installed: [InstalledRuntime], state: EngineState, appPorts: [String: Int]) -> [WorkspaceInfo] {
+        let sites = sitesOfRecord[key] ?? []
+        let workspaces = state.worktrees[key]?.workspaces ?? []
+        let isWordPress = !workspaces.isEmpty && Self.isWordPress(sites, layouts: layouts)
+
+        return workspaces.map { workspace in
             let site = workspace.site(of: sites, tld: state.tld)
-            let problem = conflicts[workspace] ?? site.flatMap { Self.problem(of: $0, installed: installed) ?? applyProblem(of: $0, appPorts: appPorts) }
+            let problem = conflicts[workspace] ?? site.flatMap { workspaceSite in
+                let layout = SiteLayout(of: workspaceSite)
+                return Self.problem(of: workspaceSite, installed: installed, layout: layout) ?? applyProblem(of: workspaceSite, appPorts: appPorts, noticeHosts: noticeHosts, layout: layout)
+            }
             let app = site.flatMap { $0.kind == .node ? appInfo(owner: Self.processOwner(key: key, workspace: workspace.name), port: workspace.ports[NodeAppLaunch.portName], host: $0.host) : nil }
 
             return WorkspaceInfo(
@@ -222,7 +251,7 @@ extension NexusEngine {
                 hosts: site?.hosts ?? [],
                 url: problem == nil ? site.map { Self.url(for: $0.host, in: state) } : nil,
                 problem: problem,
-                state: workspace.state,
+                state: isWordPress && workspace.state == .ready ? Self.wordPressWorkspaceState : workspace.state,
                 warnings: workspace.warnings + (processProblems[Self.processOwner(key: key, workspace: workspace.name)] ?? []),
                 databases: workspace.databases.map { database in
                     WorkspaceDatabaseInfo(name: database.name, instance: database.instance, port: workspace.servers.first { $0.instance == database.instance }?.port)
@@ -232,6 +261,39 @@ extension NexusEngine {
                 app: app
             )
         }
+    }
+
+    // Before Phase 4, 3a the key of a Bedrock site on web/ ended in /web. Its workspaces move to the
+    // key of the project. The move is a separate change of the state. In updateWorktrees a key
+    // that goes away removes its workspaces with their databases. A site on the project folder can
+    // have a record on that key already. A workspace with a name that this record has stays on the
+    // old key. updateWorktrees then removes it as a workspace without a site.
+    static func movingOldKeys(of worktrees: [String: SiteWorktrees], sites: [Site]) -> [String: SiteWorktrees] {
+        var moved = worktrees
+
+        for site in sites {
+            let folder = RealPath.of(site.folder)
+            let key = ProjectFolder.workspaceKey(of: site)
+
+            guard key != folder, (folder as NSString).lastPathComponent == "web", let record = moved[folder] else {
+                continue
+            }
+
+            var target = moved[key] ?? SiteWorktrees()
+            let names = Set(target.workspaces.map(\.name))
+            let staying = record.workspaces.filter { names.contains($0.name) }
+
+            guard staying.count < record.workspaces.count || moved[key] == nil else {
+                continue
+            }
+
+            target.listed.formUnion(record.listed)
+            target.workspaces += record.workspaces.filter { !names.contains($0.name) }
+            moved[key] = target
+            moved[folder] = staying.isEmpty ? nil : SiteWorktrees(listed: record.listed, workspaces: staying)
+        }
+
+        return moved
     }
 
     // A site whose worktrees git cannot list keeps what it has. Only a list from git can remove
@@ -247,6 +309,12 @@ extension NexusEngine {
         let projects = Set(sites.map(ProjectFolder.projectFolder(of:)))
         let repositories = sitesOfRecord.compactMapValues { $0.lazy.compactMap(ProjectFolder.repository(of:)).first }
         let lists = await Self.worktreeLists(of: Set(repositories.values.map(\.root)))
+
+        let current = await stateStore.current().worktrees
+
+        if Self.movingOldKeys(of: current, sites: sites) != current {
+            try? await stateStore.update { $0.worktrees = Self.movingOldKeys(of: $0.worktrees, sites: sites) }
+        }
 
         return try? await stateStore.updateWorktrees { known in
             var worktrees = known.filter { key, _ in

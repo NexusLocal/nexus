@@ -29,8 +29,16 @@ struct AddSiteSheet: View {
     @State private var address = ""
     @State private var adding = false
     @State private var failure: String?
+    @State private var wordPress: WordPressChoice?
 
     let tld: String
+
+    // The values that a WordPress folder gives, as nexusd gives them (owner, 2026-11-06).
+    private struct WordPressChoice {
+        let type: PHPProjectType
+        let server: String
+        let php: String
+    }
 
     // The Host field gets the focus when the sheet appears. A value that comes after that does not
     // show in the field. So the host is here from the start.
@@ -137,6 +145,25 @@ struct AddSiteSheet: View {
                 detect(in: folder)
             }
         }
+        // The sheet can open before the app knows the installed versions, for example at launch. A
+        // value that the user chose in that time stays.
+        .onChange(of: model.installedPHPVersions) {
+            guard php.isEmpty else {
+                return
+            }
+
+            let detectedServer = wordPress?.server
+            php = model.defaultPHP
+
+            if let folder, detectedServer == nil || server == detectedServer {
+                detectWordPress(in: folder)
+            }
+        }
+        .onChange(of: folderType) {
+            if let folder {
+                detectWordPress(in: folder)
+            }
+        }
     }
 
     private var hasRequiredValues: Bool {
@@ -216,7 +243,9 @@ struct AddSiteSheet: View {
 
         switch kind {
         case .php:
-            EmptyView()
+            if let wordPress, !php.isEmpty, server == wordPress.server, php == wordPress.php {
+                Text("Nexus found \(wordPress.type.displayName) in the folder. So the site gets \((WebServer(rawValue: server) ?? .nginx).displayName) and PHP \(php).")
+            }
         case .node:
             Text(appNote(url: url))
         case .proxy:
@@ -246,6 +275,36 @@ struct AddSiteSheet: View {
         command = project?.command ?? ""
         node = defaultNode ?? NodeLines.fromProject
         projectNode = NodeLines.choose(hint: NodeVersionFiles.hint(from: folder, upTo: folder), installed: model.installedNodeVersions)
+        detectWordPress(in: folder)
+    }
+
+    // A WordPress folder gets the WordPress values of Settings > Sites, with the rule of nexusd. A
+    // folder of many projects keeps the values of a new site, because they apply to each project in
+    // it. The WordPress values of a folder before go when the user did not change them.
+    private func detectWordPress(in folder: URL) {
+        if let wordPress, server == wordPress.server, php == wordPress.php {
+            server = model.siteDefaults.server.rawValue
+            php = model.defaultPHP
+        }
+
+        wordPress = nil
+
+        guard folderType == .oneProject else {
+            return
+        }
+
+        let type = PHPProject.type(of: Self.projectFolder(of: folder))
+
+        guard type.isWordPress else {
+            return
+        }
+
+        let values = model.siteDefaults.forWordPress.installed(phpLines: model.installedPHPVersions, hasApache: model.service(ServiceID.apache) != nil)
+        let choice = WordPressChoice(type: type, server: (values.server ?? model.siteDefaults.server).rawValue, php: values.php ?? model.defaultPHP)
+
+        server = choice.server
+        php = choice.php
+        wordPress = choice
     }
 
     private static func projectFolder(of folder: URL) -> URL {

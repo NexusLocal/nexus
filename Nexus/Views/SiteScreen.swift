@@ -59,8 +59,13 @@ struct SiteScreen: View {
         updating(form)
     }
 
+    // The design of a WordPress site is "Site · WordPress" in nexus.pen (Phase 4, 3a).
+    private var isWordPress: Bool {
+        kind == .php && site.isWordPress
+    }
+
     // A Node.js app and a proxy site have no PHP and no .env. So they get only their own section and,
-    // for a Node.js app, the workspaces (D67).
+    // for a Node.js app, the workspaces (D67). A WordPress site has no .env either.
     private var form: some View {
         Form {
             Section {
@@ -88,6 +93,14 @@ struct SiteScreen: View {
 
                 Picker("Runs as", selection: $kind) {
                     ForEach(SiteKind.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+
+                if kind == .php, let projectType = site.projectType, projectType != .other {
+                    LabeledContent("Project") {
+                        Text(projectType.displayName)
+                            .foregroundStyle(.secondary)
+                            .rowValue()
+                    }
                 }
 
                 LabeledContent("Folder") {
@@ -146,6 +159,10 @@ struct SiteScreen: View {
             switch kind {
             case .php:
                 serverSection
+
+                if isWordPress {
+                    SiteWordPressSection(site: site)
+                }
             case .node:
                 appSection
             case .proxy:
@@ -200,7 +217,12 @@ struct SiteScreen: View {
             Text("Server")
         } footer: {
             VStack(alignment: .leading, spacing: 6) {
-                Text("nginx handles HTTPS for every site. For an Apache site, nginx sends each request on to Apache.")
+                if isWordPress, server == WebServer.apache.rawValue {
+                    Text("nginx handles HTTPS for every site and sends each request on to Apache. A new WordPress site gets Apache, because plugins write their rules into .htaccess.")
+                } else {
+                    Text("nginx handles HTTPS for every site. For an Apache site, nginx sends each request on to Apache.")
+                }
+
                 missingNodeLine
             }
         }
@@ -367,7 +389,7 @@ struct SiteScreen: View {
             Toggle("Run for the main checkout", isOn: $mainProcesses)
                 .toggleStyle(.switch)
 
-            CommandRows(commands: $backgroundCommands, saved: site.backgroundCommands ?? preset, focusedRow: $focusedBackgroundCommand, prompt: "php artisan horizon", save: saveBackgroundCommands)
+            CommandRows(commands: $backgroundCommands, saved: site.backgroundCommands ?? preset, focusedRow: $focusedBackgroundCommand, prompt: isWordPress ? "npm run dev" : "php artisan horizon", save: saveBackgroundCommands)
         } header: {
             Text("Background processes")
         } footer: {
@@ -377,10 +399,21 @@ struct SiteScreen: View {
                         .foregroundStyle(Color.orangeText)
                 }
 
-                Text("Each workspace runs its own copy of these commands. {port:vite} gets a free port in each workspace. A change saves when you press Return or click outside the field. Existing workspaces then use the new list.")
+                if isWordPress {
+                    Text("A WordPress site has no background processes of its own. Add a command, for example npm run dev for the build of a theme.")
+                } else {
+                    Text("Each workspace runs its own copy of these commands. {port:vite} gets a free port in each workspace. A change saves when you press Return or click outside the field. Existing workspaces then use the new list.")
+                }
             }
         }
 
+        if !isWordPress {
+            workspaceSetupSections
+        }
+    }
+
+    @ViewBuilder
+    private var workspaceSetupSections: some View {
         Section {
             CommandRows(commands: $commands, saved: site.workspaceCommands, focusedRow: $focusedCommand, prompt: "php artisan tenant:domain shop-{workspace}.test", save: saveCommands)
         } header: {
@@ -620,6 +653,8 @@ struct SiteScreen: View {
 
     private var subtitle: String {
         switch kind {
+        case .php where isWordPress:
+            "\(site.projectType?.displayName ?? "WordPress") · \((WebServer(rawValue: server) ?? .nginx).displayName) · PHP \(php)"
         case .php:
             "\((WebServer(rawValue: server) ?? .nginx).displayName) · PHP \(php)"
         case .node:

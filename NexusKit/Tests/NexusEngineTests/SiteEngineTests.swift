@@ -24,7 +24,7 @@ extension NexusEngineTests {
     }
 
     func makeSiteEngine(root: URL, state: EngineState = EngineState(), runtimes: [(name: String, line: String)] = [], processSupervisor: ProcessSupervisor = ProcessSupervisor()) throws -> NexusEngine {
-        let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
+        let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory), pharLinks: root)
         try paths.createFolders()
         var state = state
         state.ports[NexusEngine.dnsServiceID] = state.ports[NexusEngine.dnsServiceID] ?? freeUDPPort()
@@ -131,7 +131,7 @@ extension NexusEngineTests {
         let read = await engine.handle(.siteDefaults)
 
         #expect(missing == .failure(message: "PHP 8.3 is not installed. Run: nexus install php 8.3"))
-        #expect(set == .done(message: "A new site gets Apache and PHP 8.4. Its Node version comes from the project. The sites that exist do not change."))
+        #expect(set == .done(message: "A new site gets Apache and PHP 8.4. Its Node version comes from the project. A new WordPress site gets Apache and PHP 8.4. The sites that exist do not change."))
         #expect(read == .siteDefaults(SiteDefaults(server: .apache, php: "8.4")))
     }
 

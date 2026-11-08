@@ -146,7 +146,7 @@ public actor RuntimeInstaller {
         try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
 
         do {
-            try await unpack(download, format: package.format, into: staging)
+            try await unpack(download, of: package, into: staging)
 
             let runtime = InstalledRuntime(
                 name: package.name,
@@ -203,8 +203,8 @@ public actor RuntimeInstaller {
         try fileManager.removeItem(at: folder)
     }
 
-    private func unpack(_ archive: URL, format: ManifestPackage.Format, into folder: URL) async throws {
-        switch format {
+    private func unpack(_ archive: URL, of package: ManifestPackage, into folder: URL) async throws {
+        switch package.format {
         case .tarXZ:
             let tar = Command(executable: URL(filePath: "/usr/bin/tar"), arguments: ["-xf", archive.path(percentEncoded: false), "-C", folder.path(percentEncoded: false), "--strip-components", "1"])
 
@@ -214,7 +214,7 @@ public actor RuntimeInstaller {
                 throw RuntimeError.unpackFailed(output)
             }
         case .phar:
-            try fileManager.copyItem(at: archive, to: folder.appending(path: "composer.phar"))
+            try fileManager.copyItem(at: archive, to: folder.appending(path: InstalledRuntime.pharFileName(of: package.name)))
         }
     }
 

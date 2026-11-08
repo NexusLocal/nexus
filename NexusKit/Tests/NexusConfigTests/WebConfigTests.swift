@@ -36,6 +36,55 @@ struct WebConfigTests {
         #expect(config.contains("ssl_certificate \"/Nexus/certs/shop.test.crt\";"))
     }
 
+    private func wordPressSite(_ server: WebServer, project: PHPProjectType = .wordpress) -> WebSite {
+        let base = site(server)
+        return WebSite(hosts: base.hosts, backend: base.backend, certificate: base.certificate, key: base.key, accessLog: base.accessLog, project: project)
+    }
+
+    @Test func bedrockSendsTheFilesOfWordPressToWp() throws {
+        let bedrock = try NginxConfig.render(sites: [wordPressSite(.nginx, project: .bedrock)], settings: nginxSettings())
+        let classic = try NginxConfig.render(sites: [wordPressSite(.nginx)], settings: nginxSettings())
+
+        #expect(bedrock.contains("rewrite ^/(wp-[^/]+\\.php)$ /wp/$1 last;"))
+        #expect(bedrock.contains("location = /wp-admin {"))
+        #expect(!classic.contains("rewrite"))
+    }
+
+    @Test func aWordPressSiteGetsTheSlashOfWpAdminAndRunsNoPHPInTheUploads() throws {
+        let nginx = try NginxConfig.render(sites: [wordPressSite(.nginx)], settings: nginxSettings())
+        let apache = try NginxConfig.render(sites: [wordPressSite(.apache)], settings: nginxSettings())
+        let other = try NginxConfig.render(sites: [site(.nginx)], settings: nginxSettings())
+        let uploads = try #require(nginx.range(of: "location ~* \(NginxConfig.uploadsPattern) {\n            deny all;"))
+        let php = try #require(nginx.range(of: "location ~ \\.php(/|$) {"))
+        let pattern = try NSRegularExpression(pattern: NginxConfig.uploadsPattern, options: .caseInsensitive)
+        let denies = { (path: String) in pattern.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)) != nil }
+
+        #expect(nginx.contains("location = /wp-admin {\n            return 301 /wp-admin/;"))
+        #expect(uploads.lowerBound < php.lowerBound)
+        #expect(apache.contains("location ~* \(NginxConfig.uploadsPattern) {"))
+        #expect(denies("/wp-content/uploads/shell.php"))
+        #expect(denies("/wp-content/uploads/2026/shell.PHP/x"))
+        #expect(denies("/app/uploads/shell.php"))
+        #expect(denies("/files/shell.php"))
+        #expect(denies("/shop/files/2026/shell.php"))
+        #expect(!denies("/wp-content/uploads/photo.php.jpg"))
+        #expect(!denies("/wp-content/plugins/shop/index.php"))
+        #expect(!denies("/wp-content/plugins/shop/files/ajax.php"))
+        #expect(!denies("/wp-content/themes/shop/uploads/form.php"))
+        #expect(!apache.contains("wp-admin"))
+        #expect(!other.contains("uploads"))
+    }
+
+    @Test func aNoticeIsAPageWithoutPHP() throws {
+        let config = try NginxConfig.render(sites: [site(.notice(title: "This workspace runs no PHP", text: "Nexus cannot isolate \"it\" for $5."))], settings: nginxSettings())
+
+        #expect(config.contains("return 503 \"<!doctype html>"))
+        #expect(config.contains("<title>This workspace runs no PHP</title>"))
+        #expect(config.contains("Nexus cannot isolate \\\"it\\\" for 5."))
+        #expect(!config.contains("fastcgi_pass"))
+        #expect(!config.contains("proxy_pass"))
+    }
+
     @Test func anApacheSiteGoesToApacheWithTheForwardedHeaders() throws {
         let config = try NginxConfig.render(sites: [site(.apache)], settings: nginxSettings())
 
@@ -43,6 +92,7 @@ struct WebConfigTests {
         #expect(config.contains("proxy_set_header X-Forwarded-Proto $scheme;"))
         #expect(config.contains("proxy_set_header Host $http_host;"))
         #expect(config.contains("location ~ /\\.(?!well-known) {\n            deny all;"))
+        #expect(config.contains("proxy_redirect http://$http_host/ $scheme://$http_host/;"))
         #expect(!config.contains("fastcgi_pass"))
     }
 

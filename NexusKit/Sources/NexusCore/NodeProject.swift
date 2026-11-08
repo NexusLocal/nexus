@@ -238,12 +238,18 @@ extension Site {
 
 extension SiteKind {
     // The kind of a new site (D67). composer.json makes a PHP site, also with a package.json for
-    // Vite. A package.json with a dev or start script makes a Node.js app. A folder with neither
-    // file is a PHP site. The public folder of a PHP project belongs to that project.
+    // Vite. The files of WordPress make a PHP site too, also with a package.json for the build of a
+    // theme (Phase 4, 3a). A package.json with a dev or start script makes a Node.js app. A folder
+    // with neither file is a PHP site. The public folder of a PHP project belongs to that project.
     public static func detected(in folder: URL) -> SiteKind {
         let project = URL(filePath: ProjectFolder.projectFolder(ofSiteFolder: folder), directoryHint: .isDirectory)
 
         if FileManager.default.fileExists(atPath: project.appending(path: "composer.json").path(percentEncoded: false)) {
+            return .php
+        }
+
+        // Only the folder itself counts. A Node.js app can hold a WordPress folder for its content.
+        if PHPProject.hasWordPress(project) {
             return .php
         }
 

@@ -1,7 +1,7 @@
 import Foundation
 
 // With the PATH setting on, the terminal of the user must run the links in bin/ for php,
-// composer, node and npm (D39). An alias or a shell function wins over the PATH. A line after the
+// composer, node, npm and wp (D39). An alias or a shell function wins over the PATH. A line after the
 // line of Nexus can win too. A new login shell of zsh tells what each name runs. The app shows
 // each name that does not run Nexus. So the user knows that another program runs. (owner)
 public struct OtherCommand: Sendable, Hashable {

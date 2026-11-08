@@ -96,14 +96,14 @@ struct PackagesScreen: View {
     }
 
     private func sectionOrder(_ title: String) -> Int {
-        let order = ["Webservers", "PHP", "MySQL", "MariaDB", "PostgreSQL", "Redis", "Node and Composer"]
+        let order = ["Webservers", "PHP", "MySQL", "MariaDB", "PostgreSQL", "Redis", "Mail", "Tools"]
         return order.firstIndex(of: title) ?? order.count
     }
 
-    // nginx before Apache and Node before Composer, as in the design. The other rows go from old
-    // to new by their names. So Redis 8.10 comes after Redis 8.2.
+    // The design puts nginx before Apache. It puts Node, Composer and WP-CLI in this order. The
+    // other rows go from old to new by their names. So Redis 8.10 comes after Redis 8.2.
     private static func showsBefore(_ first: PackageItem, _ second: PackageItem) -> Bool {
-        let order = ["nginx", "httpd", "node", "composer"]
+        let order = ["nginx", "httpd", "node", "composer", "wp-cli"]
         if first.package != second.package, let firstIndex = order.firstIndex(of: first.package), let secondIndex = order.firstIndex(of: second.package) {
             return firstIndex < secondIndex
         }

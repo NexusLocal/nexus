@@ -6,6 +6,16 @@ public enum ProjectTool: String, Codable, Sendable, CaseIterable {
     case composer
     case node
     case npm
+    case wp
+
+    // The package of Nexus that holds the tool.
+    public var package: String {
+        switch self {
+        case .npm: "node"
+        case .wp: "wp-cli"
+        default: rawValue
+        }
+    }
 }
 
 // The bin folder of Nexus has a link to the nexus command for nexus itself and for each tool. A
