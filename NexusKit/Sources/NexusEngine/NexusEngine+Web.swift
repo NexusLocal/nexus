@@ -1180,7 +1180,7 @@ extension NexusEngine {
         }
     }
 
-    private static func validatedFolder(_ path: String) throws -> URL {
+    static func validatedFolder(_ path: String) throws -> URL {
         let folder = URL(filePath: path, directoryHint: .isDirectory).standardizedFileURL
         var isDirectory: ObjCBool = false
 

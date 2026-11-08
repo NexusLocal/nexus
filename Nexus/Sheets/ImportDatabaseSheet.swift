@@ -361,14 +361,14 @@ struct ImportDatabaseSheet: View {
     }
 
     private static let sampleSources = [
-        DatabaseSize(name: "acme_platform", bytes: 2_800_000_000),
+        DatabaseSize(name: "foo_platform", bytes: 2_800_000_000),
         DatabaseSize(name: "shop", bytes: 48_000_000),
         DatabaseSize(name: "crm", bytes: 12_000_000),
     ]
 
     private static let sampleTask = TaskInfo(
         id: "sample",
-        work: .copyDatabase(database: "acme_platform", instance: "mysql-8.0", name: "acme_platform"),
+        work: .copyDatabase(database: "foo_platform", instance: "mysql-8.0", name: "foo_platform"),
         started: .now.addingTimeInterval(-90),
         completed: 1_200_000_000,
         total: 2_800_000_000,

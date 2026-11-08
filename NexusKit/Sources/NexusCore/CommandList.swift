@@ -30,6 +30,7 @@ extension CommandSection {
         CommandSection(title: "Sites", commands: [
             CommandItem(command: "nexus site list", help: "Lists the sites."),
             CommandItem(command: "nexus site add . --php 8.4", help: "Adds the current folder as a site."),
+            CommandItem(command: "nexus new laravel foo --kit react", help: "Makes a new site from a template: laravel, wordpress, next, nuxt, vite or astro."),
             CommandItem(command: "nexus site edit shop.test --server apache", help: "Changes the kind, the PHP version, the Node version, the webserver, the aliases or the workspace setting."),
             CommandItem(command: "nexus site remove shop.test", help: "Removes a site. The folder stays."),
             CommandItem(command: "nexus site defaults --php 8.4", help: "Changes the PHP version, the Node version or the webserver of a new site."),

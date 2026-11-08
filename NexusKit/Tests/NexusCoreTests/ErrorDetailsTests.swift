@@ -25,6 +25,22 @@ struct ErrorDetailsTests {
         #expect(ErrorDetails.summary(of: "PHP Deprecated: old call\nThe real cause") == "The real cause.")
     }
 
+    @Test func theLaravelInstallerGivesTheMessageOfItsExceptionAndNotItsProgress() {
+        let output = """
+             ✔ Creating Laravel application...
+
+               Illuminate\\Process\\Exceptions\\ProcessFailedException
+
+              The command "'npm' 'run' 'build'" failed.
+            """
+
+        #expect(ErrorDetails.summary(of: output) == "The command \"'npm' 'run' 'build'\" failed.")
+    }
+
+    @Test func aToolOfNodeJSGivesItsErrorLineAndNotItsFrame() {
+        #expect(ErrorDetails.summary(of: "│\n■  Target directory \"shop\" is not empty\n└  Operation cancelled") == "■  Target directory \"shop\" is not empty.")
+    }
+
     @Test func aLongOutputKeepsWholeLinesAtTheStartAndTheEnd() {
         let text = (1...100).map { "line \($0)" }.joined(separator: "\n")
         let excerpt = ErrorDetails.excerpt(text, head: 30, tail: 30)

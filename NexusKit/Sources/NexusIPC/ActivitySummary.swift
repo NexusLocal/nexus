@@ -16,6 +16,8 @@ extension NexusRequest {
         case .retryWorkspace(let host, let name): "retryWorkspace \(host) \(name)"
         case .removeWorkspace(let host, let name, _): "removeWorkspace \(host) \(name)"
         case .stopTask(let id): "stopTask \(id)"
+        case .createSite(let site): "createSite \(site.template.rawValue) \(site.name)"
+        case .removeSiteLeftovers(let id): "removeSiteLeftovers \(id)"
         default: Mirror(reflecting: self).children.first?.label ?? "\(self)"
         }
     }
@@ -44,13 +46,14 @@ extension NexusResponse {
         case .stopped(let message): "stopped: \(message)"
         case .portInUse(let conflict): "port in use: \(conflict.description)"
         case .invalidSettings: "failed: the settings are not valid"
+        case .siteNotCreated(let failure): "failed: \(failure.message)"
         default: "done"
         }
     }
 
     public var failed: Bool {
         switch self {
-        case .failure, .portInUse, .invalidSettings: true
+        case .failure, .portInUse, .invalidSettings, .siteNotCreated: true
         default: false
         }
     }

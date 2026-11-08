@@ -11,7 +11,7 @@ extension AppModel {
         model.services = sampleServices
         model.packages = samplePackages
         model.activities = [
-            ActivityItem(title: "Importing acme_platform into MySQL 8.0", shortTitle: "Importing acme_platform", progress: 0.62),
+            ActivityItem(title: "Importing foo_platform into MySQL 8.0", shortTitle: "Importing foo_platform", progress: 0.62),
             ActivityItem(title: "Downloading PostgreSQL 18", shortTitle: "Downloading PostgreSQL 18", progress: 0.48),
         ]
         model.packagesChecked = "08:55"
@@ -36,7 +36,7 @@ extension AppModel {
     private static let sampleMails: [MailpitAPI.Summary] = [
         ("Shop <noreply@shop.test>", "Reset your password", "Choose a new password with the link.", "shop.test", "09:41"),
         ("Shop <noreply@shop.test>", "Your order #1042", "We send your order today.", "fix.shop.test", "09:38"),
-        ("CRM <crm@crm.test>", "New lead: Acme B.V.", "A new lead came in through the form.", "crm.test", "09:20"),
+        ("CRM <crm@crm.test>", "New lead: Foo B.V.", "A new lead came in through the form.", "crm.test", "09:20"),
         ("WordPress <wordpress@blog.test>", "New comment on Hello world", "A comment waits for your approval.", "blog.test", "08:55"),
         ("Shop <noreply@shop.test>", "Welcome to Shop", "Your account is ready.", "shop.test", "08:31"),
         ("root <www@localhost>", "Cron <www@localhost> php artisan", "No commands are ready to run.", nil, "07:00"),
@@ -137,7 +137,7 @@ extension AppModel {
             .site(sampleNodeApp),
             .site(sampleProxy),
             .parked(ParkedFolder(path: "~/Sites", sites: [
-                site("acme.test", folder: "~/Sites/acme"),
+                site("foo.test", folder: "~/Sites/foo"),
                 site("demo.test", folder: "~/Sites/demo"),
                 site("legacy.test", folder: "~/Sites/legacy"),
                 site("notes.test", folder: "~/Sites/notes"),
@@ -212,7 +212,7 @@ extension AppModel {
                     "memory_limit = 512M",
                     "upload_max_filesize = 64M",
                 ],
-                usedBy: ["shop.test", "blog.test", "example.test", "roodfruit.test", "docs.roodfruit.test", "status.roodfruit.test", "acme.test", "demo.test"],
+                usedBy: ["shop.test", "blog.test", "example.test", "roodfruit.test", "docs.roodfruit.test", "status.roodfruit.test", "foo.test", "demo.test"],
                 log: [
                     "[27-Oct-2026 09:02:10] NOTICE: fpm is running, pid 4790",
                     "[27-Oct-2026 09:02:10] NOTICE: ready to handle connections",
@@ -249,7 +249,7 @@ extension AppModel {
                 dataFolder: "~/Library/Application Support/Nexus/data/mysql-8.0",
                 account: DatabaseAccount(user: "root", password: ""),
                 databases: [
-                    DatabaseItem(name: "acme_platform", usedBy: nil, size: "2.8 GB"),
+                    DatabaseItem(name: "foo_platform", usedBy: nil, size: "2.8 GB"),
                     DatabaseItem(name: "shop", usedBy: "shop.test", size: "412 MB"),
                     DatabaseItem(name: "crm", usedBy: "crm.test", size: "86 MB"),
                 ],

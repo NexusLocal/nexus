@@ -130,7 +130,7 @@ extension NexusEngine {
 
     // npm installs corepack from the registry, and corepack makes the links for pnpm and yarn. Each
     // link starts with #!/usr/bin/env node, so it runs with the Node of the app.
-    private func installCorepack() async throws {
+    func installCorepack() async throws {
         guard let node = Self.newest("node", in: await installer.installedRuntimes()) else {
             throw RuntimeError.unsupported("Node is not installed. Run: nexus install node 24")
         }

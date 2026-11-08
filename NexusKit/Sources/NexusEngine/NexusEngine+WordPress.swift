@@ -625,15 +625,25 @@ extension NexusEngine {
         let (_, client, work) = try await runningClient(instance.id)
         defer { try? FileManager.default.removeItem(at: work) }
 
-        let taken = Set(try await client.rows("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA").compactMap(\.first))
-        let base = Self.databaseBase(of: target.site.host)
-        let name = ([base] + (2...99).map { "\(base)_\($0)" }).first { !taken.contains($0) }
+        let name = try await freeDatabaseName(base: Self.databaseBase(of: target.site.host), on: client, kind: instance.kind, instance: instance.id)
+        return SetUpPlan(instance: instance, name: name)
+    }
 
-        guard let name else {
-            throw RuntimeError.unsupported("\(instance.id) has the databases \(base) to \(base)_99 already.")
+    // The base name, or the base name with a number when the instance has that database already
+    // (3b). "Set up WordPress" and a new site use it.
+    func freeDatabaseName(base: String, on client: DatabaseClient, kind: DatabaseKind, instance: String) async throws -> String {
+        let sql = kind.usesMySQLProtocol ? "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA" : "SELECT datname FROM pg_database"
+        let taken = Set(try await client.rows(sql).compactMap(\.first))
+
+        guard let name = Self.freeName(base: base, taken: taken) else {
+            throw RuntimeError.unsupported("\(instance) has the databases \(base) to \(base)_99 already.")
         }
 
-        return SetUpPlan(instance: instance, name: name)
+        return name
+    }
+
+    static func freeName(base: String, taken: Set<String>) -> String? {
+        ([base] + (2...99).map { "\(base)_\($0)" }).first { !taken.contains($0) }
     }
 
     static func databaseBase(of host: String) -> String {

@@ -85,6 +85,49 @@ public enum CommandRunner {
         return result
     }
 
+    // For a program whose output the user reads while it runs, such as a tool that makes a new
+    // site. Both outputs go to the end of the log file, in the order that the program writes them.
+    // input goes to the standard input of the program, for example a password that must not be in
+    // the arguments.
+    public static func run(_ command: Command, appendingTo log: URL, input: Data? = nil) async throws {
+        let handle = try FileHandle(forWritingTo: log)
+        defer { try? handle.close() }
+        let offset = try handle.seekToEnd()
+
+        let process = try makeProcess(command)
+        process.standardOutput = handle
+        process.standardError = handle
+
+        let inputPipe = input.map { _ in Pipe() }
+        process.standardInput = inputPipe ?? FileHandle.nullDevice
+
+        let exit = try start(process)
+
+        // A program that ends before it reads its input closes the pipe. The write then fails with
+        // an error and not with a SIGPIPE that ends nexusd.
+        if let input, let inputPipe {
+            _ = fcntl(inputPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+            try? inputPipe.fileHandleForWriting.write(contentsOf: input)
+            try? inputPipe.fileHandleForWriting.close()
+        }
+
+        let end = await withTaskCancellationHandler {
+            await exit.wait()
+        } onCancel: {
+            ProcessGroup.signal(process, command.stopSignal)
+        }
+
+        try Task.checkCancellation()
+
+        guard !end.failed else {
+            let reader = try? FileHandle(forReadingFrom: log)
+            try? reader?.seek(toOffset: offset)
+            let output = String(decoding: (try? reader?.readToEnd()) ?? Data(), as: UTF8.self)
+            try? reader?.close()
+            throw failure(command.name, status: end.status, output: TerminalOutput.lines(output).joined(separator: "\n"))
+        }
+    }
+
     // Sends the output of the first program to the input of the second, as a shell pipe does.
     // Both must succeed. When the second stops early, the first stops on the closed pipe, so the
     // error of the second is the cause. When the first fails in another way, the second got a

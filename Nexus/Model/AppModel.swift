@@ -15,6 +15,7 @@ enum SidebarItem: Hashable {
 }
 
 enum SheetKind: Identifiable {
+    case newSite
     case addSite(folder: URL?, manyProjects: Bool)
     case editAliases(host: String)
     // source holds the server of a WordPress site for "Copy to Nexus…" (Phase 4, 3d).
@@ -23,6 +24,7 @@ enum SheetKind: Identifiable {
 
     var id: String {
         switch self {
+        case .newSite: "new-site"
         case .addSite: "add-site"
         case .editAliases(let host): "aliases-\(host)"
         case .importDatabase(let instance, _): "import-\(instance)"
@@ -240,6 +242,9 @@ final class AppModel {
     var installedRuntimes: [InstalledRuntime] = []
     var installedLoaded = false
     var tasks: [TaskInfo] = []
+    // The new site of the New site sheet (3m). It stays after the sheet closes, so the sheet shows
+    // its steps, its failure or the password of WordPress again.
+    var newSiteRun: NewSiteRun?
     var packagesProblem: String?
     var installedProblem: String?
     var checkingPackages = false

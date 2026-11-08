@@ -80,7 +80,7 @@ struct NexusCommand: AsyncParsableCommand {
         subcommands: [
             Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Installed.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
-            SiteCommand.self, WorkspaceCommand.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
+            SiteCommand.self, WorkspaceCommand.self, New.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
             Database.self, PHP.self, Composer.self, Node.self, NPM.self, WP.self, MailCommand.self, Sendmail.self,
         ]
     )
@@ -1138,6 +1138,100 @@ struct SiteCommand: AsyncParsableCommand {
         }
     }
 }
+
+// A new site from a template (D38, Phase 4, 3i). The command waits until the site runs, and the
+// steps show in the app at the same time.
+struct New: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Makes a new site from a template, for example: nexus new laravel shop --kit react")
+
+    @Argument(help: "laravel, wordpress, next, nuxt, vite or astro.") var template: SiteTemplate
+    @Argument(help: "The name of the site: the folder and the first part of the host, for example shop for shop.test.") var name: String
+    @Option(help: "The folder that gets the new site. The default is the current folder.") var folder: String = "."
+    @Flag(inversion: .prefixedNo, help: "Makes a git repository with a first commit. Workspaces need it.") var git = true
+    @Option(help: "The database instance, for example mysql-8.4. A Laravel site without it uses SQLite. WordPress gets MySQL 8.4 or the newest MySQL that runs.") var database: String?
+    @Option(help: "The PHP version line. The default is the newest that fits the template.") var php: String?
+    @Option(help: "The Node version line. The default is the newest installed one.") var node: String?
+    @Option(help: "Laravel: none, react, vue, svelte or livewire.") var kit: LaravelStarterKit = .none
+    @Option(help: "Laravel with a starter kit: built_in, workos or none.") var auth: LaravelAuthentication = .builtIn
+    @Flag(help: "Laravel with a starter kit: adds teams.") var teams = false
+    @Option(help: "Laravel: pest or phpunit.") var tests: LaravelTests = .pest
+    @Flag(inversion: .prefixedNo, help: "Laravel: installs Laravel Boost.") var boost = true
+    @Option(help: "WordPress: the language, for example nl_NL.") var locale = WordPressLocale.english
+    @Option(help: "WordPress: the admin user.") var adminUser = "admin"
+    @Option(help: "WordPress: the email address of the admin user. The default is admin@ and the host.") var adminEmail = ""
+    @Option(help: "WordPress: subfolders or subdomains for a network.") var network: WordPressNetworkKind?
+    @Option(help: "Vite: react, vue or svelte.") var framework: ViteFramework = .react
+    @Option(help: "Node.js: npm, pnpm or yarn.") var packageManager: PackageManager = .npm
+
+    func run() async throws {
+        let site = NewSite(
+            template: template,
+            name: name,
+            parent: absolutePath(folder),
+            git: git,
+            database: database,
+            php: php,
+            node: node,
+            starterKit: kit,
+            authentication: auth,
+            teams: teams,
+            tests: tests,
+            boost: boost,
+            locale: locale,
+            adminUser: adminUser,
+            adminEmail: adminEmail,
+            network: network,
+            framework: framework,
+            packageManager: packageManager
+        )
+
+        print("Nexus makes the site. This can take some minutes. The log is \(NexusPaths.standard.log("new-site-\(name)").path(percentEncoded: false))")
+        let response = try await send(.createSite(site))
+
+        switch response {
+        case .siteCreated(let created):
+            print(created.message)
+
+            if let user = created.adminUser, let password = created.adminPassword {
+                print("Admin user: \(user)")
+                print("Password: \(password)")
+                print("Nexus does not keep this password. Copy it now.")
+            }
+        case .siteNotCreated(let failure):
+            var lines = [withLogHint(failure.message), ""]
+            lines += failure.steps.map { "\(Self.mark($0.state)) \($0.title)" }
+            lines += ["", "The end of the log:"] + failure.log.map { "  \($0)" }
+            lines += ["", "Nexus kept \(failure.folder)\(failure.database.map { " and the database \($0)" } ?? ""), so you can look at them. The log is \(failure.logFile)"]
+            FileHandle.standardError.write(Data((lines.joined(separator: "\n") + "\n").utf8))
+            throw ExitCode.failure
+        default:
+            try finish(response)
+        }
+    }
+
+    private static func mark(_ state: TaskStepState) -> String {
+        switch state {
+        case .done: "done   "
+        case .failed: "failed "
+        case .running: "running"
+        case .waiting: "-      "
+        }
+    }
+}
+
+extension SiteTemplate: ExpressibleByArgument {}
+
+extension LaravelStarterKit: ExpressibleByArgument {}
+
+extension LaravelAuthentication: ExpressibleByArgument {}
+
+extension LaravelTests: ExpressibleByArgument {}
+
+extension WordPressNetworkKind: ExpressibleByArgument {}
+
+extension ViteFramework: ExpressibleByArgument {}
+
+extension PackageManager: ExpressibleByArgument {}
 
 struct Park: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Makes each subfolder of a folder a site, for example ~/Sites/shop becomes shop.test.")

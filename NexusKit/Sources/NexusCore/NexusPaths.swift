@@ -126,6 +126,12 @@ public struct NexusPaths: Sendable, Equatable {
         corepack.appending(path: "bin", directoryHint: .isDirectory)
     }
 
+    // nexusd installs laravel/installer here with its own Composer (3j). So laravel new needs no
+    // global install by the user.
+    public var laravelInstaller: URL {
+        folder("tools").appending(path: "laravel-installer", directoryHint: .isDirectory)
+    }
+
     public func createFolders(using fileManager: FileManager = .default) throws {
         for folder in allFolders {
             try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)

@@ -150,6 +150,12 @@ public actor NexusEngine {
     var emptyingRedisIndexes: Set<WorkspaceRedisIndex> = []
     // The downloads and database copies that run now, and the last task list of the watchers.
     private(set) var runningTasks: [String: RunningTask] = [:]
+    // What a new site that failed left behind, by the id of its task (3i). "Move to trash" removes
+    // only these. The folders that a new site makes now, so a second one with that name waits.
+    var siteLeftovers: [String: SiteLeftovers] = [:]
+    var creatingSites: Set<String> = []
+    // Two new Laravel sites share one install of laravel/installer.
+    var laravelInstallerInstall: Task<Void, Error>?
     // The databases that a copy writes now, as "<instance> <name>". nexusd refuses a second copy
     // into one of them. It also refuses a second install of a package that it installs now. And
     // it refuses a copy into an instance that an update stops now.
@@ -266,6 +272,11 @@ public actor NexusEngine {
             case .addSite(let folder, let host, let aliases, let php, let server, let group, let runsAs, let command, let address, let node):
                 let settings = SiteChange(node: node, runsAs: runsAs, command: command, address: address)
                 return .done(message: try await serialWeb { try await self.addSite(folder: folder, host: host, aliases: aliases, php: php, server: server, group: group, settings: settings) })
+            case .createSite(let site):
+                // A new site runs for minutes, so it does not wait in the queue of the changes.
+                return .siteCreated(try await createSite(site))
+            case .removeSiteLeftovers(let id):
+                return .done(message: try await removeSiteLeftovers(id: id))
             case .removeSite(let host):
                 return .done(message: try await serialWeb { try await self.removeSite(host) })
             case .editSite(let host, let change):
@@ -383,6 +394,8 @@ public actor NexusEngine {
             return .invalidSettings(settings)
         } catch let stopped as TaskStopped {
             return .stopped(message: stopped.description)
+        } catch let failed as SiteCreationFailed {
+            return .siteNotCreated(failed.failure)
         } catch let missing as ToolNotInstalled {
             return .toolNotInstalled(message: missing.description)
         } catch {
@@ -1179,10 +1192,15 @@ extension NexusEngine {
         return false
     }
 
+    // The info of a task with steps reads its log. Without a watcher nobody reads it.
     private func publishTasks() {
+        guard !watchers.isEmpty else {
+            return
+        }
+
         let list = TaskList(tasks: runningTasks.values.map(\.info).sorted { ($0.started, $0.id) < ($1.started, $1.id) })
 
-        guard list != publishedTasks, !watchers.isEmpty else {
+        guard list != publishedTasks else {
             return
         }
 

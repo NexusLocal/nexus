@@ -264,10 +264,15 @@ struct AddMenuItems: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        Button("New site…", systemImage: "plus.square") {
+            present(.newSite)
+        }
+        .keyboardShortcut("n")
+
         Button("Add site…", systemImage: "globe") {
             present(.addSite(folder: nil, manyProjects: false))
         }
-        .keyboardShortcut("n")
+        .keyboardShortcut("o")
 
         Button("Add folder of projects…", systemImage: ParkedFolder.systemImage) {
             present(.addSite(folder: nil, manyProjects: true))

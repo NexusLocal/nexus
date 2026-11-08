@@ -118,7 +118,7 @@ public enum ErrorDetails {
         let lines = output
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && $0 != "..." && split($0).id == nil }
+            .filter { !$0.isEmpty && $0.contains(where: { $0.isLetter || $0.isNumber }) && split($0).id == nil && !isProgress($0) }
 
         if let php = lines.first(where: { line in phpErrors.contains { line.contains($0) } }) {
             return sentence(phpError(php))
@@ -126,6 +126,10 @@ public enum ErrorDetails {
 
         if let place = lines.firstIndex(where: { $0.wholeMatch(of: consolePlace) != nil }), place + 1 < lines.endIndex {
             return sentence(lines[place + 1])
+        }
+
+        if let exception = lines.firstIndex(where: { $0.wholeMatch(of: collisionException) != nil }), exception + 1 < lines.endIndex {
+            return sentence(lines[exception + 1])
         }
 
         if let error = lines.first(where: { $0.hasPrefix("Error: ") }) {
@@ -175,6 +179,18 @@ public enum ErrorDetails {
         return ".!?…)".contains(short.last ?? ".") ? short : short + "."
     }
 
+    // A line of progress, such as "✔ Creating Laravel application..." of the Laravel installer,
+    // tells what went well. The tools of Node.js use ■ and └ for their errors, so those stay.
+    private static func isProgress(_ line: String) -> Bool {
+        guard let first = line.unicodeScalars.first else {
+            return false
+        }
+
+        return "✔✓".unicodeScalars.contains(first) || (0x2800...0x28FF).contains(first.value)
+    }
+
     nonisolated(unsafe) private static let referencePattern = /\s*\(details ([0-9A-F]{6})\)/
     nonisolated(unsafe) private static let consolePlace = /In .+ line \d+:/
+    // Laravel shows an uncaught exception with the class on one line and the message on the next.
+    nonisolated(unsafe) private static let collisionException = /(?:[A-Za-z0-9_]+\\)+[A-Za-z0-9_]+(?:Exception|Error)/
 }

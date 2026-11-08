@@ -622,6 +622,30 @@ public enum TaskWork: Codable, Sendable, Equatable {
     case install(name: String, line: String, version: String, update: Bool)
     case copyDatabase(database: String, instance: String, name: String)
     case dumpDatabase(name: String, instance: String)
+    case createSite(name: String, template: SiteTemplate)
+}
+
+public enum TaskStepState: String, Codable, Sendable {
+    case waiting
+    case running
+    case done
+    case failed
+}
+
+// One step of a task with steps, such as a new site (3i). detail is the label of the spinner of
+// the tool that runs now. seconds is the time of a step that ended.
+public struct TaskStep: Codable, Sendable, Equatable {
+    public var title: String
+    public var state: TaskStepState
+    public var detail: String?
+    public var seconds: Int?
+
+    public init(title: String, state: TaskStepState = .waiting, detail: String? = nil, seconds: Int? = nil) {
+        self.title = title
+        self.state = state
+        self.detail = detail
+        self.seconds = seconds
+    }
 }
 
 // One file in the Nexus trash (D53).
@@ -654,8 +678,11 @@ public struct TaskInfo: Codable, Sendable, Equatable, Identifiable {
     public let table: String?
     public let tableNumber: Int?
     public let tableCount: Int?
+    public let steps: [TaskStep]?
+    public let log: [String]?
+    public let logFile: String?
 
-    public init(id: String, work: TaskWork, started: Date, completed: Int64 = 0, total: Int64? = nil, table: String? = nil, tableNumber: Int? = nil, tableCount: Int? = nil) {
+    public init(id: String, work: TaskWork, started: Date, completed: Int64 = 0, total: Int64? = nil, table: String? = nil, tableNumber: Int? = nil, tableCount: Int? = nil, steps: [TaskStep]? = nil, log: [String]? = nil, logFile: String? = nil) {
         self.id = id
         self.work = work
         self.started = started
@@ -664,6 +691,51 @@ public struct TaskInfo: Codable, Sendable, Equatable, Identifiable {
         self.table = table
         self.tableNumber = tableNumber
         self.tableCount = tableCount
+        self.steps = steps
+        self.log = log
+        self.logFile = logFile
+    }
+}
+
+// The answer to a new site. The password of the admin user of WordPress comes only here. Nexus
+// does not store it (3l).
+public struct CreatedSite: Codable, Sendable, Equatable {
+    public let host: String
+    public let url: String
+    public let folder: String
+    public let message: String
+    public let adminUser: String?
+    public let adminPassword: String?
+
+    public init(host: String, url: String, folder: String, message: String, adminUser: String? = nil, adminPassword: String? = nil) {
+        self.host = host
+        self.url = url
+        self.folder = folder
+        self.message = message
+        self.adminUser = adminUser
+        self.adminPassword = adminPassword
+    }
+}
+
+// A new site that failed keeps its folder, its database and its log, so the user can look at
+// them. id names them for "Move to trash".
+public struct SiteCreationFailure: Codable, Sendable, Equatable {
+    public let id: String
+    public let message: String
+    public let steps: [TaskStep]
+    public let log: [String]
+    public let logFile: String
+    public let folder: String
+    public let database: String?
+
+    public init(id: String, message: String, steps: [TaskStep], log: [String], logFile: String, folder: String, database: String?) {
+        self.id = id
+        self.message = message
+        self.steps = steps
+        self.log = log
+        self.logFile = logFile
+        self.folder = folder
+        self.database = database
     }
 }
 
@@ -703,6 +775,11 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case uninstall
     case sites
     case addSite(folder: String, host: String?, aliases: [String], php: String?, server: WebServer?, group: String? = nil, runsAs: SiteKind? = nil, command: String? = nil, address: String? = nil, node: String? = nil)
+    // A new site from a template (3i). The answer is siteCreated or siteNotCreated.
+    case createSite(NewSite)
+    // Moves the folder of a new site that failed to the Trash and drops its database. Only what
+    // that task made goes.
+    case removeSiteLeftovers(id: String)
     case removeSite(host: String)
     case editSite(host: String, change: SiteChange)
     // Starts the Node.js app of the main checkout again, or of the workspace with this name (D67).
@@ -935,6 +1012,8 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case backgroundPreset([String])
     case mailStatus(MailStatus)
     case siteMail(SiteMail)
+    case siteCreated(CreatedSite)
+    case siteNotCreated(SiteCreationFailure)
 }
 
 // What the Site screen of a WordPress site shows (Phase 4, 3b). configFile is nil without a
