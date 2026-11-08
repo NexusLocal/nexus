@@ -29,6 +29,7 @@ struct AddSiteSheet: View {
     @State private var address = ""
     @State private var adding = false
     @State private var failure: String?
+    @State private var errorReport: ErrorReport?
     @State private var wordPress: WordPressChoice?
 
     let tld: String
@@ -111,9 +112,7 @@ struct AddSiteSheet: View {
             .fixedSize(horizontal: false, vertical: true)
 
             if let failure {
-                Label(failure, systemImage: "xmark.circle")
-                    .foregroundStyle(Color.redText)
-                    .fixedSize(horizontal: false, vertical: true)
+                FailureLabel(message: failure) { errorReport = $0 }
             }
 
             HStack {
@@ -138,6 +137,9 @@ struct AddSiteSheet: View {
         }
         .padding(20)
         .frame(width: 540)
+        .sheet(item: $errorReport) { report in
+            ErrorDetailsSheet(report: report)
+        }
         .onAppear {
             server = model.siteDefaults.server.rawValue
             php = model.defaultPHP

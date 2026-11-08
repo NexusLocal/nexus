@@ -57,6 +57,11 @@ public struct NexusPaths: Sendable, Equatable {
         log("activity")
     }
 
+    // The full output of each program that failed (owner, 2026-11-07).
+    public var errorLog: URL {
+        log("errors")
+    }
+
     public var siteLogs: URL {
         logs.appending(path: "sites", directoryHint: .isDirectory)
     }

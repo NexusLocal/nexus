@@ -38,14 +38,19 @@ public final class ActivityLog: Sendable {
 
     // The requests hold no secrets, but an error of another program can repeat one.
     static func hidingSecrets(in text: String) -> String {
-        let oneLine = text.replacingOccurrences(of: "\n", with: " ")
-        let keys = oneLine.replacingOccurrences(
-            of: "\\b([a-z_]*(?:password|passwd|pwd|secret|token|api[_-]?key)[a-z_]*)[\"']?\\s*[=:]\\s*(?:\"[^\"]*\"|'[^']*'|\\S+)",
+        String(withoutSecrets(text.replacingOccurrences(of: "\n", with: " ")).prefix(longestText))
+    }
+
+    // Keeps the lines, for the full output of a program in errors.log and in a report. A value ends
+    // at the end of its line, so a key without a value does not hide the next line.
+    public static func withoutSecrets(_ text: String) -> String {
+        let keys = text.replacingOccurrences(
+            of: "\\b([a-z_]*(?:password|passwd|pwd|secret|token|api[_-]?key)[a-z_]*)[\"']?[ \\t]*[=:][ \\t]*(?:\"[^\"\\n]*\"|'[^'\\n]*'|\\S+)",
             with: "$1=<hidden>",
             options: [.regularExpression, .caseInsensitive]
         )
         let sql = keys.replacingOccurrences(
-            of: "\\b(identified by|password)\\s+'(?:[^']|'')*'",
+            of: "\\b(identified by|password)[ \\t]+'(?:[^'\\n]|'')*'",
             with: "$1 <hidden>",
             options: [.regularExpression, .caseInsensitive]
         )
@@ -55,10 +60,10 @@ public final class ActivityLog: Sendable {
             options: .regularExpression
         )
 
-        return String(urls.prefix(longestText))
+        return urls
     }
 
-    private static func append(_ line: String, to file: URL, limit: Int) {
+    static func append(_ line: String, to file: URL, limit: Int) {
         let path = file.path(percentEncoded: false)
         var descriptor = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o600)
 

@@ -134,7 +134,7 @@ struct ConfigurationProbeTests {
         let application = try application(php: "echo 'The environment file is invalid!' >&2\nexit 1")
         defer { try? FileManager.default.removeItem(at: application.root) }
 
-        await #expect(throws: ProbeError.notLoaded("php stopped with exit status 1: The environment file is invalid!")) {
+        await #expect(throws: ProbeError.notLoaded("php stopped: The environment file is invalid!")) {
             try await ConfigurationProbe(php: application.php, environment: [:]).run(root: application.root)
         }
     }

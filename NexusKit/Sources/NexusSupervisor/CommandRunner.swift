@@ -1,4 +1,5 @@
 import Foundation
+import NexusCore
 import Synchronization
 
 public struct Command: Sendable, Equatable {
@@ -34,12 +35,15 @@ public struct CommandOutput: Sendable, Equatable {
 public enum CommandError: Error, Equatable, CustomStringConvertible {
     case failed(program: String, status: Int32, output: String)
 
+    // One line that tells the cause. The full output goes to errors.log when this text is made, so
+    // a failure that a caller expects and handles writes no entry (owner, 2026-11-07).
     public var description: String {
         switch self {
-        case .failed(let program, let status, let output) where output.isEmpty:
-            "\(program) stopped with exit status \(status)."
         case .failed(let program, let status, let output):
-            "\(program) stopped with exit status \(status): \(output)"
+            let summary = ErrorDetails.summary(of: output)
+            let reference = ErrorDetails.record(program: program, status: status, output: output).map { " \(ErrorDetails.reference($0))" } ?? ""
+
+            return summary.isEmpty ? "\(program) stopped with exit status \(status).\(reference)" : "\(program) stopped: \(summary)\(reference)"
         }
     }
 }
@@ -75,7 +79,7 @@ public enum CommandRunner {
 
         guard !end.failed else {
             let reason = result.standardError.isEmpty ? result.standardOutput : result.standardError
-            throw CommandError.failed(program: command.name, status: end.status, output: tail(reason))
+            throw failure(command.name, status: end.status, output: reason)
         }
 
         return result
@@ -134,20 +138,25 @@ public enum CommandRunner {
 
         try Task.checkCancellation()
         let producerErrors = firstErrors.text()
-        let producerError = CommandError.failed(program: first.name, status: producerEnd.status, output: tail(producerErrors))
         let producerStoppedOnClosedPipe = producerEnd == Termination(status: SIGPIPE, signaled: true) || producerErrors.contains("Broken pipe") || producerErrors.contains("errno 32")
 
         if producerEnd.failed, !producerStoppedOnClosedPipe {
-            throw producerError
+            throw failure(first.name, status: producerEnd.status, output: producerErrors)
         }
 
         if consumerEnd.failed {
-            throw CommandError.failed(program: second.name, status: consumerEnd.status, output: tail(secondOutput.text()))
+            throw failure(second.name, status: consumerEnd.status, output: secondOutput.text())
         }
 
         if producerEnd.failed {
-            throw producerError
+            throw failure(first.name, status: producerEnd.status, output: producerErrors)
         }
+    }
+
+    // The error keeps the start and the end of the output: PHP names the cause before its trace, and
+    // most other programs at the end.
+    private static func failure(_ program: String, status: Int32, output: String) -> CommandError {
+        .failed(program: program, status: status, output: ErrorDetails.excerpt(output.trimmingCharacters(in: .whitespacesAndNewlines), head: 10_000, tail: 40_000))
     }
 
     private static func makeProcess(_ command: Command) throws -> Process {
@@ -213,10 +222,6 @@ public enum CommandRunner {
         return end
     }
 
-    private static func tail(_ text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.count > 2000 ? "...\(trimmed.suffix(2000))" : trimmed
-    }
 }
 
 // For a program that a signal stopped, the status is the number of the signal.

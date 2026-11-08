@@ -66,11 +66,12 @@ struct MainWindow: View {
                 }
             }
         }
-        .alert(windowFailure?.title ?? "", isPresented: showsFailure, presenting: windowFailure) { _ in
-            Button("OK") {}
+        .alert(windowFailure?.title ?? "", isPresented: showsFailure, presenting: windowFailure) { failure in
+            FailureAlertButtons(failure: failure, place: .window)
         } message: { failure in
-            Text(failure.message)
+            Text(ErrorDetails.split(failure.message).text)
         }
+        .errorDetailsSheet(model: model, place: .window)
         .alert(groupNamingTitle, isPresented: showsGroupNaming, presenting: model.groupNaming) { naming in
             TextField("Name", text: $groupName)
             Button(namingButton(naming)) {

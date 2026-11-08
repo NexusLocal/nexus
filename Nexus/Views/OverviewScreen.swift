@@ -304,7 +304,7 @@ private struct ServiceRow: View {
                 Text(problem.summary)
                     .font(.callout)
                     .foregroundStyle(Color.orangeText)
-                    .help(problem.detail)
+                    .help(ErrorDetails.split(problem.detail).text)
             }
 
             Text(service.portSummary)

@@ -27,6 +27,7 @@ if let contents {
 
 let activity = ActivityLog(file: paths.activityLog, source: "nexusd")
 activity.write("launch", "nexusd \(NexusVersion.current()) build \(NexusVersion.build())")
+ErrorDetails.write(to: paths.errorLog)
 
 let engine = NexusEngine(
     paths: paths,

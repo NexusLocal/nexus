@@ -150,10 +150,6 @@ public enum WordPressFiles {
 
     public static let beforeNexus = "// Before Nexus: "
 
-    public static func settingDBHost(_ value: String, in text: String) -> String? {
-        settingConstant("DB_HOST", to: value, in: text)
-    }
-
     // Gives a constant a new value with a click of the user, as "Send mail to Nexus" does for a .env
     // (D44). The old line stays above it as a comment line. A file with no line or with two lines
     // for the constant, for example one in each branch of an if, gives nil. A line with another

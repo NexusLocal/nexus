@@ -210,8 +210,8 @@ public actor RuntimeInstaller {
 
             do {
                 try await CommandRunner.run(tar)
-            } catch CommandError.failed(_, _, let output) {
-                throw RuntimeError.unpackFailed(output)
+            } catch let error as CommandError {
+                throw RuntimeError.unpackFailed(error.description)
             }
         case .phar:
             try fileManager.copyItem(at: archive, to: folder.appending(path: InstalledRuntime.pharFileName(of: package.name)))

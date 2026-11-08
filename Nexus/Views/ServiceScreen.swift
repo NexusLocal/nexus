@@ -350,8 +350,7 @@ struct StateSection: View {
             Text(service.kind == .mail ? "Mail service" : service.name)
         } footer: {
             if let problem = service.problem {
-                Text(problem.detail)
-                    .foregroundStyle(Color.orangeText)
+                MessageText(problem.detail, title: "\(service.name) has a problem")
             } else if let note = model.securityNote(of: service) {
                 Text(note)
                     .foregroundStyle(Color.orangeText)
@@ -524,8 +523,7 @@ private struct DatabaseSections: View {
 
         Section {
             if let problem = model.databaseListProblems[service.id] {
-                Text("Nexus cannot list the databases. \(problem)")
-                    .foregroundStyle(Color.orangeText)
+                MessageText("Nexus cannot list the databases. \(problem)")
             } else if databases.isEmpty {
                 Text(service.isActive ? "No databases yet." : "Start \(service.name) to see its databases.")
                     .foregroundStyle(.secondary)

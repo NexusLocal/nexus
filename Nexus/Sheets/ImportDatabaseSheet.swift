@@ -11,6 +11,7 @@ struct ImportDatabaseSheet: View {
     var source: WordPressCopySource?
     // The database of the WordPress site. A list that fails to load does not make it go.
     @State private var wantedDatabase: String?
+    @State private var errorReport: ErrorReport?
     // A Nexus instance, or nil for another server such as MAMP PRO.
     @State private var sourceInstance: String?
     @State private var host = "127.0.0.1"
@@ -128,8 +129,7 @@ struct ImportDatabaseSheet: View {
                     Text("From")
                 } footer: {
                     if let sourcesProblem {
-                        Text(sourcesProblem)
-                            .foregroundStyle(Color.orangeText)
+                        MessageText(sourcesProblem) { errorReport = $0 }
                     }
                 }
 
@@ -154,12 +154,10 @@ struct ImportDatabaseSheet: View {
 
             switch importResult {
             case .failed(let message):
-                Label(message, systemImage: "xmark.circle")
-                    .foregroundStyle(Color.redText)
+                FailureLabel(message: message) { errorReport = $0 }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
                     .background(Color.errorBackground, in: .rect(cornerRadius: 6))
-                    .fixedSize(horizontal: false, vertical: true)
             case .stopped(let message):
                 Label(message, systemImage: "stop.circle")
                     .foregroundStyle(.secondary)
@@ -204,6 +202,9 @@ struct ImportDatabaseSheet: View {
         }
         .padding(20)
         .frame(width: 520)
+        .sheet(item: $errorReport) { report in
+            ErrorDetailsSheet(report: report)
+        }
         .onAppear {
             guard let source else {
                 useStandardAccount(of: kind)

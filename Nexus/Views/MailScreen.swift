@@ -189,8 +189,7 @@ private struct MailForm: View {
                     Text("Start the mail service to read the inbox. New mail waits in the outbox until then.")
                         .foregroundStyle(.secondary)
                 } else if let problem = model.mailProblem {
-                    Text(problem)
-                        .foregroundStyle(Color.orangeText)
+                    MessageText(problem)
                 } else if model.mails.isEmpty {
                     Text(model.mailFilter.map { "The inbox has no mail of \($0)." } ?? "The inbox is empty. A mail of a site shows here within a second.")
                         .foregroundStyle(.secondary)

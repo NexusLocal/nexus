@@ -146,8 +146,7 @@ struct SiteScreen: View {
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     if let problem = site.problem {
-                        Text("\(site.host) does not run. \(problem)")
-                            .foregroundStyle(Color.orangeText)
+                        MessageText("\(site.host) does not run. \(problem)")
                     }
 
                     if let parkedFolder = site.parkedFolder, site.hasOwnSettings {
@@ -286,8 +285,7 @@ struct SiteScreen: View {
         } footer: {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(site.processProblems, id: \.self) { problem in
-                    Text(problem)
-                        .foregroundStyle(Color.orangeText)
+                    MessageText(problem)
                 }
 
                 missingNodeLine
@@ -358,13 +356,11 @@ struct SiteScreen: View {
         } footer: {
             VStack(alignment: .leading, spacing: 6) {
                 if let problem = site.workspaceProblem {
-                    Text(problem)
-                        .foregroundStyle(Color.orangeText)
+                    MessageText(problem)
                 }
 
                 ForEach(Array(Set(site.workspaces.compactMap(\.problem))).sorted(), id: \.self) { problem in
-                    Text(problem)
-                        .foregroundStyle(Color.orangeText)
+                    MessageText(problem)
                 }
 
                 ForEach(site.workspaces.compactMap(\.isolationMessage), id: \.self) { message in
@@ -407,8 +403,7 @@ struct SiteScreen: View {
         } footer: {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(site.processProblems, id: \.self) { problem in
-                    Text(problem)
-                        .foregroundStyle(Color.orangeText)
+                    MessageText(problem)
                 }
 
                 if isWordPress {
@@ -870,6 +865,7 @@ struct EditAliasesSheet: View {
     @State private var aliases: String
     @State private var saving = false
     @State private var failure: String?
+    @State private var errorReport: ErrorReport?
 
     init(site: SiteItem) {
         self.site = site
@@ -892,9 +888,7 @@ struct EditAliasesSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if let failure {
-                Label(failure, systemImage: "xmark.circle")
-                    .foregroundStyle(Color.redText)
-                    .fixedSize(horizontal: false, vertical: true)
+                FailureLabel(message: failure) { errorReport = $0 }
             }
 
             HStack {
@@ -919,6 +913,9 @@ struct EditAliasesSheet: View {
         }
         .padding(20)
         .frame(width: 440)
+        .sheet(item: $errorReport) { report in
+            ErrorDetailsSheet(report: report)
+        }
     }
 
     private func save() {

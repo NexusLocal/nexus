@@ -113,13 +113,13 @@ extension NexusEngine {
             environment: ServiceCatalog.phpEnvironment.merging(["PHP_INI_SCAN_DIR": scanFolder.path(percentEncoded: false)]) { _, new in new }
         )
 
-        // CommandRunner keeps only the end of a long output and starts it with "...". The first
-        // line is then only a part of a message. The baseline does not have this part.
+        // CommandRunner keeps the start and the end of a very long output. It cuts at the ends of
+        // lines, with a line "..." between them, so no message of PHP is cut.
         do {
             let output = try await CommandRunner.run(command)
             return "\(output.standardOutput)\n\(output.standardError)"
         } catch CommandError.failed(_, _, let output) {
-            return output.hasPrefix("...") ? String(output.drop { !$0.isNewline }) : output
+            return output
         }
     }
 

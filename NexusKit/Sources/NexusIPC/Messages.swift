@@ -727,7 +727,8 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     // The values that the user confirmed. nexusd refuses when they are not true any more.
     case setUpWordPress(host: String, database: String, instance: String)
     case createWordPressDatabase(host: String)
-    case setWordPressDBHost(host: String, value: String)
+    // A user also sets DB_USER and DB_PASSWORD to the account of the instance.
+    case setWordPressDBHost(host: String, value: String, user: String?)
     // The site URL and HTTPS (Phase 4, 3d). The plan is what the user confirmed.
     case changeWordPressURLs(host: String, plan: WordPressURLPlan)
     case undoWordPressURLChange(host: String, plan: WordPressURLPlan)
@@ -940,6 +941,8 @@ public struct WordPressSiteInfo: Codable, Sendable, Equatable {
     public let setUpDatabase: String?
     public let setUpInstance: String?
     public let suggestedDBHost: String?
+    // The user that "Set DB_HOST" writes with the password of the instance. Nil keeps the account.
+    public let suggestedUser: String?
     public let url: String?
     public let configHome: String?
     public let configHomeFile: String?
@@ -947,10 +950,11 @@ public struct WordPressSiteInfo: Codable, Sendable, Equatable {
     public let urlChange: WordPressURLChange?
     public let copyInstance: String?
 
-    public init(type: PHPProjectType, version: String? = nil, configFile: String? = nil, database: String? = nil, dbHost: String? = nil, instance: String? = nil, databaseExists: Bool? = nil, home: String? = nil, siteURL: String? = nil, problem: String? = nil, setUpDatabase: String? = nil, setUpInstance: String? = nil, suggestedDBHost: String? = nil, url: String? = nil, configHome: String? = nil, configHomeFile: String? = nil, urlPlan: WordPressURLPlan? = nil, urlChange: WordPressURLChange? = nil, copyInstance: String? = nil) {
+    public init(type: PHPProjectType, version: String? = nil, configFile: String? = nil, database: String? = nil, dbHost: String? = nil, instance: String? = nil, databaseExists: Bool? = nil, home: String? = nil, siteURL: String? = nil, problem: String? = nil, setUpDatabase: String? = nil, setUpInstance: String? = nil, suggestedDBHost: String? = nil, suggestedUser: String? = nil, url: String? = nil, configHome: String? = nil, configHomeFile: String? = nil, urlPlan: WordPressURLPlan? = nil, urlChange: WordPressURLChange? = nil, copyInstance: String? = nil) {
         self.setUpDatabase = setUpDatabase
         self.setUpInstance = setUpInstance
         self.suggestedDBHost = suggestedDBHost
+        self.suggestedUser = suggestedUser
         self.url = url
         self.configHome = configHome
         self.configHomeFile = configHomeFile

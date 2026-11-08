@@ -62,7 +62,7 @@ struct SiteWordPressSection: View {
         .sheet(isPresented: $asksToSetDBHost) {
             if let info, let value = info.suggestedDBHost {
                 SetDBHostSheet(host: site.host, value: value, info: info) {
-                    change { await model.setWordPressDBHost(site, value: value) }
+                    change { await model.setWordPressDBHost(site, value: value, user: info.suggestedUser) }
                 }
             }
         }
@@ -213,8 +213,8 @@ struct SiteWordPressSection: View {
                     .disabled(changing)
                 }
 
-                if info.suggestedDBHost != nil {
-                    Button("Set DB_HOST…") {
+                if let suggested = info.suggestedDBHost {
+                    Button(suggested == info.dbHost ? "Set the account…" : "Set DB_HOST…") {
                         asksToSetDBHost = true
                     }
                     .fixedSize()
@@ -241,8 +241,7 @@ struct SiteWordPressSection: View {
         } else if changingURLs, let info, let plan = info.urlPlan {
             Text(changingText(info, plan))
         } else if let info, let problem = info.problem {
-            Text(problem)
-                .foregroundStyle(Color.orangeText)
+            MessageText(problem)
         } else if let info, info.configFile == nil, info.type == .bedrock {
             Text("This Bedrock project has no .env. Copy .env.example to .env, and fill in the database.")
         } else if let info, info.configFile == nil {
@@ -365,6 +364,7 @@ struct SiteWordPressSection: View {
 // "Set DB_HOST…" asks first, as "Send mail to Nexus…" does (D44). The design is "Sheet Set
 // DB_HOST" in nexus.pen.
 struct SetDBHostSheet: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let host: String
     let value: String
@@ -379,24 +379,45 @@ struct SetDBHostSheet: View {
         (info.type == .bedrock ? EnvFile.beforeNexus : WordPressFiles.beforeNexus).trimmingCharacters(in: .whitespaces)
     }
 
+    // The design is "Sheet Set DB_HOST · Account" when the account changes too.
+    private var instanceName: String {
+        let port = DatabaseAddress(dbHost: value).localPort
+        return model.databaseInstances.first { $0.ports.first?.number == port }?.name ?? "the Nexus instance"
+    }
+
+    // DB_HOST can be right already while the account is wrong.
+    private var changesHost: Bool {
+        info.dbHost != value
+    }
+
+    private var title: String {
+        guard info.suggestedUser != nil else {
+            return "Set DB_HOST of \(host) to \(value)?"
+        }
+
+        return changesHost ? "Set DB_HOST and the account of \(host)?" : "Set the account of \(host)?"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Set DB_HOST of \(host) to \(value)?")
+            Text(title)
                 .font(.headline)
 
-            Text("Nexus changes this line in \(file). WordPress then reaches the database \(info.database ?? "") on its Nexus instance.")
+            Text(info.suggestedUser == nil
+                ? "Nexus changes this line in \(file). WordPress then reaches the database \(info.database ?? "") on its Nexus instance."
+                : "\(info.configTextAtStart) has another account than \(instanceName). Nexus changes these lines in \(file). WordPress then reaches the database \(info.database ?? "") with the account of that instance.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Form {
                 Section {
-                    LabeledContent {
-                        Text(verbatim: value)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                    } label: {
-                        Text(verbatim: "DB_HOST")
-                            .font(.system(.body, design: .monospaced))
+                    if changesHost {
+                        keyRow("DB_HOST", value)
+                    }
+
+                    if let user = info.suggestedUser {
+                        keyRow("DB_USER", user)
+                        keyRow("DB_PASSWORD", "••••••")
                     }
                 }
             }
@@ -405,7 +426,9 @@ struct SetDBHostSheet: View {
             .padding(.horizontal, -20)
             .fixedSize(horizontal: false, vertical: true)
 
-            Text("The old line stays in \(file) as a comment line that starts with \"\(commentStart)\". PHP reads the new value at the next request.")
+            Text(info.suggestedUser == nil
+                ? "The old line stays in \(file) as a comment line that starts with \"\(commentStart)\". PHP reads the new value at the next request."
+                : "The old lines stay in \(file) as comment lines that start with \"\(commentStart)\". PHP reads the new values at the next request.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -417,7 +440,7 @@ struct SetDBHostSheet: View {
                 }
                 .keyboardShortcut(.cancelAction)
 
-                Button("Set DB_HOST") {
+                Button(changesHost ? "Set DB_HOST" : "Set the account") {
                     dismiss()
                     set()
                 }
@@ -426,5 +449,16 @@ struct SetDBHostSheet: View {
         }
         .padding(20)
         .frame(width: 520)
+    }
+
+    private func keyRow(_ key: String, _ text: String) -> some View {
+        LabeledContent {
+            Text(verbatim: text)
+                .font(.system(.body, design: .monospaced))
+                .textSelection(.enabled)
+        } label: {
+            Text(verbatim: key)
+                .font(.system(.body, design: .monospaced))
+        }
     }
 }

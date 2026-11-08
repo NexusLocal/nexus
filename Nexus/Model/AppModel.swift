@@ -209,6 +209,8 @@ final class AppModel {
     @ObservationIgnored private var versionCheck = NexusdVersionCheck(appBuild: NexusVersion.build(), lastRestartBuild: UserDefaults.standard.string(forKey: AppPreference.nexusdRestartBuild))
     // Grows after each change to a WordPress site. The Mail section then checks the site again.
     var wordPressChanges = 0
+    // The message whose details a window shows (owner, 2026-11-07).
+    var errorReport: ErrorReport?
     var failure: ActionFailure? {
         didSet {
             if let failure {

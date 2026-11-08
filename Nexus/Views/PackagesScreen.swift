@@ -29,13 +29,11 @@ struct PackagesScreen: View {
             if model.packagesProblem != nil || model.installedProblem != nil {
                 Section {
                     if let reason = model.packagesProblem {
-                        Text("Nexus cannot check for updates. \(reason)")
-                            .foregroundStyle(Color.orangeText)
+                        MessageText("Nexus cannot check for updates. \(reason)")
                     }
 
                     if let problem = model.installedProblemText {
-                        Text(problem)
-                            .foregroundStyle(Color.orangeText)
+                        MessageText(problem)
                     }
                 }
             }

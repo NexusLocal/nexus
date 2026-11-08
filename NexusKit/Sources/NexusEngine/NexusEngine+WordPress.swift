@@ -34,7 +34,7 @@ extension NexusEngine {
                 return configFile
             }
 
-            return bedrockFiles.last { EnvFile.values(of: $0)["DB_HOST"] != nil } ?? bedrockFiles.first
+            return envFile(setting: "DB_HOST") ?? bedrockFiles.first
         }
 
         var configName: String {
@@ -48,6 +48,11 @@ extension NexusEngine {
             }
 
             return bedrockFiles.last { EnvFile.values(of: $0)["WP_HOME"]?.isEmpty == false }
+        }
+
+        // The last file of Bedrock that sets this key.
+        func envFile(setting key: String) -> URL? {
+            bedrockFiles.last { EnvFile.values(of: $0)[key] != nil }
         }
 
         // The file that sets DOMAIN_CURRENT_SITE of a network.
@@ -100,6 +105,7 @@ extension NexusEngine {
             siteURL: database.siteURL,
             problem: database.problem,
             suggestedDBHost: database.suggestedDBHost,
+            suggestedUser: Self.suggestedAccount(for: database, config: config, in: instances)?.user,
             url: Self.url(for: target.site.host, in: state),
             configHome: Self.literalHome(of: config),
             configHomeFile: Self.literalHome(of: config) == nil ? nil : target.homeFile.map { Self.displayPath($0) },
@@ -183,24 +189,44 @@ extension NexusEngine {
 
     // DB_HOST gets the port of the instance that holds the database. The old line stays as a comment
     // line, as with "Send mail to Nexus" (D44). A DB_HOST that needs no change stays.
-    func setWordPressDBHost(host: String, value: String) async throws -> String {
+    // With user, DB_USER and DB_PASSWORD get the account of the instance too, because a copy from
+    // MAMP PRO keeps the account of MAMP PRO (owner, 2026-11-07). The password never leaves nexusd.
+    func setWordPressDBHost(host: String, value: String, user: String?) async throws -> String {
         let target = try await wordPressTarget(host)
 
         guard let config = target.config, let file = target.shownFile else {
             throw RuntimeError.unsupported("\(host) has no \(target.configName).")
         }
 
-        guard let suggested = await databaseCheck(of: config, in: await mysqlInstances()).suggestedDBHost else {
+        let instances = await mysqlInstances()
+        let check = await databaseCheck(of: config, in: instances)
+
+        guard let suggested = check.suggestedDBHost else {
             throw RuntimeError.unsupported("DB_HOST of \(host) needs no change. Nexus changes nothing.")
         }
 
-        guard suggested == value else {
-            throw RuntimeError.unsupported("Nexus would now set DB_HOST of \(host) to \(suggested). Set DB_HOST again to confirm this.")
+        let account = Self.suggestedAccount(for: check, config: config, in: instances)
+
+        guard suggested == value, account?.user == user else {
+            throw RuntimeError.unsupported("Nexus would now set DB_HOST of \(host) to \(suggested)\(account.map { " with the user \($0.user)" } ?? ""). Set DB_HOST again to confirm this.")
         }
 
-        let path = file.path(percentEncoded: false)
-        let text = try String(contentsOfFile: path, encoding: .utf8)
-        let changed: String?
+        var keys: [String: String] = [:]
+
+        // When only the account is wrong, DB_HOST keeps its line.
+        if config.host != value {
+            keys["DB_HOST"] = value
+        }
+
+        if let account, config.user != account.user {
+            keys["DB_USER"] = account.user
+        }
+
+        if let account, (config.password ?? "") != account.password {
+            keys["DB_PASSWORD"] = account.password
+        }
+
+        var texts: [URL: String] = [:]
 
         if target.type == .bedrock {
             let env = EnvFile.values(of: target.project.appending(path: ".env")).merging(EnvFile.values(of: target.project.appending(path: ".env.local"))) { _, local in local }
@@ -209,17 +235,67 @@ extension NexusEngine {
                 throw RuntimeError.unsupported("\(host) sets DATABASE_URL, which wins over DB_HOST. Change the host in DATABASE_URL yourself.")
             }
 
-            changed = EnvRewrite.applyKeepingOldValues(to: text, keys: ["DB_HOST": value])
+            // Each key goes into the file that sets it, because .env.local wins over .env.
+            for (key, keyValue) in keys {
+                let keyFile = target.envFile(setting: key) ?? file
+                let text = try texts[keyFile] ?? String(contentsOf: keyFile, encoding: .utf8)
+                texts[keyFile] = EnvRewrite.applyKeepingOldValues(to: text, keys: [key: keyValue])
+            }
         } else {
-            changed = WordPressFiles.settingDBHost(value, in: text)
+            var text = try String(contentsOf: file, encoding: .utf8)
+
+            for key in ["DB_HOST", "DB_USER", "DB_PASSWORD"] {
+                guard let keyValue = keys[key] else {
+                    continue
+                }
+
+                guard let changed = WordPressFiles.settingConstant(key, to: keyValue, in: text) else {
+                    throw RuntimeError.unsupported("wp-config.php of \(host) has no single line that defines \(key), or the value needs a quote. Change it there yourself. Nexus changed nothing.")
+                }
+
+                text = changed
+            }
+
+            texts[file] = text
         }
 
-        guard let changed else {
-            throw RuntimeError.unsupported("wp-config.php of \(host) has no single line that defines DB_HOST. Change it there yourself.")
+        try Self.writeAll(texts)
+
+        let changed = ["DB_HOST", "DB_USER", "DB_PASSWORD"].filter { keys[$0] != nil }
+        let files = EnglishList.joined(texts.keys.map(\.lastPathComponent).sorted())
+        let old = changed.count == 1 ? "The old line stays in \(files) as a comment line." : "The old lines stay in \(files) as comment lines."
+        return "Nexus changed \(EnglishList.joined(changed)) of \(host). \(old)"
+    }
+
+    // All files or none: a failed write puts back the files that this call wrote already.
+    static func writeAll(_ texts: [URL: String]) throws {
+        var written: [(URL, String)] = []
+
+        for (file, text) in texts {
+            let path = file.path(percentEncoded: false)
+
+            do {
+                let old = try String(contentsOf: file, encoding: .utf8)
+                try write(text, to: path)
+                written.append((file, old))
+            } catch {
+                for (writtenFile, old) in written {
+                    try? write(old, to: writtenFile.path(percentEncoded: false))
+                }
+
+                throw RuntimeError.unsupported("Nexus could not write \(file.lastPathComponent). \(error) Nexus changed nothing.")
+            }
+        }
+    }
+
+    // The account of the instance that DB_HOST gets, when the configuration has another account.
+    static func suggestedAccount(for check: DatabaseCheck, config: WordPressConfig, in instances: [DatabaseInstance]) -> DatabaseAccount? {
+        guard let value = check.suggestedDBHost, let port = DatabaseAddress(dbHost: value).localPort, let instance = instances.first(where: { $0.port == port }) else {
+            return nil
         }
 
-        try Self.write(changed, to: path)
-        return "DB_HOST of \(host) is \(value) now. The old line stays in \(file.lastPathComponent) as a comment line."
+        let account = instance.account
+        return config.user == account.user && (config.password ?? "") == account.password ? nil : account
     }
 
     func wordPressTarget(_ host: String) async throws -> WordPressTarget {
@@ -350,6 +426,18 @@ extension NexusEngine {
             let options = (try? await client.rows("SELECT option_name, option_value FROM \(Self.sqlName(name)).\(Self.sqlName("\(prefix)options")) WHERE option_name IN ('home', 'siteurl')")) ?? []
             let values = Dictionary(options.compactMap { $0.count == 2 ? ($0[0], $0[1]) : nil }) { first, _ in first }
 
+            // A copy from MAMP PRO keeps its account in wp-config.php, also when DB_HOST is right.
+            guard await logsIn(config, on: instance) else {
+                return DatabaseCheck(
+                    instance: instance.id,
+                    exists: true,
+                    home: values["home"],
+                    siteURL: values["siteurl"],
+                    problem: "WordPress cannot log in to \(instance.id) with DB_USER and DB_PASSWORD of the configuration. Set them to the account of \(instance.id).",
+                    suggestedDBHost: "127.0.0.1:\(instance.port)"
+                )
+            }
+
             return DatabaseCheck(instance: instance.id, exists: true, home: values["home"], siteURL: values["siteurl"])
         } catch {
             return DatabaseCheck(instance: instance.id, problem: "Nexus cannot read the databases of \(instance.id). \(error)")
@@ -395,6 +483,20 @@ extension NexusEngine {
             problem: "DB_HOST names \(config.host ?? ""). Nexus did not make that server. So Nexus does not change the URLs there. Copy the database \(name) to \(target.id) first. Then set DB_HOST to its port. Change the URLs after that.",
             copyInstance: target.id
         )
+    }
+
+    // The account of the instance always works. Another account can exist on the instance, so
+    // Nexus tries it before it calls it wrong.
+    private func logsIn(_ config: WordPressConfig, on instance: DatabaseInstance) async -> Bool {
+        let account = DatabaseAccount(user: config.user ?? "", password: config.password ?? "")
+
+        guard account != instance.account, let tools = await databaseRuntime(instance.id), let (client, work) = try? preparedClient(tools, port: instance.port, account: account) else {
+            return true
+        }
+
+        defer { try? FileManager.default.removeItem(at: work) }
+
+        return (try? await client.query("SELECT 1")) != nil
     }
 
     private func holder(of database: String, in instances: [DatabaseInstance]) async -> DatabaseInstance? {

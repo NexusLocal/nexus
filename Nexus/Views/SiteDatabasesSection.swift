@@ -14,8 +14,7 @@ struct SiteDatabasesSection: View {
     var body: some View {
         Section {
             if let problem {
-                Text("Nexus cannot read the connections of the application. \(problem)")
-                    .foregroundStyle(Color.orangeText)
+                MessageText("Nexus cannot read the connections of the application. \(problem)")
             } else if let databases {
                 ForEach(databases, id: \.connection) { database in
                     row(database)

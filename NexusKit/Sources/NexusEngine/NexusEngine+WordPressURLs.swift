@@ -25,7 +25,7 @@ extension NexusEngine {
     // Nexus compares the home option of the database and WP_HOME of the configuration with its own
     // URL. A plan needs a database that Nexus can read on its own instance.
     func urlPlan(of target: WordPressTarget, config: WordPressConfig, check: DatabaseCheck, in state: EngineState) -> WordPressURLPlan? {
-        guard check.instance != nil, check.exists == true, let home = check.home else {
+        guard check.instance != nil, check.exists == true, check.problem == nil, let home = check.home else {
             return nil
         }
 
@@ -141,9 +141,7 @@ extension NexusEngine {
         do {
             let files = try await fileTexts(of: target, config: config, plan: plan, networkDomain: changedDomain)
 
-            for file in files.texts {
-                try Self.write(file.text, to: file.path)
-            }
+            try Self.writeAll(Dictionary(files.texts.map { (URL(filePath: $0.path), $0.text) }) { first, _ in first })
 
             if plan.configFrom != nil, let file = target.homeFile {
                 lines.append("WP_HOME in \(file.lastPathComponent) is \(plan.to) now. The old line stays as a comment line.")

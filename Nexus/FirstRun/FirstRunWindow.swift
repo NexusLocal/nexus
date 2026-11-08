@@ -137,11 +137,12 @@ struct FirstRunWindow: View {
                 background.registerIfNeeded()
             }
         }
-        .alert(firstRunFailure?.title ?? "", isPresented: showsFailure, presenting: firstRunFailure) { _ in
-            Button("OK") {}
+        .alert(firstRunFailure?.title ?? "", isPresented: showsFailure, presenting: firstRunFailure) { failure in
+            FailureAlertButtons(failure: failure, place: .firstRun)
         } message: { failure in
-            Text(failure.message)
+            Text(ErrorDetails.split(failure.message).text)
         }
+        .errorDetailsSheet(model: model, place: .firstRun)
     }
 
     private var firstRunFailure: ActionFailure? {

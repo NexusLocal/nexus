@@ -76,8 +76,8 @@ extension AppModel {
         await sendWordPressChange(.createWordPressDatabase(host: site.host), failure: "Nexus did not make the database of \(site.host)")
     }
 
-    func setWordPressDBHost(_ site: SiteItem, value: String) async -> Bool {
-        await sendWordPressChange(.setWordPressDBHost(host: site.host, value: value), failure: "DB_HOST of \(site.host) did not change")
+    func setWordPressDBHost(_ site: SiteItem, value: String, user: String?) async -> Bool {
+        await sendWordPressChange(.setWordPressDBHost(host: site.host, value: value, user: user), failure: "DB_HOST of \(site.host) did not change")
     }
 
     func changeWordPressURLs(_ site: SiteItem, plan: WordPressURLPlan) async -> Bool {

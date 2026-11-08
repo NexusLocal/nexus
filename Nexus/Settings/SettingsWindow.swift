@@ -48,11 +48,12 @@ struct SettingsWindow: View {
             }
         }
         .frame(width: 640)
-        .alert(settingsFailure?.title ?? "", isPresented: showsFailure, presenting: settingsFailure) { _ in
-            Button("OK") {}
+        .alert(settingsFailure?.title ?? "", isPresented: showsFailure, presenting: settingsFailure) { failure in
+            FailureAlertButtons(failure: failure, place: .settings)
         } message: { failure in
-            Text(failure.message)
+            Text(ErrorDetails.split(failure.message).text)
         }
+        .errorDetailsSheet(model: model, place: .settings)
         .alert("Nexus is removed", isPresented: showsUninstalled, presenting: model.uninstalled) { _ in
             Button("Quit Nexus") {
                 model.moveToTrashAndQuit()

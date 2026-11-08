@@ -247,7 +247,7 @@ struct Status: AsyncParsableCommand {
             print([service.id.padding(to: 14), state(service.state).padding(to: 26), ports.padding(to: 16), service.displayName].joined(separator: " "))
 
             if case .failed(let reason) = service.state {
-                print("    \(reason)")
+                print("    \(withLogHint(reason))")
             }
         }
 
@@ -531,7 +531,7 @@ struct WorkspaceCommand: AsyncParsableCommand {
 
                     if workspace.state == .ready {
                         guard let url = workspace.url else {
-                            FileHandle.standardError.write(Data("\(workspace.problem ?? "The workspace \(workspace.name) has no URL.")\n".utf8))
+                            FileHandle.standardError.write(Data("\(withLogHint(workspace.problem ?? "The workspace \(workspace.name) has no URL."))\n".utf8))
                             throw ExitCode.failure
                         }
 
@@ -540,7 +540,7 @@ struct WorkspaceCommand: AsyncParsableCommand {
                     }
 
                     if let message = workspace.isolationMessage {
-                        FileHandle.standardError.write(Data("\(message)\n".utf8))
+                        FileHandle.standardError.write(Data("\(withLogHint(message))\n".utf8))
                         throw ExitCode.failure
                     }
                 } catch let error as WorkspaceTargetError where error.canAppearLater && waited < Self.secondsForANewWorktree {
@@ -576,7 +576,7 @@ struct WorkspaceCommand: AsyncParsableCommand {
             print("URL        \(details.url ?? "none")")
             print("Worktree   \(details.worktree)")
 
-            details.problem.map { print("Problem    \($0)") }
+            details.problem.map { print("Problem    \(withLogHint($0))") }
             details.databases.forEach { print("Database   \($0.name) on \($0.instance), port \($0.port.map(String.init) ?? "unknown")") }
             details.redisIndexes.sorted { $0.key < $1.key }.forEach { print("Redis      \($0.key)=\($0.value)") }
             details.ports.sorted { $0.key < $1.key }.forEach { print("Port       \($0.key)=\($0.value)") }
@@ -653,11 +653,11 @@ struct WorkspaceCommand: AsyncParsableCommand {
                 print([row.site.padding(to: 28), row.workspace.name.padding(to: 28), (row.workspace.url ?? "").padding(to: 44), row.workspace.folder].joined(separator: " "))
 
                 if let problem = row.workspace.problem {
-                    print("    does not run: \(problem)")
+                    print("    does not run: \(withLogHint(problem))")
                 }
 
                 if let message = row.workspace.isolationMessage {
-                    print("    \(message)")
+                    print("    \(withLogHint(message))")
                 }
 
                 for warning in row.workspace.warnings ?? [] {
@@ -723,7 +723,7 @@ struct SiteCommand: AsyncParsableCommand {
 
             if setUp {
                 guard let database = info.setUpDatabase, let instance = info.setUpInstance else {
-                    FileHandle.standardError.write(Data("\(info.problem ?? "Nexus cannot set up \(host). It needs a classic WordPress site without wp-config.php and a running MySQL or MariaDB.")\n".utf8))
+                    FileHandle.standardError.write(Data("\(withLogHint(info.problem ?? "Nexus cannot set up \(host). It needs a classic WordPress site without wp-config.php and a running MySQL or MariaDB."))\n".utf8))
                     throw ExitCode.failure
                 }
 
@@ -737,7 +737,7 @@ struct SiteCommand: AsyncParsableCommand {
                     return
                 }
 
-                try finish(try await send(.setWordPressDBHost(host: host, value: value)))
+                try finish(try await send(.setWordPressDBHost(host: host, value: value, user: info.suggestedUser)))
                 return
             }
 
@@ -795,7 +795,7 @@ struct SiteCommand: AsyncParsableCommand {
             }
 
             if let problem = info.problem {
-                print(problem)
+                print(withLogHint(problem))
             }
 
             if let database = info.setUpDatabase, let instance = info.setUpInstance {
@@ -803,7 +803,8 @@ struct SiteCommand: AsyncParsableCommand {
             }
 
             if info.suggestedDBHost != nil {
-                print("nexus site wordpress \(host) --set-db-host changes DB_HOST.")
+                let account = info.suggestedUser == nil ? "" : info.suggestedDBHost == info.dbHost ? " DB_USER and DB_PASSWORD to the account of the instance" : " DB_HOST, DB_USER and DB_PASSWORD"
+                print(account.isEmpty ? "nexus site wordpress \(host) --set-db-host changes DB_HOST." : "nexus site wordpress \(host) --set-db-host changes\(account).")
             }
 
             if info.databaseExists == false, info.suggestedDBHost == nil {
@@ -869,7 +870,7 @@ struct SiteCommand: AsyncParsableCommand {
             }
 
             if let problem = mail.problem {
-                FileHandle.standardError.write(Data("Nexus cannot read the mail settings of \(host). \(problem)\n".utf8))
+                FileHandle.standardError.write(Data("\(withLogHint("Nexus cannot read the mail settings of \(host). \(problem)"))\n".utf8))
                 throw ExitCode.failure
             }
 
@@ -971,7 +972,7 @@ struct SiteCommand: AsyncParsableCommand {
                 }
 
                 if let problem = site.problem {
-                    print("    does not run: \(problem)")
+                    print("    does not run: \(withLogHint(problem))")
                 }
             }
         }
@@ -1424,7 +1425,7 @@ func finish(_ response: NexusResponse) throws {
     case .done(let message):
         print(message)
     case .failure(let message), .toolNotInstalled(let message):
-        FileHandle.standardError.write(Data("\(message)\n".utf8))
+        FileHandle.standardError.write(Data("\(withLogHint(message))\n".utf8))
         throw ExitCode.failure
     case .portInUse(let conflict):
         FileHandle.standardError.write(Data("\(conflict)\n".utf8))
@@ -1433,11 +1434,21 @@ func finish(_ response: NexusResponse) throws {
         FileHandle.standardError.write(Data("\(error)\n".utf8))
         throw ExitCode.failure
     case .stopped(let message):
-        FileHandle.standardError.write(Data("\(message)\n".utf8))
+        FileHandle.standardError.write(Data("\(withLogHint(message))\n".utf8))
         throw ExitCode.failure
     default:
         break
     }
+}
+
+// A message with a reference to errors.log gets the path of that file (owner, 2026-11-07).
+func withLogHint(_ message: String) -> String {
+    guard ErrorDetails.split(message).id != nil else {
+        return message
+    }
+
+    let log = (NexusPaths.standard.errorLog.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
+    return "\(message)\nThe full output is in \(log)."
 }
 
 extension String {

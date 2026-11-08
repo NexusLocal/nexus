@@ -1,4 +1,5 @@
 import AppKit
+import NexusCore
 import SwiftUI
 
 struct MenuBarContent: View {
@@ -75,7 +76,15 @@ struct MenuBarContent: View {
             }
 
             if let failure = model.failure, failure.place == .menuBar {
-                Notice(text: failure.title, detail: failure.message, showsDetail: true) {
+                Notice(text: failure.title, detail: ErrorDetails.split(failure.message).text, showsDetail: true) {
+                    if ErrorDetails.split(failure.message).id != nil {
+                        Button("Details…") {
+                            open()
+                            model.failure = nil
+                            model.errorReport = ErrorReport(message: failure.message, title: failure.title, place: .window)
+                        }
+                    }
+
                     Button("Close", systemImage: "xmark") {
                         model.failure = nil
                     }

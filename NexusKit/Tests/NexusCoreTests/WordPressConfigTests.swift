@@ -77,14 +77,14 @@ struct WordPressConfigTests {
         let text = "<?php\n// define('DB_HOST', 'old');\n\tdefine( 'DB_HOST', 'localhost' );\ndefine('DB_NAME', 'blog');\n"
         let twice = "<?php\nif ($local) {\n    define('DB_HOST', 'localhost');\n} else {\n    define('DB_HOST', 'db');\n}\n"
 
-        let changed = WordPressFiles.settingDBHost("127.0.0.1:13307", in: text)
+        let changed = WordPressFiles.settingConstant("DB_HOST", to: "127.0.0.1:13307", in: text)
 
         #expect(changed == "<?php\n// define('DB_HOST', 'old');\n\t// Before Nexus: define( 'DB_HOST', 'localhost' );\n\tdefine( 'DB_HOST', '127.0.0.1:13307' );\ndefine('DB_NAME', 'blog');\n")
-        #expect(WordPressFiles.settingDBHost("127.0.0.1:13307", in: twice) == nil)
-        #expect(WordPressFiles.settingDBHost("127.0.0.1:13307", in: "<?php\n") == nil)
-        #expect(WordPressFiles.settingDBHost("x'y", in: text) == nil)
-        #expect(WordPressFiles.settingDBHost("127.0.0.1:13307", in: "<?php\ndefine('DB_HOST', 'localhost'); define('DB_NAME', 'blog');\n") == nil)
-        #expect(WordPressFiles.settingDBHost("127.0.0.1:13307", in: "<?php\ndefine('DB_HOST', 'localhost'); // the socket\n") != nil)
+        #expect(WordPressFiles.settingConstant("DB_HOST", to: "127.0.0.1:13307", in: twice) == nil)
+        #expect(WordPressFiles.settingConstant("DB_HOST", to: "127.0.0.1:13307", in: "<?php\n") == nil)
+        #expect(WordPressFiles.settingConstant("DB_HOST", to: "x'y", in: text) == nil)
+        #expect(WordPressFiles.settingConstant("DB_HOST", to: "127.0.0.1:13307", in: "<?php\ndefine('DB_HOST', 'localhost'); define('DB_NAME', 'blog');\n") == nil)
+        #expect(WordPressFiles.settingConstant("DB_HOST", to: "127.0.0.1:13307", in: "<?php\ndefine('DB_HOST', 'localhost'); // the socket\n") != nil)
     }
 
     @Test func aTablePrefixWithOtherCharactersIsNotSafe() {

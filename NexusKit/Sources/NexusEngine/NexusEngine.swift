@@ -319,8 +319,8 @@ public actor NexusEngine {
                 return .done(message: try await setUpWordPress(host: host, database: database, instance: instance))
             case .createWordPressDatabase(let host):
                 return .done(message: try await createWordPressDatabase(host: host))
-            case .setWordPressDBHost(let host, let value):
-                return .done(message: try await setWordPressDBHost(host: host, value: value))
+            case .setWordPressDBHost(let host, let value, let user):
+                return .done(message: try await setWordPressDBHost(host: host, value: value, user: user))
             case .changeWordPressURLs(let host, let plan):
                 return .done(message: try await changeWordPressURLs(host: host, plan: plan))
             case .undoWordPressURLChange(let host, let plan):
