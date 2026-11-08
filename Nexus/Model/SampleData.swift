@@ -126,10 +126,10 @@ extension AppModel {
                 site("example.test", folder: "~/Development/Example/website", group: "Example"),
                 site("my.example.test", folder: "~/Development/Example/portal", php: "8.5", group: "Example"),
             ])),
-            .group(SiteGroup(name: "Rood Fruit", sites: [
-                site("roodfruit.test", folder: "~/Development/Rood Fruit/website", group: "Rood Fruit"),
-                site("docs.roodfruit.test", folder: "~/Development/Rood Fruit/docs", group: "Rood Fruit"),
-                site("status.roodfruit.test", folder: "~/Development/Rood Fruit/status", group: "Rood Fruit"),
+            .group(SiteGroup(name: "Agency", sites: [
+                site("agency.test", folder: "~/Development/Agency/website", group: "Agency"),
+                site("docs.agency.test", folder: "~/Development/Agency/docs", group: "Agency"),
+                site("status.agency.test", folder: "~/Development/Agency/status", group: "Agency"),
             ])),
             .site(site("shop.test", folder: "~/Development/shop", aliases: ["www.shop.test"])),
             .site(site("crm.test", folder: "~/Development/crm", php: "8.5")),
@@ -212,7 +212,7 @@ extension AppModel {
                     "memory_limit = 512M",
                     "upload_max_filesize = 64M",
                 ],
-                usedBy: ["shop.test", "blog.test", "example.test", "roodfruit.test", "docs.roodfruit.test", "status.roodfruit.test", "foo.test", "demo.test"],
+                usedBy: ["shop.test", "blog.test", "example.test", "agency.test", "docs.agency.test", "status.agency.test", "foo.test", "demo.test"],
                 log: [
                     "[27-Oct-2026 09:02:10] NOTICE: fpm is running, pid 4790",
                     "[27-Oct-2026 09:02:10] NOTICE: ready to handle connections",
