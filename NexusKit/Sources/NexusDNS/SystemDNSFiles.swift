@@ -32,8 +32,8 @@ public enum SystemDNSFilesError: Error, Equatable, CustomStringConvertible {
 // /etc/hosts stays as it is, because MAMP PRO and the user write lines there too.
 public struct SystemDNSFiles: Sendable {
     public static let resolverMarker = ResolverFile.marker
-    public static let hostsBegin = "# Nexus begin"
-    public static let hostsEnd = "# Nexus end"
+    public static let hostsBegin = "# \(NexusVariant.current.name) begin"
+    public static let hostsEnd = "# \(NexusVariant.current.name) end"
     public static let maximumHosts = 10_000
 
     public let resolverFolder: URL

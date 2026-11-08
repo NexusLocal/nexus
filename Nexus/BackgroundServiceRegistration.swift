@@ -33,7 +33,7 @@ final class BackgroundServices {
 
     // The text for a banner when the user must turn Nexus on in Login Items.
     var approvalNeeded: String? {
-        let place = "Turn on Nexus in System Settings > General > Login Items & Extensions."
+        let place = "Turn on \(NexusVariant.current.name) in System Settings > General > Login Items & Extensions."
 
         if daemon.needsApproval {
             return "\(place) Without it, no service runs."

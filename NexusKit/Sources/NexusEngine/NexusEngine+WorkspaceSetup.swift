@@ -11,7 +11,7 @@ import NexusWorkspaces
 // application gets no .env (D54).
 extension NexusEngine {
     private static let firstRedisIndex = 16
-    static let firstWorkspacePort = 20000
+    static let firstWorkspacePort = NexusVariant.current.firstWorkspacePort
     static let databasePortName = "database"
 
     // A setup can take long, so it runs next to the watch of the worktrees.

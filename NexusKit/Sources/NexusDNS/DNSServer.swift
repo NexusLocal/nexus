@@ -1,6 +1,7 @@
 import Darwin
 import Dispatch
 import Foundation
+import NexusCore
 import Synchronization
 
 public enum DNSServerError: Error, Equatable, CustomStringConvertible {
@@ -20,7 +21,7 @@ public enum DNSServerError: Error, Equatable, CustomStringConvertible {
 // A UDP DNS server on 127.0.0.1. macOS sends it the questions for the dev TLD, because
 // /etc/resolver/<tld> names this address and port. It binds a high port, so it needs no root.
 public final class DNSServer: Sendable {
-    public static let defaultPort = 10053
+    public static let defaultPort = NexusVariant.current.port(10053)
 
     private struct Listening: @unchecked Sendable {
         let port: Int

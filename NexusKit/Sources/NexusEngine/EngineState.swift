@@ -8,10 +8,10 @@ public enum PortProfile: String, Codable, Sendable {
 
     // While MAMP PRO still runs on the standard ports, the development profile keeps Nexus on
     // ports next to them.
-    func defaultPort(_ standard: Int) -> Int {
+    func defaultPort(_ standard: Int, variant: NexusVariant = .current) -> Int {
         switch self {
-        case .standard: standard
-        case .development: standard < 1024 ? standard + 8000 : standard + 10000
+        case .standard: variant.port(standard)
+        case .development: variant.port(standard < 1024 ? standard + 8000 : standard + 10000)
         }
     }
 }
@@ -24,7 +24,7 @@ public struct EngineState: Codable, Sendable, Equatable {
     // (D63). Until then, nexusd does not start them. A start or a stop of one service removes it.
     public var stoppedByStopAll: Set<String> = []
     public var manifestURL = Manifest.defaultURL
-    public var tld = "test"
+    public var tld = NexusVariant.current.tld
     public var hosts: Set<String> = []
     public var sites: [Site] = []
     public var parked: [ParkedFolder] = []

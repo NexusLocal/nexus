@@ -22,7 +22,7 @@ struct MenuBarContent: View {
                     .frame(width: 30, height: 30)
 
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Nexus")
+                    Text(verbatim: NexusVariant.current.name)
                         .fontWeight(.semibold)
                     Text(model.runningSummary)
                         .font(.caption)

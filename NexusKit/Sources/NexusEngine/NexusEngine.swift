@@ -1622,7 +1622,7 @@ extension NexusEngine {
         try await Task.detached { try authority.trust() }.value
 
         guard authority.isTrusted() else {
-            throw RuntimeError.unsupported("macOS saved the trust setting, but it does not trust the Nexus root CA. Check \"Nexus Root CA\" in Keychain Access.")
+            throw RuntimeError.unsupported("macOS saved the trust setting, but it does not trust the root CA of \(NexusVariant.current.name). Check \"\(LoginKeychainStore.label)\" in Keychain Access.")
         }
 
         return """

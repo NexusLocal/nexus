@@ -12,7 +12,7 @@ public struct NexusPaths: Sendable, Equatable {
     }
 
     public static var standard: NexusPaths {
-        NexusPaths(root: .applicationSupportDirectory.appending(path: "Nexus", directoryHint: .isDirectory))
+        NexusPaths(root: .applicationSupportDirectory.appending(path: NexusVariant.current.name, directoryHint: .isDirectory))
     }
 
     public var runtimes: URL { folder("runtimes") }

@@ -12,7 +12,7 @@ import NexusSupervisor
 // Astro start a detached server.
 extension NexusEngine {
     static let corepackRetryWait: Duration = .seconds(60)
-    static let firstAppPort = 19000
+    static let firstAppPort = NexusVariant.current.firstAppPort
 
     // A background command has no tab at its start, so this id is never the id of such a command.
     static func appProcessID(owner: String) -> String {

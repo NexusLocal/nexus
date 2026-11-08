@@ -1,4 +1,5 @@
 import Foundation
+import NexusCore
 @preconcurrency import Security
 
 public enum TLSError: Error, Equatable, CustomStringConvertible {
@@ -49,8 +50,8 @@ public protocol RootKeyStore: Sendable {
 // question from macOS. The certificate must be in the keychain too: macOS finds the root of a
 // chain there when a browser checks a certificate of a host.
 public struct LoginKeychainStore: RootKeyStore {
-    public static let label = "Nexus Root CA"
-    static let tag = Data("nl.roodfruit.nexus.root-ca".utf8)
+    public static let label = "\(NexusVariant.current.name) Root CA"
+    static let tag = Data("\(NexusIdentifiers.app).root-ca".utf8)
 
     public init() {}
 

@@ -12,7 +12,7 @@ public struct ShellPathLine: Sendable {
         case notLast
     }
 
-    public static let marker = "# Added by Nexus (Settings > General > Add Nexus to PATH)"
+    public static let marker = "# Added by \(NexusVariant.current.name) (Settings > General > Add Nexus to PATH)"
 
     public let file: URL
     public let line: String

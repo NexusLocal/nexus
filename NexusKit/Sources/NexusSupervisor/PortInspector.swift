@@ -40,6 +40,9 @@ public struct PortOwner: Codable, Sendable, Equatable {
         if executable.contains("/Application Support/Nexus/") {
             return "Nexus"
         }
+        if executable.contains("/Application Support/Nexus Dev/") {
+            return "Nexus Dev"
+        }
         if executable.hasPrefix("/opt/homebrew/") || executable.hasPrefix("/usr/local/Cellar/") {
             return "Homebrew"
         }

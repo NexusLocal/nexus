@@ -25,8 +25,6 @@
 		0000000000000000000000F2 /* nexusd in Embed Executables */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B2 /* nexusd */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0000000000000000000000F3 /* nexus in Embed Command Line Tool */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B3 /* nexus */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0000000000000000000000F4 /* NexusHelper in Embed Executables */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B4 /* NexusHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
-		0000000000000000000000F5 /* nl.roodfruit.nexus.daemon.plist in Embed Launch Agents */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000C1 /* nl.roodfruit.nexus.daemon.plist */; };
-		0000000000000000000000F6 /* nl.roodfruit.nexus.helper.plist in Embed Launch Daemons */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000C2 /* nl.roodfruit.nexus.helper.plist */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -77,28 +75,6 @@
 			name = "Embed Command Line Tool";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		000000000000000000000109 /* Embed Launch Agents */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
-			files = (
-				0000000000000000000000F5 /* nl.roodfruit.nexus.daemon.plist in Embed Launch Agents */,
-			);
-			name = "Embed Launch Agents";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		00000000000000000000010A /* Embed Launch Daemons */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchDaemons;
-			dstSubfolderSpec = 1;
-			files = (
-				0000000000000000000000F6 /* nl.roodfruit.nexus.helper.plist in Embed Launch Daemons */,
-			);
-			name = "Embed Launch Daemons";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -106,8 +82,8 @@
 		0000000000000000000000B2 /* nexusd */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = nexusd; sourceTree = BUILT_PRODUCTS_DIR; };
 		0000000000000000000000B3 /* nexus */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = nexus; sourceTree = BUILT_PRODUCTS_DIR; };
 		0000000000000000000000B4 /* NexusHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = NexusHelper; sourceTree = BUILT_PRODUCTS_DIR; };
-		0000000000000000000000C1 /* nl.roodfruit.nexus.daemon.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = nl.roodfruit.nexus.daemon.plist; sourceTree = "<group>"; };
-		0000000000000000000000C2 /* nl.roodfruit.nexus.helper.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = nl.roodfruit.nexus.helper.plist; sourceTree = "<group>"; };
+		0000000000000000000000C1 /* daemon.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = daemon.plist; sourceTree = "<group>"; };
+		0000000000000000000000C2 /* helper.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = helper.plist; sourceTree = "<group>"; };
 		0000000000000000000000C3 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -208,8 +184,8 @@
 		000000000000000000000003 /* LaunchServices */ = {
 			isa = PBXGroup;
 			children = (
-				0000000000000000000000C1 /* nl.roodfruit.nexus.daemon.plist */,
-				0000000000000000000000C2 /* nl.roodfruit.nexus.helper.plist */,
+				0000000000000000000000C1 /* daemon.plist */,
+				0000000000000000000000C2 /* helper.plist */,
 			);
 			path = LaunchServices;
 			sourceTree = "<group>";
@@ -234,8 +210,7 @@
 				000000000000000000000106 /* Resources */,
 				000000000000000000000107 /* Embed Executables */,
 				000000000000000000000108 /* Embed Command Line Tool */,
-				000000000000000000000109 /* Embed Launch Agents */,
-				00000000000000000000010A /* Embed Launch Daemons */,
+				00000000000000000000010C /* Write the launchd jobs */,
 				00000000000000000000010B /* Use the Nexus texts in Sparkle */,
 			);
 			buildRules = (
@@ -415,6 +390,28 @@
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/Config/sparkle-text.sh\"\n";
 		};
+		00000000000000000000010C /* Write the launchd jobs */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Config/launchd-jobs.sh",
+				"$(SRCROOT)/LaunchServices/daemon.plist",
+				"$(SRCROOT)/LaunchServices/helper.plist",
+			);
+			name = "Write the launchd jobs";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/Config/launchd-jobs.sh\"\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -472,6 +469,8 @@
 			baseConfigurationReference = 0000000000000000000000C3 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				NEXUS_APP_NAME = "Nexus Dev";
+				NEXUS_BUNDLE_ID = nl.roodfruit.nexus.dev;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
@@ -542,6 +541,8 @@
 			baseConfigurationReference = 0000000000000000000000C3 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				NEXUS_APP_NAME = Nexus;
+				NEXUS_BUNDLE_ID = nl.roodfruit.nexus;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
@@ -609,11 +610,11 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Config/Nexus-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Nexus;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(NEXUS_APP_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2026 Rood Fruit B.V.";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(NEXUS_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -631,11 +632,11 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Config/Nexus-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Nexus;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(NEXUS_APP_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2026 Rood Fruit B.V.";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(NEXUS_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -648,7 +649,7 @@
 			buildSettings = {
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus.daemon;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(NEXUS_BUNDLE_ID).daemon";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 			};
@@ -659,7 +660,7 @@
 			buildSettings = {
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus.daemon;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(NEXUS_BUNDLE_ID).daemon";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 			};
@@ -670,7 +671,7 @@
 			buildSettings = {
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus.cli;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(NEXUS_BUNDLE_ID).cli";
 				PRODUCT_MODULE_NAME = NexusCLI;
 				PRODUCT_NAME = nexus;
 				SKIP_INSTALL = YES;
@@ -682,7 +683,7 @@
 			buildSettings = {
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus.cli;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(NEXUS_BUNDLE_ID).cli";
 				PRODUCT_MODULE_NAME = NexusCLI;
 				PRODUCT_NAME = nexus;
 				SKIP_INSTALL = YES;
@@ -694,7 +695,7 @@
 			buildSettings = {
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus.helper;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(NEXUS_BUNDLE_ID).helper";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 			};
@@ -705,7 +706,7 @@
 			buildSettings = {
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = nl.roodfruit.nexus.helper;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(NEXUS_BUNDLE_ID).helper";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 			};

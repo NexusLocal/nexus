@@ -740,7 +740,7 @@ private struct CertificatesSettings: View {
     var body: some View {
         Form {
             Section {
-                LabeledContent("Nexus Root CA") {
+                LabeledContent("\(NexusVariant.current.name) Root CA") {
                     if let info = model.rootCertificate, info.trusted {
                         Label("Trusted · valid until \(info.validUntil?.formatted(Date.ISO8601FormatStyle(timeZone: .current).year().month().day()) ?? "")", systemImage: "checkmark.circle")
                             .foregroundStyle(.secondary)
@@ -812,9 +812,9 @@ private struct UpdatesSettings: View {
                 }
                 .labeledContentStyle(.rowValue)
             } header: {
-                Text("Nexus")
+                Text(verbatim: NexusVariant.current.name)
             } footer: {
-                Text(verbatim: "Nexus \(version). Updates come from \(AppUpdater.repository).")
+                Text(verbatim: "\(NexusVariant.current.name) \(version). Updates come from \(AppUpdater.repository).")
             }
 
             Section {

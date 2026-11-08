@@ -472,7 +472,7 @@ private struct StepList: View {
                 Image(nsImage: NSApplication.shared.applicationIconImage)
                     .resizable()
                     .frame(width: 32, height: 32)
-                Text("Nexus")
+                Text(verbatim: NexusVariant.current.name)
                     .font(.title3.weight(.semibold))
             }
             .padding(.bottom, 16)

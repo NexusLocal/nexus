@@ -167,7 +167,7 @@ struct AppSettings {
     var databaseApps: [AppChoice] = []
     var mysqlApp = ""
     var postgresqlApp = ""
-    var tld = "test"
+    var tld = NexusVariant.current.tld
     var lanAccess = false
 }
 
