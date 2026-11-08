@@ -1,5 +1,6 @@
 import Foundation
 import NexusCore
+import NexusCrashReports
 import NexusEngine
 import NexusIPC
 import NexusTLS
@@ -8,6 +9,9 @@ if CommandLine.arguments.contains("--version") {
     print("nexusd \(NexusVersion.current())")
     exit(0)
 }
+
+// First, so a crash during the start gets a report too.
+CrashReports.apply(process: "nexusd")
 
 let paths = NexusPaths.standard
 try? paths.createFolders()
@@ -34,7 +38,8 @@ let engine = NexusEngine(
     helper: HelperClient(),
     certificateAuthority: CertificateAuthority(paths: paths),
     activity: activity,
-    unregister: BackgroundServices.unregisterAll
+    unregister: BackgroundServices.unregisterAll,
+    applyCrashReports: { isOn in CrashReports.apply(process: "nexusd", isOn: isOn) }
 )
 let service = DaemonService(engine: engine, activity: activity)
 let listener = NSXPCListener(machServiceName: NexusIdentifiers.daemon)

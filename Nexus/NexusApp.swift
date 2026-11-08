@@ -1,9 +1,12 @@
 import AppKit
+import NexusCrashReports
 import SwiftUI
 
-// The Dock icon gets its setting before the first window shows.
+// The Dock icon gets its setting before the first window shows. The crash reports start first, so
+// a crash during the launch gets a report too.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
+        CrashReports.apply(process: "app")
         ActivityTracker.start()
         AppPreference.registerDefaults()
         AppPresence.apply()

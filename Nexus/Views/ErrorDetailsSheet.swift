@@ -1,5 +1,6 @@
 import AppKit
 import NexusCore
+import NexusCrashReports
 import SwiftUI
 
 // A message of nexusd that names an entry in errors.log (owner, 2026-11-07). The design is "Sheet
@@ -215,10 +216,10 @@ struct ErrorDetailsSheet: View {
     }
 }
 
-// Sends one report to Sentry, only after a click on "Send report" (owner, 2026-11-07). Nexus has no
-// SDK of Sentry, so it collects nothing else and sends nothing in the background.
+// Sends one report to Sentry, only after a click on "Send report" (owner, 2026-11-07). The SDK of
+// Sentry sends only crashes (CrashReports), so a failed program goes only through this report.
 enum ErrorReporter {
-    static let dsn = "https://4455756da7312c659e52d6e870f8b6a9@o4512390385893376.ingest.de.sentry.io/4512390391857232"
+    static let dsn = CrashReports.dsn
     static let activityLines = 25
 
     struct SendError: LocalizedError {

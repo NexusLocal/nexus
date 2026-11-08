@@ -43,6 +43,8 @@ public actor NexusEngine {
     let certificateAuthority: CertificateAuthority
     private let systemFiles: SystemDNSFiles
     private let unregister: @Sendable () -> Void
+    // Starts or stops the crash reports of nexusd after a change of the setting in the app.
+    private let applyCrashReports: @Sendable (Bool) -> Void
     private let helperRetryDelay: Duration
 
     private var dnsServer: DNSServer?
@@ -197,9 +199,11 @@ public actor NexusEngine {
         systemFiles: SystemDNSFiles = SystemDNSFiles(),
         helperRetryDelay: Duration = .seconds(5),
         activity: ActivityLog? = nil,
-        unregister: @escaping @Sendable () -> Void = {}
+        unregister: @escaping @Sendable () -> Void = {},
+        applyCrashReports: @escaping @Sendable (Bool) -> Void = { _ in }
     ) {
         self.paths = paths
+        self.applyCrashReports = applyCrashReports
         self.activity = activity
         self.supervisor = supervisor
         self.processSupervisor = processSupervisor
@@ -268,6 +272,9 @@ public actor NexusEngine {
                 return .done(message: try await removeHost(host))
             case .uninstall:
                 return .done(message: try await uninstall())
+            case .crashReports(let enabled):
+                applyCrashReports(enabled)
+                return .done(message: enabled ? "nexusd sends crash reports." : "nexusd sends no crash reports.")
             case .sites:
                 return .sites(await siteInfo())
             case .addSite(let folder, let host, let aliases, let php, let server, let group, let runsAs, let command, let address, let node, let workspaceDatabases):
@@ -427,6 +434,9 @@ public actor NexusEngine {
     // for "Start stopped services" (D63).
     public func startEnabledServices() async {
         await observeSupervisor()
+        // A database server of a workspace uses the program of its instance. So the clean stop of
+        // the services also reaches it, before the background processes get SIGKILL.
+        await endServicesOfEarlierRun()
         await endProcessesOfEarlierRun()
         _ = try? await startDNS()
         applyMailSettings(await stateStore.current().mailSettings)

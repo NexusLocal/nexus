@@ -1,4 +1,5 @@
 import NexusCore
+import NexusCrashReports
 import NexusIPC
 import SwiftUI
 import UniformTypeIdentifiers
@@ -845,6 +846,7 @@ private struct AdvancedSettings: View {
     @Environment(AppModel.self) private var model
     @Environment(BackgroundServices.self) private var background
     @State private var confirmsUninstall = false
+    @AppStorage(CrashReports.setting) private var sendsCrashReports = true
 
     private let paths = NexusPaths.standard
 
@@ -875,6 +877,15 @@ private struct AdvancedSettings: View {
             }
 
             Section {
+                Toggle("Send crash reports to Nexus", isOn: $sendsCrashReports)
+                    .toggleStyle(.switch)
+            } header: {
+                Text("Crash reports")
+            } footer: {
+                Text("Crash reports are anonymous. A report holds the place of the crash in the code and the versions of Nexus and macOS. It holds no IP address, no location, no names of your sites and no name of your home folder. The reports help us to improve Nexus.")
+            }
+
+            Section {
                 LabeledContent("Remove Nexus from this Mac") {
                     Button("Uninstall…") {
                         confirmsUninstall = true
@@ -890,6 +901,10 @@ private struct AdvancedSettings: View {
         .fixedSize(horizontal: false, vertical: true)
         .onAppear {
             background.refresh()
+        }
+        .onChange(of: sendsCrashReports) {
+            CrashReports.apply(process: "app", isOn: sendsCrashReports)
+            model.send(.crashReports(enabled: sendsCrashReports), failure: "nexusd did not change its crash reports", place: .settings)
         }
         .alert("Remove Nexus from this Mac?", isPresented: $confirmsUninstall) {
             Button("Uninstall", role: .destructive) {

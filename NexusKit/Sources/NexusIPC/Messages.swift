@@ -807,6 +807,9 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case addHost(String)
     case removeHost(String)
     case uninstall
+    // The switch "Send crash reports to Nexus" of Settings > Advanced. nexusd reads the setting at
+    // its start, and this request applies a change at once.
+    case crashReports(enabled: Bool)
     case sites
     case addSite(folder: String, host: String?, aliases: [String], php: String?, server: WebServer?, group: String? = nil, runsAs: SiteKind? = nil, command: String? = nil, address: String? = nil, node: String? = nil, workspaceDatabases: WorkspaceDatabaseKind? = nil)
     // A new site from a template (3i). The answer is siteCreated or siteNotCreated.

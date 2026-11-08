@@ -17,15 +17,24 @@ let package = Package(
         .library(name: "NexusDNS", targets: ["NexusDNS"]),
         .library(name: "NexusMail", targets: ["NexusMail"]),
         .library(name: "NexusTLS", targets: ["NexusTLS"]),
+        .library(name: "NexusCrashReports", targets: ["NexusCrashReports"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-certificates", from: "1.21.0"),
         .package(url: "https://github.com/apple/swift-crypto", from: "5.0.0"),
         .package(url: "https://github.com/apple/swift-asn1", from: "1.7.0"),
+        .package(url: "https://github.com/getsentry/sentry-cocoa", from: "9.33.0"),
     ],
     targets: [
         .target(name: "NexusCore"),
+        // The app and nexusd send their crashes to Sentry. The product Sentry is a static library.
+        // The build without AppKit is a dynamic framework, and nexusd is a tool without a folder
+        // for frameworks, so it would not start.
+        .target(name: "NexusCrashReports", dependencies: [
+            "NexusCore",
+            .product(name: "Sentry", package: "sentry-cocoa"),
+        ]),
         .target(name: "NexusDNS", dependencies: ["NexusCore"]),
         .target(name: "NexusMail"),
         .target(name: "NexusConfig", dependencies: ["NexusCore"]),
@@ -48,6 +57,10 @@ let package = Package(
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]),
         .testTarget(name: "NexusCoreTests", dependencies: ["NexusCore"]),
+        .testTarget(name: "NexusCrashReportsTests", dependencies: [
+            "NexusCrashReports",
+            .product(name: "Sentry", package: "sentry-cocoa"),
+        ]),
         .testTarget(name: "NexusRuntimeTests", dependencies: ["NexusRuntime"]),
         .testTarget(name: "NexusSupervisorTests", dependencies: ["NexusSupervisor"]),
         .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusMail", "NexusTestSupport"]),
