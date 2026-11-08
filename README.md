@@ -36,7 +36,7 @@
   click. Changed your mind? Undo it.
 - 📥 **Import a WordPress backup.** From Local, Studio, Jetpack or All-in-One WP Migration.
 - ✨ **A new site in one click.** Laravel, WordPress, Next.js, Nuxt, Vite or Astro.
-- 📬 **A mail inbox for every site.** No test mail ever reaches a real customer.
+- 📬 **A mail inbox for every site.** Built on Mailpit. No test mail ever reaches a real customer.
 - 💜 **Free and open source.** MIT license. No subscription and no paywall, ever.
 
 ## 🌳 A workspace for each branch
@@ -124,10 +124,11 @@ database and a git repository. Then it opens the site over HTTPS. In the termina
 
 ## 📬 A mail inbox for every site
 
-![The Mail screen with the inbox and a password mail of shop.test](.github/mail.png)
+![The Mail screen with the inbox and an order mail of shop.test](.github/mail.png)
 
-Every mail that your sites send goes to the inbox of Nexus. No mail leaves your Mac. Each mail shows
-the site or the workspace that sent it.
+Nexus installs and runs [Mailpit](https://github.com/axllent/mailpit) for you. Every mail that your
+sites send goes to its inbox. No mail leaves your Mac. Each mail shows the site or the workspace that
+sent it. Read your mails in Nexus, or open the web inbox of Mailpit.
 
 ## 📦 The versions that you need
 

@@ -34,8 +34,8 @@ extension AppModel {
     }
 
     private static let sampleMails: [MailpitAPI.Summary] = [
-        ("Shop <noreply@shop.test>", "Reset your password", "Choose a new password with the link.", "shop.test", "09:41"),
-        ("Shop <noreply@shop.test>", "Your order #1042", "We send your order today.", "fix.shop.test", "09:38"),
+        ("Shop <noreply@shop.test>", "Thank you for your order", "We received order #1042. We send it today.", "shop.test", "09:41"),
+        ("Shop <noreply@shop.test>", "Your order #1041 is on its way", "The parcel arrives tomorrow.", "fix.shop.test", "09:38"),
         ("CRM <crm@crm.test>", "New lead: Foo B.V.", "A new lead came in through the form.", "crm.test", "09:20"),
         ("WordPress <wordpress@blog.test>", "New comment on Hello world", "A comment waits for your approval.", "blog.test", "08:55"),
         ("Shop <noreply@shop.test>", "Welcome to Shop", "Your account is ready.", "shop.test", "08:31"),
@@ -55,7 +55,7 @@ extension AppModel {
             <p style="font-weight:700;font-size:16px">Shop</p>
             <h2 style="font-size:18px">\(summary.subject)</h2>
             <p style="color:#3C3C43;font-size:13px;line-height:1.5">\(summary.snippet)</p>
-            <a style="display:inline-block;background:#1F6FEB;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none">Reset password</a>
+            <a style="display:inline-block;background:#1F6FEB;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none">View your order</a>
             </div></div>
             """
 
