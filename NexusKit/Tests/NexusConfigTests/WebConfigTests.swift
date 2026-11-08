@@ -85,15 +85,24 @@ struct WebConfigTests {
         #expect(!config.contains("proxy_pass"))
     }
 
-    @Test func anApacheSiteGoesToApacheWithTheForwardedHeaders() throws {
+    @Test func anApacheSiteGoesToApacheOverTLSWithTheNameOfTheSite() throws {
         let config = try NginxConfig.render(sites: [site(.apache)], settings: nginxSettings())
 
-        #expect(config.contains("proxy_pass http://127.0.0.1:8081;"))
+        #expect(config.contains("proxy_pass https://127.0.0.1:8081;"))
+        #expect(config.contains("proxy_ssl_server_name on;"))
+        #expect(config.contains("proxy_ssl_name $host;"))
         #expect(config.contains("proxy_set_header X-Forwarded-Proto $scheme;"))
         #expect(config.contains("proxy_set_header Host $http_host;"))
         #expect(config.contains("location ~ /\\.(?!well-known) {\n            deny all;"))
-        #expect(config.contains("proxy_redirect http://$http_host/ $scheme://$http_host/;"))
+        #expect(config.contains("proxy_redirect https://$http_host/ $scheme://$http_host/;"))
         #expect(!config.contains("fastcgi_pass"))
+    }
+
+    @Test func onlyAnApacheSiteGoesOverTLSToItsServer() throws {
+        let config = try NginxConfig.render(sites: [site(.proxy(address: "http://127.0.0.1:3000"))], settings: nginxSettings())
+
+        #expect(!config.contains("proxy_ssl_server_name"))
+        #expect(!config.contains("proxy_redirect"))
     }
 
     @Test func aProxySiteGoesToItsAddressAndKeepsFoldersWithADot() throws {
@@ -201,13 +210,15 @@ struct WebConfigTests {
         }
     }
 
-    @Test func apacheSetsHTTPSFromTheProxyAndSendsPHPToTheSocket() throws {
+    @Test func apacheGetsTLSWithTheCertificateOfEachSiteAndSendsPHPToTheSocket() throws {
         let settings = ApacheSettings(port: 8081, runtime: URL(filePath: "/Nexus/runtimes/httpd/2.4"), runFolder: run, modules: ["rewrite", "proxy"])
 
         let config = try ApacheConfig.render(sites: [site(.apache, php: "8.4"), site(.nginx)], settings: settings)
 
-        #expect(config.contains("Listen 127.0.0.1:8081"))
-        #expect(config.contains("SetEnvIf X-Forwarded-Proto \"^https$\" HTTPS=on"))
+        #expect(config.contains("Listen 127.0.0.1:8081 https"))
+        #expect(config.contains("LoadModule ssl_module modules/mod_ssl.so"))
+        #expect(config.contains("    SSLEngine on\n    SSLCertificateFile \"/Nexus/certs/shop.test.crt\"\n    SSLCertificateKeyFile \"/Nexus/certs/shop.test.key\""))
+        #expect(!config.contains("X-Forwarded-Proto"))
         #expect(config.contains("RemoteIPInternalProxy 127.0.0.1 ::1"))
         #expect(config.contains("SetHandler \"proxy:unix:/Nexus/run/php-8.4.sock|fcgi://php-8.4\""))
         #expect(config.contains("ServerAlias www.shop.test"))

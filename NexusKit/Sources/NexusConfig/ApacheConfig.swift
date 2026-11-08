@@ -15,14 +15,16 @@ public struct ApacheSettings: Sendable, Equatable {
     }
 }
 
-// Apache behind nginx. It listens on 127.0.0.1 only, so the access rules of nginx cover it. It
-// sets HTTPS=on from X-Forwarded-Proto and takes the client IP from X-Forwarded-For, so PHP
-// sees HTTPS and the real client without a change in the application (D23).
+// Apache behind nginx. It listens on 127.0.0.1 only, so the access rules of nginx cover it. nginx
+// sends each request over TLS, and each site has its own certificate. So mod_ssl sets HTTPS=on,
+// and a .htaccess rule that checks %{HTTPS} or %{SERVER_PORT} works as in production. Apache
+// takes the client IP from X-Forwarded-For, so PHP sees the real client without a change in the
+// application (D23).
 public enum ApacheConfig {
     // The modules that Apache needs to work behind nginx. The module toggles cannot remove them.
     public static let requiredModules = [
         "mpm_event", "unixd", "authn_core", "authz_core", "authz_host", "log_config", "mime", "dir",
-        "setenvif", "remoteip", "proxy", "proxy_fcgi",
+        "setenvif", "remoteip", "proxy", "proxy_fcgi", "ssl",
     ]
 
     public static let defaultModules: Set<String> = [
@@ -55,7 +57,7 @@ public enum ApacheConfig {
         var lines = [
             "# Nexus writes this file. Changes are lost at the next change of a site.",
             "ServerRoot \(try ConfigText.quoted(settings.runtime))",
-            "Listen 127.0.0.1:\(settings.port)",
+            "Listen 127.0.0.1:\(settings.port) https",
             "",
         ]
 
@@ -78,7 +80,7 @@ public enum ApacheConfig {
             "",
             "RemoteIPHeader X-Forwarded-For",
             "RemoteIPInternalProxy 127.0.0.1 ::1",
-            "SetEnvIf X-Forwarded-Proto \"^https$\" HTTPS=on",
+            "SSLSessionCache none",
             "",
             "<Directory />",
             "    AllowOverride None",
@@ -110,6 +112,9 @@ public enum ApacheConfig {
             }
 
             lines += [
+                "    SSLEngine on",
+                "    SSLCertificateFile \(try ConfigText.quoted(site.certificate))",
+                "    SSLCertificateKeyFile \(try ConfigText.quoted(site.key))",
                 "    DocumentRoot \(try ConfigText.quoted(documentRoot))",
                 "    <Directory \(try ConfigText.quoted(documentRoot))>",
                 "        Options FollowSymLinks",

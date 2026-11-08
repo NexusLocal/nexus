@@ -207,7 +207,7 @@ public enum NginxConfig {
                 "",
             ]
             lines += site.isWordPress ? uploadsRule + [""] : []
-            lines += proxyLocation(to: "http://127.0.0.1:\(settings.apachePort)", redirect: "        proxy_redirect http://$http_host/ $scheme://$http_host/;")
+            lines += proxyLocation(to: "https://127.0.0.1:\(settings.apachePort)", extra: apacheTLS)
         case .notice(let title, let text):
             lines += noticePage(title: title, text: text)
         // A dev server serves files in folders with a dot, for example node_modules/.vite. So
@@ -294,12 +294,19 @@ public enum NginxConfig {
         "    }",
     ]
 
-    // Apache sees plain HTTP from nginx. So a redirect of Apache, for example of a folder without
-    // a slash such as /wp-admin, names http:// with the HTTPS port. The redirect line of an Apache
-    // site gives such an address the scheme of the request.
-    private static func proxyLocation(to address: String, origin: String? = nil, redirect: String? = nil) -> [String] {
+    // nginx sends a request to Apache over TLS, with the name of the site for the certificate. So
+    // a .htaccess rule that checks %{HTTPS} or %{SERVER_PORT} sees HTTPS, as in production, and
+    // does not send each request to https again (D23). Apache then also sees TLS for a request on
+    // the HTTP port. So a redirect of Apache, for example of a folder without a slash such as
+    // /wp-admin, names https://. The redirect line gives such an address the scheme of the request.
+    private static let apacheTLS = [
+        "        proxy_ssl_server_name on;",
+        "        proxy_ssl_name $host;",
+        "        proxy_redirect https://$http_host/ $scheme://$http_host/;",
+    ]
+
+    private static func proxyLocation(to address: String, origin: String? = nil, extra: [String] = []) -> [String] {
         let originLine = origin.map { ["        proxy_set_header Origin \($0);"] } ?? []
-        let redirectLine = redirect.map { [$0] } ?? []
 
         return [
             "    location / {",
@@ -311,7 +318,7 @@ public enum NginxConfig {
             "        proxy_set_header X-Forwarded-Port $server_port;",
             "        proxy_set_header Upgrade $http_upgrade;",
             "        proxy_set_header Connection $connection_upgrade;",
-        ] + originLine + redirectLine + [
+        ] + originLine + extra + [
             "        proxy_read_timeout 300;",
             "    }",
         ]

@@ -154,7 +154,7 @@ public enum ToggleHelp {
         "socache_redis": "A cache in Redis for other modules.",
         "socache_shmcb": "A cache in shared memory for other modules.",
         "speling": "Corrects small spelling mistakes in URLs.",
-        "ssl": "HTTPS in Apache. nginx does HTTPS for every site. So Apache does not need it behind nginx.",
+        "ssl": "HTTPS in Apache. nginx sends each request to Apache over TLS, so Apache always needs it.",
         "status": "A page with the state of Apache at /server-status.",
         "substitute": "Replaces text in responses.",
         "suexec": "Runs CGI scripts as another user.",
