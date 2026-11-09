@@ -3,30 +3,6 @@
 Nexus gets updates about every week until version 1.0. The order below can change. Each item
 needs research and a plan before the work starts.
 
-## Next
-
-Small items for the next release.
-
-- **PCOV on by default.** Fast code coverage for your tests, in each PHP version.
-- **A workspace in one step.** `nexus workspace create <branch>` and a "New workspace" button make
-  the git worktree and the workspace.
-- **`nexus open` and `nexus edit`.** They open the site of the current folder in the browser or in
-  your editor.
-- **Extra files for each workspace.** A site can name files that git ignores, for example
-  `.env.testing` or `auth.json`. Each workspace gets a clone of them.
-- **Database commands.** `nexus db connection` shows the database connection of a site. Another
-  command makes an empty database, for example a test database for an agent.
-- **A document root setting** for a project that does not use `public/`.
-- **Commands before the removal of a workspace,** for example `php artisan queue:clear`.
-- **A dump file for each new workspace.** A site can name a dump file, for example a scrubbed copy
-  of production. Each new workspace loads it into its own database.
-- **Import a dump file.** Load a `.sql` or `.sql.gz` file into a database, in the app and with
-  the `nexus` command.
-- **Better error pages:** a list of your sites for a name that Nexus does not know, and a wait page
-  while PHP restarts.
-- **Plain error texts.** Nexus shows each error as a plain sentence, not as a raw system text.
-- **`mailparse`** in each PHP version.
-
 ## Planned
 
 In this order:
@@ -66,6 +42,10 @@ In this order:
 
 ## Done recently
 
+- **0.2.4:** import a dump file, a dump file for each new workspace (WordPress links change during
+  the load), a workspace in one step, extra files and removal commands for workspaces, `nexus open`,
+  `nexus edit` and database commands, a document root setting, better error pages, plain error
+  texts, PCOV for `--coverage` and `mailparse`.
 - **0.2.3:** package updates install by themselves, for example a security fix of PHP or Node.js.
 - **0.2.2:** `php`, `composer` and `wp` follow the project in their arguments. Workspaces wait for
   your own worktree scripts.
