@@ -16,6 +16,13 @@ not in a fixed order. Each item needs research and a plan before the work starts
 - **Valkey.** The fork of Redis with the BSD license, as a service next to Redis.
 - **More PHP extensions.** `mailparse`, `gmp` and `memcached`, in each PHP version where they build
   and load.
+- **A dump file for each new workspace.** A site can name a dump file, for example a scrubbed copy
+  of production. Each new workspace loads it into its own database.
+- **Xdebug only for debug requests.** A request with the Xdebug cookie goes to a PHP process with
+  Xdebug. All other requests stay fast.
+- **Stop idle workspaces, if you want.** A workspace without requests can stop its database server
+  and its workers. The next request starts them again. You choose the time, or never.
+- **Import a .wpress file with a password or with compression.** Nexus asks for the password.
 
 ## Not planned
 
