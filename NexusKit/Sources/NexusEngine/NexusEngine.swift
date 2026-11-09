@@ -122,6 +122,8 @@ public actor NexusEngine {
     // from 0 to 1. The key is the owner of the processes of that workspace (Phase 4, 3e).
     var linkChanges: [String: Task<Void, Never>] = [:]
     var linkProgress: [String: Double] = [:]
+    // The load of the dump file into a new workspace, with the same key.
+    var dumpProgress: [String: WorkspaceDumpProgress] = [:]
     var runningCommand: (worktree: String, task: Task<CommandOutput, Error>)?
     // The background processes that nexusd started, the run of the sync that changes them, and what
     // stops one of them. An entry in processProblems has the owner of the process as its key.

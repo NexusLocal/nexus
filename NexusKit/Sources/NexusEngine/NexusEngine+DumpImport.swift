@@ -72,7 +72,8 @@ extension NexusEngine {
         let keptCopy = trashCopy.map { " Nexus put a copy of the old \(name) in the trash: \($0.lastPathComponent)." } ?? ""
         let plan = DumpLoad(file: file, container: container, dump: dump, format: format, name: name, replacesTables: request.existing == .replaceTables)
         let progress = TaskProgress()
-        progress.update { $0.total = container == .plain ? Self.fileSize(file) : nil }
+        let total = await Self.sqlSize(of: file, container: container)
+        progress.update { $0.total = total }
 
         do {
             try await runTask(.importDump(file: fileName, instance: instance, name: name), progress: progress, stopped: {
@@ -249,6 +250,13 @@ extension NexusEngine {
     }
 
     private func load(_ plan: DumpLoad, client: DatabaseClient, tools: DatabaseTools, progress: TaskProgress) async throws {
+        try await Self.pipe(plan, client: client, tools: tools) { done in
+            progress.update { $0.completed = done }
+        }
+    }
+
+    // read gets the number of bytes of SQL that went to the client so far.
+    static func pipe(_ plan: DumpLoad, client: DatabaseClient, tools: DatabaseTools, read: @escaping @Sendable (Int64) -> Void) async throws {
         let reader = Command(
             executable: URL(filePath: "/bin/bash"),
             arguments: ["-c", plan.container.readerScript(dump: plan.dump), "reader", plan.file.path(percentEncoded: false)] + (plan.dump.map { [$0] } ?? []),
@@ -256,14 +264,114 @@ extension NexusEngine {
         )
         let counted = Mutex<Int64>(0)
 
-        try await CommandRunner.pipe(reader, into: Self.loader(for: plan, client: client, tools: tools)) { data in
-            let done = counted.withLock { value in
+        try await CommandRunner.pipe(reader, into: loader(for: plan, client: client, tools: tools)) { data in
+            read(counted.withLock { value in
                 value += Int64(data.count)
                 return value
+            })
+        }
+    }
+
+    // The size of the SQL. gzip keeps the size of the original in its last 4 bytes, so a dump of 4 GB
+    // or more gives a wrong number. That number is then smaller than the file, and it does not count.
+    static func sqlSize(of file: URL, container: DumpContainer) async -> Int64? {
+        let size = fileSize(file)
+
+        switch container {
+        case .plain:
+            return size
+        case .gzip:
+            guard let output = try? await CommandRunner.run(Command(executable: URL(filePath: "/usr/bin/gzip"), arguments: ["-l", file.path(percentEncoded: false)])) else {
+                return nil
             }
 
-            progress.update { $0.completed = done }
+            let numbers = output.standardOutput.split(whereSeparator: \.isNewline).dropFirst().first?.split(separator: " ").compactMap { Int64($0) } ?? []
+
+            guard numbers.count >= 2, let size, numbers[1] >= size else {
+                return nil
+            }
+
+            return numbers[1]
+        case .zip, .tar:
+            return nil
         }
+    }
+
+    // A path of the setting: an empty value removes the file.
+    static func workspaceDumpPath(_ value: String) throws -> String? {
+        let path = (value.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+
+        guard !path.isEmpty else {
+            return nil
+        }
+
+        var isFolder: ObjCBool = false
+
+        guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: path, isDirectory: &isFolder), !isFolder.boolValue else {
+            throw RuntimeError.unsupported("\(path) is no file. Choose a .sql or .sql.gz file, or a .zip, .tar or .tar.gz file with such a dump.")
+        }
+
+        return URL(filePath: path).standardizedFileURL.path(percentEncoded: false)
+    }
+
+    // A new workspace with the choice dump (owner, 2026-11-09). Its database is empty already. A
+    // failure says so in its first sentence, and the Site screen shows that sentence as the state.
+    func loadWorkspaceDump(_ file: URL, into name: String, tools: DatabaseTools, client: DatabaseClient, owner: String) async throws {
+        let path = file.path(percentEncoded: false)
+
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw RuntimeError.unsupported("\(WorkspaceDumpText.gone) Nexus cannot find \(path). Choose the file again under Dump file, and then click Retry.")
+        }
+
+        let container = DumpContainer.of(file.lastPathComponent)
+        let dumps = try await archiveDumps(in: file, container: container)
+
+        guard !container.isArchive || dumps.count == 1 else {
+            throw RuntimeError.unsupported("\(WorkspaceDumpText.failed) \(file.lastPathComponent) has \(dumps.count) dumps. Choose a file with one dump under Dump file.")
+        }
+
+        let dump = container.isArchive ? dumps.first : nil
+        let format = try await dumpFormat(of: file, container: container, dump: dump) ?? (tools.kind.usesMySQLProtocol ? .mysql : .postgresql)
+
+        guard format.fits(tools.kind) else {
+            throw RuntimeError.unsupported("\(WorkspaceDumpText.failed) \(file.lastPathComponent) is a dump of \(format.displayName), and this database is on \(tools.kind.displayName).")
+        }
+
+        let plan = DumpLoad(file: file, container: container, dump: dump, format: format, name: name, replacesTables: false)
+        let total = await Self.sqlSize(of: file, container: container)
+        let done = Mutex<Int64>(0)
+
+        dumpProgress[owner] = WorkspaceDumpProgress(completed: 0, total: total)
+        publishSites()
+
+        let reporter = Task { [weak self] in
+            while (try? await Task.sleep(for: .milliseconds(500))) != nil {
+                await self?.reportDump(owner: owner, completed: done.withLock { $0 }, total: total)
+            }
+        }
+
+        defer {
+            reporter.cancel()
+            dumpProgress[owner] = nil
+            publishSites()
+        }
+
+        do {
+            try await Self.pipe(plan, client: client, tools: tools) { bytes in
+                done.withLock { $0 = bytes }
+            }
+        } catch {
+            throw RuntimeError.unsupported("\(WorkspaceDumpText.failed) \(ErrorText.plain(error)) Retry makes the database of this workspace empty and loads the dump again.")
+        }
+    }
+
+    private func reportDump(owner: String, completed: Int64, total: Int64?) {
+        guard dumpProgress[owner] != nil else {
+            return
+        }
+
+        dumpProgress[owner] = WorkspaceDumpProgress(completed: completed, total: total)
+        publishSites()
     }
 
     static func loader(for plan: DumpLoad, client: DatabaseClient, tools: DatabaseTools) -> Command {

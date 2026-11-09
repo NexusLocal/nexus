@@ -188,8 +188,18 @@ extension NexusEngine {
 
         let key = ProjectFolder.workspaceKey(of: site)
 
-        if databases == .empty, Self.isWordPress(resolvedSites(state).map(\.site).filter { ProjectFolder.workspaceKey(of: $0) == key }) {
+        let sitesOfKey = resolvedSites(state).map(\.site).filter { ProjectFolder.workspaceKey(of: $0) == key }
+
+        if databases == .empty, Self.isWordPress(sitesOfKey) {
             throw RuntimeError.unsupported("A WordPress site always gets a copy of its database, because WordPress has no migrations.")
+        }
+
+        if databases == .dump, Self.isWordPress(sitesOfKey) {
+            throw RuntimeError.unsupported("A WordPress site gets a dump file in each workspace in a later version of Nexus. Until then it gets a copy of its database.")
+        }
+
+        if databases == .dump, !sitesOfKey.contains(where: { $0.workspaceDump != nil }) {
+            throw RuntimeError.unsupported("This site has no dump file. Choose one first, for example: nexus site edit \(site.host) --workspace-dump ~/Dumps/shop.sql.gz")
         }
 
         // The check and the change are one step, because a check of the worktrees can add the same
@@ -312,6 +322,17 @@ extension NexusEngine {
         return workspace
     }
 
+    private func workspaceDumpFile(key: String) async throws -> URL {
+        let state = await stateStore.current()
+        let sites = resolvedSites(state).map(\.site).filter { ProjectFolder.workspaceKey(of: $0) == key }
+
+        guard let path = sites.lazy.compactMap(\.workspaceDump).first else {
+            throw RuntimeError.unsupported("\(WorkspaceDumpText.gone) This site has no dump file. Choose one under Dump file, and then click Retry.")
+        }
+
+        return URL(filePath: path, directoryHint: .notDirectory)
+    }
+
     // The steps after this one can take minutes. A change in that time gives a new setup. So an edit
     // of the .env does not stay in a workspace that is Ready.
     private func writeEnvAndCopyData(of workspace: inout Workspace, key: String) async throws -> WrittenEnv? {
@@ -320,10 +341,12 @@ extension NexusEngine {
         }
 
         workspace.configurationDigest = Self.configurationDigest(of: written.folder, in: workspace.worktree)
-        let emptying = workspace.databaseKind == .empty
+        let emptying = workspace.databaseKind?.startsEmpty == true
+        let dump = workspace.databaseKind == .dump ? try await workspaceDumpFile(key: key) : nil
+        let owner = Self.processOwner(key: key, workspace: workspace.name)
 
         for server in written.servers {
-            try await prepareServer(of: server.tools, port: server.port, databases: written.databases.filter { $0.port == server.mainPort }, workspace: workspace.name, key: key, emptying: emptying)
+            try await prepareServer(of: server.tools, port: server.port, databases: written.databases.filter { $0.port == server.mainPort }, workspace: workspace.name, key: key, emptying: emptying, dump: dump, owner: owner)
         }
 
         for file in written.sqliteFiles {

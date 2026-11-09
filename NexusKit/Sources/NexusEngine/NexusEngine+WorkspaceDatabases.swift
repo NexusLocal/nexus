@@ -38,9 +38,9 @@ extension NexusEngine {
         }
     }
 
-    // The record names the server after the last statement. So a stop of nexusd in between gives a
-    // new run, and a retry later keeps the tables that the commands made.
-    func emptyDatabases(_ names: [String], on server: WorkspaceDatabaseServer, tools: DatabaseTools, client: DatabaseClient, workspace: String, key: String) async throws {
+    // The record names the server after the last statement (markEmptied). So a stop of nexusd in
+    // between gives a new run, and a retry later keeps the tables that the commands made.
+    func emptyDatabases(_ names: [String], tools: DatabaseTools, client: DatabaseClient) async throws {
         for name in Set(names).sorted() {
             let validated = try DatabaseName.validated(name)
             let settings = DatabaseClient.rows(in: try await client.query(EmptyDatabase.settingsQuery(validated, kind: tools.kind))).first ?? []
@@ -49,7 +49,9 @@ extension NexusEngine {
                 try await client.query(statement)
             }
         }
+    }
 
+    func markEmptied(_ server: WorkspaceDatabaseServer, workspace: String, key: String) async throws {
         try await updateRecord(of: workspace, key: key) { record in
             if !record.emptiedServers.contains(server.folder) {
                 record.emptiedServers.append(server.folder)

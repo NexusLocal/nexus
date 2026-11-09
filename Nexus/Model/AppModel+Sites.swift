@@ -42,7 +42,8 @@ extension SiteItem {
             offersEmptyDatabases: info.offersEmptyDatabases,
             documentRootSetting: info.documentRootSetting,
             removalCommands: info.removalCommands ?? [],
-            workspaceFiles: info.workspaceFiles ?? []
+            workspaceFiles: info.workspaceFiles ?? [],
+            workspaceDump: info.workspaceDump
         )
     }
 }

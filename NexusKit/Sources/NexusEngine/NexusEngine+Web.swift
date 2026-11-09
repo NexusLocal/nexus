@@ -658,7 +658,8 @@ extension NexusEngine {
                 migrationCommand: nodeProject?.migrationCommand,
                 documentRootSetting: site.documentRootFolder,
                 removalCommands: site.removalCommands,
-                workspaceFiles: site.workspaceFiles
+                workspaceFiles: site.workspaceFiles,
+                workspaceDump: site.workspaceDump
             ))
         }
 
@@ -767,6 +768,10 @@ extension NexusEngine {
         }
 
         if let workspaceDatabases = settings.workspaceDatabases {
+            guard workspaceDatabases != .dump else {
+                throw RuntimeError.unsupported("Add the site first. Then choose its dump file with: nexus site edit \(site.host) --workspace-databases dump --workspace-dump ~/Dumps/shop.sql.gz")
+            }
+
             site.workspaceDatabases = workspaceDatabases.kind
         }
 
@@ -883,8 +888,20 @@ extension NexusEngine {
         if let mainProcesses = change.mainProcesses {
             site.mainProcesses = mainProcesses
         }
+        if let workspaceDump = change.workspaceDump {
+            site.workspaceDump = try Self.workspaceDumpPath(workspaceDump)
+        }
         if let workspaceDatabases = change.workspaceDatabases {
             site.workspaceDatabases = workspaceDatabases.kind
+        }
+        if site.workspaceDatabases == .dump {
+            guard site.workspaceDump != nil else {
+                throw RuntimeError.unsupported("Choose the dump file first, for example: nexus site edit \(host) --workspace-dump ~/Dumps/shop.sql.gz")
+            }
+
+            guard !PHPProject.type(of: site).isWordPress else {
+                throw RuntimeError.unsupported("A WordPress site gets a dump file in each workspace in a later version of Nexus. Until then it gets a copy of its database.")
+            }
         }
         if let workspaceSeeders = change.workspaceSeeders {
             site.workspaceSeeders = workspaceSeeders
@@ -920,7 +937,7 @@ extension NexusEngine {
         // The Node line, the command and the workspace settings change no server. So they need no
         // new web configuration.
         let changesProcesses = change.backgroundCommands != nil || change.workspaceProcesses != nil || change.mainProcesses != nil || change.command != nil
-        let changesDatabases = change.workspaceDatabases != nil || change.workspaceSeeders != nil
+        let changesDatabases = change.workspaceDatabases != nil || change.workspaceSeeders != nil || change.workspaceDump != nil
         let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil || change.workspaceCommands != nil || change.removalCommands != nil || change.workspaceFiles != nil || changesProcesses || changesDatabases
         let changesServers = change.php != nil || change.server != nil || change.aliases != nil || change.address != nil || change.documentRoot != nil || edited.kind != kindBefore
         let onlySettings = hasSetting && !changesServers

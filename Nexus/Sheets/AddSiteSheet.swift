@@ -233,7 +233,7 @@ struct AddSiteSheet: View {
             Picker("Workspace databases", selection: $workspaceDatabases) {
                 Text("Default (\((model.siteList?.newWorkspaceDatabases ?? .copy).displayName.lowercased()))").tag(WorkspaceDatabaseChoice.default)
                 Divider()
-                ForEach(WorkspaceDatabaseKind.allCases, id: \.self) { kind in
+                ForEach(WorkspaceDatabaseKind.defaultChoices, id: \.self) { kind in
                     Text(kind.displayName).tag(WorkspaceDatabaseChoice(kind))
                 }
             }

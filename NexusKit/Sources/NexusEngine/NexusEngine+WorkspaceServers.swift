@@ -39,7 +39,7 @@ extension NexusEngine {
     // A second setup keeps a finished clone, because that clone holds the data of the workspace. A
     // clone that did not end is no use, so it gets a new run. With emptying, each database of the
     // application on the clone is made again without tables, one time for each server.
-    func prepareServer(of tools: DatabaseTools, port: Int, databases: [WorkspaceDatabase], workspace: String, key: String, emptying: Bool = false) async throws {
+    func prepareServer(of tools: DatabaseTools, port: Int, databases: [WorkspaceDatabase], workspace: String, key: String, emptying: Bool = false, dump: URL? = nil, owner: String = "") async throws {
         let record = await stateStore.current().worktrees[key]?.workspaces.first { $0.name == workspace }
         var server = record?.servers.first { $0.instance == tools.id }
 
@@ -81,10 +81,19 @@ extension NexusEngine {
         guard !emptying else {
             let emptied = await stateStore.current().worktrees[key]?.workspaces.first { $0.name == workspace }?.emptiedServers.contains(server.folder) == true
 
-            if !emptied {
-                try await emptyDatabases(databases.map(\.name), on: server, tools: tools, client: client, workspace: workspace, key: key)
+            guard !emptied else {
+                return
             }
 
+            try await emptyDatabases(databases.map(\.name), tools: tools, client: client)
+
+            // The server counts as done only after the dump. So a retry after a failed load empties
+            // the database again and loads the whole dump.
+            if let dump, let main = databases.first(where: \.isDefault) {
+                try await loadWorkspaceDump(dump, into: try DatabaseName.validated(main.name), tools: tools, client: client, owner: owner)
+            }
+
+            try await markEmptied(server, workspace: workspace, key: key)
             return
         }
 

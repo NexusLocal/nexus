@@ -383,6 +383,10 @@ extension NexusEngine {
             throw RuntimeError.unsupported("The trash keeps a dump for at least 1 day.")
         }
 
+        guard settings.newWorkspaceDatabases != .dump else {
+            throw RuntimeError.unsupported("Only a site has a dump file. Choose it on the Site screen, or with: nexus site edit <host> --workspace-databases dump --workspace-dump <file>")
+        }
+
         try await stateStore.update { $0.workspaceSettings = settings }
         removeOldDumps(after: settings.dumpDays)
 

@@ -497,7 +497,7 @@ private struct WorkspacesSettings: View {
 
             Section {
                 Picker("Databases", selection: setting(\.newWorkspaceDatabases)) {
-                    ForEach(WorkspaceDatabaseKind.allCases, id: \.self) { kind in
+                    ForEach(WorkspaceDatabaseKind.defaultChoices, id: \.self) { kind in
                         Text(kind.displayName).tag(kind)
                     }
                 }

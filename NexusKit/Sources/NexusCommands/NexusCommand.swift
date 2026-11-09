@@ -511,7 +511,7 @@ struct WorkspaceCommand: AsyncParsableCommand {
         )
 
         @Argument(help: "A branch for a new worktree. The default is the worktree of the current folder.") var branch: String?
-        @Option(help: "copy or empty. The default is the choice of the site. A workspace that exists keeps its databases.") var databases: WorkspaceDatabaseKind?
+        @Option(help: "copy, empty or dump. dump loads the dump file of the site. The default is the choice of the site. A workspace that exists keeps its databases.") var databases: WorkspaceDatabaseKind?
 
         func run() async throws {
             guard let branch else {
@@ -1115,7 +1115,8 @@ struct SiteCommand: AsyncParsableCommand {
         @Flag(help: "Remove every background process.") var noBackgroundCommands = false
         @Option(name: .customLong("workspace-processes"), help: "on or off. With on, each workspace runs the background processes.") var workspaceProcesses: OnOff?
         @Option(name: .customLong("main-processes"), help: "on or off. With on, the main checkout runs the background processes.") var mainProcesses: OnOff?
-        @Option(name: .customLong("workspace-databases"), help: "default, copy or empty. What a new workspace gets: a copy of the main database or an empty database. default follows Settings > Workspaces. A WordPress site always gets a copy.") var workspaceDatabases: WorkspaceDatabaseChoice?
+        @Option(name: .customLong("workspace-databases"), help: "default, copy, empty or dump. What a new workspace gets: a copy of the main database, an empty database, or an empty database with the dump file of --workspace-dump. default follows Settings > Workspaces. A WordPress site always gets a copy.") var workspaceDatabases: WorkspaceDatabaseChoice?
+        @Option(name: .customLong("workspace-dump"), help: "The dump file that each new workspace gets in its main database with --workspace-databases dump.") var workspaceDump: String?
         @Option(name: .customLong("workspace-seeders"), help: "on or off. With on, a Laravel site with an empty database runs php artisan db:seed in a new workspace.") var workspaceSeeders: OnOff?
         @Option(name: .customLong("document-root"), help: "The folder in the site folder that the web server serves, for example htdocs. Each workspace serves the same folder.") var documentRoot: String?
         @Flag(help: "Use the automatic document root again: public/ when the site folder has one.") var noDocumentRoot = false
@@ -1166,7 +1167,8 @@ struct SiteCommand: AsyncParsableCommand {
                 workspaceSeeders: workspaceSeeders.map { $0 == .on },
                 documentRoot: noDocumentRoot ? "" : documentRoot,
                 removalCommands: removalChange,
-                workspaceFiles: filesChange
+                workspaceFiles: filesChange,
+                workspaceDump: workspaceDump.map(absolutePath)
             )
 
             try finish(try await send(.editSite(host: host, change: change)))

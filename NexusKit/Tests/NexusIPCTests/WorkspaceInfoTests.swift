@@ -15,6 +15,14 @@ struct WorkspaceInfoTests {
         #expect(workspace.isolationMessage == "ticket-151 is not isolated: \(cause) Nexus starts no background process for it.")
     }
 
+    @Test func aDumpThatDidNotLoadSaysWhatHappened() {
+        let reason = "The dump did not load. mysql stopped: ERROR 1146. Retry makes the database of this workspace empty and loads the dump again."
+        let workspace = WorkspaceInfo(name: "ticket-150", worktree: "/w/fix", folder: "/w/fix", state: .notIsolated(reason))
+
+        #expect(workspace.hasDumpProblem)
+        #expect(workspace.isolationMessage == "ticket-150: \(reason)")
+    }
+
     @Test func aReadyWorkspaceHasNoIsolationMessage() {
         let workspace = WorkspaceInfo(name: "fix", worktree: "/w/fix", folder: "/w/fix", state: .ready)
 

@@ -59,6 +59,8 @@ public struct Site: Codable, Sendable, Equatable {
     public var documentRootFolder: String?
     public var removalCommands: [String]?
     public var workspaceFiles: [String]?
+    // The dump file that a new workspace gets with the choice dump (owner, 2026-11-09).
+    public var workspaceDump: String?
 
     public init(
         host: String,
@@ -80,8 +82,10 @@ public struct Site: Codable, Sendable, Equatable {
         workspaceSeeders: Bool? = nil,
         documentRootFolder: String? = nil,
         removalCommands: [String]? = nil,
-        workspaceFiles: [String]? = nil
+        workspaceFiles: [String]? = nil,
+        workspaceDump: String? = nil
     ) {
+        self.workspaceDump = workspaceDump
         self.host = host
         self.folder = folder
         self.aliases = aliases

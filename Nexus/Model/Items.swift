@@ -195,6 +195,7 @@ struct SiteItem: Identifiable, Hashable {
     var documentRootSetting: String?
     var removalCommands: [String] = []
     var workspaceFiles: [String] = []
+    var workspaceDump: String?
 
     var id: String { host }
 

@@ -60,6 +60,8 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let removalCommands: [String]?
     // The paths that git ignores and that each workspace gets as a clone.
     public let workspaceFiles: [String]?
+    // The dump file of the choice dump for new workspaces.
+    public let workspaceDump: String?
 
     public init(
         hosts: [String],
@@ -95,8 +97,10 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         migrationCommand: String? = nil,
         documentRootSetting: String? = nil,
         removalCommands: [String]? = nil,
-        workspaceFiles: [String]? = nil
+        workspaceFiles: [String]? = nil,
+        workspaceDump: String? = nil
     ) {
+        self.workspaceDump = workspaceDump
         self.documentRootSetting = documentRootSetting
         self.removalCommands = removalCommands
         self.workspaceFiles = workspaceFiles
@@ -217,6 +221,22 @@ public struct WorkspaceLinkInfo: Codable, Sendable, Hashable {
     }
 }
 
+// The load of the dump file into a new workspace. total is nil when a compressed file does not tell
+// its size.
+public struct WorkspaceDumpProgress: Codable, Sendable, Hashable {
+    public let completed: Int64
+    public let total: Int64?
+
+    public init(completed: Int64, total: Int64?) {
+        self.completed = completed
+        self.total = total
+    }
+
+    public var fraction: Double? {
+        total.map { $0 > 0 ? min(1, Double(completed) / Double($0)) : 0 }
+    }
+}
+
 // A workspace as the app and nexus workspace list show it. url is nil for a workspace that does
 // not run. The problem then says why. A nexusd of part 8b sends only name, worktree, folder and
 // branch. An app of part 8b cannot read the sites without worktree, so nexusd always sends it.
@@ -235,6 +255,7 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
     public let ports: [String: Int]?
     public let app: AppProcessInfo?
     public let links: WorkspaceLinkInfo?
+    public let dump: WorkspaceDumpProgress?
 
     public var id: String { name }
 
@@ -252,8 +273,10 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         redisIndexes: [String: Int]? = nil,
         ports: [String: Int]? = nil,
         app: AppProcessInfo? = nil,
-        links: WorkspaceLinkInfo? = nil
+        links: WorkspaceLinkInfo? = nil,
+        dump: WorkspaceDumpProgress? = nil
     ) {
+        self.dump = dump
         self.name = name
         self.worktree = worktree
         self.folder = folder
@@ -278,12 +301,26 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         return nil
     }
 
+    public var hasDumpProblem: Bool {
+        guard let isolationProblem else {
+            return false
+        }
+
+        return isolationProblem.hasPrefix(WorkspaceDumpText.failed) || isolationProblem.hasPrefix(WorkspaceDumpText.gone)
+    }
+
     public var isolationMessage: String? {
         guard let isolationProblem else {
             return nil
         }
 
         let reason = isolationProblem.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // A dump that did not load is no problem of the isolation. Its reason says what happened.
+        if hasDumpProblem {
+            return "\(name): \(reason)"
+        }
+
         let startsWithArticle = reason.hasPrefix("The ") || reason.hasPrefix("A ")
         let cause = startsWithArticle ? "\(reason.prefix(1).lowercased())\(reason.dropFirst())" : reason
         let sentence = cause.hasSuffix(".") ? cause : "\(cause)."
@@ -390,6 +427,8 @@ public struct SiteChange: Codable, Sendable, Equatable {
     public var documentRoot: String?
     public var removalCommands: [String]?
     public var workspaceFiles: [String]?
+    // A path. An empty value removes the dump file.
+    public var workspaceDump: String?
 
     public init(
         php: String? = nil,
@@ -409,8 +448,10 @@ public struct SiteChange: Codable, Sendable, Equatable {
         workspaceSeeders: Bool? = nil,
         documentRoot: String? = nil,
         removalCommands: [String]? = nil,
-        workspaceFiles: [String]? = nil
+        workspaceFiles: [String]? = nil,
+        workspaceDump: String? = nil
     ) {
+        self.workspaceDump = workspaceDump
         self.documentRoot = documentRoot
         self.removalCommands = removalCommands
         self.workspaceFiles = workspaceFiles

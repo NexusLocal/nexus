@@ -369,11 +369,31 @@ struct SiteScreen: View {
                     Text("Default (\(defaultDatabases.displayName.lowercased()))").tag(WorkspaceDatabaseChoice.default)
                     Divider()
                     ForEach(WorkspaceDatabaseKind.allCases, id: \.self) { kind in
-                        Text(kind.displayName).tag(WorkspaceDatabaseChoice(kind))
+                        Text(kind == .dump ? "Dump file…" : kind.displayName).tag(WorkspaceDatabaseChoice(kind))
                     }
                 } label: {
                     Text("Databases")
                     Text(workspaceDatabases == .default ? "This site follows Settings > Workspaces. When you change that setting, this site changes too." : "This site keeps its own choice. Settings > Workspaces does not change it.")
+                }
+
+                if newWorkspaceDatabases == .dump {
+                    LabeledContent {
+                        HStack {
+                            Text(site.workspaceDump.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "No file")
+                                .foregroundStyle(.secondary)
+                                .rowValue(.middle)
+                                .help(site.workspaceDump ?? "")
+
+                            Button("Choose…") {
+                                if let path = chooseDumpFile() {
+                                    change(SiteChange(workspaceDump: path)) {}
+                                }
+                            }
+                        }
+                    } label: {
+                        Text("Dump file")
+                        Text("Each new workspace gets this dump in its main database.")
+                    }
                 }
 
                 if site.projectType == .laravel, newWorkspaceDatabases == .empty {
@@ -393,7 +413,9 @@ struct SiteScreen: View {
                             .foregroundStyle(.secondary)
                             .rowValue(.middle)
 
-                        if let links = workspace.links, workspace.isolationProblem == nil {
+                        if let dump = workspace.dump {
+                            dumpProgress(dump)
+                        } else if let links = workspace.links, workspace.isolationProblem == nil {
                             linkProgress(links)
                         } else {
                             Text(stateText(of: workspace))
@@ -457,7 +479,7 @@ struct SiteScreen: View {
                 // A reason or a warning can name a failed program with its details in errors.log.
                 ForEach(site.workspaces) { workspace in
                     if let message = workspace.isolationMessage {
-                        MessageText(message, title: "The workspace \(workspace.name) of \(site.host) is not isolated")
+                        MessageText(message, title: workspace.hasDumpProblem ? "The dump of the workspace \(workspace.name) of \(site.host) did not load" : "The workspace \(workspace.name) of \(site.host) is not isolated")
                     }
 
                     ForEach(workspace.warnings ?? [], id: \.self) { warning in
@@ -808,7 +830,20 @@ struct SiteScreen: View {
                 return
             }
 
-            change(SiteChange(workspaceDatabases: workspaceDatabases)) { workspaceDatabases = WorkspaceDatabaseChoice(site.workspaceDatabases) }
+            let revert = { workspaceDatabases = WorkspaceDatabaseChoice(site.workspaceDatabases) }
+
+            // "Dump file…" asks for the file first. Without a file the choice goes back.
+            guard workspaceDatabases == .dump, site.workspaceDump == nil else {
+                change(SiteChange(workspaceDatabases: workspaceDatabases), revert: revert)
+                return
+            }
+
+            guard let path = chooseDumpFile() else {
+                revert()
+                return
+            }
+
+            change(SiteChange(workspaceDatabases: .dump, workspaceDump: path), revert: revert)
         }
         .onChange(of: workspaceSeeders) {
             guard workspaceSeeders != site.workspaceSeeders else {
@@ -986,15 +1021,41 @@ struct SiteScreen: View {
         return [chosen] + installed
     }
 
+    // A dump that did not load says so in its first sentence (owner, 2026-11-09).
     private func stateText(of workspace: WorkspaceInfo) -> String {
         switch workspace.state {
         case .ready:
             "Ready"
+        case .notIsolated(let reason) where reason.hasPrefix(WorkspaceDumpText.failed):
+            "The dump did not load"
+        case .notIsolated(let reason) where reason.hasPrefix(WorkspaceDumpText.gone):
+            "The dump file is gone"
         case .notIsolated:
             "Not isolated"
         case .preparing, nil:
             "Preparing"
         }
+    }
+
+    private func dumpProgress(_ dump: WorkspaceDumpProgress) -> some View {
+        HStack(spacing: 8) {
+            Text("Loading the dump")
+                .foregroundStyle(.secondary)
+
+            if let fraction = dump.fraction {
+                ProgressView(value: fraction)
+                    .frame(width: 80)
+
+                Text(fraction, format: .percent.precision(.fractionLength(0)))
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(dump.completed.formatted(.byteCount(style: .file)))
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .fixedSize()
     }
 
     // A text field can read its row once more after the row goes away.
@@ -1075,6 +1136,21 @@ struct SiteScreen: View {
         }
 
         change(SiteChange(workspaceKeys: completeKeys)) { ownKeys = site.workspaceKeys }
+    }
+
+    // The dump file of the choice "Dump file" for new workspaces.
+    private func chooseDumpFile() -> String? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = site.workspaceDump.map { URL(filePath: $0).deletingLastPathComponent() } ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Downloads")
+
+        guard panel.runModal() == .OK, let chosen = panel.url else {
+            return nil
+        }
+
+        return chosen.path(percentEncoded: false)
     }
 
     // Each workspace serves the same folder in its worktree.

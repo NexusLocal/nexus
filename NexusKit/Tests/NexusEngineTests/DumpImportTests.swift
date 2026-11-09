@@ -70,6 +70,43 @@ struct DumpImportTests {
         }
     }
 
+    @Test func theDumpFileOfASiteMustBeAFile() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "nexus-site-dump-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let file = folder.appending(path: "shop.sql")
+        try Data("CREATE TABLE `users` (id int);\n".utf8).write(to: file)
+
+        #expect(try NexusEngine.workspaceDumpPath("  ") == nil)
+        #expect(try NexusEngine.workspaceDumpPath(file.path(percentEncoded: false)) == file.standardizedFileURL.path(percentEncoded: false))
+        #expect(throws: Error.self) { try NexusEngine.workspaceDumpPath(folder.path(percentEncoded: false)) }
+        #expect(throws: Error.self) { try NexusEngine.workspaceDumpPath(folder.appending(path: "gone.sql").path(percentEncoded: false)) }
+    }
+
+    @Test func aCompressedDumpTellsTheSizeOfItsSQL() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "nexus-size-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let sql = String(repeating: "INSERT INTO `users` VALUES (1,'Ann');\n", count: 500)
+        let file = folder.appending(path: "shop.sql")
+        try Data(sql.utf8).write(to: file)
+        _ = try run("/usr/bin/gzip", ["-k", file.path(percentEncoded: false)])
+
+        #expect(await NexusEngine.sqlSize(of: file, container: .plain) == Int64(sql.utf8.count))
+        #expect(await NexusEngine.sqlSize(of: folder.appending(path: "shop.sql.gz"), container: .gzip) == Int64(sql.utf8.count))
+        #expect(await NexusEngine.sqlSize(of: file, container: .zip) == nil)
+    }
+
+    @Test func onlyASiteOffersTheDumpFile() {
+        #expect(WorkspaceDatabaseChoice(.dump) == .dump)
+        #expect(WorkspaceDatabaseChoice.dump.kind == .dump)
+        #expect(!WorkspaceDatabaseKind.defaultChoices.contains(.dump))
+        #expect(WorkspaceDatabaseKind.dump.startsEmpty)
+        #expect(!WorkspaceDatabaseKind.copy.startsEmpty)
+    }
+
     @Test func theTablesOfADumpComeInTheirOrderAndOnce() {
         let mysql = "CREATE TABLE `users`\nCREATE TABLE IF NOT EXISTS `orders`\nCREATE TABLE `users`\n"
         let postgres = "CREATE TABLE public.users\nCREATE TABLE audit.events\n"

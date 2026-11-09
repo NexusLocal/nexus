@@ -170,16 +170,34 @@ public enum NewWorktree {
 // What the databases of a new workspace hold. copy is the clone of the instance (D66). empty has
 // each database of the application again without tables, on the server of the workspace. So the
 // migrations run from zero, and the workspace of an agent holds no data of customers.
+// dump loads the dump file of the site into the main database of an empty workspace (owner,
+// 2026-11-09). Only a site has a dump file, so Settings > Workspaces offers only copy and empty.
 public enum WorkspaceDatabaseKind: String, Codable, Sendable, CaseIterable {
     case copy
     case empty
+    case dump
 
     public var displayName: String {
         switch self {
         case .copy: "Copy of main database"
         case .empty: "Empty database"
+        case .dump: "Dump file"
         }
     }
+
+    public static let defaultChoices: [WorkspaceDatabaseKind] = [.copy, .empty]
+
+    // The databases of the workspace start without tables.
+    public var startsEmpty: Bool {
+        self != .copy
+    }
+}
+
+// The texts of a workspace whose dump did not load. The Site screen shows the first sentence as the
+// state of the workspace.
+public enum WorkspaceDumpText {
+    public static let failed = "The dump did not load."
+    public static let gone = "The dump file is gone."
 }
 
 // The choice of a site. default follows Settings > Workspaces, also after a change of that setting.
@@ -187,11 +205,13 @@ public enum WorkspaceDatabaseChoice: String, Codable, Sendable, CaseIterable {
     case `default`
     case copy
     case empty
+    case dump
 
     public init(_ kind: WorkspaceDatabaseKind?) {
         switch kind {
         case .copy: self = .copy
         case .empty: self = .empty
+        case .dump: self = .dump
         case nil: self = .default
         }
     }
@@ -201,6 +221,7 @@ public enum WorkspaceDatabaseChoice: String, Codable, Sendable, CaseIterable {
         case .default: nil
         case .copy: .copy
         case .empty: .empty
+        case .dump: .dump
         }
     }
 }

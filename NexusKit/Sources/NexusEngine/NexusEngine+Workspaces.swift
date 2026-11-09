@@ -297,7 +297,8 @@ extension NexusEngine {
                 redisIndexes: workspace.redisIndexes,
                 ports: workspace.ports,
                 app: app,
-                links: links
+                links: links,
+                dump: dumpProgress[owner]
             )
         }
     }
