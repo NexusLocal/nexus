@@ -649,7 +649,8 @@ extension NexusEngine {
                 workspaceDatabases: site.workspaceDatabases,
                 workspaceSeeders: site.runsWorkspaceSeeders,
                 migrationCommand: nodeProject?.migrationCommand,
-                documentRootSetting: site.documentRootFolder
+                documentRootSetting: site.documentRootFolder,
+                removalCommands: site.removalCommands
             ))
         }
 
@@ -880,6 +881,9 @@ extension NexusEngine {
         if let workspaceSeeders = change.workspaceSeeders {
             site.workspaceSeeders = workspaceSeeders
         }
+        if let removalCommands = change.removalCommands {
+            site.removalCommands = Self.uniqueCommands(removalCommands)
+        }
         if let documentRoot = change.documentRoot {
             site.documentRootFolder = try Site.documentRootFolder(documentRoot, in: site.folder)
         }
@@ -906,7 +910,7 @@ extension NexusEngine {
         // new web configuration.
         let changesProcesses = change.backgroundCommands != nil || change.workspaceProcesses != nil || change.mainProcesses != nil || change.command != nil
         let changesDatabases = change.workspaceDatabases != nil || change.workspaceSeeders != nil
-        let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil || change.workspaceCommands != nil || changesProcesses || changesDatabases
+        let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil || change.workspaceCommands != nil || change.removalCommands != nil || changesProcesses || changesDatabases
         let changesServers = change.php != nil || change.server != nil || change.aliases != nil || change.address != nil || change.documentRoot != nil || edited.kind != kindBefore
         let onlySettings = hasSetting && !changesServers
         var notes = onlySettings ? [] : try await changeWeb(.sites, store)

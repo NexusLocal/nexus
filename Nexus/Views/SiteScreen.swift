@@ -17,6 +17,8 @@ struct SiteScreen: View {
     @FocusState private var focusedKeyField: Int?
     @State private var commands: [String]
     @FocusState private var focusedCommand: Int?
+    @State private var removalCommands: [String]
+    @FocusState private var focusedRemovalCommand: Int?
     @State private var workspaceProcesses: Bool
     @State private var mainProcesses: Bool
     @State private var preset: [String] = []
@@ -47,6 +49,7 @@ struct SiteScreen: View {
         _automaticWorkspaces = State(initialValue: site.automaticWorkspaces)
         _ownKeys = State(initialValue: site.workspaceKeys)
         _commands = State(initialValue: site.workspaceCommands)
+        _removalCommands = State(initialValue: site.removalCommands)
         _workspaceProcesses = State(initialValue: site.workspaceProcesses)
         _mainProcesses = State(initialValue: site.mainProcesses)
         _backgroundCommands = State(initialValue: site.backgroundCommands ?? [])
@@ -607,9 +610,20 @@ struct SiteScreen: View {
         return command
     }
 
+    private var removalCommandsSection: some View {
+        Section {
+            CommandRows(commands: $removalCommands, saved: site.removalCommands, focusedRow: $focusedRemovalCommand, prompt: "php artisan queue:clear", save: saveRemovalCommands)
+        } header: {
+            Text("Commands before removal")
+        } footer: {
+            Text("Nexus runs these commands in a workspace before it removes the workspace. They run only in a Ready workspace. A command that fails gives a warning, and the removal goes on. A worktree that you remove with git yourself runs none. The commands can use {workspace}, {host}, {database} and {port:<name>}.")
+        }
+    }
+
     @ViewBuilder
     private var workspaceSetupSections: some View {
         commandsSection
+        removalCommandsSection
 
         Section {
             ForEach(nexusKeys.filter { entry in !ownKeys.contains { $0.key == entry.key } }, id: \.key) { entry in
@@ -675,6 +689,11 @@ struct SiteScreen: View {
                 saveCommands()
             }
         }
+        .onChange(of: focusedRemovalCommand) { old, _ in
+            if old != nil {
+                saveRemovalCommands()
+            }
+        }
         .onChange(of: focusedBackgroundCommand) { old, _ in
             if old != nil {
                 saveBackgroundCommands()
@@ -687,6 +706,7 @@ struct SiteScreen: View {
 
             saveOwnKeys()
             saveCommands()
+            saveRemovalCommands()
             saveBackgroundCommands()
             saveAppCommand()
             saveAddress()
@@ -763,6 +783,11 @@ struct SiteScreen: View {
         .onChange(of: site.workspaceCommands) {
             if focusedCommand == nil, site.workspaceCommands != completeCommands {
                 commands = site.workspaceCommands
+            }
+        }
+        .onChange(of: site.removalCommands) {
+            if focusedRemovalCommand == nil, site.removalCommands != CommandRows.complete(removalCommands) {
+                removalCommands = site.removalCommands
             }
         }
         .onChange(of: site.backgroundCommands) {
@@ -973,6 +998,16 @@ struct SiteScreen: View {
         }
 
         change(SiteChange(backgroundCommands: completeBackgroundCommands)) { backgroundCommands = site.backgroundCommands ?? preset }
+    }
+
+    private func saveRemovalCommands() {
+        let complete = CommandRows.complete(removalCommands)
+
+        guard complete != site.removalCommands else {
+            return
+        }
+
+        change(SiteChange(removalCommands: complete)) { removalCommands = site.removalCommands }
     }
 
     private func saveOwnKeys() {

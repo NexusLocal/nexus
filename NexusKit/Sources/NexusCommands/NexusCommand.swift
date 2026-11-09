@@ -591,7 +591,7 @@ struct WorkspaceCommand: AsyncParsableCommand {
     struct Remove: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Removes the workspace and keeps a dump.",
-            discussion: "Nexus runs git worktree remove. git refuses a worktree with changes that are not committed. --force removes these changes too. Nexus then writes a dump of each database to the trash and removes the database server of the workspace."
+            discussion: "Nexus first runs the commands of nexus site edit --removal-command in the workspace. Then it runs git worktree remove. git refuses a worktree with changes that are not committed. --force removes these changes too. Nexus then writes a dump of each database to the trash and removes the database server of the workspace."
         )
 
         @Argument(help: "The name of the workspace. The default is the workspace of the current folder.") var name: String?
@@ -1097,6 +1097,8 @@ struct SiteCommand: AsyncParsableCommand {
         @Flag(help: "Remove every key of the workspaces.") var noWorkspaceKeys = false
         @Option(name: .customLong("workspace-command"), help: "A command for a new workspace, after the database clone. It can use {workspace}, {host}, {database} and {port:<name>}. {port:database} is the port of the database server of the workspace. Repeat it for more commands. These replace the current commands.") var workspaceCommands: [String] = []
         @Flag(help: "Remove every command of new workspaces.") var noWorkspaceCommands = false
+        @Option(name: .customLong("removal-command"), help: "A command that runs in a workspace before Nexus removes it, for example \"php artisan queue:clear\". It can use the same values as --workspace-command. Repeat it for more commands. These replace the current commands.") var removalCommands: [String] = []
+        @Flag(help: "Remove every command before the removal of a workspace.") var noRemovalCommands = false
         @Option(name: .customLong("background-command"), help: "A background process of each workspace. It can use {workspace}, {host}, {database} and {port:<name>}. {port:database} is the port of the database server of the workspace. Repeat it for more processes. These replace the current processes.") var backgroundCommands: [String] = []
         @Flag(help: "Remove every background process.") var noBackgroundCommands = false
         @Option(name: .customLong("workspace-processes"), help: "on or off. With on, each workspace runs the background processes.") var workspaceProcesses: OnOff?
@@ -1114,6 +1116,10 @@ struct SiteCommand: AsyncParsableCommand {
 
         private var commandChange: [String]? {
             noWorkspaceCommands ? [] : (workspaceCommands.isEmpty ? nil : workspaceCommands)
+        }
+
+        private var removalChange: [String]? {
+            noRemovalCommands ? [] : (removalCommands.isEmpty ? nil : removalCommands)
         }
 
         private var backgroundChange: [String]? {
@@ -1142,7 +1148,8 @@ struct SiteCommand: AsyncParsableCommand {
                 address: address,
                 workspaceDatabases: workspaceDatabases,
                 workspaceSeeders: workspaceSeeders.map { $0 == .on },
-                documentRoot: noDocumentRoot ? "" : documentRoot
+                documentRoot: noDocumentRoot ? "" : documentRoot,
+                removalCommands: removalChange
             )
 
             try finish(try await send(.editSite(host: host, change: change)))

@@ -56,6 +56,8 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let migrationCommand: String?
     // The document root that the user chose, as a folder in the site folder. nil is automatic.
     public let documentRootSetting: String?
+    // The commands that run in a workspace before Nexus removes it.
+    public let removalCommands: [String]?
 
     public init(
         hosts: [String],
@@ -89,9 +91,11 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         workspaceDatabases: WorkspaceDatabaseKind? = nil,
         workspaceSeeders: Bool? = nil,
         migrationCommand: String? = nil,
-        documentRootSetting: String? = nil
+        documentRootSetting: String? = nil,
+        removalCommands: [String]? = nil
     ) {
         self.documentRootSetting = documentRootSetting
+        self.removalCommands = removalCommands
         self.hosts = hosts
         self.folder = folder
         self.documentRoot = documentRoot
@@ -380,6 +384,7 @@ public struct SiteChange: Codable, Sendable, Equatable {
     public var workspaceSeeders: Bool?
     // A folder in the site folder. An empty value gives the automatic document root again.
     public var documentRoot: String?
+    public var removalCommands: [String]?
 
     public init(
         php: String? = nil,
@@ -397,9 +402,11 @@ public struct SiteChange: Codable, Sendable, Equatable {
         address: String? = nil,
         workspaceDatabases: WorkspaceDatabaseChoice? = nil,
         workspaceSeeders: Bool? = nil,
-        documentRoot: String? = nil
+        documentRoot: String? = nil,
+        removalCommands: [String]? = nil
     ) {
         self.documentRoot = documentRoot
+        self.removalCommands = removalCommands
         self.php = php
         self.server = server
         self.aliases = aliases

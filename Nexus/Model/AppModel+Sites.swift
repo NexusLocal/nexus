@@ -40,7 +40,8 @@ extension SiteItem {
             workspaceSeeders: info.workspaceSeeders ?? false,
             migrationCommand: info.migrationCommand,
             offersEmptyDatabases: info.offersEmptyDatabases,
-            documentRootSetting: info.documentRootSetting
+            documentRootSetting: info.documentRootSetting,
+            removalCommands: info.removalCommands ?? []
         )
     }
 }

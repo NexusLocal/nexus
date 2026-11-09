@@ -193,6 +193,7 @@ struct SiteItem: Identifiable, Hashable {
     var offersEmptyDatabases = false
     // The document root that the user chose. nil is automatic.
     var documentRootSetting: String?
+    var removalCommands: [String] = []
 
     var id: String { host }
 

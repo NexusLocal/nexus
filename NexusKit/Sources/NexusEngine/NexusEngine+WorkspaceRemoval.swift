@@ -42,6 +42,7 @@ extension NexusEngine {
             throw RuntimeError.unsupported(GitTool.missing)
         }
 
+        let warnings = try await runRemovalCommands(of: workspace, key: key, git: git, force: force)
         let earlierDumps = Set(dumps().map(\.name))
         let arguments = ["-C", repository.root, "worktree", "remove"] + (force ? ["--force"] : []) + [workspace.worktree]
 
@@ -68,7 +69,7 @@ extension NexusEngine {
         }
 
         guard await listedRecord() == nil else {
-            return "git removed the worktree of \(name). Nexus removes the workspace and its databases later."
+            return (warnings + ["git removed the worktree of \(name). Nexus removes the workspace and its databases later."]).joined(separator: "\n")
         }
 
         await startDatabaseRemovals().value
@@ -80,7 +81,7 @@ extension NexusEngine {
         let newDumps = dumps().map(\.name).filter { dump in
             !earlierDumps.contains(dump) && dumpNames.contains(where: dump.contains)
         }
-        let answer = (["The workspace \(name) is removed."] + newDumps.map { "The trash keeps \($0)." }).joined(separator: "\n")
+        let answer = (warnings + ["The workspace \(name) is removed."] + newDumps.map { "The trash keeps \($0)." }).joined(separator: "\n")
 
         // The workspace is gone, but a script must not count on a dump that does not exist.
         if let problem = databaseRemovalProblem(ofSite: key, in: await stateStore.current(), of: Set(removals.map(\.server.folder))) {
@@ -288,6 +289,7 @@ extension NexusEngine {
         for host in gone {
             let files = [
                 paths.log("workspace-\(host)"),
+                paths.log(Self.removalLog(of: host)),
                 paths.log("main-\(host)"),
                 paths.siteLog(host),
                 paths.certs.appending(path: "\(host).crt"),

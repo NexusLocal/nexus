@@ -83,6 +83,84 @@ extension NexusEngine {
         await endCommands(of: &workspace, key: key)
     }
 
+    private static let removalCommandTimeLimit: Duration = .seconds(5 * 60)
+
+    // The commands of a site that run before Nexus removes a workspace, for example php artisan
+    // queue:clear (owner, 2026-11-09, Herd item 26). They run only in a Ready workspace, because a
+    // command in a workspace that is not isolated can reach the database of the main site (D48). A
+    // command that fails gives a warning, and the removal goes on. A worktree that git removes
+    // without Nexus runs none, because its folder is gone. The answer holds the warnings. git
+    // refuses a worktree with changes that are not committed. A refusal after the commands would
+    // keep a workspace that the commands cleaned up, so that check comes first.
+    func runRemovalCommands(of workspace: Workspace, key: String, git: URL, force: Bool) async throws -> [String] {
+        let state = await stateStore.current()
+        let sites = resolvedSites(state).map(\.site).filter { ProjectFolder.workspaceKey(of: $0) == key }
+        let commands = Self.distinct(sites.flatMap { $0.removalCommands ?? [] })
+
+        guard !commands.isEmpty else {
+            return []
+        }
+
+        let changes = try? await CommandRunner.run(Command(executable: git, arguments: ["-C", workspace.worktree, "status", "--porcelain"]))
+
+        if !force, changes?.trimmed.isEmpty == false {
+            throw RuntimeError.unsupported("The worktree of \(workspace.name) has changes that are not committed, so git would not remove it. Nexus ran no commands, and the workspace stays. Commit the changes, or remove the workspace with --force.")
+        }
+
+        guard workspace.state == .ready, let folder = await fileFolders(of: workspace, key: key)?.worktree else {
+            return ["Nexus ran no commands before the removal, because the workspace is not isolated."]
+        }
+
+        // The log of the workspace goes away with the workspace. So the output goes to a log of the
+        // main site.
+        let host = workspace.hosts(of: sites, tld: state.tld).first ?? ""
+        let database = workspace.database.map(WorkspaceKeys.shellWord)
+        let log = Self.removalLog(of: sites.first?.host ?? host)
+        var warnings: [String] = []
+
+        for command in commands {
+            guard database != nil || !command.contains(WorkspaceKeys.databasePlaceholder) else {
+                warnings.append("Nexus did not run \(command) before the removal, because the workspace has no database.")
+                continue
+            }
+
+            let expanded = WorkspaceKeys.expanded(command, workspace: workspace.name, host: host, database: database, ports: workspace.ports)
+            let shell = await shellCommand(expanded, log: log, in: folder)
+
+            writeToLog(of: log, "$ \(expanded)\n")
+
+            do {
+                try await runBeforeRemoval(shell)
+            } catch {
+                writeToLog(of: log, "\(error)\n")
+                warnings.append("The command \(expanded) failed before the removal. See \(paths.log(log).path(percentEncoded: false)).")
+            }
+        }
+
+        return warnings
+    }
+
+    static func removalLog(of host: String) -> String {
+        "workspace-removals-\(host)"
+    }
+
+    // A setup can run a command of another workspace at the same time. So this run does not replace
+    // runningCommand, which a stop of nexusd ends.
+    private func runBeforeRemoval(_ command: Command) async throws {
+        let task = Task { try await CommandRunner.run(command) }
+        let limit = Task {
+            try await Task.sleep(for: Self.removalCommandTimeLimit)
+            task.cancel()
+        }
+        defer { limit.cancel() }
+
+        do {
+            _ = try await task.value
+        } catch is CancellationError {
+            throw RuntimeError.unsupported("The command did not end in 5 minutes, so Nexus stopped it.")
+        }
+    }
+
     private func endCommands(of workspace: inout Workspace, key: String) async {
         workspace.commandsEnded = true
         try? await updateRecord(of: workspace.name, key: key) { record in

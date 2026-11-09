@@ -1456,6 +1456,38 @@ extension NexusEngineTests {
         #expect(!FileManager.default.fileExists(atPath: worktree.path(percentEncoded: false)))
     }
 
+    @Test func removalCommandsRunBeforeTheRemovalAndAFailureIsAWarning() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        let marker = root.appending(path: "ran-fix.txt").path(percentEncoded: false)
+
+        _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(removalCommands: ["touch \(root.path(percentEncoded: false))/ran-{workspace}.txt", "false"])))
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+        try writeFile("work", to: "new.txt", in: worktree)
+
+        guard case .failure(let refused) = await engine.handle(.removeWorkspace(host: "shop.test", name: "fix", force: false)) else {
+            Issue.record("Nexus removed a worktree with changes")
+            return
+        }
+
+        #expect(refused.contains("Nexus ran no commands, and the workspace stays."))
+        #expect(!FileManager.default.fileExists(atPath: marker))
+
+        guard case .done(let message) = await engine.handle(.removeWorkspace(host: "shop.test", name: "fix", force: true)) else {
+            Issue.record("Nexus did not remove the workspace")
+            return
+        }
+
+        #expect(message.hasPrefix("The command false failed before the removal."))
+        #expect(message.contains("The workspace fix is removed."))
+        #expect(FileManager.default.fileExists(atPath: marker))
+        #expect(await workspaces(engine).isEmpty)
+    }
+
     @Test func removeNamesAnUnknownWorkspace() async throws {
         let root = workspaceRoot()
         defer { try? FileManager.default.removeItem(at: root) }

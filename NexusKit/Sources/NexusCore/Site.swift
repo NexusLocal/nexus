@@ -34,6 +34,7 @@ public enum SiteKind: String, Codable, Sendable, CaseIterable {
 // address when it runs as another kind, so a change back restores them. workspaceDatabases of nil
 // follows Settings > Workspaces. workspaceSeeders of nil is off. documentRootFolder is a folder in
 // the site folder that the user chose. So a workspace serves the same folder in its worktree.
+// removalCommands run in a workspace before Nexus removes it. nil is none.
 public struct Site: Codable, Sendable, Equatable {
     public static let commandFromProject = "project"
 
@@ -55,6 +56,7 @@ public struct Site: Codable, Sendable, Equatable {
     public var workspaceDatabases: WorkspaceDatabaseKind?
     public var workspaceSeeders: Bool?
     public var documentRootFolder: String?
+    public var removalCommands: [String]?
 
     public init(
         host: String,
@@ -74,7 +76,8 @@ public struct Site: Codable, Sendable, Equatable {
         address: String? = nil,
         workspaceDatabases: WorkspaceDatabaseKind? = nil,
         workspaceSeeders: Bool? = nil,
-        documentRootFolder: String? = nil
+        documentRootFolder: String? = nil,
+        removalCommands: [String]? = nil
     ) {
         self.host = host
         self.folder = folder
@@ -94,6 +97,7 @@ public struct Site: Codable, Sendable, Equatable {
         self.workspaceDatabases = workspaceDatabases
         self.workspaceSeeders = workspaceSeeders
         self.documentRootFolder = documentRootFolder
+        self.removalCommands = removalCommands
     }
 
     public var kind: SiteKind {
