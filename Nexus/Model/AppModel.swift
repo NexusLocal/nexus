@@ -111,7 +111,7 @@ enum AppPreference {
             notifyImportDone: true,
             notifyWorkspaceReady: true,
             checkPackageUpdates: true,
-            installPackageUpdates: false,
+            installPackageUpdates: true,
         ])
     }
 

@@ -786,7 +786,7 @@ private struct CertificatesSettings: View {
 private struct UpdatesSettings: View {
     @Environment(AppModel.self) private var model
     @AppStorage(AppPreference.checkPackageUpdates) private var checkPackageUpdates = true
-    @AppStorage(AppPreference.installPackageUpdates) private var installPackageUpdates = false
+    @AppStorage(AppPreference.installPackageUpdates) private var installPackageUpdates = true
     @Environment(AppUpdater.self) private var updater
 
     private var version: String {
