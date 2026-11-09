@@ -9,7 +9,7 @@ public enum PHPConfig {
 
     public static let dependencies = ToggleDependencies(["redis": ["igbinary"]])
 
-    public static let defaultExtensions: Set<String> = ["opcache", "apcu", "igbinary", "redis", "imagick", "pgsql", "pdo_pgsql", "yaml"]
+    public static let defaultExtensions: Set<String> = ["opcache", "apcu", "igbinary", "redis", "imagick", "pgsql", "pdo_pgsql", "yaml", "mailparse"]
 
     public static let nexusIniName = "00-nexus.ini"
     public static let customIniName = "99-custom.ini"

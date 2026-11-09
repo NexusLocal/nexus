@@ -19,6 +19,7 @@ public enum ToggleHelp {
         "apcu": "A cache in the memory of PHP-FPM. Laravel can use it as a cache store.",
         "igbinary": "A faster and smaller format to store PHP values, for example in Redis.",
         "imagick": "Changes images with ImageMagick.",
+        "mailparse": "Reads the parts of a mail. php-mime-mail-parser needs it.",
         "opcache": "Keeps compiled PHP code in memory. So each request runs faster.",
         "pcov": "Measures code coverage for tests. It is faster than Xdebug for coverage.",
         "pdo_pgsql": "Connects PDO and Laravel to PostgreSQL.",
