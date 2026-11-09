@@ -100,13 +100,36 @@ public enum LaravelMail {
     public static func encryptionWarning(_ configuration: LaravelConfiguration) -> String? {
         let settings = configuration.settings
         let scheme = settings["\(smtpMailer).scheme"]?.value.description
-        let encryption = settings["\(smtpMailer).encryption"]?.value.description
+        let encryption = settings["\(smtpMailer).encryption"]?.value
 
-        guard scheme == "smtps" || encryption == "ssl" else {
+        guard scheme == "smtps" || encryption.map({ asksForTLS($0, laravelVersion: configuration.version) }) == true else {
             return nil
         }
 
         return "The smtp mailer of this site asks for TLS. The mail service of Nexus has no TLS. \"Send mail to Nexus\" turns TLS off for this site."
+    }
+
+    // SwiftMailer, the mailer of Laravel 8 and older, uses TLS for ssl and STARTTLS for tls. Without
+    // STARTTLS on the server, each mail fails. Symfony Mailer of Laravel 9 and newer uses STARTTLS
+    // only when the server offers it.
+    static func asksForTLS(_ encryption: ConfigValue, laravelVersion: String) -> Bool {
+        switch encryption.description.lowercased() {
+        case "ssl":
+            true
+        case "tls":
+            usesSwiftMailer(laravelVersion)
+        default:
+            false
+        }
+    }
+
+    // The version of Lumen starts with its name, for example "Lumen (8.3.4) (Laravel Components ^8.0)".
+    static func usesSwiftMailer(_ laravelVersion: String) -> Bool {
+        guard let major = laravelVersion.firstMatch(of: /\d+/).flatMap({ Int($0.output) }) else {
+            return false
+        }
+
+        return major < 9
     }
 
     // The keys that send the mail of the application to the receiver of nexusd, with the user as the
@@ -156,7 +179,7 @@ public enum LaravelMail {
         change(path("host"), to: WorkspaceEnvPlan.serverHost, when: { $0.description != WorkspaceEnvPlan.serverHost }, problem: localHosts.contains(fixed("host")) ? nil : "config/mail.php gives the smtp mailer the host \(fixed("host")). \(notNexus)")
         change(path("port"), to: String(nexusPort), when: { $0.description != String(nexusPort) }, problem: "config/mail.php gives the smtp mailer the port \(fixed("port")). \(notNexus)")
         change(path("scheme"), to: "null", when: { $0.description == "smtps" }, problem: noTLS)
-        change(path("encryption"), to: "null", when: { $0.description == "ssl" }, problem: noTLS)
+        change(path("encryption"), to: "null", when: { asksForTLS($0, laravelVersion: configuration.version) }, problem: noTLS)
         change(path("username"), to: user, when: { $0.description != user }, problem: nil)
         change(path("password"), to: "", when: filled, problem: nil)
 

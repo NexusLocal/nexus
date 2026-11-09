@@ -4,8 +4,8 @@ import Testing
 @testable import NexusLaravel
 
 struct LaravelMailTests {
-    private func configuration(_ settings: [String: ConfigSetting]) -> LaravelConfiguration {
-        LaravelConfiguration(version: "12.0.0", settings: settings, databaseConnections: [], redisConnections: [])
+    private func configuration(_ settings: [String: ConfigSetting], version: String = "12.0.0") -> LaravelConfiguration {
+        LaravelConfiguration(version: version, settings: settings, databaseConnections: [], redisConnections: [])
     }
 
     private func key(_ value: ConfigValue, _ name: String) -> ConfigSetting {
@@ -102,6 +102,24 @@ struct LaravelMailTests {
 
         #expect(LaravelMail.encryptionWarning(configuration(settings)) != nil)
         #expect(LaravelMail.nexusKeys(configuration(settings), user: "shop.test", nexusPort: 1025).keys["MAIL_SCHEME"] == "null")
+    }
+
+    @Test(arguments: [
+        ("8.83.27", "tls", true),
+        ("Lumen (8.3.4) (Laravel Components ^8.0)", "TLS", true),
+        ("7.30.6", "ssl", true),
+        ("12.0.0", "ssl", true),
+        ("9.52.16", "tls", false),
+        ("12.0.0", "tls", false),
+        ("8.83.27", "null", false),
+    ])
+    func swiftMailerOfLaravel8AndOlderNeedsStartTLSForTLS(version: String, encryption: String, turnedOff: Bool) {
+        var settings = postmark
+        settings["mail.mailers.smtp.encryption"] = key(.text(encryption), "MAIL_ENCRYPTION")
+        let laravel = configuration(settings, version: version)
+
+        #expect((LaravelMail.encryptionWarning(laravel) != nil) == turnedOff)
+        #expect((LaravelMail.nexusKeys(laravel, user: "shop.test", nexusPort: 1025).keys["MAIL_ENCRYPTION"] == "null") == turnedOff)
     }
 
     @Test func aWorkspaceGetsTheMailKeysWithItsHost() {
