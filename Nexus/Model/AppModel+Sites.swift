@@ -237,6 +237,10 @@ extension AppModel {
         await failureMessage(of: .park(folder: folder.path(percentEncoded: false), php: php, server: server))
     }
 
+    func createWorktree(branch: String, of site: SiteItem) async {
+        _ = await perform(.createWorktree(folder: site.folderURL.path(percentEncoded: false), branch: branch), failure: "Nexus did not make a workspace for \(branch)", place: .window)
+    }
+
     func retry(_ workspace: WorkspaceInfo, of site: SiteItem) async {
         _ = await perform(.retryWorkspace(host: site.host, name: workspace.name), failure: "\(workspace.name) did not start again", place: .window)
     }

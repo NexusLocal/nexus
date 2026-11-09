@@ -89,16 +89,29 @@ public struct WorkspaceSettings: Codable, Sendable, Equatable {
     public var runsNpmInstall: Bool
     // What a new workspace of a site on Default gets (step 3 of the order of the work).
     public var newWorkspaceDatabases: WorkspaceDatabaseKind
+    // Where nexus workspace create <branch> and the "New workspace" button put a new worktree.
+    // worktreeFolder is the folder of the place folder.
+    public var worktreePlace: WorktreePlace
+    public var worktreeFolder: String?
 
-    public init(dumpDays: Int = 7, runsComposerInstall: Bool = true, runsNpmInstall: Bool = true, newWorkspaceDatabases: WorkspaceDatabaseKind = .copy) {
+    public init(
+        dumpDays: Int = 7,
+        runsComposerInstall: Bool = true,
+        runsNpmInstall: Bool = true,
+        newWorkspaceDatabases: WorkspaceDatabaseKind = .copy,
+        worktreePlace: WorktreePlace = .inProject,
+        worktreeFolder: String? = nil
+    ) {
         self.dumpDays = dumpDays
         self.runsComposerInstall = runsComposerInstall
         self.runsNpmInstall = runsNpmInstall
         self.newWorkspaceDatabases = newWorkspaceDatabases
+        self.worktreePlace = worktreePlace
+        self.worktreeFolder = worktreeFolder
     }
 
     private enum CodingKeys: String, CodingKey {
-        case dumpDays, runsComposerInstall, runsNpmInstall, newWorkspaceDatabases
+        case dumpDays, runsComposerInstall, runsNpmInstall, newWorkspaceDatabases, worktreePlace, worktreeFolder
     }
 
     // The settings of an older nexusd have no choice of the databases. Their workspaces got a copy.
@@ -109,6 +122,48 @@ public struct WorkspaceSettings: Codable, Sendable, Equatable {
         runsComposerInstall = try container.decodeIfPresent(Bool.self, forKey: .runsComposerInstall) ?? true
         runsNpmInstall = try container.decodeIfPresent(Bool.self, forKey: .runsNpmInstall) ?? true
         newWorkspaceDatabases = try container.decodeIfPresent(WorkspaceDatabaseKind.self, forKey: .newWorkspaceDatabases) ?? .copy
+        worktreePlace = try container.decodeIfPresent(WorktreePlace.self, forKey: .worktreePlace) ?? .inProject
+        worktreeFolder = try container.decodeIfPresent(String.self, forKey: .worktreeFolder)
+    }
+}
+
+// The place of a new worktree (owner, 2026-11-09). inProject is the folder that Claude Code uses
+// too, so both find the same worktrees.
+public enum WorktreePlace: String, Codable, Sendable, CaseIterable {
+    case inProject = "in_project"
+    case besideProject = "beside_project"
+    case folder
+
+    public var displayName: String {
+        switch self {
+        case .inProject: "In the project, in \(NewWorktree.projectFolder)"
+        case .besideProject: "Next to the project"
+        case .folder: "In a folder of your choice"
+        }
+    }
+}
+
+public enum NewWorktree {
+    public static let projectFolder = ".claude/worktrees"
+
+    // A branch such as feature/login gets the folder feature-login.
+    public static func folderName(ofBranch branch: String) -> String {
+        branch.split(separator: "/").joined(separator: "-")
+    }
+
+    // A place folder without a folder uses the project, as the default does.
+    public static func path(branch: String, repository: String, place: WorktreePlace, folder: String?) -> String {
+        let name = folderName(ofBranch: branch)
+        let project = (repository as NSString).lastPathComponent
+
+        switch (place, folder) {
+        case (.besideProject, _):
+            return ((repository as NSString).deletingLastPathComponent as NSString).appendingPathComponent("\(project)-\(name)")
+        case (.folder, let folder?) where !folder.isEmpty:
+            return (((folder as NSString).expandingTildeInPath as NSString).appendingPathComponent(project) as NSString).appendingPathComponent(name)
+        default:
+            return ((repository as NSString).appendingPathComponent(projectFolder) as NSString).appendingPathComponent(name)
+        }
     }
 }
 

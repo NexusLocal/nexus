@@ -942,6 +942,8 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case retryWorkspace(host: String, name: String)
     // Makes a workspace for the worktree that holds this folder (D40).
     case createWorkspace(folder: String, databases: WorkspaceDatabaseKind? = nil)
+    // Makes a git worktree for a branch of the site that holds this folder, and its workspace.
+    case createWorktree(folder: String, branch: String, databases: WorkspaceDatabaseKind? = nil)
     // Removes the worktree with git. The workspace then goes as for each removal (D53).
     case removeWorkspace(host: String, name: String, force: Bool)
     case workspaceSettings

@@ -197,4 +197,21 @@ struct WorkspaceHostPairTests {
         #expect(pairs.map(\.from) == ["shop-fix.localhost", "shop-fix.test"])
         #expect(pairs.allSatisfy { $0.to == "shop-fix.internal" })
     }
+
+    @Test func aNewWorktreeGoesToThePlaceOfTheSettings() {
+        #expect(NewWorktree.path(branch: "feature/login", repository: "/w/shop", place: .inProject, folder: nil) == "/w/shop/.claude/worktrees/feature-login")
+        #expect(NewWorktree.path(branch: "fix", repository: "/w/shop", place: .besideProject, folder: nil) == "/w/shop-fix")
+        #expect(NewWorktree.path(branch: "fix", repository: "/w/shop", place: .folder, folder: "/trees") == "/trees/shop/fix")
+    }
+
+    @Test func thePlaceFolderWithoutAFolderUsesTheProject() {
+        #expect(NewWorktree.path(branch: "fix", repository: "/w/shop", place: .folder, folder: nil) == "/w/shop/.claude/worktrees/fix")
+    }
+
+    @Test func settingsFromBeforeThePlaceUseTheProject() throws {
+        let settings = try JSONDecoder().decode(WorkspaceSettings.self, from: Data(#"{"dumpDays": 3}"#.utf8))
+
+        #expect(settings.worktreePlace == .inProject)
+        #expect(settings.worktreeFolder == nil)
+    }
 }

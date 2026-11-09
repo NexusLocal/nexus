@@ -44,6 +44,7 @@ extension CommandSection {
         ]),
         CommandSection(title: "Workspaces", commands: [
             CommandItem(command: "nexus workspace create", help: "Makes a workspace for the current worktree. --databases empty gives it an empty database."),
+            CommandItem(command: "nexus workspace create fix-login", help: "Makes a git worktree for a branch and its workspace, in the place of Settings > Workspaces."),
             CommandItem(command: "nexus workspace wait", help: "Waits until the workspace is ready."),
             CommandItem(command: "nexus workspace info --json", help: "Gives the URL, the databases and the ports."),
             CommandItem(command: "nexus workspace list", help: "Lists the workspaces of the current site."),

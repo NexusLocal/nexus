@@ -19,6 +19,8 @@ struct SiteScreen: View {
     @FocusState private var focusedCommand: Int?
     @State private var removalCommands: [String]
     @FocusState private var focusedRemovalCommand: Int?
+    @State private var asksForBranch = false
+    @State private var newBranch = ""
     @State private var workspaceProcesses: Bool
     @State private var mainProcesses: Bool
     @State private var preset: [String] = []
@@ -414,6 +416,28 @@ struct SiteScreen: View {
                 }
                 .labeledContentStyle(.rowValue)
                 .help((workspace.folder as NSString).abbreviatingWithTildeInPath)
+            }
+
+            HStack {
+                Spacer()
+
+                Button("New workspace…") {
+                    newBranch = ""
+                    asksForBranch = true
+                }
+                .alert("New workspace", isPresented: $asksForBranch) {
+                    TextField("Branch", text: $newBranch)
+
+                    Button("Create") {
+                        let branch = newBranch.trimmingCharacters(in: .whitespaces)
+                        Task { await model.createWorktree(branch: branch, of: site) }
+                    }
+                    .disabled(newBranch.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Nexus makes a git worktree for this branch in the place of Settings > Workspaces, and then its workspace. A new branch starts from the current branch of the main checkout.")
+                }
             }
         } header: {
             Text("Workspaces")

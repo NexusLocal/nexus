@@ -375,6 +375,7 @@ extension NexusEngine {
         }
 
         let wordPressKeys = Set(sitesOfRecord.filter { Self.isWordPress($0.value) }.keys)
+        let inCreation = worktreesInCreation
 
         if Self.settingUpOldWordPressWorkspaces(of: await stateStore.current().worktrees, keys: wordPressKeys) != nil {
             try? await stateStore.update { state in
@@ -404,7 +405,7 @@ extension NexusEngine {
                     listed: listed,
                     automatic: sites.contains(where: \.createsWorkspaces),
                     subfolder: repository.subfolder,
-                    excluded: projects.subtracting(sites.map(ProjectFolder.projectFolder(of:))),
+                    excluded: projects.subtracting(sites.map(ProjectFolder.projectFolder(of:))).union(inCreation),
                     folderExists: { FileManager.default.fileExists(atPath: $0) }
                 )
             }

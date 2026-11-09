@@ -505,12 +505,22 @@ struct WorkspaceCommand: AsyncParsableCommand {
     }
 
     struct Create: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Makes a workspace for the current worktree. This also works when the switch of the site is off.")
+        static let configuration = CommandConfiguration(
+            abstract: "Makes a workspace for the current worktree. With a branch, it makes the git worktree first, for example: nexus workspace create fix-login",
+            discussion: "With a branch, Nexus runs git worktree add in the place of Settings > Workspaces. The default place is .claude/worktrees/<branch> in the project, where Claude Code makes its worktrees too. A new branch starts from the current branch of the main checkout. This also works when the switch of the site is off."
+        )
 
+        @Argument(help: "A branch for a new worktree. The default is the worktree of the current folder.") var branch: String?
         @Option(help: "copy or empty. The default is the choice of the site. A workspace that exists keeps its databases.") var databases: WorkspaceDatabaseKind?
 
         func run() async throws {
-            try finish(try await send(.createWorkspace(folder: WorkspaceCommand.currentFolder, databases: databases)))
+            guard let branch else {
+                try finish(try await send(.createWorkspace(folder: WorkspaceCommand.currentFolder, databases: databases)))
+                return
+            }
+
+            print("Nexus makes the worktree for \(branch). A large project can take some seconds.")
+            try finish(try await send(.createWorktree(folder: WorkspaceCommand.currentFolder, branch: branch, databases: databases)))
         }
     }
 

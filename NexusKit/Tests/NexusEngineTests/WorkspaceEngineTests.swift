@@ -1456,6 +1456,49 @@ extension NexusEngineTests {
         #expect(!FileManager.default.fileExists(atPath: worktree.path(percentEncoded: false)))
     }
 
+    @Test func aBranchGetsAWorktreeInTheProjectThatGitStatusDoesNotShow() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop, automatic: false)
+        let worktree = shop.appending(path: ".claude/worktrees/feature-login", directoryHint: .isDirectory)
+
+        guard case .done(let message) = await engine.handle(.createWorktree(folder: shop.path(percentEncoded: false), branch: "feature/login")) else {
+            Issue.record("Nexus did not make the worktree")
+            return
+        }
+
+        let status = try await CommandRunner.run(Command(executable: URL(filePath: "/usr/bin/git"), arguments: ["-C", shop.path(percentEncoded: false), "status", "--porcelain"]))
+
+        #expect(message.contains("on the new branch feature/login"))
+        #expect(FileManager.default.fileExists(atPath: worktree.appending(path: ".git").path(percentEncoded: false)))
+        #expect(await workspaces(engine).map(\.name) == ["feature-login"])
+        #expect(status.trimmed.isEmpty)
+    }
+
+    @Test func theExcludeFileGetsTheWorktreeFolderOneTime() {
+        #expect(NexusEngine.excludeText(adding: "/.claude/worktrees/", to: "") == "/.claude/worktrees/\n")
+        #expect(NexusEngine.excludeText(adding: "/.claude/worktrees/", to: "# git ls-files\n*.log") == "# git ls-files\n*.log\n/.claude/worktrees/\n")
+        #expect(NexusEngine.excludeText(adding: "/.claude/worktrees/", to: "*.log\n/.claude/worktrees/\n") == nil)
+    }
+
+    @Test func anExistingBranchKeepsItsCommitsAndABadNameIsRefused() async throws {
+        let root = workspaceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop, automatic: false)
+
+        try await git("branch", "existing", in: shop)
+
+        guard case .done(let message) = await engine.handle(.createWorktree(folder: shop.path(percentEncoded: false), branch: "existing")) else {
+            Issue.record("Nexus did not make the worktree of a branch that exists")
+            return
+        }
+
+        #expect(message.contains("on the branch existing."))
+        #expect(await engine.handle(.createWorktree(folder: shop.path(percentEncoded: false), branch: "bad..name")) == .failure(message: "bad..name is not a valid name for a git branch."))
+    }
+
     @Test func removalCommandsRunBeforeTheRemovalAndAFailureIsAWarning() async throws {
         let root = workspaceRoot()
         defer { try? FileManager.default.removeItem(at: root) }

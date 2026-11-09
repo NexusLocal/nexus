@@ -411,6 +411,21 @@ private struct WorkspacesSettings: View {
         )
     }
 
+    private func chooseWorktreeFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose the folder for new worktrees."
+
+        guard panel.runModal() == .OK, let chosen = panel.url else {
+            return
+        }
+
+        setting(\.worktreeFolder).wrappedValue = chosen.path(percentEncoded: false)
+    }
+
     private func load() async {
         if case .workspaceSettings(let current) = await model.perform(.workspaceSettings, failure: "Nexus cannot read the settings of the workspaces", place: .settings) {
             settings = current
@@ -451,6 +466,33 @@ private struct WorkspacesSettings: View {
                 Text("Removed workspaces")
             } footer: {
                 Text("When git no longer lists a worktree, Nexus removes its workspace. Before Nexus drops a database, it writes a dump to the trash.")
+            }
+
+            Section {
+                Picker("Place", selection: setting(\.worktreePlace)) {
+                    ForEach(WorktreePlace.allCases, id: \.self) { place in
+                        Text(place.displayName).tag(place)
+                    }
+                }
+
+                if settings.worktreePlace == .folder {
+                    LabeledContent("Folder") {
+                        HStack {
+                            Text(settings.worktreeFolder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "None")
+                                .foregroundStyle(.secondary)
+                                .rowValue(.middle)
+
+                            Button("Choose…") {
+                                chooseWorktreeFolder()
+                            }
+                        }
+                    }
+                    .labeledContentStyle(.rowValue)
+                }
+            } header: {
+                Text("New worktrees")
+            } footer: {
+                Text("\"New workspace\" and nexus workspace create <branch> make the git worktree here. In the project, Nexus adds only /\(NewWorktree.projectFolder)/ to .git/info/exclude, so git status does not show it. That file stays on this Mac. Next to the project, a worktree of shop for the branch fix gets the folder shop-fix. In a folder of your choice, it gets <folder>/shop/fix.")
             }
 
             Section {

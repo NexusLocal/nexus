@@ -180,6 +180,9 @@ public actor NexusEngine {
     // it refuses a copy into an instance that an update stops now.
     var copyTargets: Set<String> = []
     var installTargets: Set<String> = []
+    // The project folders of the worktrees that createWorktree adds now. The check of the
+    // worktrees gives them no workspace, so the request makes it with the databases of its choice.
+    var worktreesInCreation: Set<String> = []
     var updatingServices: Set<String> = []
     // The configuration that the Site screen shows, for each folder, with the files that it came
     // from. The setup of a workspace always runs the probe again.
@@ -394,6 +397,8 @@ public actor NexusEngine {
                 return .backgroundPreset(try await backgroundPreset(host: host))
             case .retryWorkspace(let host, let name):
                 return .done(message: try await retryWorkspace(host: host, name: name))
+            case .createWorktree(let folder, let branch, let databases):
+                return .done(message: try await createWorktree(folder: folder, branch: branch, databases: databases))
             case .createWorkspace(let folder, let databases):
                 return .done(message: try await createWorkspace(folder: folder, databases: databases))
             case .removeWorkspace(let host, let name, let force):
