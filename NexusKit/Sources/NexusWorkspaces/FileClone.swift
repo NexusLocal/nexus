@@ -4,11 +4,16 @@ import NexusSupervisor
 
 public enum FileCloneError: Error, Equatable, CustomStringConvertible {
     case failed(path: String, reason: String)
+    // Another program made the target while the clone ran, for example a script that prepares a
+    // new worktree. Its file or folder stays.
+    case targetExists(path: String)
 
     public var description: String {
         switch self {
         case .failed(let path, let reason):
             "Nexus cannot clone \(path): \(reason)"
+        case .targetExists(let path):
+            "Another program made \(path) during the clone of Nexus. Nexus keeps that one."
         }
     }
 }
@@ -34,7 +39,17 @@ public enum FileClone {
         }
 
         try prepare(part)
-        try manager.moveItem(atPath: part, toPath: target)
+        try move(part, to: target)
+    }
+
+    private static func move(_ part: String, to target: String) throws {
+        do {
+            try FileManager.default.moveItem(atPath: part, toPath: target)
+        } catch CocoaError.fileWriteFileExists {
+            throw FileCloneError.targetExists(path: target)
+        } catch {
+            throw FileCloneError.failed(path: target, reason: error.localizedDescription)
+        }
     }
 
     // Two clones of a SQLite file and its write-ahead file are not one moment while the main site
@@ -59,7 +74,7 @@ public enum FileClone {
 
         let permissions = try manager.attributesOfItem(atPath: source)[.posixPermissions]
         try manager.setAttributes([.posixPermissions: permissions ?? 0o600], ofItemAtPath: part)
-        try manager.moveItem(atPath: part, toPath: target)
+        try move(part, to: target)
     }
 
     // Each part gets a new temporary folder of macOS on the disk of the target.

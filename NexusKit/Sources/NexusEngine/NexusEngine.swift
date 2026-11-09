@@ -187,6 +187,8 @@ public actor NexusEngine {
     // has an old port. So nexusd tries the outbox again while Mailpit runs.
     var mailRetry: Task<Void, Never>?
     var mailRetryInterval: Duration = .seconds(15)
+    // The setup of a workspace waits until vendor and node_modules have no change for this time.
+    let workspaceFolderQuiet: Duration
 
     public init(
         paths: NexusPaths,
@@ -198,6 +200,7 @@ public actor NexusEngine {
         manifestSource: any ManifestSource = HTTPManifestSource(),
         systemFiles: SystemDNSFiles = SystemDNSFiles(),
         helperRetryDelay: Duration = .seconds(5),
+        workspaceFolderQuiet: Duration = .seconds(6),
         activity: ActivityLog? = nil,
         unregister: @escaping @Sendable () -> Void = {},
         applyCrashReports: @escaping @Sendable (Bool) -> Void = { _ in }
@@ -216,6 +219,7 @@ public actor NexusEngine {
         self.certificateAuthority = certificateAuthority
         self.systemFiles = systemFiles
         self.helperRetryDelay = helperRetryDelay
+        self.workspaceFolderQuiet = workspaceFolderQuiet
         self.unregister = unregister
     }
 

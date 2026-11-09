@@ -117,6 +117,7 @@ struct NexusEngineTests {
             manifestSource: manifestSource ?? FixedManifest(manifest: manifest),
             systemFiles: systemFiles,
             helperRetryDelay: .milliseconds(50),
+            workspaceFolderQuiet: .zero,
             unregister: unregister
         )
     }

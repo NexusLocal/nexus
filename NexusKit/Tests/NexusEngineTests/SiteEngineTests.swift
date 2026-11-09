@@ -47,7 +47,8 @@ extension NexusEngineTests {
             systemFiles: SystemDNSFiles(
                 resolverFolder: root.appending(path: "etc/resolver", directoryHint: .isDirectory),
                 hostsFile: root.appending(path: "etc/hosts", directoryHint: .notDirectory)
-            )
+            ),
+            workspaceFolderQuiet: .zero
         )
     }
 

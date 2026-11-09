@@ -108,4 +108,25 @@ struct FileCloneTests {
 
         #expect(try FileManager.default.contentsOfDirectory(atPath: root.appending(path: "copy").path(percentEncoded: false)) == ["main.sqlite"])
     }
+
+    @Test func aTargetThatAnotherProgramMakesDuringTheCloneStaysAndGivesItsOwnError() throws {
+        let root = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appending(path: "vendor", directoryHint: .isDirectory)
+        let target = root.appending(path: "worktree/vendor", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data("main".utf8).write(to: source.appending(path: "autoload.php"))
+        var part = ""
+
+        #expect(throws: FileCloneError.targetExists(path: target.path(percentEncoded: false))) {
+            try FileClone.clone(source.path(percentEncoded: false), to: target.path(percentEncoded: false)) { clone in
+                part = clone
+                try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+                try Data("other".utf8).write(to: target.appending(path: "autoload.php"))
+            }
+        }
+
+        #expect(try String(contentsOf: target.appending(path: "autoload.php"), encoding: .utf8) == "other")
+        #expect(!FileManager.default.fileExists(atPath: (part as NSString).deletingLastPathComponent))
+    }
 }

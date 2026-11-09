@@ -43,9 +43,15 @@ extension NexusEngine {
         let replaced = Self.installers.filter { $0.replacesFolder && workspace.state == .preparing && Self.newLockFile(of: $0, in: folders, workspace: workspace) != nil }
         var warnings = await clone(in: folders, git: git, leavingOut: replaced.map { "\($0.folder)/" })
 
+        // Another program can write vendor or node_modules of the worktree at the same time, for
+        // example a script that copies them and runs composer install. The probe and the install
+        // wait until it stops.
+        let installFolders = Self.installers.map { "\(folders.worktree)/\($0.folder)" }
+
         for installer in Self.installers {
             // The install before this one can give the packages that an earlier probe needed.
             if Self.newLockFile(of: installer, in: folders, workspace: workspace) != nil {
+                await FolderActivity.waitUntilQuiet(installFolders, quiet: workspaceFolderQuiet)
                 await beforeInstall(&workspace)
             }
 
@@ -59,6 +65,8 @@ extension NexusEngine {
                 warnings += await clone(in: folders, git: git)
             }
         }
+
+        await FolderActivity.waitUntilQuiet(installFolders, quiet: workspaceFolderQuiet)
 
         for lockFile in Self.otherLockFiles where Self.lockFile(lockFile, differsIn: folders) {
             warnings.append("\(lockFile) is different from the main checkout, so node_modules can be out of date. Run the install in the worktree.")
@@ -169,8 +177,11 @@ extension NexusEngine {
                 return warnings
             }
 
+            // Another program can make the path during the clone. Its file or folder stays.
             do {
                 try await clone(entry, in: folders)
+            } catch FileCloneError.targetExists, CocoaError.fileWriteFileExists {
+                continue
             } catch {
                 warnings.append(String(describing: error))
             }

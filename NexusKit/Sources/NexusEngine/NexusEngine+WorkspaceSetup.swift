@@ -430,12 +430,17 @@ extension NexusEngine {
             return
         }
 
-        guard hasWriteAheadFile || hasJournal else {
-            try await Self.cloneOutsideTheActor(source, to: file.to)
+        // Another program can make the file in the worktree during the clone. That file stays.
+        do {
+            guard hasWriteAheadFile || hasJournal else {
+                try await Self.cloneOutsideTheActor(source, to: file.to)
+                return
+            }
+
+            try await FileClone.backUpSQLiteFile(source, to: file.to, readOnly: hasWriteAheadFile)
+        } catch FileCloneError.targetExists {
             return
         }
-
-        try await FileClone.backUpSQLiteFile(source, to: file.to, readOnly: hasWriteAheadFile)
     }
 
     // Between two disks or on a disk without APFS, a clone is a normal copy that can take long.
