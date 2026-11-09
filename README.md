@@ -201,6 +201,7 @@ Nexus is in public beta. Your honest feedback makes it better, also when it is n
 
 - 🐛 Did you find a bug? [Open an issue](https://github.com/NexusLocal/nexus/issues/new?template=bug_report.yml).
 - 💡 Do you need a feature? [Ask for it](https://github.com/NexusLocal/nexus/issues/new?template=feature_request.yml).
+- 🗺️ What comes next? See the [roadmap](ROADMAP.md).
 - ⭐ Do you like Nexus? Give it a star on GitHub. A star helps other developers find Nexus.
 
 ## Privacy
