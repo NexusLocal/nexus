@@ -1,4 +1,5 @@
 import Foundation
+import NexusConfig
 import NexusCore
 import NexusMail
 import NexusRuntime
@@ -148,7 +149,7 @@ public struct ServiceCatalog: Sendable {
                     "--fpm-config", folder.appending(path: "php-fpm.conf").path(percentEncoded: false),
                     "-c", folder.appending(path: "php.ini").path(percentEncoded: false),
                 ],
-                environment: Self.phpEnvironment.merging(["PHP_INI_SCAN_DIR": folder.appending(path: "conf.d").path(percentEncoded: false)]) { _, new in new },
+                environment: Self.phpEnvironment.merging(["PHP_INI_SCAN_DIR": PHPConfig.fpmScanFolders(in: folder)]) { _, new in new },
                 workingDirectory: folder,
                 logFile: paths.log(id)
             )

@@ -21,7 +21,7 @@ public enum ToggleHelp {
         "imagick": "Changes images with ImageMagick.",
         "mailparse": "Reads the parts of a mail. php-mime-mail-parser needs it.",
         "opcache": "Keeps compiled PHP code in memory. So each request runs faster.",
-        "pcov": "Measures code coverage for tests. It is faster than Xdebug for coverage.",
+        "pcov": "Measures code coverage for tests on the command line. It is faster than Xdebug for coverage. PHP-FPM loads it without coverage, so pages stay fast.",
         "pdo_pgsql": "Connects PDO and Laravel to PostgreSQL.",
         "pgsql": "Connects to PostgreSQL with the pg_ functions.",
         "redis": "Connects to Redis. Laravel uses it for the cache, sessions and queues. It needs igbinary.",

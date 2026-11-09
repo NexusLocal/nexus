@@ -9,10 +9,31 @@ public enum PHPConfig {
 
     public static let dependencies = ToggleDependencies(["redis": ["igbinary"]])
 
-    public static let defaultExtensions: Set<String> = ["opcache", "apcu", "igbinary", "redis", "imagick", "pgsql", "pdo_pgsql", "yaml", "mailparse"]
+    public static let defaultExtensions: Set<String> = ["opcache", "apcu", "igbinary", "redis", "imagick", "pgsql", "pdo_pgsql", "yaml", "mailparse", "pcov"]
 
     public static let nexusIniName = "00-nexus.ini"
     public static let customIniName = "99-custom.ini"
+
+    // PHP-FPM reads this folder before conf.d, and the command line does not read it. PCOV with
+    // pcov.enabled = 1 runs every line of PHP through its own code, also without a test. A page
+    // then takes about 70% more time in PHP (measured on 2026-11-09). So PHP-FPM loads PCOV
+    // without it, and tests on the command line keep their coverage. A custom setting
+    // pcov.enabled = 1 comes later and turns it on for PHP-FPM too.
+    public static let fpmFolderName = "fpm.d"
+    public static let fpmIniName = "00-nexus-fpm.ini"
+
+    public static let fpmIni = """
+        ; Nexus writes this file. Only PHP-FPM reads it. A custom setting of the Nexus app can change it.
+        pcov.enabled = 0
+
+        """
+
+    // PHP reads the folders in this order, and a later file wins.
+    public static func fpmScanFolders(in configFolder: URL) -> String {
+        [fpmFolderName, "conf.d"]
+            .map { configFolder.appending(path: $0, directoryHint: .notDirectory).path(percentEncoded: false) }
+            .joined(separator: ":")
+    }
 
     // The first line of the custom file is a comment. So line 1 of the custom lines is line 2
     // of the file.

@@ -337,6 +337,14 @@ struct WebConfigTests {
         }
     }
 
+    @Test func phpFPMReadsItsOwnFolderFirstAndLoadsPCOVWithoutCoverage() {
+        let folders = PHPConfig.fpmScanFolders(in: URL(filePath: "/Nexus/config/php/8.5", directoryHint: .isDirectory))
+
+        #expect(folders == "/Nexus/config/php/8.5/fpm.d:/Nexus/config/php/8.5/conf.d")
+        #expect(PHPConfig.fpmIni.contains("\npcov.enabled = 0\n"))
+        #expect(PHPConfig.defaultExtensions.contains("pcov"))
+    }
+
     @Test func theFPMPoolListensOnASocketThatOnlyTheUserCanUse() throws {
         let config = try PHPConfig.fpmConfig(socket: URL(filePath: "/Nexus/run/php-8.5.sock"), pidFile: URL(filePath: "/Nexus/run/php-8.5.pid"))
 
