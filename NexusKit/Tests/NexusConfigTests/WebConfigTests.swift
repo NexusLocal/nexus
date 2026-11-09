@@ -337,11 +337,12 @@ struct WebConfigTests {
         }
     }
 
-    @Test func phpFPMReadsItsOwnFolderFirstAndLoadsPCOVWithoutCoverage() {
-        let folders = PHPConfig.fpmScanFolders(in: URL(filePath: "/Nexus/config/php/8.5", directoryHint: .isDirectory))
+    @Test func pcovLoadsWithoutCoverageAndItsFolderTurnsItOn() throws {
+        let ini = try PHPConfig.nexusIni(extensionDirectory: URL(filePath: "/ext"), extensions: ["opcache", "pcov"])
 
-        #expect(folders == "/Nexus/config/php/8.5/fpm.d:/Nexus/config/php/8.5/conf.d")
-        #expect(PHPConfig.fpmIni.contains("\npcov.enabled = 0\n"))
+        #expect(ini.contains("extension = pcov\npcov.enabled = 0\n"))
+        #expect(try !PHPConfig.nexusIni(extensionDirectory: URL(filePath: "/ext"), extensions: ["opcache"]).contains("pcov"))
+        #expect(PHPConfig.coverageIni.contains("\npcov.enabled = 1\n"))
         #expect(PHPConfig.defaultExtensions.contains("pcov"))
     }
 

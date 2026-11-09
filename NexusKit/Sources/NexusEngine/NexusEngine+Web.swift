@@ -366,14 +366,14 @@ extension NexusEngine {
 
         let customIni = PHPConfig.customIni(lines: state.phpCustomSettings[line] ?? [])
 
-        let fpmFolder = folder.appending(path: PHPConfig.fpmFolderName, directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: fpmFolder, withIntermediateDirectories: true)
+        let coverageFolder = folder.appending(path: PHPConfig.coverageFolderName, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: coverageFolder, withIntermediateDirectories: true)
+        _ = try Self.writeIfChanged(PHPConfig.coverageIni, to: coverageFolder.appending(path: PHPConfig.coverageIniName))
 
         let fpmChanged = try Self.writeIfChanged(fpm, to: folder.appending(path: "php-fpm.conf"))
-        let fpmIniChanged = try Self.writeIfChanged(PHPConfig.fpmIni, to: fpmFolder.appending(path: PHPConfig.fpmIniName))
         let iniChanged = try Self.writeIfChanged(nexusIni, to: confD.appending(path: PHPConfig.nexusIniName))
         let customChanged = try Self.writeIfChanged(customIni, to: confD.appending(path: PHPConfig.customIniName))
-        return fpmChanged || fpmIniChanged || iniChanged || customChanged
+        return fpmChanged || iniChanged || customChanged
     }
 
     // The extension folder has a name with the API version, for example

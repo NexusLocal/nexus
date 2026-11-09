@@ -356,13 +356,34 @@ public struct ToolCommand: Codable, Sendable, Equatable {
     // The core folder of WordPress for nexus wp. The nexus command adds it as --path, because only
     // the nexus command sees the arguments of the user (Phase 4, 3c).
     public var wordPressCore: String?
+    // The folder with pcov.enabled = 1 (owner, 2026-11-09). The nexus command adds it to
+    // PHP_INI_SCAN_DIR for a command with --coverage.
+    public var coverageFolder: String?
 
-    public init(executable: String, arguments: [String] = [], environment: [String: String] = [:], path: [String] = [], wordPressCore: String? = nil) {
+    public init(executable: String, arguments: [String] = [], environment: [String: String] = [:], path: [String] = [], wordPressCore: String? = nil, coverageFolder: String? = nil) {
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
         self.path = path
         self.wordPressCore = wordPressCore
+        self.coverageFolder = coverageFolder
+    }
+
+    // phpunit, pest, paratest and php artisan test name each coverage report with --coverage.
+    public static func asksForCoverage(_ arguments: [String]) -> Bool {
+        arguments.contains { $0.hasPrefix("--coverage") }
+    }
+
+    // A PHP that the command starts, for example php artisan test, gets the folder too, because it
+    // is in the environment.
+    public func environment(for arguments: [String]) -> [String: String] {
+        guard let coverageFolder, Self.asksForCoverage(arguments) else {
+            return environment
+        }
+
+        var changed = environment
+        changed["PHP_INI_SCAN_DIR"] = [changed["PHP_INI_SCAN_DIR"], coverageFolder].compactMap { $0 }.joined(separator: ":")
+        return changed
     }
 }
 

@@ -222,7 +222,7 @@ private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bo
         throw ExitCode.failure
     }
 
-    var toolEnvironment = environment.merging(command.environment) { _, new in new }
+    var toolEnvironment = environment.merging(command.environment(for: arguments)) { _, new in new }
     toolEnvironment["PATH"] = (command.path + [path]).joined(separator: ":")
     let toolArguments = WordPressCore.arguments(arguments, core: command.wordPressCore, environment: environment, home: FileManager.default.homeDirectoryForCurrentUser)
     try execute(command.executable, [command.executable] + command.arguments + toolArguments, environment: toolEnvironment)

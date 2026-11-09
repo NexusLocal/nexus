@@ -212,7 +212,8 @@ extension NexusEngine {
                 "PHPRC": folder.appending(path: "php.ini").path(percentEncoded: false),
                 "PHP_INI_SCAN_DIR": ([confD] + (settingsFolder.map { [$0] } ?? [])).map { $0.path(percentEncoded: false) }.joined(separator: ":"),
             ]) { _, new in new },
-            path: [bin.path(percentEncoded: false), commandLinks]
+            path: [bin.path(percentEncoded: false), commandLinks],
+            coverageFolder: folder.appending(path: PHPConfig.coverageFolderName).path(percentEncoded: false)
         )
     }
 

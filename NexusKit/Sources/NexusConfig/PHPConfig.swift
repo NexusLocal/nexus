@@ -14,26 +14,20 @@ public enum PHPConfig {
     public static let nexusIniName = "00-nexus.ini"
     public static let customIniName = "99-custom.ini"
 
-    // PHP-FPM reads this folder before conf.d, and the command line does not read it. PCOV with
-    // pcov.enabled = 1 runs every line of PHP through its own code, also without a test. A page
-    // then takes about 70% more time in PHP (measured on 2026-11-09). So PHP-FPM loads PCOV
-    // without it, and tests on the command line keep their coverage. A custom setting
-    // pcov.enabled = 1 comes later and turns it on for PHP-FPM too.
-    public static let fpmFolderName = "fpm.d"
-    public static let fpmIniName = "00-nexus-fpm.ini"
+    // PCOV with pcov.enabled = 1 runs every line of PHP through its own code, also without a test.
+    // A page then took about 70% more time in PHP, and a loop on the command line 3 times more
+    // (measured on 2026-11-09). So PCOV loads with pcov.enabled = 0 (owner, 2026-11-09). The nexus
+    // command adds this folder after conf.d for a command with --coverage, for example
+    // pest --coverage. A PHP that the command starts gets the folder too, because it is in the
+    // environment. A custom setting pcov.enabled = 1 turns it on for each command and each page.
+    public static let coverageFolderName = "coverage.d"
+    public static let coverageIniName = "00-nexus-coverage.ini"
 
-    public static let fpmIni = """
-        ; Nexus writes this file. Only PHP-FPM reads it. A custom setting of the Nexus app can change it.
-        pcov.enabled = 0
+    public static let coverageIni = """
+        ; Nexus writes this file. The nexus command reads it only for a command with --coverage.
+        pcov.enabled = 1
 
         """
-
-    // PHP reads the folders in this order, and a later file wins.
-    public static func fpmScanFolders(in configFolder: URL) -> String {
-        [fpmFolderName, "conf.d"]
-            .map { configFolder.appending(path: $0, directoryHint: .notDirectory).path(percentEncoded: false) }
-            .joined(separator: ":")
-    }
 
     // The first line of the custom file is a comment. So line 1 of the custom lines is line 2
     // of the file.
@@ -118,6 +112,10 @@ public enum PHPConfig {
 
         for name in extensions {
             lines.append(zendExtensions.contains(name) ? "zend_extension = \(name)" : "extension = \(name)")
+        }
+
+        if extensions.contains("pcov") {
+            lines.append("pcov.enabled = 0")
         }
 
         if extensions.contains("xdebug") {
