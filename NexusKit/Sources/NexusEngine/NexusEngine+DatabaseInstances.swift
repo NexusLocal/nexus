@@ -48,6 +48,10 @@ extension NexusEngine {
         let (tools, client, work) = try await runningClient(id)
         defer { try? FileManager.default.removeItem(at: work) }
 
+        return try await databaseSizes(tools: tools, client: client)
+    }
+
+    func databaseSizes(tools: DatabaseTools, client: DatabaseClient) async throws -> [DatabaseSize] {
         let answer = tools.kind.usesMySQLProtocol
             ? try await client.queryWithCurrentSizes(Self.mysqlSizes)
             : try await client.query(Self.postgresqlSizes)

@@ -80,7 +80,7 @@ struct NexusCommand: AsyncParsableCommand {
         subcommands: [
             Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Installed.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
-            SiteCommand.self, WorkspaceCommand.self, New.self, Import.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
+            SiteCommand.self, WorkspaceCommand.self, OpenSite.self, EditSite.self, New.self, Import.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
             Database.self, PHP.self, Composer.self, Node.self, NPM.self, WP.self, MailCommand.self, Sendmail.self,
         ]
     )
@@ -1421,8 +1421,8 @@ extension DatabaseApp: ExpressibleByArgument {}
 struct Database: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "db",
-        abstract: "Lists the database instances, copies a database into one, and opens one in a database app.",
-        subcommands: [List.self, Copy.self, Open.self, Account.self, Dumps.self, Restore.self],
+        abstract: "Lists the database instances, shows the database of a site, copies a database into an instance, and opens one in a database app.",
+        subcommands: [List.self, Connection.self, Databases.self, Create.self, Copy.self, Open.self, Account.self, Dumps.self, Restore.self],
         defaultSubcommand: List.self
     )
 

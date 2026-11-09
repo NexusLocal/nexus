@@ -450,6 +450,45 @@ extension DatabaseKind {
     }
 }
 
+// A database that a site or a workspace uses (owner, 2026-11-09, Herd item 19). A database on a
+// server of Nexus has its instance, its kind and the account of that server. A workspace uses the
+// server of the workspace (D66), so its port is not the port of the instance. connection is the
+// Laravel connection. WordPress and a workspace have none.
+public struct DatabaseConnectionInfo: Codable, Sendable, Equatable {
+    public let connection: String?
+    public let database: String
+    public let host: String
+    public let port: Int?
+    public let instance: String?
+    public let kind: DatabaseKind?
+    public let account: DatabaseAccount?
+
+    public init(connection: String?, database: String, host: String, port: Int?, instance: String?, kind: DatabaseKind?, account: DatabaseAccount?) {
+        self.connection = connection
+        self.database = database
+        self.host = host
+        self.port = port
+        self.instance = instance
+        self.kind = kind
+        self.account = account
+    }
+
+    public var url: URL? {
+        guard let kind, let port, let account else {
+            return nil
+        }
+
+        return kind.url(port: port, account: account, database: database.isEmpty ? nil : database)
+    }
+}
+
+// A database server of Nexus: an instance, or the server of a workspace on a clone of an instance
+// (D66). site is a host of the site of the workspace.
+public enum DatabaseTarget: Codable, Sendable, Equatable {
+    case instance(String)
+    case workspace(site: String, name: String, instance: String)
+}
+
 // usedBy names the sites whose .env points to this database.
 public struct DatabaseSize: Codable, Sendable, Equatable {
     public let name: String
@@ -858,6 +897,13 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case workspaceEnv(host: String)
     // The database connections of a Laravel site, for its Site screen.
     case siteDatabases(host: String)
+    // The databases of a site or of one of its workspaces, with the account of the server, for
+    // nexus db connection.
+    case databaseConnections(host: String, workspace: String?)
+    // The databases on a server of Nexus, and a new empty database there. No request drops a
+    // database, so an agent cannot remove one by mistake.
+    case serverDatabases(DatabaseTarget)
+    case createDatabase(DatabaseTarget, name: String)
     // The configuration and the database of a WordPress site (Phase 4, 3b), and the three actions of
     // its Site screen.
     case wordPressSite(host: String)
@@ -1047,6 +1093,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case toolNotInstalled(message: String)
     case configuration(LaravelConfiguration)
     case siteDatabases([SiteDatabase])
+    case databaseConnections([DatabaseConnectionInfo])
     case wordPressSite(WordPressSiteInfo)
     case wordPressCopySource(WordPressCopySource)
     case workspaceEnv([WorkspaceEnvKey])

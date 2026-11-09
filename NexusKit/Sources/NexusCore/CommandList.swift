@@ -29,6 +29,8 @@ extension CommandSection {
     public static let all: [CommandSection] = [
         CommandSection(title: "Sites", commands: [
             CommandItem(command: "nexus site list", help: "Lists the sites."),
+            CommandItem(command: "nexus open", help: "Opens the site or the workspace of the current folder in the browser. nexus open shop.test opens another one."),
+            CommandItem(command: "nexus edit", help: "Opens the folder of the site or the workspace in the code editor of Settings > General."),
             CommandItem(command: "nexus site add . --php 8.4", help: "Adds the current folder as a site."),
             CommandItem(command: "nexus new laravel foo --kit react", help: "Makes a new site from a template: laravel, wordpress, next, nuxt, vite or astro."),
             CommandItem(command: "nexus import ~/Downloads/foo.wpress", help: "Makes a WordPress site from a backup of Local, Jetpack, Studio or All-in-One WP Migration, or from a folder with a dump."),
@@ -66,6 +68,9 @@ extension CommandSection {
         ]),
         CommandSection(title: "Databases", commands: [
             CommandItem(command: "nexus db list", help: "Lists the database instances."),
+            CommandItem(command: "nexus db connection", help: "Shows the database of the site or the workspace of the current folder, also as a URL. --json prints JSON."),
+            CommandItem(command: "nexus db databases", help: "Lists the databases on the server of the site or the workspace. --instance lists them on an instance."),
+            CommandItem(command: "nexus db create shop_testing", help: "Makes an empty database on the server of the site or the workspace, for example for the tests of an agent."),
             CommandItem(command: "nexus db copy shop --to mysql-8.4", help: "Imports a database from another server."),
             CommandItem(command: "nexus db open mysql-8.4 shop", help: "Opens a database in your database app."),
             CommandItem(command: "nexus db dumps", help: "Lists the dumps of removed workspaces in the Nexus trash."),

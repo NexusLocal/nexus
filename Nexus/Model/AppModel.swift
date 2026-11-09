@@ -94,7 +94,7 @@ enum AppPreference {
     static let installPackageUpdates = "installPackageUpdates"
     static let nexusdRestartBuild = "nexusdRestartBuild"
     static let terminalApp = "terminalApp"
-    static let editorApp = "editorApp"
+    static let editorApp = CodeEditors.preferenceKey
     static let addedTerminals = "addedTerminals"
     static let addedEditors = "addedEditors"
     static let addedDatabaseApps = "addedDatabaseApps"

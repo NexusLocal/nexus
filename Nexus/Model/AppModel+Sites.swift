@@ -65,11 +65,7 @@ enum KnownApps {
         "org.alacritty", "com.github.wez.wezterm", "co.zeit.hyper", "com.apple.Terminal",
     ]
 
-    static let editors = [
-        "com.jetbrains.PhpStorm", "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "com.exafunction.windsurf", "dev.zed.Zed",
-        "com.sublimetext.4", "com.panic.Nova", "com.jetbrains.WebStorm", "com.jetbrains.intellij", "com.jetbrains.intellij.ce",
-        "com.barebones.bbedit", "com.macromates.TextMate",
-    ]
+    static let editors = CodeEditors.bundleIdentifiers
 
     static func installed(_ bundleIdentifiers: [String]) -> [AppChoice] {
         bundleIdentifiers.compactMap { identifier in

@@ -19,6 +19,7 @@ extension NexusRequest {
         case .createSite(let site): "createSite \(site.template.rawValue) \(site.name)"
         case .removeSiteLeftovers(let id): "removeSiteLeftovers \(id)"
         case .importSite(let site): "importSite \(site.name)"
+        case .createDatabase(_, let name): "createDatabase \(name)"
         default: Mirror(reflecting: self).children.first?.label ?? "\(self)"
         }
     }
@@ -27,7 +28,7 @@ extension NexusRequest {
     public var onlyReads: Bool {
         switch self {
         case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules,
-             .customSettings, .databases, .databaseSizes, .sourceDatabases, .workspaceEnv, .siteDatabases, .wordPressSite, .backgroundPreset,
+             .customSettings, .databases, .databaseSizes, .sourceDatabases, .workspaceEnv, .siteDatabases, .databaseConnections, .serverDatabases, .wordPressSite, .backgroundPreset,
              .workspaceSettings, .dumps, .probe, .tool, .inspectBackup:
             true
         case .lan(let enabled):

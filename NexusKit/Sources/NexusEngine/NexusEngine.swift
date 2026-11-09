@@ -366,6 +366,12 @@ public actor NexusEngine {
                 return .workspaceEnv(try await workspaceEnvPreview(host: host))
             case .siteDatabases(let host):
                 return .siteDatabases(try await siteDatabases(host: host))
+            case .databaseConnections(let host, let workspace):
+                return .databaseConnections(try await databaseConnections(host: host, workspace: workspace))
+            case .serverDatabases(let target):
+                return .databaseSizes(try await serverDatabases(target))
+            case .createDatabase(let target, let name):
+                return .done(message: try await createDatabase(name, on: target))
             case .wordPressSite(let host):
                 return .wordPressSite(try await wordPressSite(host: host))
             case .setUpWordPress(let host, let database, let instance):
@@ -1344,7 +1350,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .siteDatabases, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines: true
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .siteDatabases, .databaseConnections, .serverDatabases, .createDatabase, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines: true
         default: false
         }
     }
