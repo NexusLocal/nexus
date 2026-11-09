@@ -476,6 +476,9 @@ struct DatabaseCopier {
         return { watcher.read($0) }
     }
 
+    // nexus db restore also takes a path to a dump of the user. A USE line or a CREATE DATABASE
+    // line in such a dump would write into another database of the instance. So the filter of
+    // the WordPress import removes them.
     func restore(_ file: URL, as name: String) async throws {
         let reader = Command(executable: URL(filePath: "/usr/bin/gzip"), arguments: ["-dc", file.path(percentEncoded: false)])
         let identifier = DatabaseConfig.identifier(name, kind: kind)
@@ -483,7 +486,7 @@ struct DatabaseCopier {
         try await query(.target, kind.usesMySQLProtocol ? "CREATE DATABASE \(identifier)" : "CREATE DATABASE \(identifier) TEMPLATE template0")
 
         do {
-            try await CommandRunner.pipe(reader, into: restoreCommand(name))
+            try await CommandRunner.pipe(reader, into: restoreCommand(name, filter: NexusEngine.importFilter(prefix: nil, toMySQL: kind == .mysql)))
         } catch {
             await Task { try? await drop(name) }.value
             throw error
