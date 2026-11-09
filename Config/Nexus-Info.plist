@@ -4,6 +4,8 @@
 <dict>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>3600</integer>
 	<key>SUFeedURL</key>
 	<string>https://github.com/NexusLocal/nexus/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>
