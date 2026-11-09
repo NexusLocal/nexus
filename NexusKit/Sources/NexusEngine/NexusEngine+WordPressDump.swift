@@ -77,9 +77,13 @@ extension NexusEngine {
             return try await running.value
         }
 
-        let columns = await postsColumns(of: target, prefix: prefix)
-        let file = WordPressDumpFile(path: path, size: size, modified: modified, prefix: prefix, addedURLs: added, postsColumns: columns)
-        let task = Task { try await self.runWordPressDumpCheck(file, host: host) }
+        // The task is in place before the next await. So a second caller waits for this check.
+        let task = Task {
+            let columns = await self.postsColumns(of: target, prefix: prefix)
+            let file = WordPressDumpFile(path: path, size: size, modified: modified, prefix: prefix, addedURLs: added, postsColumns: columns)
+
+            return try await self.runWordPressDumpCheck(file, host: host)
+        }
 
         dumpChecks[host] = task
         dumpCheckProgress[host] = WorkspaceDumpProgress(completed: 0, total: nil)
@@ -164,8 +168,14 @@ extension NexusEngine {
             return check("The dump has no tables with the prefix \(dumpFile.prefix) of this site.", found, nil)
         }
 
-        guard found.home != nil else {
+        guard let home = found.home else {
             return check("The dump has no option home in \(dumpFile.prefix)options.", found, nil)
+        }
+
+        let workspace = "https://workspace.invalid"
+
+        if let unreadable = LiveURLRewriter.unreadable([home, found.siteURL].compactMap { $0 }.map { LiveURLRule(from: $0, to: workspace) }).first {
+            return check("The dump has the URL \(unreadable.from) in \(dumpFile.prefix)options. Nexus cannot read it as the URL of a site.", found, nil)
         }
 
         let first = check(nil, found, nil)
@@ -175,9 +185,8 @@ extension NexusEngine {
         }
 
         // The URL of the workspace does not change the count. Only the rules of the live URLs do.
-        let home = "https://workspace.invalid"
-        let siteURL = first.siteURL.flatMap { siteURL in first.home.flatMap { WordPressDumpCheck.suffix(of: siteURL, below: $0) } }.map { home + $0 } ?? home
-        let counted = try await dumpFilterReport(source, plan: SQLDumpFilter.Plan(prefix: dumpFile.prefix, rules: first.rules(home: home, siteURL: siteURL), columns: dumpFile.postsColumns), part: 1, host: host)
+        let siteURL = first.siteURL.flatMap { WordPressDumpCheck.suffix(of: $0, below: home) }.map { workspace + $0 } ?? workspace
+        let counted = try await dumpFilterReport(source, plan: SQLDumpFilter.Plan(prefix: dumpFile.prefix, rules: first.rules(home: workspace, siteURL: siteURL), columns: dumpFile.postsColumns), part: 1, host: host)
 
         return check(nil, found, counted)
     }
@@ -217,8 +226,9 @@ extension NexusEngine {
         publishSites()
     }
 
-    // The order of the columns of the posts tables in the main database. A dump of
-    // mysqldump --no-create-info has no CREATE TABLE, and guid must not change.
+    // The order of the columns of the posts table in the main database. A dump of
+    // mysqldump --no-create-info has no CREATE TABLE, and guid must not change. The posts tables of
+    // the sites of a network have the same columns, so the filter uses this order for them too.
     private func postsColumns(of target: WordPressTarget, prefix: String) async -> [String: [String]] {
         guard let config = target.config, let name = config.database, let port = config.address?.localPort,
               let instance = await mysqlInstances().first(where: { $0.port == port && $0.running }),
@@ -228,15 +238,11 @@ extension NexusEngine {
 
         defer { try? FileManager.default.removeItem(at: work) }
 
-        let pattern = prefix.replacingOccurrences(of: "_", with: "\\_") + "%posts"
-        let rows = (try? await client.rows("SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = \(Self.sqlText(name)) AND TABLE_NAME LIKE \(Self.sqlText(pattern)) ORDER BY TABLE_NAME, ORDINAL_POSITION")) ?? []
-        var columns: [String: [String]] = [:]
+        let table = prefix + "posts"
+        let rows = (try? await client.rows("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = \(Self.sqlText(name)) AND TABLE_NAME = \(Self.sqlText(table)) ORDER BY ORDINAL_POSITION")) ?? []
+        let columns = rows.compactMap(\.first)
 
-        for row in rows where row.count == 2 {
-            columns[row[0], default: []].append(row[1])
-        }
-
-        return columns
+        return columns.isEmpty ? [:] : [table: columns]
     }
 
     // The check of the WordPress site of a workspace, before its load. A problem of the dump stops

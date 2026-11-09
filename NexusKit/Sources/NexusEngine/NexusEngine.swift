@@ -128,6 +128,9 @@ public actor NexusEngine {
     var dumpChecks: [String: Task<WordPressDumpCheck, Error>] = [:]
     var dumpCheckProgress: [String: WorkspaceDumpProgress] = [:]
     var dumpCheckFailures: [String: String] = [:]
+    // The tables of a dump file for the sheet "Import a database", with the file, its size and its
+    // date as the key. One entry for each file.
+    var dumpTableReads: [String: Task<[String]?, Error>] = [:]
     var runningCommand: (worktree: String, task: Task<CommandOutput, Error>)?
     // The background processes that nexusd started, the run of the sync that changes them, and what
     // stops one of them. An entry in processProblems has the owner of the process as its key.

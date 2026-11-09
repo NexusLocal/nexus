@@ -20,6 +20,11 @@ enum DumpFilterRun {
             return usageError
         }
 
+        if let rule = LiveURLRewriter.unreadable(options.plan.rules).first {
+            fail("Nexus cannot read the URL \(rule.from) or \(rule.to). So it cannot change these links.")
+            return usageError
+        }
+
         let filter = SQLDumpFilter(plan: options.plan)
         let output = Output(writes: options.writes)
         let chunk = UnsafeMutableRawBufferPointer.allocate(byteCount: 1 << 20, alignment: 1)

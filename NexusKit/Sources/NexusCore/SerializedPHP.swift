@@ -251,6 +251,13 @@ public enum SerializedPHP {
             let content = Array(input[start..<end])
             var changed = content
 
+            // The content of ArrayObject and similar classes holds serialized strings with their
+            // own lengths. A plain change would break them, so WP-CLI changes such a value.
+            if let rewriter, rewriter.mayContain(content), Self.holdsSerializedStrings(content), rewriter.rewrite(content) != nil {
+                unsupported = true
+                return false
+            }
+
             if let rewriter, let result = rewriter.rewrite(content) {
                 changed = result.bytes
                 links += result.links
@@ -261,6 +268,18 @@ public enum SerializedPHP {
             output.append(UInt8(ascii: "}"))
             index = end + 1
             return true
+        }
+
+        static func holdsSerializedStrings(_ content: [UInt8]) -> Bool {
+            guard content.count >= 3 else {
+                return false
+            }
+
+            for index in 0..<(content.count - 2) where content[index] == UInt8(ascii: "s") && content[index + 1] == Byte.colon && Byte.isDigit(content[index + 2]) {
+                return true
+            }
+
+            return false
         }
 
         // A string can hold serialized PHP again, or JSON. Serialized PHP inside changes first.

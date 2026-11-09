@@ -24,6 +24,8 @@ extension NexusEngine {
             throw RuntimeError.unsupported("\(site.host) is a proxy site. A proxy site gets no workspaces, because each workspace would go to the same server.")
         }
 
+        try checkDatabaseChoice(databases, of: site, state: state)
+
         guard let git = await GitTool.executable() else {
             throw RuntimeError.unsupported(GitTool.missing)
         }

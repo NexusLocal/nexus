@@ -153,6 +153,21 @@ extension NexusEngine {
     // D40: this also works when the setting of the site is off and for a worktree from before the
     // site. A second call changes nothing. So a script can always run it before nexus workspace wait.
     // databases chooses for this workspace only. A workspace that exists keeps its databases.
+    // A worktree in one step checks the choice before git makes the worktree. So a refused choice
+    // leaves no worktree without a workspace.
+    func checkDatabaseChoice(_ databases: WorkspaceDatabaseKind?, of site: Site, state: EngineState) throws {
+        let key = ProjectFolder.workspaceKey(of: site)
+        let sitesOfKey = resolvedSites(state).map(\.site).filter { ProjectFolder.workspaceKey(of: $0) == key }
+
+        if databases == .empty, Self.isWordPress(sitesOfKey) {
+            throw RuntimeError.unsupported("A WordPress site gets a copy of its database or a dump file, because WordPress has no migrations.")
+        }
+
+        if databases == .dump, !sitesOfKey.contains(where: { $0.workspaceDump != nil }) {
+            throw RuntimeError.unsupported("This site has no dump file. Choose one first, for example: nexus site edit \(site.host) --workspace-dump ~/Dumps/shop.sql.gz")
+        }
+    }
+
     func createWorkspace(folder: String, databases: WorkspaceDatabaseKind? = nil) async throws -> String {
         let state = await stateStore.current()
         let path = RealPath.of(URL(filePath: folder, directoryHint: .isDirectory))
@@ -188,15 +203,7 @@ extension NexusEngine {
 
         let key = ProjectFolder.workspaceKey(of: site)
 
-        let sitesOfKey = resolvedSites(state).map(\.site).filter { ProjectFolder.workspaceKey(of: $0) == key }
-
-        if databases == .empty, Self.isWordPress(sitesOfKey) {
-            throw RuntimeError.unsupported("A WordPress site gets a copy of its database or a dump file, because WordPress has no migrations.")
-        }
-
-        if databases == .dump, !sitesOfKey.contains(where: { $0.workspaceDump != nil }) {
-            throw RuntimeError.unsupported("This site has no dump file. Choose one first, for example: nexus site edit \(site.host) --workspace-dump ~/Dumps/shop.sql.gz")
-        }
+        try checkDatabaseChoice(databases, of: site, state: state)
 
         // The check and the change are one step, because a check of the worktrees can add the same
         // worktree in between. A new site gets the list that a first check gives it. Without that
@@ -340,6 +347,13 @@ extension NexusEngine {
         let emptying = workspace.databaseKind?.startsEmpty == true
         let dump = workspace.databaseKind == .dump ? workspaceDumpSource(key: key, wordPress: written.wordPress) : nil
         let owner = Self.processOwner(key: key, workspace: workspace.name)
+
+        // Only a server with the main database loads the dump, for example not a SQLite file.
+        let loadsDump = written.servers.contains { server in written.databases.contains { $0.port == server.mainPort && $0.isDefault } }
+
+        if dump != nil, !loadsDump {
+            throw RuntimeError.unsupported("\(WorkspaceDumpText.failed) The main database of this site is not on a MySQL, MariaDB or PostgreSQL instance of Nexus. So Nexus has no database for the dump. Choose another choice under Databases.")
+        }
 
         for server in written.servers {
             if let links = try await prepareServer(of: server.tools, port: server.port, databases: written.databases.filter { $0.port == server.mainPort }, workspace: workspace.name, key: key, emptying: emptying, dump: dump, owner: owner) {

@@ -223,7 +223,8 @@ public final class SQLDumpFilter {
                             return
                         }
 
-                        index += 2
+                        // A dump that ends in the middle of a string ends here too.
+                        index = min(index + 2, count)
                         continue
                     }
 
@@ -771,10 +772,18 @@ public final class SQLDumpFilter {
         pending = nil
     }
 
-    // The links of a value that the filter did not change. WP-CLI changes them after the load.
+    // The links of a value that the filter did not change. WP-CLI changes them after the load. A
+    // value with the host but without a link, such as info@shop.com, needs no WP-CLI. A value that
+    // is too large to read counts as one link.
     private func markUncertain(_ table: Table, value: [UInt8]?) {
+        let links = value.map { rewriter?.rewrite($0)?.links ?? 0 } ?? 1
+
+        guard links > 0 else {
+            return
+        }
+
         uncertain.insert(table.name)
-        report.uncertainLinks += value.flatMap { rewriter?.rewrite($0)?.links } ?? 1
+        report.uncertainLinks += links
     }
 
     private func finishWord(_ bytes: UnsafeBufferPointer<UInt8>, start: Int, end: Int, write: (UnsafeRawBufferPointer) -> Void) {

@@ -81,7 +81,7 @@ struct ImportDatabaseSheet: View {
     }
 
     private var inspectionKey: String {
-        [dumpFile?.path(percentEncoded: false) ?? "", dumpChoice ?? "", instance, trimmedName].joined(separator: "\n")
+        [String(usesDumpFile), dumpFile?.path(percentEncoded: false) ?? "", dumpChoice ?? "", instance, trimmedName].joined(separator: "\n")
     }
 
     // MySQL and MariaDB speak the same protocol. PostgreSQL only reads PostgreSQL.
@@ -462,7 +462,9 @@ struct ImportDatabaseSheet: View {
 
     // A short wait comes first. So each typed letter of the name does not read the file again.
     private func inspectDump() async {
+        // A cancelled run can leave inspecting on. A run for another source turns it off.
         guard usesDumpFile, let dumpFile else {
+            inspecting = false
             return
         }
 

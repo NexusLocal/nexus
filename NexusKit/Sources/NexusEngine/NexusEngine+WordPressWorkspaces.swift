@@ -613,7 +613,9 @@ extension NexusEngine {
             return
         }
 
-        let options = (tables ?? ["--all-tables-with-prefix"]) + ["--skip-columns=guid"] + (links.network ? ["--network", "--url=\(links.to)"] : [])
+        // WP-CLI keeps only the tables of its list that it knows. Without --all-tables-with-prefix
+        // it knows only the tables of WordPress itself, because no plugin loads.
+        let options = (tables ?? []) + ["--all-tables-with-prefix", "--skip-columns=guid"] + (links.network ? ["--network", "--url=\(links.to)"] : [])
 
         for (index, pass) in passes.enumerated() {
             guard !watchingStopped else {

@@ -1123,7 +1123,7 @@ struct SiteCommand: AsyncParsableCommand {
         @Option(name: .customLong("workspace-databases"), help: "default, copy, empty or dump. What a new workspace gets: a copy of the main database, an empty database, or an empty database with the dump file of --workspace-dump. default follows Settings > Workspaces. A WordPress site gets a copy or the dump file.") var workspaceDatabases: WorkspaceDatabaseChoice?
         @Option(name: .customLong("workspace-dump"), help: "The dump file that each new workspace gets in its main database with --workspace-databases dump. The links of a WordPress dump to its live URL go to the workspace.") var workspaceDump: String?
         @Option(name: .customLong("live-url"), help: "WordPress: another URL of the live site in the dump, for example https://staging.shop.com. Its links go to the workspace too. Repeat it for more URLs. These replace the current URLs.") var liveURLs: [String] = []
-        @Flag(help: "WordPress: remove each added live URL.") var noLiveURLs = false
+        @Flag(name: .customLong("no-live-urls"), help: "WordPress: remove each added live URL.") var noLiveURLs = false
         @Option(name: .customLong("workspace-seeders"), help: "on or off. With on, a Laravel site with an empty database runs php artisan db:seed in a new workspace.") var workspaceSeeders: OnOff?
         @Option(name: .customLong("document-root"), help: "The folder in the site folder that the web server serves, for example htdocs. Each workspace serves the same folder.") var documentRoot: String?
         @Flag(help: "Use the automatic document root again: public/ when the site folder has one.") var noDocumentRoot = false

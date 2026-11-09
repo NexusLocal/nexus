@@ -48,7 +48,9 @@ extension Database {
             let connections = try await databaseConnections(of: target)
             let main = connections.first { $0.instance != nil && !$0.database.isEmpty }
 
-            guard let server = DatabaseTarget.server(of: target, connections: connections), let name = into ?? main?.database else {
+            // The server and the name come from the same connection. The first connection can be on
+            // another instance without a database name.
+            guard let server = DatabaseTarget.server(of: target, connections: main.map { [$0] } ?? connections), let name = into ?? main?.database else {
                 FileHandle.standardError.write(Data("Nexus finds no database of \(target.host) on a server of Nexus. Give one, for example: nexus db import shop.sql.gz --instance mysql-8.4 --into shop\n".utf8))
                 throw ExitCode.failure
             }

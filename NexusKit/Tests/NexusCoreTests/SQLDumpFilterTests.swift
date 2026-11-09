@@ -131,12 +131,18 @@ struct SerializedPHPTests {
     }
 
     @Test func aCustomObjectGetsItsNewContentLength() {
-        let content = #"x:i:0;s:16:"https://shop.com";"#
-        let value = "C:11:\"ArrayObject\":\(content.utf8.count):{\(content)}"
+        let content = #"{"url":"https://shop.com"}"#
+        let value = "C:6:\"Custom\":\(content.utf8.count):{\(content)}"
         let changed = text(rewritten(value)) ?? ""
 
-        #expect(changed.hasPrefix("C:11:\"ArrayObject\":\(content.utf8.count + 12):{"))
+        #expect(changed == "C:6:\"Custom\":\(content.utf8.count + 12):{{\"url\":\"https://shop-ticket-150.test\"}}")
         #expect(SerializedPHP.isValid(Array(changed.utf8)))
+    }
+
+    @Test func aCustomObjectWithSerializedStringsGoesToWPCLI() {
+        let content = #"x:i:0;a:1:{s:3:"url";s:16:"https://shop.com";};m:a:0:{}"#
+
+        #expect(rewritten("C:11:\"ArrayObject\":\(content.utf8.count):{\(content)}") == .unsafe)
     }
 
     @Test func aValueWithWrongLengthsChangesAsPlainText() {
@@ -308,6 +314,28 @@ struct SQLDumpFilterTests {
 
         #expect(result.sql == sql)
         #expect(result.report.uncertainTables == ["wp_options"])
+    }
+
+    @Test func aHostWithoutALinkNeedsNoWPCLI() {
+        let result = filtered("INSERT INTO `wp_posts` VALUES (1,'mail info@shop.com');\n")
+
+        #expect(result.report.uncertainTables.isEmpty)
+        #expect(result.report.uncertainLinks == 0)
+    }
+
+    @Test(arguments: [1, 5, 100])
+    func aDumpThatEndsInAStringEndsWithoutACrash(block: Int) {
+        let sql = "INSERT INTO `wp_options` VALUES (1,'home','https://shop.com\\"
+
+        #expect(filtered(sql, block: block).sql == sql)
+    }
+
+    @Test func aHostWithAnUnderscoreChanges() {
+        let plan = SQLDumpFilter.Plan(prefix: "wp_", rules: [LiveURLRule(from: "https://my_shop.com", to: "https://ws.test")])
+
+        #expect(LiveURLRewriter.unreadable(plan.rules).isEmpty)
+        #expect(filtered("INSERT INTO `wp_options` VALUES (1,'home','https://my_shop.com','yes');\n", plan: plan).sql == "INSERT INTO `wp_options` VALUES (1,'home','https://ws.test','yes');\n")
+        #expect(LiveURLRewriter.unreadable([LiveURLRule(from: "https://user@shop.com", to: "https://ws.test")]).count == 1)
     }
 }
 

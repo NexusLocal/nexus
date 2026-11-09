@@ -44,7 +44,17 @@ extension NexusEngine {
             throw RuntimeError.unsupported("Nexus can replace only the tables of a PostgreSQL dump of pg_dump -Fc. For \(shownName), replace the whole database.")
         }
 
-        let reserved = try reserveCopyTarget(name, on: instance, for: "import")
+        // A database of a workspace has the name of the main database on a server of its own. So its
+        // trash copy and its reservation get the name of the workspace too.
+        let ownName: String
+
+        if case .workspace(_, let workspace, _) = request.target {
+            ownName = Workspace.databaseName(name, workspace: workspace)
+        } else {
+            ownName = name
+        }
+
+        let reserved = try reserveCopyTarget(ownName, on: instance, for: "import")
         defer { copyTargets.remove(reserved) }
 
         let exists = try await client.exists(name)
@@ -56,7 +66,7 @@ extension NexusEngine {
         let copier = DatabaseCopier(tools: tools, source: client.endpoint, target: client.endpoint, work: work)
         try copier.prepare()
 
-        let trashCopy = exists ? try await writeDump(of: name, as: name, with: copier, instance: instance, kind: tools.kind) : nil
+        let trashCopy = exists ? try await writeDump(of: name, as: ownName, with: copier, instance: instance, kind: tools.kind) : nil
 
         if exists, request.existing == .replaceDatabase {
             try await copier.drop(name)
@@ -137,13 +147,39 @@ extension NexusEngine {
             return info
         }
 
-        info.tables = try await dumpTables(of: file, container: container, dump: info.dump, format: format)
+        info.tables = try await sharedDumpTables(of: file, container: container, dump: info.dump, format: format)
 
         if let target = inspection.target, let name = inspection.name.flatMap({ try? DatabaseName.validated($0) }) {
             info.existingTables = await existingTables(of: name, on: target)
         }
 
         return info
+    }
+
+    // The sheet asks again at each change of the name or the instance, but the tables of the dump
+    // stay the same. So one read of the file serves each question until the file changes, also the
+    // questions that come while the read runs.
+    private func sharedDumpTables(of file: URL, container: DumpContainer, dump: String?, format: DumpFormat?) async throws -> [String]? {
+        let path = file.path(percentEncoded: false)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+        let size = (attributes?[.size] as? NSNumber)?.int64Value ?? -1
+        let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let key = [path, dump ?? "", String(size), String(modified)].joined(separator: "\n")
+
+        if let running = dumpTableReads[key] {
+            return try await running.value
+        }
+
+        let read = Task { try await self.dumpTables(of: file, container: container, dump: dump, format: format) }
+        dumpTableReads = dumpTableReads.filter { !$0.key.hasPrefix(path + "\n") }
+        dumpTableReads[key] = read
+
+        do {
+            return try await read.value
+        } catch {
+            dumpTableReads[key] = nil
+            throw error
+        }
     }
 
     // The names of the tables that the dump makes, in their order. A file of pg_dump -Fc has a

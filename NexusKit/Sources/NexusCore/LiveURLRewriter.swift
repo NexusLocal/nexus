@@ -79,6 +79,17 @@ public struct LiveURLRewriter: Sendable {
         }
     }
 
+    // The rules whose URLs the rewriter cannot read. Their links would stay without a sign.
+    public static func unreadable(_ rules: [LiveURLRule]) -> [LiveURLRule] {
+        rules.filter { rule in
+            guard let from = URLParts(rule.from), let to = URLParts(rule.to) else {
+                return true
+            }
+
+            return !(from.scheme == nil || from.isWeb) || !to.isWeb
+        }
+    }
+
     // A fast check before the value is decoded. Each form of a link holds the host as plain text.
     public func mayContain(_ bytes: UnsafeBufferPointer<UInt8>) -> Bool {
         hosts.contains { host in Self.find(host, in: bytes) }
@@ -367,7 +378,7 @@ struct URLParts {
             port = String(authority[authority.index(after: colon)...])
         }
 
-        guard !host.isEmpty, host.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-") }) else {
+        guard !host.isEmpty, host.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_") }) else {
             return nil
         }
 
