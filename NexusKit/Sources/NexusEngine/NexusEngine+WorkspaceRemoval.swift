@@ -234,7 +234,7 @@ extension NexusEngine {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd-HHmmss"
 
-        let file = paths.trash.appending(path: "\(formatter.string(from: .now))-\(instance)-\(fileName).\(kind.dumpExtension)", directoryHint: .notDirectory)
+        let file = Self.freeFile(named: "\(formatter.string(from: .now))-\(instance)-\(fileName)", extension: kind.dumpExtension, in: paths.trash)
 
         try FileManager.default.createDirectory(at: paths.trash, withIntermediateDirectories: true)
 
@@ -243,6 +243,24 @@ extension NexusEngine {
             defer { estimating.cancel() }
 
             try await copier.dump(name, to: file, progress: progress)
+        }
+
+        return file
+    }
+
+    // Two dumps of one database in the same second get the same time in their name, for example two
+    // imports with a replace. The second one then gets -2.
+    static func freeFile(named name: String, extension fileExtension: String, in folder: URL) -> URL {
+        let taken = { (url: URL) in
+            [url, url.deletingLastPathComponent().appending(path: "\(url.lastPathComponent).partial")].contains { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
+        }
+
+        var file = folder.appending(path: "\(name).\(fileExtension)", directoryHint: .notDirectory)
+        var number = 2
+
+        while taken(file) {
+            file = folder.appending(path: "\(name)-\(number).\(fileExtension)", directoryHint: .notDirectory)
+            number += 1
         }
 
         return file

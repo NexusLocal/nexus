@@ -72,6 +72,7 @@ extension CommandSection {
             CommandItem(command: "nexus db connection", help: "Shows the database of the site or the workspace of the current folder, also as a URL. --json prints JSON."),
             CommandItem(command: "nexus db databases", help: "Lists the databases on the server of the site or the workspace. --instance lists them on an instance."),
             CommandItem(command: "nexus db create shop_testing", help: "Makes an empty database on the server of the site or the workspace, for example for the tests of an agent."),
+            CommandItem(command: "nexus db import ~/Downloads/shop.sql.gz", help: "Loads a dump file into the database of the site or the workspace. A database that exists changes only with --replace-tables or --replace-database."),
             CommandItem(command: "nexus db copy shop --to mysql-8.4", help: "Imports a database from another server."),
             CommandItem(command: "nexus db open mysql-8.4 shop", help: "Opens a database in your database app."),
             CommandItem(command: "nexus db dumps", help: "Lists the dumps of removed workspaces in the Nexus trash."),

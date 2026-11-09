@@ -1455,7 +1455,7 @@ struct Database: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "db",
         abstract: "Lists the database instances, shows the database of a site, copies a database into an instance, and opens one in a database app.",
-        subcommands: [List.self, Connection.self, Databases.self, Create.self, Copy.self, Open.self, Account.self, Dumps.self, Restore.self],
+        subcommands: [List.self, Connection.self, Databases.self, Create.self, Import.self, Copy.self, Open.self, Account.self, Dumps.self, Restore.self],
         defaultSubcommand: List.self
     )
 
@@ -1627,7 +1627,7 @@ private func printToggles(_ response: NexusResponse) throws {
     }
 }
 
-private func absolutePath(_ path: String) -> String {
+func absolutePath(_ path: String) -> String {
     let expanded = NSString(string: path).expandingTildeInPath
     return URL(filePath: expanded, relativeTo: URL(filePath: FileManager.default.currentDirectoryPath, directoryHint: .isDirectory))
         .standardizedFileURL

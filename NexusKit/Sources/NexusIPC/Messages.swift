@@ -587,6 +587,32 @@ public struct DatabaseServer: Codable, Sendable, Equatable {
     }
 }
 
+// What happens to a database that exists already when a dump goes into it. Without a choice the
+// import stops, and nothing changes. Before each choice, Nexus puts a copy of the database in the
+// trash (owner, 2026-11-09).
+public enum DumpExisting: String, Codable, Sendable, CaseIterable {
+    case replaceTables = "replace_tables"
+    case replaceDatabase = "replace_database"
+}
+
+// Loads a dump file into a database (owner, 2026-11-09). file is a path. dump names the file in a
+// .zip or .tar archive. name is the database on the server of the target.
+public struct DumpImport: Codable, Sendable, Equatable {
+    public var file: String
+    public var dump: String?
+    public var target: DatabaseTarget
+    public var name: String
+    public var existing: DumpExisting?
+
+    public init(file: String, dump: String? = nil, target: DatabaseTarget, name: String, existing: DumpExisting? = nil) {
+        self.file = file
+        self.dump = dump
+        self.target = target
+        self.name = name
+        self.existing = existing
+    }
+}
+
 // Copies a database from another server into an instance of Nexus (D37). The other server is
 // only read.
 public struct DatabaseCopy: Codable, Sendable, Equatable {
@@ -713,6 +739,7 @@ public enum TaskWork: Codable, Sendable, Equatable {
     case install(name: String, line: String, version: String, update: Bool)
     case copyDatabase(database: String, instance: String, name: String)
     case dumpDatabase(name: String, instance: String)
+    case importDump(file: String, instance: String, name: String)
     case createSite(name: String, template: SiteTemplate)
     case importSite(name: String)
 }
@@ -959,6 +986,7 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case emptyTrash
     // file is a path, or a name in the Nexus trash.
     case restoreDump(file: String, instance: String, name: String)
+    case importDump(DumpImport)
     // The mail service (Phase 3): its ports, the outbox and the settings.
     case mailStatus
     case clearOutbox

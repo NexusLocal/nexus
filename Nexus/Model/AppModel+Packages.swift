@@ -343,6 +343,8 @@ extension AppModel {
             return name == database ? "Importing \(database) into \(into)" : "Importing \(database) into \(into) as \(name)"
         case .dumpDatabase(let name, _):
             return "Saving a dump of \(name)"
+        case .importDump(let file, let instance, let name):
+            return "Loading \(file) into \(name) on \(service(instance)?.name ?? instance)"
         case .createSite(let name, let template):
             return "Creating \(name) with \(template.displayName)"
         case .importSite(let name):
@@ -358,6 +360,8 @@ extension AppModel {
             "Importing \(name)"
         case .dumpDatabase:
             title(of: task)
+        case .importDump(_, _, let name):
+            "Importing \(name)"
         case .createSite(let name, _):
             "Creating \(name)"
         case .importSite(let name):

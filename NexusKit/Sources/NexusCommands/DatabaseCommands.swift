@@ -3,10 +3,60 @@ import Foundation
 import NexusCore
 import NexusIPC
 
-// nexus db connection, nexus db databases and nexus db create (owner, 2026-11-09, Herd item 19).
-// They follow the site or the workspace of the current folder. No command drops a database, so an
-// agent cannot remove one by mistake.
+// nexus db connection, nexus db databases, nexus db create and nexus db import (owner, 2026-11-09,
+// Herd item 19). They follow the site or the workspace of the current folder. Only an import with
+// a replace changes a database that exists, and Nexus puts a copy of it in the trash first.
 extension Database {
+    struct Import: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Loads a dump file into the database of the site or the workspace of the current folder, for example: nexus db import ~/Downloads/shop.sql.gz",
+            discussion: "Nexus reads a .sql or .sql.gz file, and a .zip, .tar or .tar.gz file with such a dump in it. For PostgreSQL it also reads a file of pg_dump -Fc. A database that exists changes only with --replace-tables or --replace-database. Nexus then puts a copy of the old database in the trash first."
+        )
+
+        @Argument(help: "The dump file.") var file: String
+        @Option(help: "The database. The default is the database of the site or the workspace.") var into: String?
+        @Option(help: "The host of a site or a workspace. The default is the site or the workspace of the current folder.") var site: String?
+        @Option(help: "An instance instead of a site, as nexus db list shows it. Give the database with --into.") var instance: String?
+        @Option(help: "The dump in a .zip or .tar file that holds more than one.") var dump: String?
+        @Flag(help: "The tables of the dump replace their old tables. The other tables stay.") var replaceTables = false
+        @Flag(help: "Nexus drops the database first and loads the dump into an empty database.") var replaceDatabase = false
+
+        func validate() throws {
+            if replaceTables, replaceDatabase {
+                throw ValidationError("Use --replace-tables or --replace-database, not both.")
+            }
+
+            if instance != nil, into == nil {
+                throw ValidationError("Give the database with --into, for example: nexus db import shop.sql.gz --instance mysql-8.4 --into shop")
+            }
+        }
+
+        func run() async throws {
+            let (target, name) = try await importTarget()
+            let existing: DumpExisting? = replaceTables ? .replaceTables : replaceDatabase ? .replaceDatabase : nil
+
+            print("Nexus loads the dump into \(name) now. A large dump can take some minutes.")
+            try finish(try await send(.importDump(DumpImport(file: absolutePath(file), dump: dump, target: target, name: name, existing: existing))))
+        }
+
+        private func importTarget() async throws -> (DatabaseTarget, String) {
+            if let instance, let into {
+                return (.instance(instance), into)
+            }
+
+            let target = try await siteTarget(host: site, example: "nexus db import shop.sql.gz --site shop.test")
+            let connections = try await databaseConnections(of: target)
+            let main = connections.first { $0.instance != nil && !$0.database.isEmpty }
+
+            guard let server = DatabaseTarget.server(of: target, connections: connections), let name = into ?? main?.database else {
+                FileHandle.standardError.write(Data("Nexus finds no database of \(target.host) on a server of Nexus. Give one, for example: nexus db import shop.sql.gz --instance mysql-8.4 --into shop\n".utf8))
+                throw ExitCode.failure
+            }
+
+            return (server, name)
+        }
+    }
+
     struct Connection: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Shows the database connection of the site or the workspace of the current folder, also as a URL.",

@@ -20,6 +20,7 @@ extension NexusRequest {
         case .removeSiteLeftovers(let id): "removeSiteLeftovers \(id)"
         case .importSite(let site): "importSite \(site.name)"
         case .createDatabase(_, let name): "createDatabase \(name)"
+        case .importDump(let request): "importDump \(request.name)\(request.existing.map { " \($0.rawValue)" } ?? "")"
         default: Mirror(reflecting: self).children.first?.label ?? "\(self)"
         }
     }

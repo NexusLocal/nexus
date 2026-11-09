@@ -96,7 +96,7 @@ extension NexusEngine {
         return workspace
     }
 
-    private func client(for target: DatabaseTarget) async throws -> (DatabaseTools, DatabaseClient, URL) {
+    func client(for target: DatabaseTarget) async throws -> (DatabaseTools, DatabaseClient, URL) {
         switch target {
         case .instance(let id):
             return try await runningClient(id)

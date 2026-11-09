@@ -415,6 +415,9 @@ public actor NexusEngine {
             case .restoreDump(let file, let instance, let name):
                 // A restore can take minutes, so it does not wait in the queue of the changes.
                 return .done(message: try await restoreDump(file, instance: instance, name: name))
+            case .importDump(let request):
+                // An import can take minutes, so it does not wait in the queue of the changes.
+                return .done(message: try await importDump(request))
             case .mailStatus:
                 return .mailStatus(try await mailStatus())
             case .clearOutbox:
