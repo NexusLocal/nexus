@@ -1,4 +1,5 @@
 import Foundation
+import NexusCore
 import Synchronization
 
 // Gives each mail of the receiver to the inbox (Mailpit). While the inbox does not run or does not
@@ -90,7 +91,7 @@ public final class MailRouter: Sendable {
                 return .refused("The outbox of Nexus is full")
             }
         } catch {
-            return .refused("Nexus could not keep the mail: \(error)")
+            return .refused("Nexus could not keep the mail: \(ErrorText.plain(error))")
         }
     }
 
@@ -146,7 +147,7 @@ public final class MailRouter: Sendable {
                     continue
                 }
 
-                outbox.refuse(file, reason: "Nexus cannot read this mail: \(error)")
+                outbox.refuse(file, reason: "Nexus cannot read this mail: \(ErrorText.plain(error))")
                 result.refused += 1
                 continue
             }
@@ -171,7 +172,7 @@ public final class MailRouter: Sendable {
             try outbox.keepRefused(message, reason: reason)
             return .accepted
         } catch {
-            return .refused("Nexus could not keep the mail: \(error)")
+            return .refused("Nexus could not keep the mail: \(ErrorText.plain(error))")
         }
     }
 }

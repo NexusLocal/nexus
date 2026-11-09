@@ -57,7 +57,7 @@ extension NexusEngine {
                 canRestore: canRestore
             )
         } catch {
-            return SiteMail(sendsToNexus: false, problem: String(describing: error), canRestore: canRestore)
+            return SiteMail(sendsToNexus: false, problem: ErrorText.plain(error), canRestore: canRestore)
         }
     }
 

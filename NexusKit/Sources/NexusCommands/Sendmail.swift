@@ -57,7 +57,7 @@ enum SendmailRun {
             port = requestedPort
             message = try request.message(from: input.readDataToEndOfFile(), user: folder)
         } catch {
-            report(String(describing: error))
+            report(ErrorText.plain(error))
             return usageError
         }
 
@@ -82,7 +82,7 @@ enum SendmailRun {
                 return refused
             }
         } catch {
-            report("Nexus could not keep the mail: \(error)")
+            report("Nexus could not keep the mail: \(ErrorText.plain(error))")
             return notKept
         }
     }

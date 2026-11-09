@@ -169,7 +169,7 @@ func siteTarget(host: String?, example: String) async throws -> SiteTarget {
     do {
         return try SiteTarget.find(host: host, folder: folder, in: sites, example: example)
     } catch {
-        FileHandle.standardError.write(Data("\(error)\n".utf8))
+        FileHandle.standardError.write(Data("\(ErrorText.plain(error))\n".utf8))
         throw ExitCode.failure
     }
 }

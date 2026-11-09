@@ -67,7 +67,7 @@ final class HelperService: NSObject, NSXPCListenerDelegate, NexusXPCService, @un
                 }
                 response = .done
             } catch {
-                response = .failure(message: String(describing: error))
+                response = .failure(message: ErrorText.plain(error))
             }
 
             reply((try? NexusMessageCoding.encode(response)) ?? Data())

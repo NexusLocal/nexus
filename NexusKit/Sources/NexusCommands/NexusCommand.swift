@@ -188,13 +188,13 @@ private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bo
         response = try await NexusClient().send(.tool(tool, folder: folder, argumentFolder: argumentFolder))
     } catch let error as NexusClientError {
         guard let other = nextProgram() else {
-            try fail("\(error)")
+            try fail("\(ErrorText.plain(error))")
         }
 
         FileHandle.standardError.write(Data("nexusd does not answer. This \(tool.rawValue) is \(other.file), the next one on the PATH. Open the Nexus app to use the versions of the site.\n".utf8))
         try run(other)
     } catch {
-        try fail("\(error)")
+        try fail("\(ErrorText.plain(error))")
     }
 
     switch response {
@@ -1638,7 +1638,7 @@ func send(_ request: NexusRequest) async throws -> NexusResponse {
     do {
         return try await NexusClient().send(request)
     } catch {
-        FileHandle.standardError.write(Data("\(error)\n".utf8))
+        FileHandle.standardError.write(Data("\(ErrorText.plain(error))\n".utf8))
         throw ExitCode.failure
     }
 }
@@ -1654,7 +1654,7 @@ func finish(_ response: NexusResponse) throws {
         FileHandle.standardError.write(Data("\(conflict)\n".utf8))
         throw ExitCode.failure
     case .invalidSettings(let error):
-        FileHandle.standardError.write(Data("\(error)\n".utf8))
+        FileHandle.standardError.write(Data("\(ErrorText.plain(error))\n".utf8))
         throw ExitCode.failure
     case .stopped(let message):
         FileHandle.standardError.write(Data("\(withLogHint(message))\n".utf8))

@@ -119,7 +119,7 @@ extension NexusEngine {
                     try await stateStore.update { $0.databaseRemovals.removeAll { $0 == next } }
                     databaseRemovalProblems[folder] = nil
                 } catch {
-                    databaseRemovalProblems[folder] = DatabaseRemovalProblem(reason: String(describing: error), nextTry: .now + Self.removalRetryWait)
+                    databaseRemovalProblems[folder] = DatabaseRemovalProblem(reason: ErrorText.plain(error), nextTry: .now + Self.removalRetryWait)
                     writeToLog(of: next.server.instance, "Nexus did not remove the server of the workspace \(next.workspace). \(error)\n")
                 }
 

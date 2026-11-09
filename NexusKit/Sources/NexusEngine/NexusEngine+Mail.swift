@@ -110,7 +110,7 @@ extension NexusEngine {
                     await supervisor.signal(id, SIGUSR2)
                 }
             } catch {
-                problems.append("PHP \(runtime.line) still sends mail to the old port. \(error)")
+                problems.append("PHP \(runtime.line) still sends mail to the old port. \(ErrorText.plain(error))")
             }
         }
 
@@ -209,7 +209,7 @@ extension NexusEngine {
             try await startMailReceiver()
             return installed
         } catch {
-            return "\(installed)\nnexusd does not receive mail yet. \(error)"
+            return "\(installed)\nnexusd does not receive mail yet. \(ErrorText.plain(error))"
         }
     }
 

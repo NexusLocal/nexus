@@ -72,7 +72,7 @@ extension NexusEngine {
         do {
             target = try await wordPressTarget(host)
         } catch {
-            return .unknown("\(error)")
+            return .unknown(ErrorText.plain(error))
         }
 
         guard let core = target.core, target.config != nil else {
@@ -95,7 +95,7 @@ extension NexusEngine {
             let answer = try await generalMailCheck(wpCLI)
             return .checked(Self.sources(of: answer, core: core))
         } catch {
-            return .unknown("\(error)")
+            return .unknown(ErrorText.plain(error))
         }
     }
 

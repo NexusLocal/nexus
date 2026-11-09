@@ -109,7 +109,7 @@ extension NexusEngine {
         do {
             try WebConfigPath.validate(documentRoot)
         } catch {
-            return String(describing: error)
+            return ErrorText.plain(error)
         }
 
         return nil
@@ -137,7 +137,7 @@ extension NexusEngine {
         do {
             _ = try site.hosts.map(HostName.validatedAllowingWildcard)
         } catch {
-            return String(describing: error)
+            return ErrorText.plain(error)
         }
 
         return nil
@@ -1052,7 +1052,7 @@ extension NexusEngine {
         do {
             try await applyWeb(.automatic)
         } catch {
-            automaticWebFailure = String(describing: error)
+            automaticWebFailure = ErrorText.plain(error)
             throw error
         }
 

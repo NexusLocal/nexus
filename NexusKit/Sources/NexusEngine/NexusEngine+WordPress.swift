@@ -86,7 +86,7 @@ extension NexusEngine {
                 let setUp = try await setUpPlan(for: target, in: instances)
                 return WordPressSiteInfo(type: target.type, version: target.result.version, setUpDatabase: setUp?.name, setUpInstance: setUp?.instance.id)
             } catch {
-                return WordPressSiteInfo(type: target.type, version: target.result.version, problem: "Nexus cannot read the databases for the set-up. \(error)")
+                return WordPressSiteInfo(type: target.type, version: target.result.version, problem: "Nexus cannot read the databases for the set-up. \(ErrorText.plain(error))")
             }
         }
 
@@ -328,7 +328,7 @@ extension NexusEngine {
                     }
                 }
 
-                throw RuntimeError.unsupported("Nexus could not write \(file.lastPathComponent). \(error) Nexus changed nothing.")
+                throw RuntimeError.unsupported("Nexus could not write \(file.lastPathComponent). \(ErrorText.plain(error)) Nexus changed nothing.")
             }
         }
     }
@@ -400,7 +400,7 @@ extension NexusEngine {
             do {
                 return try await CommandRunner.run(command(arguments)).standardOutput
             } catch let error as CommandError {
-                throw RuntimeError.unsupported("\(failure) \(error)")
+                throw RuntimeError.unsupported("\(failure) \(ErrorText.plain(error))")
             }
         }
     }
@@ -501,7 +501,7 @@ extension NexusEngine {
 
             return DatabaseCheck(instance: instance.id, exists: true, home: values["home"], siteURL: values["siteurl"], blogCount: blogCount, blogs: blogs)
         } catch {
-            return DatabaseCheck(instance: instance.id, problem: "Nexus cannot read the databases of \(instance.id). \(error)")
+            return DatabaseCheck(instance: instance.id, problem: "Nexus cannot read the databases of \(instance.id). \(ErrorText.plain(error))")
         }
     }
 

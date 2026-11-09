@@ -82,7 +82,7 @@ extension NexusEngine {
 
             return Self.sizes(in: DatabaseClient.rows(in: try await client.queryWithCurrentSizes(Self.mysqlSizes)))
         } catch let error as CommandError {
-            throw RuntimeError.unsupported("Nexus cannot read the databases on \(endpoint.host):\(endpoint.port). \(error)")
+            throw RuntimeError.unsupported("Nexus cannot read the databases on \(endpoint.host):\(endpoint.port). \(ErrorText.plain(error))")
         }
     }
 

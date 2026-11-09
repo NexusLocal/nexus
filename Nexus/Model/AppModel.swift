@@ -629,7 +629,7 @@ final class AppModel {
         do {
             try process.run()
         } catch {
-            failure = ActionFailure(title: "Nexus did not start its background service again", message: String(describing: error), place: place)
+            failure = ActionFailure(title: "Nexus did not start its background service again", message: ErrorText.plain(error), place: place)
         }
     }
 
@@ -748,7 +748,7 @@ final class AppModel {
                     do {
                         try await job.stopHomebrewService(executable: holder.path)
                     } catch {
-                        failure = ActionFailure(title: "brew services stop \(formula) failed", message: String(describing: error), place: .window)
+                        failure = ActionFailure(title: "brew services stop \(formula) failed", message: ErrorText.plain(error), place: .window)
                         return
                     }
                 } else {
@@ -816,7 +816,7 @@ final class AppModel {
             }
         } catch {
             ActivityTracker.log.write("request", "\(request.activitySummary) did not reach nexusd: \(error)")
-            return .failure(String(describing: error))
+            return .failure(ErrorText.plain(error))
         }
     }
 

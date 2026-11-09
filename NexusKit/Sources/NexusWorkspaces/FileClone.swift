@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import NexusCore
 import NexusSupervisor
 
 public enum FileCloneError: Error, Equatable, CustomStringConvertible {
@@ -69,7 +70,7 @@ public enum FileClone {
         do {
             try await CommandRunner.run(Command(executable: URL(filePath: "/usr/bin/sqlite3"), arguments: arguments))
         } catch {
-            throw FileCloneError.failed(path: source, reason: String(describing: error))
+            throw FileCloneError.failed(path: source, reason: ErrorText.plain(error))
         }
 
         let permissions = try manager.attributesOfItem(atPath: source)[.posixPermissions]

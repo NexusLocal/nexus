@@ -120,7 +120,7 @@ extension NexusEngine {
             output = try await initialize(tools, into: staging, account: account)
         } catch {
             try? FileManager.default.removeItem(at: staging)
-            throw RuntimeError.unsupported("Nexus could not make the data folder of \(tools.kind.displayName) \(line). \(error)")
+            throw RuntimeError.unsupported("Nexus could not make the data folder of \(tools.kind.displayName) \(line). \(ErrorText.plain(error))")
         }
 
         try? FileManager.default.removeItem(at: data)
@@ -392,7 +392,7 @@ struct DatabaseCopier {
 
             return "CREATE DATABASE \(identifier) \(try await characterSet(of: database))"
         } catch let error as CommandError {
-            throw RuntimeError.unsupported("Nexus cannot read \(database) on \(source.host):\(source.port). \(error)")
+            throw RuntimeError.unsupported("Nexus cannot read \(database) on \(source.host):\(source.port). \(ErrorText.plain(error))")
         }
     }
 

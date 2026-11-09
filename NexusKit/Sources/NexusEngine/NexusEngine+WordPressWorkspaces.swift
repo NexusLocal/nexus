@@ -641,7 +641,7 @@ extension NexusEngine {
                     }
                 }
             } catch {
-                let warning = "Nexus did not change the links in the posts to \(links.to). \(error)"
+                let warning = "Nexus did not change the links in the posts to \(links.to). \(ErrorText.plain(error))"
 
                 if !watchingStopped {
                     try? await updateRecord(of: workspace.name, key: key) { record in

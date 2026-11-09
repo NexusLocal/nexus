@@ -442,7 +442,7 @@ public actor NexusEngine {
         } catch let missing as ToolNotInstalled {
             return .toolNotInstalled(message: missing.description)
         } catch {
-            return .failure(message: String(describing: error))
+            return .failure(message: ErrorText.plain(error))
         }
     }
 
@@ -875,7 +875,7 @@ public actor NexusEngine {
                         _ = try await self.stop(id, disable: false)
                         return (id, nil)
                     } catch {
-                        return (id, "\(id): \(error)")
+                        return (id, "\(id): \(ErrorText.plain(error))")
                     }
                 }
             }
@@ -914,7 +914,7 @@ public actor NexusEngine {
             do {
                 _ = try await start(id, enable: false)
             } catch {
-                failures.append("\(id): \(error)")
+                failures.append("\(id): \(ErrorText.plain(error))")
             }
         }
 
@@ -1074,7 +1074,7 @@ public actor NexusEngine {
             _ = try await stop(id, disable: false)
         } catch {
             await installer.discard(prepared)
-            throw RuntimeError.unsupported("Nexus did not update \(prepared.runtime.name) \(prepared.runtime.line), because \(id) did not stop. \(error)")
+            throw RuntimeError.unsupported("Nexus did not update \(prepared.runtime.name) \(prepared.runtime.line), because \(id) did not stop. \(ErrorText.plain(error))")
         }
 
         let runtime: InstalledRuntime
@@ -1088,7 +1088,7 @@ public actor NexusEngine {
         do {
             _ = try await start(id, enable: false)
         } catch {
-            throw RuntimeError.unsupported("\(runtime.name) \(runtime.line) is updated to \(runtime.version), but \(id) did not start again. \(error)")
+            throw RuntimeError.unsupported("\(runtime.name) \(runtime.line) is updated to \(runtime.version), but \(id) did not start again. \(ErrorText.plain(error))")
         }
 
         return runtime
@@ -1394,7 +1394,7 @@ extension NexusEngine {
             try server.start(port: port)
         } catch {
             if dnsServer?.port == nil {
-                dnsState = .failed(reason: String(describing: error))
+                dnsState = .failed(reason: ErrorText.plain(error))
             }
             throw error
         }
@@ -1598,7 +1598,7 @@ extension NexusEngine {
             do {
                 try await inSystemFilesTurn { try await self.helper.send(.setResolver(tld: tld, port: port)) }
             } catch {
-                throw RuntimeError.unsupported("Nexus did not change the dev TLD, because /etc/resolver/\(tld) was not written. Nothing changed. \(error)")
+                throw RuntimeError.unsupported("Nexus did not change the dev TLD, because /etc/resolver/\(tld) was not written. Nothing changed. \(ErrorText.plain(error))")
             }
         }
 
@@ -1621,7 +1621,7 @@ extension NexusEngine {
             do {
                 try await bindDNS(port: port)
             } catch {
-                warnings.append("The DNS server did not start again for .\(tld). Run: nexus restart dns. \(error)")
+                warnings.append("The DNS server did not start again for .\(tld). Run: nexus restart dns. \(ErrorText.plain(error))")
             }
         }
 
@@ -1711,7 +1711,7 @@ extension NexusEngine {
                 try await helper.send(.setHosts([]))
             } catch {
                 uninstalling = false
-                throw RuntimeError.unsupported("Nexus did not remove \(removedFiles), so it stopped the removal. Nothing else changed. \(error)")
+                throw RuntimeError.unsupported("Nexus did not remove \(removedFiles), so it stopped the removal. Nothing else changed. \(ErrorText.plain(error))")
             }
         }
 
@@ -1719,7 +1719,7 @@ extension NexusEngine {
         do {
             try await Task.detached { try authority.remove() }.value
         } catch {
-            throw RuntimeError.unsupported("Nexus removed \(removedFiles), but not its root CA. Run nexus uninstall again. \(error)")
+            throw RuntimeError.unsupported("Nexus removed \(removedFiles), but not its root CA. Run nexus uninstall again. \(ErrorText.plain(error))")
         }
 
         parkedWatcher?.stop()

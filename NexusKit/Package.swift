@@ -36,7 +36,7 @@ let package = Package(
             .product(name: "Sentry", package: "sentry-cocoa"),
         ]),
         .target(name: "NexusDNS", dependencies: ["NexusCore"]),
-        .target(name: "NexusMail"),
+        .target(name: "NexusMail", dependencies: ["NexusCore"]),
         .target(name: "NexusConfig", dependencies: ["NexusCore"]),
         .target(name: "NexusTLS", dependencies: [
             "NexusCore",

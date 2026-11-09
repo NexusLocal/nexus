@@ -208,7 +208,7 @@ extension NexusEngine {
 
             throw SiteCreationFailed(failure: SiteCreationFailure(
                 id: id,
-                message: String(describing: error),
+                message: ErrorText.plain(error),
                 steps: failedSteps ?? [],
                 log: lines ?? [],
                 logFile: log.path(percentEncoded: false),
@@ -262,7 +262,7 @@ extension NexusEngine {
             do {
                 _ = try await serialWeb { try await self.removeSite(host) }
             } catch {
-                return ["Nexus could not remove the site \(host): \(error)"]
+                return ["Nexus could not remove the site \(host): \(ErrorText.plain(error))"]
             }
         }
 
@@ -280,7 +280,7 @@ extension NexusEngine {
                 defer { try? FileManager.default.removeItem(at: work) }
                 try await client.query("DROP DATABASE IF EXISTS \(DatabaseConfig.identifier(database.name, kind: tools.kind))")
             } catch {
-                problems.append("Nexus could not drop the database \(database.name) on \(database.instance): \(error)")
+                problems.append("Nexus could not drop the database \(database.name) on \(database.instance): \(ErrorText.plain(error))")
             }
         }
 

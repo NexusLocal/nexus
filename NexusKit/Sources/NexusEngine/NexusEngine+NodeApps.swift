@@ -41,7 +41,7 @@ extension NexusEngine {
         do {
             node = try await toolCommand(.node, folder: list.folder)
         } catch {
-            plannedProcessProblems[list.owner, default: []].append("The Node.js app does not run. \(error)")
+            plannedProcessProblems[list.owner, default: []].append("The Node.js app does not run. \(ErrorText.plain(error))")
             return nil
         }
 
@@ -112,7 +112,7 @@ extension NexusEngine {
                     try await installCorepack()
                     corepackFailure = nil
                 } catch {
-                    corepackFailure = (nextTry: .now + Self.corepackRetryWait, reason: String(describing: error))
+                    corepackFailure = (nextTry: .now + Self.corepackRetryWait, reason: ErrorText.plain(error))
                 }
 
                 corepackInstall = nil

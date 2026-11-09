@@ -65,7 +65,7 @@ extension NexusEngine {
 
             _ = try await CommandRunner.run(Command(executable: git, arguments: ["-C", repository, "worktree", "add"] + arguments))
         } catch {
-            throw RuntimeError.unsupported("git did not make the worktree \(worktree). \(error)")
+            throw RuntimeError.unsupported("git did not make the worktree \(worktree). \(ErrorText.plain(error))")
         }
 
         let workspace = try await createWorkspace(folder: worktree, databases: databases)

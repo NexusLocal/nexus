@@ -1,4 +1,5 @@
 import Foundation
+import NexusCore
 
 public enum SMTPClientError: Error, Equatable, CustomStringConvertible {
     case unreachable(String)
@@ -40,7 +41,7 @@ public struct SMTPClient: Sendable {
         do {
             socket = try LineSocket.connect(port: port, timeout: timeout)
         } catch {
-            throw SMTPClientError.unreachable(String(describing: error))
+            throw SMTPClientError.unreachable(ErrorText.plain(error))
         }
 
         defer { socket.close() }
@@ -69,7 +70,7 @@ public struct SMTPClient: Sendable {
         } catch let error as SMTPClientError {
             throw error
         } catch {
-            throw SMTPClientError.unreachable(String(describing: error))
+            throw SMTPClientError.unreachable(ErrorText.plain(error))
         }
     }
 

@@ -79,7 +79,7 @@ extension NexusEngine {
         do {
             return try await cloneEntries(in: folders, git: git, leavingOut: leftOut, chosen: await chosenWorkspaceFiles(mainFolder: folders.main))
         } catch {
-            return ["Nexus cannot read which files git ignores: \(error)"]
+            return ["Nexus cannot read which files git ignores: \(ErrorText.plain(error))"]
         }
     }
 
@@ -201,7 +201,7 @@ extension NexusEngine {
 
                 try Data(EnvRewrite.apply(to: text, hosts: rewrite.hosts, keys: keys).utf8).write(to: URL(filePath: file), options: .atomic)
             } catch {
-                workspace.warnings.append("Nexus did not change the keys in \(path) of this worktree: \(error)")
+                workspace.warnings.append("Nexus did not change the keys in \(path) of this worktree: \(ErrorText.plain(error))")
             }
         }
     }
@@ -237,7 +237,7 @@ extension NexusEngine {
             } catch FileCloneError.targetExists, CocoaError.fileWriteFileExists {
                 continue
             } catch {
-                warnings.append(String(describing: error))
+                warnings.append(ErrorText.plain(error))
             }
         }
 
@@ -333,7 +333,7 @@ extension NexusEngine {
             return nil
         } catch {
             Self.removeLeftover(of: installer, in: folders.worktree, worktree: workspace.worktree)
-            return "\(installer.folder) does not fit \(lockFile), and the install failed: \(error)"
+            return "\(installer.folder) does not fit \(lockFile), and the install failed: \(ErrorText.plain(error))"
         }
     }
 

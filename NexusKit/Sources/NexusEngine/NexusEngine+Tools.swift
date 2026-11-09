@@ -34,7 +34,7 @@ extension NexusEngine {
         do {
             return try await toolCommand(tool, folder: folder, location: location, state: state, installed: installed)
         } catch where !installed.contains(where: { $0.name == tool.package }) {
-            throw ToolNotInstalled(description: String(describing: error))
+            throw ToolNotInstalled(description: ErrorText.plain(error))
         }
     }
 

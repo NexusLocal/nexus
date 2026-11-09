@@ -552,7 +552,7 @@ extension NexusEngine {
         do {
             output = try await CommandRunner.run(Command(executable: URL(filePath: "/usr/bin/tar"), arguments: ["-tvf", archive.path(percentEncoded: false)], name: "tar"))
         } catch {
-            throw RuntimeError.unsupported("Nexus cannot read \(archive.lastPathComponent). Is it a whole zip or tar file? \(error)")
+            throw RuntimeError.unsupported("Nexus cannot read \(archive.lastPathComponent). Is it a whole zip or tar file? \(ErrorText.plain(error))")
         }
 
         return output.standardOutput.split(separator: "\n").compactMap { line in

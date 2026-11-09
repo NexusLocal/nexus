@@ -94,7 +94,7 @@ func newSiteNameProblem(_ name: String, in folder: URL?) -> String? {
     do {
         _ = try NewSiteName.validated(name)
     } catch {
-        return String(describing: error)
+        return ErrorText.plain(error)
     }
 
     if let target = folder?.appending(path: name, directoryHint: .isDirectory), FileManager.default.fileExists(atPath: target.path(percentEncoded: false)) {

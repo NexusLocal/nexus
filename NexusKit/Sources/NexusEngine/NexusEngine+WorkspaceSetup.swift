@@ -300,7 +300,7 @@ extension NexusEngine {
         } catch {
             // A failure in a worktree that went away says nothing about the workspace.
             if FileManager.default.fileExists(atPath: workspace.worktree) {
-                workspace.state = Self.adding(String(describing: error), to: workspace.state)
+                workspace.state = Self.adding(ErrorText.plain(error), to: workspace.state)
             }
 
             // An old digest would give a new setup after each setup that fails.

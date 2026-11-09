@@ -120,7 +120,7 @@ extension NexusEngine {
                     }
                 } catch {
                     runningProcesses[id] = nil
-                    plannedProcessProblems[process.owner, default: []].append("The background process \(process.command) does not run. \(error)")
+                    plannedProcessProblems[process.owner, default: []].append("The background process \(process.command) does not run. \(ErrorText.plain(error))")
                 }
             }
 
@@ -411,7 +411,7 @@ extension NexusEngine {
 
             return await backgroundProcesses(of: Self.backgroundCommands(of: switched, preset: plan.preset), in: list) + apps
         } catch {
-            plannedProcessProblems[owner, default: []].append("Nexus cannot start the background processes of the main checkout. \(error)")
+            plannedProcessProblems[owner, default: []].append("Nexus cannot start the background processes of the main checkout. \(ErrorText.plain(error))")
             return apps
         }
     }
@@ -480,7 +480,7 @@ extension NexusEngine {
             configuration = try await self.configuration(of: sites[0], folder: folder)
             mainProbeFailures[key] = nil
         } catch {
-            mainProbeFailures[key] = MainProbeFailure(nextProbe: .now + Self.mainProbeWait, reason: String(describing: error))
+            mainProbeFailures[key] = MainProbeFailure(nextProbe: .now + Self.mainProbeWait, reason: ErrorText.plain(error))
             throw error
         }
 

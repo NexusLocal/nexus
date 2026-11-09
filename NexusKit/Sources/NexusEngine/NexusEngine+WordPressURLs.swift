@@ -93,7 +93,7 @@ extension NexusEngine {
             let domain = try await wpCLI(["eval", "echo is_multisite() ? get_network()->domain : '';", "--skip-plugins", "--skip-themes"]).trimmingCharacters(in: .whitespacesAndNewlines)
             networkDomain = domain.isEmpty ? nil : domain
         } catch {
-            throw RuntimeError.unsupported("WordPress cannot read the database \(name) with DB_USER and DB_PASSWORD of \(target.configName). Nexus changed nothing. \(error)")
+            throw RuntimeError.unsupported("WordPress cannot read the database \(name) with DB_USER and DB_PASSWORD of \(target.configName). Nexus changed nothing. \(ErrorText.plain(error))")
         }
 
         let newDomain = WordPressURL.domain(of: plan.to)
@@ -157,7 +157,7 @@ extension NexusEngine {
 
             return (lines + files.notes).joined(separator: " ")
         } catch {
-            throw RuntimeError.unsupported("\(lines.joined(separator: " ")) But Nexus did not change the configuration. \(error) \"Undo…\" puts back the database.")
+            throw RuntimeError.unsupported("\(lines.joined(separator: " ")) But Nexus did not change the configuration. \(ErrorText.plain(error)) \"Undo…\" puts back the database.")
         }
     }
 
@@ -195,7 +195,7 @@ extension NexusEngine {
             do {
                 try await copier.restore(URL(filePath: path), as: change.database)
             } catch {
-                throw RuntimeError.unsupported("Nexus could not put back the database \(change.database). \(error) The dumps stay in the trash. See: nexus db dumps")
+                throw RuntimeError.unsupported("Nexus could not put back the database \(change.database). \(ErrorText.plain(error)) The dumps stay in the trash. See: nexus db dumps")
             }
 
             lines.insert("Nexus put back the database \(change.database) from the dump of \(Self.changeTime(change.date)).", at: 0)
@@ -271,9 +271,9 @@ extension NexusEngine {
         do {
             try await copier.drop(name)
             try await copier.restore(dump, as: name)
-            return RuntimeError.unsupported("\(error) Nexus put back the database \(name) from the dump.")
+            return RuntimeError.unsupported("\(ErrorText.plain(error)) Nexus put back the database \(name) from the dump.")
         } catch let restoreError {
-            return RuntimeError.unsupported("\(error) Nexus could not put back the database \(name) either. \(restoreError) Put it back with: nexus db restore \(dump.lastPathComponent) --to \(instance) --as \(name)")
+            return RuntimeError.unsupported("\(ErrorText.plain(error)) Nexus could not put back the database \(name) either. \(ErrorText.plain(restoreError)) Put it back with: nexus db restore \(dump.lastPathComponent) --to \(instance) --as \(name)")
         }
     }
 
