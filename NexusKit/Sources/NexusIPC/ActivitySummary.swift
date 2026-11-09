@@ -30,7 +30,7 @@ extension NexusRequest {
         switch self {
         case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules,
              .customSettings, .databases, .databaseSizes, .sourceDatabases, .workspaceEnv, .siteDatabases, .databaseConnections, .serverDatabases, .wordPressSite, .backgroundPreset,
-             .workspaceSettings, .dumps, .probe, .tool, .inspectBackup:
+             .workspaceSettings, .dumps, .probe, .tool, .inspectBackup, .inspectDump:
             true
         case .lan(let enabled):
             enabled == nil

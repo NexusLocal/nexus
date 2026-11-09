@@ -31,7 +31,7 @@ struct SiteDatabasesSection: View {
         } header: {
             Text("Databases")
         } footer: {
-            Text("Nexus finds these connections in the configuration of the application. \"Open\" uses the app of Settings > Databases > Open with.")
+            Text("Nexus finds these connections in the configuration of the application. \"Import dump…\" loads a dump file into that database. \"Open\" uses the app of Settings > Databases > Open with.")
         }
         .task(id: "\(site.host) \(site.php) \(site.folder) \(instancePorts)") {
             await load()
@@ -57,6 +57,12 @@ struct SiteDatabasesSection: View {
                     .rowValue()
 
                 if let service {
+                    if !database.database.isEmpty {
+                        Button("Import dump…") {
+                            model.sheet = .importDatabase(instance: service.id, dumpInto: database.database)
+                        }
+                    }
+
                     OpenDatabaseButton(kind: service.kind, url: service.databaseURL(database.database.isEmpty ? nil : database.database))
                 }
             }

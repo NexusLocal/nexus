@@ -418,6 +418,8 @@ public actor NexusEngine {
             case .importDump(let request):
                 // An import can take minutes, so it does not wait in the queue of the changes.
                 return .done(message: try await importDump(request))
+            case .inspectDump(let inspection):
+                return .dumpInfo(try await inspectDump(inspection))
             case .mailStatus:
                 return .mailStatus(try await mailStatus())
             case .clearOutbox:

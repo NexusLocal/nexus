@@ -20,7 +20,8 @@ enum SheetKind: Identifiable {
     case addSite(folder: URL?, manyProjects: Bool)
     case editAliases(host: String)
     // source holds the server of a WordPress site for "Copy to Nexus…" (Phase 4, 3d).
-    case importDatabase(instance: String, source: WordPressCopySource? = nil)
+    // dumpInto holds the database of a row on the Site screen for "Import dump…".
+    case importDatabase(instance: String, source: WordPressCopySource? = nil, dumpInto: String? = nil)
     case portInUse(service: String, holder: PortHolder)
 
     var id: String {
@@ -29,7 +30,7 @@ enum SheetKind: Identifiable {
         case .importSite: "import-site"
         case .addSite: "add-site"
         case .editAliases(let host): "aliases-\(host)"
-        case .importDatabase(let instance, _): "import-\(instance)"
+        case .importDatabase(let instance, _, let dumpInto): "import-\(instance)\(dumpInto.map { "-\($0)" } ?? "")"
         case .portInUse(let service, _): "port-\(service)"
         }
     }

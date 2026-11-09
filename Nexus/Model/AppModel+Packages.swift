@@ -388,12 +388,79 @@ extension AppModel {
 
     func importTask(instance: String, name: String) -> TaskInfo? {
         tasks.first { task in
-            guard case .copyDatabase(_, let taskInstance, let taskName) = task.work else {
-                return false
+            switch task.work {
+            case .copyDatabase(_, let taskInstance, let taskName), .importDump(_, let taskInstance, let taskName):
+                taskInstance == instance && taskName == name
+            default:
+                false
             }
-
-            return taskInstance == instance && taskName == name
         }
+    }
+
+    // What nexusd finds in a dump file before the import. A problem in the file is part of the
+    // answer. Only a failure of the request is a failure here.
+    func inspectDump(_ inspection: DumpInspection) async -> Result<DumpInfo, ImportProblem> {
+        switch await outcome(of: .inspectDump(inspection)) {
+        case .answer(.dumpInfo(let info)):
+            .success(info)
+        case .failure(let message):
+            .failure(ImportProblem(message: message))
+        default:
+            .failure(ImportProblem(message: "Nexus cannot read the dump file now."))
+        }
+    }
+
+    // The same flow as a copy: the sheet shows the end while it is open, and an alert shows it
+    // otherwise. A dump that replaced data can leave a database that is not complete. So a stop
+    // with the sheet closed also shows as an alert.
+    func startDumpImport(_ request: DumpImport) {
+        let instance = request.target.instanceID
+        let key = Self.importKey(instance: instance, name: request.name)
+        let file = URL(filePath: request.file).lastPathComponent
+        runningImports.insert(key)
+        importResults[key] = nil
+        importInSheet = key
+
+        Task {
+            let outcome = await outcome(of: .importDump(request))
+            runningImports.remove(key)
+            let inSheet = importInSheet == key
+
+            switch outcome {
+            case .answer(.done):
+                if inSheet {
+                    importInSheet = nil
+                    sheet = nil
+                }
+                if let service = service(instance) {
+                    loadDatabases(of: service)
+                }
+                Notifier.post("The import is done", "\(file) is in \(request.name) now.", setting: AppPreference.notifyImportDone)
+            case .answer(.stopped(let message)):
+                if inSheet {
+                    importResults[key] = .stopped(message)
+                } else if request.existing != nil {
+                    failure = ActionFailure(title: "The import of \(file) stopped", message: message, place: .window)
+                }
+            case .failure(let message):
+                showDumpFailure(message, file: file, key: key, inSheet: inSheet)
+            case .portInUse(let conflict):
+                showDumpFailure(conflict.description, file: file, key: key, inSheet: inSheet)
+            default:
+                break
+            }
+        }
+    }
+
+    private func showDumpFailure(_ message: String, file: String, key: String, inSheet: Bool) {
+        Notifier.post("\(file) was not imported", message, setting: AppPreference.notifyImportDone)
+
+        guard inSheet else {
+            failure = ActionFailure(title: "\(file) was not imported", message: message, place: .window)
+            return
+        }
+
+        importResults[key] = .failed(message)
     }
 
     // The import goes on when the user closes the sheet. A failure then shows as an alert in

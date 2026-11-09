@@ -59,8 +59,8 @@ struct MainWindow: View {
                     Color.clear
                         .onAppear { model.sheet = nil }
                 }
-            case .importDatabase(let instance, let source):
-                ImportDatabaseSheet(instance: instance, source: source)
+            case .importDatabase(let instance, let source, let dumpInto):
+                ImportDatabaseSheet(instance: instance, source: source, dumpInto: dumpInto)
             case .portInUse(let id, let holder):
                 if let service = model.service(id) {
                     PortInUseSheet(service: service, holder: holder)

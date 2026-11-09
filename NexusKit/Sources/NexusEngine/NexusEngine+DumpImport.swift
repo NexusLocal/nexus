@@ -102,14 +102,122 @@ extension NexusEngine {
         }
     }
 
-    // A plain archive has one dump. With more than one, the request names it.
-    private func chosenDump(in file: URL, container: DumpContainer, wanted: String?) async throws -> String? {
-        guard let list = container.listArguments else {
+    // What the sheet shows before the import: the dumps of an archive, the kind, the tables of the
+    // dump, and the tables of the database when it exists. A problem is an answer, not an error. So
+    // the sheet can show it under the file.
+    func inspectDump(_ inspection: DumpInspection) async throws -> DumpInfo {
+        let file = URL(filePath: inspection.file, directoryHint: .notDirectory)
+        let fileName = file.lastPathComponent
+
+        guard FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) else {
+            return DumpInfo(problem: "\(file.path(percentEncoded: false)) does not exist.")
+        }
+
+        let container = DumpContainer.of(fileName)
+        let dumps = try await archiveDumps(in: file, container: container)
+        var info = DumpInfo(dumps: dumps, bytes: Self.fileSize(file) ?? 0)
+
+        if container.isArchive, dumps.isEmpty {
+            info.problem = "\(fileName) has no .sql file. Choose a .sql or .sql.gz file, or an archive with such a file."
+            return info
+        }
+
+        info.dump = container.isArchive ? inspection.dump.flatMap { dumps.contains($0) ? $0 : nil } ?? (dumps.count == 1 ? dumps[0] : nil) : nil
+
+        if container.isArchive, info.dump == nil {
+            return info
+        }
+
+        let format = try await dumpFormat(of: file, container: container, dump: info.dump)
+        info.format = format
+
+        if let target = inspection.target, let format, let kind = await databaseRuntime(target.instanceID)?.kind, !format.fits(kind) {
+            info.problem = "\(info.dump.map { "\(fileName) (\($0))" } ?? fileName) is a dump of \(format.displayName). Choose an instance of \(format.displayName)."
+            return info
+        }
+
+        info.tables = try await dumpTables(of: file, container: container, dump: info.dump, format: format)
+
+        if let target = inspection.target, let name = inspection.name.flatMap({ try? DatabaseName.validated($0) }) {
+            info.existingTables = await existingTables(of: name, on: target)
+        }
+
+        return info
+    }
+
+    // The names of the tables that the dump makes, in their order. A file of pg_dump -Fc has a
+    // binary list. Nexus does not read it, so the sheet then names no tables.
+    private func dumpTables(of file: URL, container: DumpContainer, dump: String?, format: DumpFormat?) async throws -> [String]? {
+        let pattern: String
+
+        switch format {
+        case .mysql, nil:
+            pattern = "^CREATE TABLE (IF NOT EXISTS )?`[^`]+`"
+        case .postgresql:
+            pattern = "^CREATE TABLE [^ (]+"
+        case .postgresqlCustom:
             return nil
         }
 
+        let script = "( \(container.readerScript(dump: dump)) ) 2>/dev/null | LC_ALL=C /usr/bin/grep -E -o \"$PATTERN\"; exit 0"
+        let output = try await CommandRunner.run(Command(executable: URL(filePath: "/bin/bash"), arguments: ["-c", script, "reader", file.path(percentEncoded: false)] + (dump.map { [$0] } ?? []), environment: ["PATTERN": pattern]))
+
+        return Self.tableNames(in: output.standardOutput)
+    }
+
+    static func tableNames(in lines: String) -> [String] {
+        var names: [String] = []
+
+        for line in lines.split(whereSeparator: \.isNewline) {
+            let last = line.split(separator: " ").last.map(String.init) ?? ""
+            let name = last.trimmingCharacters(in: CharacterSet(charactersIn: "`\"")).replacingOccurrences(of: "public.", with: "")
+
+            if !name.isEmpty, !names.contains(name) {
+                names.append(name)
+            }
+        }
+
+        return names
+    }
+
+    // nil when the database does not exist, or when its server does not answer.
+    private func existingTables(of name: String, on target: DatabaseTarget) async -> [String]? {
+        guard let connection = try? await client(for: target) else {
+            return nil
+        }
+
+        let (tools, client, work) = connection
+        defer { try? FileManager.default.removeItem(at: work) }
+
+        guard (try? client.prepare()) != nil, (try? await client.exists(name)) == true else {
+            return nil
+        }
+
+        let mysql = tools.kind.usesMySQLProtocol
+        let sql = mysql
+            ? "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = '\(name)' AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME"
+            : "SELECT tablename FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY tablename"
+        let output = (try? await client.query(sql, database: mysql ? nil : name)) ?? ""
+
+        return output.split(whereSeparator: \.isNewline).map(String.init)
+    }
+
+    private func archiveDumps(in file: URL, container: DumpContainer) async throws -> [String] {
+        guard let list = container.listArguments else {
+            return []
+        }
+
         let output = try await CommandRunner.run(Command(executable: URL(filePath: list[0]), arguments: Array(list.dropFirst()) + [file.path(percentEncoded: false)]))
-        let dumps = DumpArchive.dumps(in: output.standardOutput.split(whereSeparator: \.isNewline).map(String.init))
+        return DumpArchive.dumps(in: output.standardOutput.split(whereSeparator: \.isNewline).map(String.init))
+    }
+
+    // A plain archive has one dump. With more than one, the request names it.
+    private func chosenDump(in file: URL, container: DumpContainer, wanted: String?) async throws -> String? {
+        guard container.isArchive else {
+            return nil
+        }
+
+        let dumps = try await archiveDumps(in: file, container: container)
         let archive = file.lastPathComponent
 
         if let wanted {
@@ -210,20 +318,4 @@ struct DumpLoad: Sendable {
     let format: DumpFormat
     let name: String
     let replacesTables: Bool
-}
-
-extension DatabaseTarget {
-    var instanceID: String {
-        switch self {
-        case .instance(let id): id
-        case .workspace(_, _, let instance): instance
-        }
-    }
-
-    var serverName: String {
-        switch self {
-        case .instance(let id): id
-        case .workspace(_, let name, let instance): "the server of the workspace \(name) (\(instance))"
-        }
-    }
 }

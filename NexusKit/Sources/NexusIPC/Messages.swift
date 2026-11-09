@@ -509,6 +509,20 @@ public struct DatabaseConnectionInfo: Codable, Sendable, Equatable {
 public enum DatabaseTarget: Codable, Sendable, Equatable {
     case instance(String)
     case workspace(site: String, name: String, instance: String)
+
+    public var instanceID: String {
+        switch self {
+        case .instance(let id): id
+        case .workspace(_, _, let instance): instance
+        }
+    }
+
+    public var serverName: String {
+        switch self {
+        case .instance(let id): id
+        case .workspace(_, let name, let instance): "the server of the workspace \(name) (\(instance))"
+        }
+    }
 }
 
 // usedBy names the sites whose .env points to this database.
@@ -610,6 +624,45 @@ public struct DumpImport: Codable, Sendable, Equatable {
         self.target = target
         self.name = name
         self.existing = existing
+    }
+}
+
+// What the sheet "Import a database" asks before an import of a dump file. With a target and a
+// name, nexusd also reads the tables of that database when it exists.
+public struct DumpInspection: Codable, Sendable, Equatable {
+    public var file: String
+    public var dump: String?
+    public var target: DatabaseTarget?
+    public var name: String?
+
+    public init(file: String, dump: String? = nil, target: DatabaseTarget? = nil, name: String? = nil) {
+        self.file = file
+        self.dump = dump
+        self.target = target
+        self.name = name
+    }
+}
+
+// dumps lists the dumps of an archive. dump is the one that the import uses, nil when the archive
+// has more than one and the user did not choose. tables are the tables of the dump. existingTables
+// is nil when the database does not exist. problem says why the import cannot start.
+public struct DumpInfo: Codable, Sendable, Equatable {
+    public var dumps: [String]
+    public var dump: String?
+    public var format: DumpFormat?
+    public var bytes: Int64
+    public var tables: [String]?
+    public var existingTables: [String]?
+    public var problem: String?
+
+    public init(dumps: [String] = [], dump: String? = nil, format: DumpFormat? = nil, bytes: Int64 = 0, tables: [String]? = nil, existingTables: [String]? = nil, problem: String? = nil) {
+        self.dumps = dumps
+        self.dump = dump
+        self.format = format
+        self.bytes = bytes
+        self.tables = tables
+        self.existingTables = existingTables
+        self.problem = problem
     }
 }
 
@@ -987,6 +1040,7 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     // file is a path, or a name in the Nexus trash.
     case restoreDump(file: String, instance: String, name: String)
     case importDump(DumpImport)
+    case inspectDump(DumpInspection)
     // The mail service (Phase 3): its ports, the outbox and the settings.
     case mailStatus
     case clearOutbox
@@ -1151,6 +1205,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case workspaceEnv([WorkspaceEnvKey])
     case workspaceSettings(WorkspaceSettings)
     case dumps([DatabaseDump])
+    case dumpInfo(DumpInfo)
     case backgroundPreset([String])
     case mailStatus(MailStatus)
     case siteMail(SiteMail)

@@ -56,7 +56,11 @@ enum DebugLaunch {
                 model.startImport(SiteImport(backup: backup.path(percentEncoded: false), name: name, parent: folder, database: value(of: "--database")), format: nil)
             }
         case "add-site": model.sheet = .addSite(folder: value(of: "--folder").map { URL(filePath: $0, directoryHint: .isDirectory) } ?? URL(filePath: NSHomeDirectory()).appending(path: "Documents/clients/foo"), manyProjects: false)
-        case "import": model.sheet = .importDatabase(instance: "mysql-8.0")
+        // --dump-file /path opens the sheet with a dump file and no file panel. --dump-into shop
+        // opens it as "Import dump…" of the Site screen does.
+        case "import":
+            ImportDatabaseSheet.debugDumpFile = value(of: "--dump-file").map { URL(filePath: $0) }
+            model.sheet = .importDatabase(instance: value(of: "--instance") ?? "mysql-8.0", dumpInto: value(of: "--dump-into"))
         case "port":
             if let blocked = model.blockedServices.first {
                 model.sheet = .portInUse(service: blocked.service.id, holder: blocked.holder)

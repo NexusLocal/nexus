@@ -70,6 +70,14 @@ struct DumpImportTests {
         }
     }
 
+    @Test func theTablesOfADumpComeInTheirOrderAndOnce() {
+        let mysql = "CREATE TABLE `users`\nCREATE TABLE IF NOT EXISTS `orders`\nCREATE TABLE `users`\n"
+        let postgres = "CREATE TABLE public.users\nCREATE TABLE audit.events\n"
+
+        #expect(NexusEngine.tableNames(in: mysql) == ["users", "orders"])
+        #expect(NexusEngine.tableNames(in: postgres) == ["users", "audit.events"])
+    }
+
     @Test func aSecondDumpInTheSameSecondGetsItsOwnFile() throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "nexus-trash-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
