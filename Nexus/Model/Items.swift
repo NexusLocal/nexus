@@ -191,6 +191,8 @@ struct SiteItem: Identifiable, Hashable {
     var workspaceSeeders = false
     var migrationCommand: String?
     var offersEmptyDatabases = false
+    // The document root that the user chose. nil is automatic.
+    var documentRootSetting: String?
 
     var id: String { host }
 

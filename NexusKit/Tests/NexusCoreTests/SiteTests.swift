@@ -22,6 +22,52 @@ struct SiteTests {
         #expect(Site(host: "b.test", folder: plain, php: "8.5").documentRoot.lastPathComponent == "plain")
     }
 
+    @Test func aChosenDocumentRootComesBeforePublic() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let laravel = try makeFolder("laravel")
+        _ = try makeFolder("laravel/public")
+        _ = try makeFolder("laravel/htdocs")
+
+        let site = Site(host: "a.test", folder: laravel, php: "8.5", documentRootFolder: "htdocs")
+
+        #expect(site.documentRoot.lastPathComponent == "htdocs")
+    }
+
+    @Test func aDocumentRootIsStoredAsAFolderInTheSiteFolder() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let site = try makeFolder("site")
+        let nested = try makeFolder("site/build/web")
+
+        #expect(try Site.documentRootFolder("build/web", in: site) == "build/web")
+        #expect(try Site.documentRootFolder("./build/web/", in: site) == "build/web")
+        #expect(try Site.documentRootFolder(nested.path(percentEncoded: false), in: site) == "build/web")
+    }
+
+    @Test func anEmptyDocumentRootOrTheSiteFolderIsAutomatic() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let site = try makeFolder("site")
+
+        #expect(try Site.documentRootFolder("", in: site) == nil)
+        #expect(try Site.documentRootFolder(".", in: site) == nil)
+        #expect(try Site.documentRootFolder(site.path(percentEncoded: false), in: site) == nil)
+    }
+
+    @Test func aDocumentRootOutsideTheSiteFolderIsRefused() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let site = try makeFolder("site")
+        _ = try makeFolder("other")
+
+        #expect(throws: DocumentRootError.outside("../other")) { try Site.documentRootFolder("../other", in: site) }
+        #expect(throws: DocumentRootError.missing("dist")) { try Site.documentRootFolder("dist", in: site) }
+    }
+
+    @Test func aWorkspaceServesTheSameDocumentRoot() {
+        let main = Site(host: "shop.test", folder: URL(filePath: "/w/shop", directoryHint: .isDirectory), php: "8.5", documentRootFolder: "htdocs")
+        let workspace = Workspace(name: "fix", worktree: "/w/fix", folder: "/w/fix")
+
+        #expect(workspace.site(of: [main], tld: "test")?.documentRoot.path(percentEncoded: false) == "/w/fix/htdocs/")
+    }
+
     @Test func eachSubfolderOfAParkedFolderIsASite() throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let parked = try makeFolder("parked")

@@ -133,7 +133,20 @@ struct SiteScreen: View {
 
                 if kind == .php {
                     LabeledContent("Document root") {
-                        PathText(site.documentRoot)
+                        HStack {
+                            PathText(site.documentRoot)
+
+                            if site.documentRootSetting != nil {
+                                Button("Automatic") {
+                                    change(SiteChange(documentRoot: "")) {}
+                                }
+                                .help("Serve public/ when the folder has one, else the folder itself.")
+                            }
+
+                            Button("Choose…") {
+                                chooseDocumentRoot()
+                            }
+                        }
                     }
                     .labeledContentStyle(.rowValue)
                 }
@@ -968,6 +981,22 @@ struct SiteScreen: View {
         }
 
         change(SiteChange(workspaceKeys: completeKeys)) { ownKeys = site.workspaceKeys }
+    }
+
+    // Each workspace serves the same folder in its worktree.
+    private func chooseDocumentRoot() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(filePath: (site.documentRoot as NSString).expandingTildeInPath, directoryHint: .isDirectory)
+        panel.message = "Choose the folder that the web server serves. It must be in the folder of \(site.host)."
+
+        guard panel.runModal() == .OK, let chosen = panel.url else {
+            return
+        }
+
+        change(SiteChange(documentRoot: chosen.path(percentEncoded: false))) {}
     }
 
     private func change(_ change: SiteChange, revert: @escaping () -> Void) {

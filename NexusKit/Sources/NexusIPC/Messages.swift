@@ -54,6 +54,8 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let workspaceSeeders: Bool?
     // The command of the migrations of a Node.js app, for an empty database of a workspace.
     public let migrationCommand: String?
+    // The document root that the user chose, as a folder in the site folder. nil is automatic.
+    public let documentRootSetting: String?
 
     public init(
         hosts: [String],
@@ -86,8 +88,10 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         projectType: PHPProjectType? = nil,
         workspaceDatabases: WorkspaceDatabaseKind? = nil,
         workspaceSeeders: Bool? = nil,
-        migrationCommand: String? = nil
+        migrationCommand: String? = nil,
+        documentRootSetting: String? = nil
     ) {
+        self.documentRootSetting = documentRootSetting
         self.hosts = hosts
         self.folder = folder
         self.documentRoot = documentRoot
@@ -374,6 +378,8 @@ public struct SiteChange: Codable, Sendable, Equatable {
     public var address: String?
     public var workspaceDatabases: WorkspaceDatabaseChoice?
     public var workspaceSeeders: Bool?
+    // A folder in the site folder. An empty value gives the automatic document root again.
+    public var documentRoot: String?
 
     public init(
         php: String? = nil,
@@ -390,8 +396,10 @@ public struct SiteChange: Codable, Sendable, Equatable {
         command: String? = nil,
         address: String? = nil,
         workspaceDatabases: WorkspaceDatabaseChoice? = nil,
-        workspaceSeeders: Bool? = nil
+        workspaceSeeders: Bool? = nil,
+        documentRoot: String? = nil
     ) {
+        self.documentRoot = documentRoot
         self.php = php
         self.server = server
         self.aliases = aliases

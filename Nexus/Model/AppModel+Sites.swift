@@ -39,7 +39,8 @@ extension SiteItem {
             workspaceDatabases: info.workspaceDatabases,
             workspaceSeeders: info.workspaceSeeders ?? false,
             migrationCommand: info.migrationCommand,
-            offersEmptyDatabases: info.offersEmptyDatabases
+            offersEmptyDatabases: info.offersEmptyDatabases,
+            documentRootSetting: info.documentRootSetting
         )
     }
 }

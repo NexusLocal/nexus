@@ -32,7 +32,8 @@ public enum SiteKind: String, Codable, Sendable, CaseIterable {
 // is on, and mainProcesses of nil is off. A site from before D67 has no runsAs, and it is a PHP
 // site. A command of nil comes from package.json. A site keeps its PHP version, its command and its
 // address when it runs as another kind, so a change back restores them. workspaceDatabases of nil
-// follows Settings > Workspaces. workspaceSeeders of nil is off.
+// follows Settings > Workspaces. workspaceSeeders of nil is off. documentRootFolder is a folder in
+// the site folder that the user chose. So a workspace serves the same folder in its worktree.
 public struct Site: Codable, Sendable, Equatable {
     public static let commandFromProject = "project"
 
@@ -53,6 +54,7 @@ public struct Site: Codable, Sendable, Equatable {
     public var address: String?
     public var workspaceDatabases: WorkspaceDatabaseKind?
     public var workspaceSeeders: Bool?
+    public var documentRootFolder: String?
 
     public init(
         host: String,
@@ -71,7 +73,8 @@ public struct Site: Codable, Sendable, Equatable {
         command: String? = nil,
         address: String? = nil,
         workspaceDatabases: WorkspaceDatabaseKind? = nil,
-        workspaceSeeders: Bool? = nil
+        workspaceSeeders: Bool? = nil,
+        documentRootFolder: String? = nil
     ) {
         self.host = host
         self.folder = folder
@@ -90,6 +93,7 @@ public struct Site: Codable, Sendable, Equatable {
         self.address = address
         self.workspaceDatabases = workspaceDatabases
         self.workspaceSeeders = workspaceSeeders
+        self.documentRootFolder = documentRootFolder
     }
 
     public var kind: SiteKind {
@@ -136,8 +140,13 @@ public struct Site: Codable, Sendable, Equatable {
 
     // The document root is public/ when the folder has one, else the folder itself (D33). Radicle
     // serves public/ too. Bedrock serves web/. A classic WordPress site without an index.php of
-    // its own serves the folder below it that holds WordPress (Phase 4, 3a).
+    // its own serves the folder below it that holds WordPress (Phase 4, 3a). A folder that the user
+    // chose comes first.
     public var documentRoot: URL {
+        if let documentRootFolder {
+            return folder.appending(path: documentRootFolder, directoryHint: .isDirectory)
+        }
+
         let publicFolder = folder.appending(path: "public", directoryHint: .isDirectory)
         let webFolder = folder.appending(path: "web", directoryHint: .isDirectory)
 
@@ -154,6 +163,33 @@ public struct Site: Codable, Sendable, Equatable {
         }
 
         return folder
+    }
+
+    // A chosen document root is a folder in the site folder, as a path from the site folder. An
+    // absolute path in the site folder becomes such a path. An empty value or the site folder
+    // itself gives nil, so the site gets the automatic document root again.
+    public static func documentRootFolder(_ value: String, in folder: URL) throws -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+
+        if trimmed.isEmpty {
+            return nil
+        }
+
+        let chosen = URL(filePath: (trimmed as NSString).expandingTildeInPath, directoryHint: .isDirectory, relativeTo: folder).standardizedFileURL
+
+        guard isFolder(chosen) else {
+            throw DocumentRootError.missing(trimmed)
+        }
+
+        let siteFolder = RealPath.of(folder)
+        let chosenFolder = RealPath.of(chosen)
+
+        guard RealPath.contains(siteFolder, chosenFolder) else {
+            throw DocumentRootError.outside(trimmed)
+        }
+
+        let relative = String(chosenFolder.dropFirst(siteFolder.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return relative.isEmpty ? nil : relative
     }
 
     private static func isFolder(_ folder: URL) -> Bool {
@@ -305,6 +341,20 @@ extension SiteLayoutEntry {
             .site(HostName.movingTLD(host, from: old, to: new))
         case .group(let name, let hosts):
             .group(name: name, hosts: hosts.map { HostName.movingTLD($0, from: old, to: new) })
+        }
+    }
+}
+
+public enum DocumentRootError: Error, Equatable, CustomStringConvertible {
+    case missing(String)
+    case outside(String)
+
+    public var description: String {
+        switch self {
+        case .missing(let folder):
+            "The folder \(folder) does not exist. Give a folder in the site folder, for example htdocs."
+        case .outside(let folder):
+            "\(folder) is not in the site folder. The document root must be a folder in the site folder."
         }
     }
 }

@@ -1081,7 +1081,7 @@ struct SiteCommand: AsyncParsableCommand {
     }
 
     struct Edit: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Changes the kind, the PHP version, the Node version, the web server or the aliases of a site.")
+        static let configuration = CommandConfiguration(abstract: "Changes the kind, the PHP version, the Node version, the web server, the document root or the aliases of a site.")
 
         @Argument(help: "The host of the site.") var host: String
         @Option(help: "php, node or proxy.") var runsAs: SiteKind?
@@ -1103,6 +1103,14 @@ struct SiteCommand: AsyncParsableCommand {
         @Option(name: .customLong("main-processes"), help: "on or off. With on, the main checkout runs the background processes.") var mainProcesses: OnOff?
         @Option(name: .customLong("workspace-databases"), help: "default, copy or empty. What a new workspace gets: a copy of the main database or an empty database. default follows Settings > Workspaces. A WordPress site always gets a copy.") var workspaceDatabases: WorkspaceDatabaseChoice?
         @Option(name: .customLong("workspace-seeders"), help: "on or off. With on, a Laravel site with an empty database runs php artisan db:seed in a new workspace.") var workspaceSeeders: OnOff?
+        @Option(name: .customLong("document-root"), help: "The folder in the site folder that the web server serves, for example htdocs. Each workspace serves the same folder.") var documentRoot: String?
+        @Flag(help: "Use the automatic document root again: public/ when the site folder has one.") var noDocumentRoot = false
+
+        func validate() throws {
+            if documentRoot != nil, noDocumentRoot {
+                throw ValidationError("Give --document-root or --no-document-root, not both.")
+            }
+        }
 
         private var commandChange: [String]? {
             noWorkspaceCommands ? [] : (workspaceCommands.isEmpty ? nil : workspaceCommands)
@@ -1133,7 +1141,8 @@ struct SiteCommand: AsyncParsableCommand {
                 command: command,
                 address: address,
                 workspaceDatabases: workspaceDatabases,
-                workspaceSeeders: workspaceSeeders.map { $0 == .on }
+                workspaceSeeders: workspaceSeeders.map { $0 == .on },
+                documentRoot: noDocumentRoot ? "" : documentRoot
             )
 
             try finish(try await send(.editSite(host: host, change: change)))

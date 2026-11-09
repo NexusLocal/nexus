@@ -431,7 +431,7 @@ extension Workspace {
         }
 
         let hosts = hosts(of: sites, tld: tld)
-        return Site(host: hosts[0], folder: URL(filePath: folder, directoryHint: .isDirectory), aliases: Array(hosts.dropFirst()), php: main.php, server: main.server, node: main.node, runsAs: main.runsAs, command: main.command, address: main.address)
+        return Site(host: hosts[0], folder: URL(filePath: folder, directoryHint: .isDirectory), aliases: Array(hosts.dropFirst()), php: main.php, server: main.server, node: main.node, runsAs: main.runsAs, command: main.command, address: main.address, documentRootFolder: main.documentRootFolder)
     }
 }
 
