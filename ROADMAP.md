@@ -20,6 +20,8 @@ Small items for the next release.
 - **Commands before the removal of a workspace,** for example `php artisan queue:clear`.
 - **A dump file for each new workspace.** A site can name a dump file, for example a scrubbed copy
   of production. Each new workspace loads it into its own database.
+- **Import a dump file.** Load a `.sql` or `.sql.gz` file into a database, in the app and with
+  the `nexus` command.
 - **Better error pages:** a list of your sites for a name that Nexus does not know, and a wait page
   while PHP restarts.
 - **Plain error texts.** Nexus shows each error as a plain sentence, not as a raw system text.
