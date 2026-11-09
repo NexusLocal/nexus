@@ -15,14 +15,30 @@ public protocol ManifestSource: Sendable {
 public struct HTTPManifestSource: ManifestSource {
     public init() {}
 
+    // A failure on the side of GitHub gets one more try through its API (GitHubReleaseAsset).
     public func manifest(from url: URL) async throws -> Manifest {
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, status) = try await Self.data(for: URLRequest(url: url))
 
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw RuntimeError.httpStatus(http.statusCode, url)
+        if (200..<300).contains(status) {
+            return try Manifest.decode(from: data)
         }
 
-        return try Manifest.decode(from: data)
+        guard GitHubReleaseAsset.isTemporaryFailure(status), let request = try? await GitHubReleaseAsset.apiRequest(for: url) else {
+            throw RuntimeError.httpStatus(status, url)
+        }
+
+        let (apiData, apiStatus) = try await Self.data(for: request)
+
+        guard (200..<300).contains(apiStatus) else {
+            throw RuntimeError.httpStatus(status, url)
+        }
+
+        return try Manifest.decode(from: apiData)
+    }
+
+    private static func data(for request: URLRequest) async throws -> (Data, Int) {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        return (data, (response as? HTTPURLResponse)?.statusCode ?? 200)
     }
 }
 

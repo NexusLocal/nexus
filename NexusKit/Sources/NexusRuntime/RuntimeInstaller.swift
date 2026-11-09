@@ -24,12 +24,25 @@ public protocol PackageDownloader: Sendable {
 public struct URLSessionDownloader: PackageDownloader {
     public init() {}
 
+    // A failure on the side of GitHub gets one more try through its API (GitHubReleaseAsset).
     public func download(_ url: URL, progress: @escaping @Sendable (DownloadProgress) -> Void) async throws -> URL {
+        do {
+            return try await transfer(URLRequest(url: url), of: url, progress: progress)
+        } catch RuntimeError.httpStatus(let status, _) where GitHubReleaseAsset.isTemporaryFailure(status) {
+            guard let request = try? await GitHubReleaseAsset.apiRequest(for: url) else {
+                throw RuntimeError.httpStatus(status, url)
+            }
+
+            return try await transfer(request, of: url, progress: progress)
+        }
+    }
+
+    private func transfer(_ request: URLRequest, of url: URL, progress: @escaping @Sendable (DownloadProgress) -> Void) async throws -> URL {
         let transfer = Transfer()
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                let task = URLSession.shared.downloadTask(with: url) { file, response, error in
+                let task = URLSession.shared.downloadTask(with: request) { file, response, error in
                     continuation.resume(with: Result { try Self.keep(file, response: response, error: error, url: url) })
                 }
 
