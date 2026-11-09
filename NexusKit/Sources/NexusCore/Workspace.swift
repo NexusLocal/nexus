@@ -248,17 +248,21 @@ public struct WorkspaceLinks: Codable, Sendable, Hashable {
     public let network: Bool
     public var done: Bool
     public let subsites: [Move]
+    // The tables that WP-CLI changes. nil is each table with the prefix. A dump file gives the
+    // tables that its filter did not change (owner, 2026-11-09).
+    public let tables: [String]?
 
-    public init(from: [String], to: String, network: Bool, done: Bool = false, subsites: [Move] = []) {
+    public init(from: [String], to: String, network: Bool, done: Bool = false, subsites: [Move] = [], tables: [String]? = nil) {
         self.from = from
         self.to = to
         self.network = network
         self.done = done
         self.subsites = subsites
+        self.tables = tables
     }
 
     private enum CodingKeys: String, CodingKey {
-        case from, to, network, done, subsites
+        case from, to, network, done, subsites, tables
     }
 
     public init(from decoder: any Decoder) throws {
@@ -269,6 +273,7 @@ public struct WorkspaceLinks: Codable, Sendable, Hashable {
         network = try container.decode(Bool.self, forKey: .network)
         done = try container.decode(Bool.self, forKey: .done)
         subsites = try container.decodeIfPresent([Move].self, forKey: .subsites) ?? []
+        tables = try container.decodeIfPresent([String].self, forKey: .tables)
     }
 }
 

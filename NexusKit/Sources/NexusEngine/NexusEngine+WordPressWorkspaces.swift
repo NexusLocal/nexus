@@ -22,14 +22,17 @@ extension NexusEngine {
         let serverPort: Int
         let mainPort: Int
         let url: String
+        let siteURL: String
         let mainURL: String
-        let network: (from: String, to: String)?
+        var network: (from: String, to: String)?
         let database: String?
         let tablePrefix: String?
         let redisIndex: Int?
         let isBedrock: Bool
         let configName: String
         var copy: ConfigCopy?
+        // The live URLs of a dump file, for a network that changes its links after the load.
+        var dumpURLs: [String] = []
     }
 
     struct ConfigCopy {
@@ -117,7 +120,8 @@ extension NexusEngine {
         let mainURL = Self.url(for: site.host, in: state)
         let network = Self.networkDomains(of: config, type: target.type, mainURL: mainURL, url: url)
         let redisIndex = workspace.redisIndexes[WorkspaceEnvPlan.wordPressRedisKey]
-        let values = Self.workspaceValues(config: config, databaseHost: "\(WorkspaceEnvPlan.serverHost):\(serverPort)", url: url, siteURL: url + Self.corePath(of: target), network: network, redisIndex: redisIndex)
+        let siteURL = url + Self.corePath(of: target)
+        let values = Self.workspaceValues(config: config, databaseHost: "\(WorkspaceEnvPlan.serverHost):\(serverPort)", url: url, siteURL: siteURL, network: network, redisIndex: redisIndex)
         var copy: ConfigCopy?
         var writeProblems: [String] = []
 
@@ -160,6 +164,7 @@ extension NexusEngine {
                 serverPort: serverPort,
                 mainPort: mainPort,
                 url: url,
+                siteURL: siteURL,
                 mainURL: mainURL,
                 network: network,
                 database: config.database,
@@ -438,7 +443,13 @@ extension NexusEngine {
             return
         }
 
-        let from = Self.distinctURLs(([answer.storedHome, write.mainURL, earlier?.to].compactMap { $0 } + (earlier?.from ?? [])).filter { !WordPressURL.same($0, write.url) })
+        // The filter changed the links of a dump during the load. WP-CLI changes only the tables
+        // that it did not change.
+        if workspace.databaseKind == .dump, write.network == nil, let earlier, earlier.to == write.url, earlier.tables != nil {
+            return
+        }
+
+        let from = Self.distinctURLs(([answer.storedHome, write.mainURL, earlier?.to].compactMap { $0 } + (earlier?.from ?? []) + write.dumpURLs).filter { !WordPressURL.same($0, write.url) })
         var links = WorkspaceLinks(from: from, to: write.url, network: write.network != nil, done: from.isEmpty && subsites.isEmpty, subsites: subsites)
         workspace.links = links
 
@@ -581,12 +592,19 @@ extension NexusEngine {
         let wpCLI = try await wpCLICommand(in: core, failure: "WP-CLI did not change the links in the posts.", php: php)
         let passes = links.from.flatMap { WordPressURL.replacements(from: $0, to: links.to) }
             + links.subsites.flatMap { WordPressURL.replacements(from: $0.from, to: $0.to) }
-        let options = ["--all-tables-with-prefix", "--skip-columns=guid"] + (links.network ? ["--network", "--url=\(links.to)"] : [])
 
         defer {
             linkProgress[owner] = nil
             publishSites()
         }
+
+        let tables = links.tables
+
+        if let tables, tables.isEmpty {
+            return
+        }
+
+        let options = (tables ?? ["--all-tables-with-prefix"]) + ["--skip-columns=guid"] + (links.network ? ["--network", "--url=\(links.to)"] : [])
 
         for (index, pass) in passes.enumerated() {
             guard !watchingStopped else {

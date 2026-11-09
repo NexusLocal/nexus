@@ -62,6 +62,11 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let workspaceFiles: [String]?
     // The dump file of the choice dump for new workspaces.
     public let workspaceDump: String?
+    // WordPress: the added live URLs, the last check of the dump file, and the progress of a check
+    // that runs now.
+    public let workspaceDumpURLs: [String]?
+    public let workspaceDumpCheck: WordPressDumpCheck?
+    public let workspaceDumpChecking: WorkspaceDumpProgress?
 
     public init(
         hosts: [String],
@@ -98,9 +103,15 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         documentRootSetting: String? = nil,
         removalCommands: [String]? = nil,
         workspaceFiles: [String]? = nil,
-        workspaceDump: String? = nil
+        workspaceDump: String? = nil,
+        workspaceDumpURLs: [String]? = nil,
+        workspaceDumpCheck: WordPressDumpCheck? = nil,
+        workspaceDumpChecking: WorkspaceDumpProgress? = nil
     ) {
         self.workspaceDump = workspaceDump
+        self.workspaceDumpURLs = workspaceDumpURLs
+        self.workspaceDumpCheck = workspaceDumpCheck
+        self.workspaceDumpChecking = workspaceDumpChecking
         self.documentRootSetting = documentRootSetting
         self.removalCommands = removalCommands
         self.workspaceFiles = workspaceFiles
@@ -145,6 +156,11 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         case .php: projectType == .laravel
         case .proxy: false
         }
+    }
+
+    // A WordPress site chooses between a copy and a dump file (owner, 2026-11-09).
+    public var isWordPress: Bool {
+        kind == .php && projectType?.isWordPress == true
     }
 
     public var node: String? {
@@ -429,6 +445,8 @@ public struct SiteChange: Codable, Sendable, Equatable {
     public var workspaceFiles: [String]?
     // A path. An empty value removes the dump file.
     public var workspaceDump: String?
+    // The added live URLs of a WordPress dump. An empty list removes them.
+    public var workspaceDumpURLs: [String]?
 
     public init(
         php: String? = nil,
@@ -449,9 +467,11 @@ public struct SiteChange: Codable, Sendable, Equatable {
         documentRoot: String? = nil,
         removalCommands: [String]? = nil,
         workspaceFiles: [String]? = nil,
-        workspaceDump: String? = nil
+        workspaceDump: String? = nil,
+        workspaceDumpURLs: [String]? = nil
     ) {
         self.workspaceDump = workspaceDump
+        self.workspaceDumpURLs = workspaceDumpURLs
         self.documentRoot = documentRoot
         self.removalCommands = removalCommands
         self.workspaceFiles = workspaceFiles

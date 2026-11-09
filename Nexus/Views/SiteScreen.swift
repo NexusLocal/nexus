@@ -36,6 +36,8 @@ struct SiteScreen: View {
     @State private var asksToAddWorkspaceLines = false
     @State private var workspaceDatabases: WorkspaceDatabaseChoice
     @State private var workspaceSeeders: Bool
+    @State private var asksForLiveURL = false
+    @State private var newLiveURL = ""
 
     private enum KindField {
         case command
@@ -67,8 +69,20 @@ struct SiteScreen: View {
         model.siteList?.newWorkspaceDatabases ?? .copy
     }
 
+    // WordPress has no migrations. So it gets a copy or a dump, whatever Settings > Workspaces says.
     private var newWorkspaceDatabases: WorkspaceDatabaseKind {
-        workspaceDatabases.kind ?? defaultDatabases
+        guard !isWordPress else {
+            return workspaceDatabases == .dump ? .dump : .copy
+        }
+
+        return workspaceDatabases.kind ?? defaultDatabases
+    }
+
+    private var wordPressDatabases: Binding<WorkspaceDatabaseChoice> {
+        Binding(
+            get: { workspaceDatabases == .dump ? .dump : .copy },
+            set: { workspaceDatabases = $0 }
+        )
     }
 
     private var group: Binding<String> {
@@ -364,7 +378,12 @@ struct SiteScreen: View {
             Toggle("Create workspaces automatically", isOn: $automaticWorkspaces)
                 .toggleStyle(.switch)
 
-            if site.offersEmptyDatabases {
+            if isWordPress {
+                Picker("Databases", selection: wordPressDatabases) {
+                    Text(WorkspaceDatabaseKind.copy.displayName).tag(WorkspaceDatabaseChoice.copy)
+                    Text("Dump file…").tag(WorkspaceDatabaseChoice.dump)
+                }
+            } else if site.offersEmptyDatabases {
                 Picker(selection: $workspaceDatabases) {
                     Text("Default (\(defaultDatabases.displayName.lowercased()))").tag(WorkspaceDatabaseChoice.default)
                     Divider()
@@ -375,7 +394,9 @@ struct SiteScreen: View {
                     Text("Databases")
                     Text(workspaceDatabases == .default ? "This site follows Settings > Workspaces. When you change that setting, this site changes too." : "This site keeps its own choice. Settings > Workspaces does not change it.")
                 }
+            }
 
+            if isWordPress || site.offersEmptyDatabases {
                 if newWorkspaceDatabases == .dump {
                     LabeledContent {
                         HStack {
@@ -392,7 +413,14 @@ struct SiteScreen: View {
                         }
                     } label: {
                         Text("Dump file")
-                        Text("Each new workspace gets this dump in its main database.")
+
+                        if !isWordPress {
+                            Text("Each new workspace gets this dump in its main database.")
+                        }
+                    }
+
+                    if isWordPress, site.workspaceDump != nil {
+                        liveURLRow
                     }
                 }
 
@@ -491,6 +519,10 @@ struct SiteScreen: View {
                     Text(linksText(of: workspace))
                 }
 
+                if isWordPress, newWorkspaceDatabases == .dump, site.workspaceDump != nil {
+                    liveURLNote
+                }
+
                 if isWordPress, wordPressInfo?.workspaceLines?.state == .missing {
                     Text("\"Add the lines for workspaces…\" changes \(workspaceLinesFiles) of the main checkout. Commit the change. A worktree of a branch with this commit gets its own database.")
                 }
@@ -506,6 +538,95 @@ struct SiteScreen: View {
                             wordPressInfo = await model.wordPressSite(of: site)
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // The live URL of a WordPress dump is "Site Workspaces Section · Dump file · WordPress" in
+    // nexus.pen (owner, 2026-11-09). Nexus finds it in the dump. The user can add more URLs, for
+    // example a staging site.
+    private var liveURLRow: some View {
+        LabeledContent("Live URL") {
+            HStack {
+                if let checking = site.workspaceDumpChecking {
+                    progressRow("Checking the dump", checking)
+                } else if let check = site.workspaceDumpCheck, check.problem == nil {
+                    liveURLMenu(check)
+                } else {
+                    Text(site.workspaceDumpCheck == nil ? "Not checked" : "Not found")
+                        .foregroundStyle(Color.orangeText)
+
+                    Button("Check") {
+                        change(SiteChange(workspaceDump: site.workspaceDump)) {}
+                    }
+                }
+            }
+        }
+        .labeledContentStyle(.rowValue)
+        .alert("Add a live URL", isPresented: $asksForLiveURL) {
+            TextField("https://staging.shop.com", text: $newLiveURL)
+
+            Button("Add") {
+                change(SiteChange(workspaceDumpURLs: site.workspaceDumpURLs + [newLiveURL.trimmingCharacters(in: .whitespaces)])) {}
+            }
+            .disabled(newLiveURL.trimmingCharacters(in: .whitespaces).isEmpty)
+
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The links of the dump to this URL go to each new workspace too, for example the links to a staging site.")
+        }
+    }
+
+    private func liveURLMenu(_ check: WordPressDumpCheck) -> some View {
+        let urls = check.liveURLs
+
+        return Menu {
+            ForEach(urls.filter { !check.addedURLs.contains($0) }, id: \.self) { url in
+                Toggle(isOn: .constant(true)) {
+                    Text(url)
+                    Text("Found in the dump")
+                }
+            }
+
+            ForEach(site.workspaceDumpURLs, id: \.self) { url in
+                Toggle(url, isOn: Binding(
+                    get: { true },
+                    set: { isOn in
+                        if !isOn {
+                            change(SiteChange(workspaceDumpURLs: site.workspaceDumpURLs.filter { $0 != url })) {}
+                        }
+                    }
+                ))
+            }
+
+            Divider()
+
+            Button("Add a URL…") {
+                newLiveURL = ""
+                asksForLiveURL = true
+            }
+        } label: {
+            Text(urls.count == 1 ? urls[0] : "\(urls.count) URLs")
+        }
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private var liveURLNote: some View {
+        if site.workspaceDumpChecking != nil {
+            Text("A new workspace waits for this check.")
+        } else if let check = site.workspaceDumpCheck {
+            if let problem = check.problem {
+                MessageText(problem, title: "The dump file of \(site.host)")
+            } else if check.isNetwork {
+                Text("Each new workspace gets the dump. This dump is of a network, so its links change after the load. A new workspace then needs more time.")
+            } else {
+                Text("Each new workspace gets the dump. Its links to \(EnglishList.joined(check.liveURLs)) go to the workspace instead.")
+
+                if check.uncertainLinks > 0 {
+                    Text("\(check.uncertainLinks) \(check.uncertainLinks == 1 ? "link changes" : "links change") after the load. So a new workspace needs more time.")
+                        .foregroundStyle(Color.orangeText)
                 }
             }
         }
@@ -1038,8 +1159,12 @@ struct SiteScreen: View {
     }
 
     private func dumpProgress(_ dump: WorkspaceDumpProgress) -> some View {
+        progressRow("Loading the dump", dump)
+    }
+
+    private func progressRow(_ title: String, _ dump: WorkspaceDumpProgress) -> some View {
         HStack(spacing: 8) {
-            Text("Loading the dump")
+            Text(title)
                 .foregroundStyle(.secondary)
 
             if let fraction = dump.fraction {

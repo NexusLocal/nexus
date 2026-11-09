@@ -11,11 +11,12 @@ import NexusSupervisor
 // drops each database of the application on that server and makes it again, with the same character
 // set and collation. That server belongs to the workspace. Nexus drops nothing on the instance.
 extension NexusEngine {
-    // A WordPress site always gets a copy, because WordPress has no migrations (owner, 2026-11-08).
-    // Sites that share a project share their workspaces, so the first choice of these sites counts.
+    // A WordPress site gets a copy or its dump file, because WordPress has no migrations (owner,
+    // 2026-11-08 and 2026-11-09). Sites that share a project share their workspaces, so the first
+    // choice of these sites counts.
     static func newWorkspaceDatabases(of sites: [Site], settings: WorkspaceSettings) -> WorkspaceDatabaseKind {
         guard !isWordPress(sites) else {
-            return .copy
+            return sites.contains { $0.workspaceDatabases == .dump && $0.workspaceDump != nil } ? .dump : .copy
         }
 
         return sites.lazy.compactMap(\.workspaceDatabases).first ?? settings.newWorkspaceDatabases

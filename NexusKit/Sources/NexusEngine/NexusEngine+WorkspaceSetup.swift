@@ -191,11 +191,7 @@ extension NexusEngine {
         let sitesOfKey = resolvedSites(state).map(\.site).filter { ProjectFolder.workspaceKey(of: $0) == key }
 
         if databases == .empty, Self.isWordPress(sitesOfKey) {
-            throw RuntimeError.unsupported("A WordPress site always gets a copy of its database, because WordPress has no migrations.")
-        }
-
-        if databases == .dump, Self.isWordPress(sitesOfKey) {
-            throw RuntimeError.unsupported("A WordPress site gets a dump file in each workspace in a later version of Nexus. Until then it gets a copy of its database.")
+            throw RuntimeError.unsupported("A WordPress site gets a copy of its database or a dump file, because WordPress has no migrations.")
         }
 
         if databases == .dump, !sitesOfKey.contains(where: { $0.workspaceDump != nil }) {
@@ -336,24 +332,68 @@ extension NexusEngine {
     // The steps after this one can take minutes. A change in that time gives a new setup. So an edit
     // of the .env does not stay in a workspace that is Ready.
     private func writeEnvAndCopyData(of workspace: inout Workspace, key: String) async throws -> WrittenEnv? {
-        guard let written = try await writeEnvFile(of: &workspace, key: key) else {
+        guard var written = try await writeEnvFile(of: &workspace, key: key) else {
             return nil
         }
 
         workspace.configurationDigest = Self.configurationDigest(of: written.folder, in: workspace.worktree)
         let emptying = workspace.databaseKind?.startsEmpty == true
-        let dump = workspace.databaseKind == .dump ? try await workspaceDumpFile(key: key) : nil
+        let dump = workspace.databaseKind == .dump ? workspaceDumpSource(key: key, wordPress: written.wordPress) : nil
         let owner = Self.processOwner(key: key, workspace: workspace.name)
 
         for server in written.servers {
-            try await prepareServer(of: server.tools, port: server.port, databases: written.databases.filter { $0.port == server.mainPort }, workspace: workspace.name, key: key, emptying: emptying, dump: dump, owner: owner)
+            if let links = try await prepareServer(of: server.tools, port: server.port, databases: written.databases.filter { $0.port == server.mainPort }, workspace: workspace.name, key: key, emptying: emptying, dump: dump, owner: owner) {
+                workspace.links = links
+            }
         }
 
         for file in written.sqliteFiles {
             try await clone(file, in: written.folder, git: written.git, into: &workspace, empty: emptying)
         }
 
+        // A network changes its links with WP-CLI after the load (owner, 2026-11-09). Its domain in
+        // the dump is the domain of the live site, not of the main site.
+        if workspace.databaseKind == .dump, let network = written.wordPress?.network, let check = await storedDumpCheck(key: key), check.isNetwork {
+            written.wordPress?.network = (check.networkDomain ?? network.from, network.to)
+            written.wordPress?.dumpURLs = check.liveURLs
+        }
+
         return written
+    }
+
+    // The file of the site, and for WordPress the filter of the links of the live site.
+    private func workspaceDumpSource(key: String, wordPress: WordPressWrite?) -> WorkspaceDumpSource {
+        let site = wordPress.map { (url: $0.url, siteURL: $0.siteURL, isNetwork: $0.network != nil) }
+
+        return { [weak self] in
+            guard let self else {
+                throw CancellationError()
+            }
+
+            let file = try await self.workspaceDumpFile(key: key)
+
+            guard let site else {
+                return (file, nil)
+            }
+
+            let check = try await self.workspaceDumpCheck(key: key)
+
+            guard check.isNetwork == site.isNetwork else {
+                let problem = check.isNetwork ? "The dump is of a WordPress network, and this site is no network." : "This site is a WordPress network, and the dump is of a single site."
+                throw RuntimeError.unsupported("\(WorkspaceDumpText.failed) \(problem)")
+            }
+
+            guard !check.isNetwork else {
+                return (file, nil)
+            }
+
+            let plan = SQLDumpFilter.Plan(prefix: check.prefix, rules: check.rules(home: site.url, siteURL: site.siteURL), columns: check.postsColumns)
+            return (file, WorkspaceDumpLinks(plan: plan, fallbackURLs: check.fallbackURLs, to: site.url))
+        }
+    }
+
+    private func storedDumpCheck(key: String) async -> WordPressDumpCheck? {
+        resolvedSites(await stateStore.current()).map(\.site).first { ProjectFolder.workspaceKey(of: $0) == key && $0.workspaceDump != nil }?.workspaceDumpCheck
     }
 
     // The plan comes from the main checkout, because a new worktree has no vendor folder at that

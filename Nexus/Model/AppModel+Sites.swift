@@ -43,7 +43,10 @@ extension SiteItem {
             documentRootSetting: info.documentRootSetting,
             removalCommands: info.removalCommands ?? [],
             workspaceFiles: info.workspaceFiles ?? [],
-            workspaceDump: info.workspaceDump
+            workspaceDump: info.workspaceDump,
+            workspaceDumpURLs: info.workspaceDumpURLs ?? [],
+            workspaceDumpCheck: info.workspaceDumpCheck,
+            workspaceDumpChecking: info.workspaceDumpChecking
         )
     }
 }

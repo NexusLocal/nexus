@@ -21,6 +21,11 @@ public enum NexusCLI {
             exit(SendmailRun.run(Array(CommandLine.arguments.dropFirst(2))))
         }
 
+        if CommandLine.arguments.count > 1, CommandLine.arguments[1] == DumpFilterRun.name {
+            signal(SIGPIPE, SIG_IGN)
+            exit(DumpFilterRun.run(Array(CommandLine.arguments.dropFirst(2))))
+        }
+
         await NexusCommand.main()
     }
 
@@ -1115,8 +1120,10 @@ struct SiteCommand: AsyncParsableCommand {
         @Flag(help: "Remove every background process.") var noBackgroundCommands = false
         @Option(name: .customLong("workspace-processes"), help: "on or off. With on, each workspace runs the background processes.") var workspaceProcesses: OnOff?
         @Option(name: .customLong("main-processes"), help: "on or off. With on, the main checkout runs the background processes.") var mainProcesses: OnOff?
-        @Option(name: .customLong("workspace-databases"), help: "default, copy, empty or dump. What a new workspace gets: a copy of the main database, an empty database, or an empty database with the dump file of --workspace-dump. default follows Settings > Workspaces. A WordPress site always gets a copy.") var workspaceDatabases: WorkspaceDatabaseChoice?
-        @Option(name: .customLong("workspace-dump"), help: "The dump file that each new workspace gets in its main database with --workspace-databases dump.") var workspaceDump: String?
+        @Option(name: .customLong("workspace-databases"), help: "default, copy, empty or dump. What a new workspace gets: a copy of the main database, an empty database, or an empty database with the dump file of --workspace-dump. default follows Settings > Workspaces. A WordPress site gets a copy or the dump file.") var workspaceDatabases: WorkspaceDatabaseChoice?
+        @Option(name: .customLong("workspace-dump"), help: "The dump file that each new workspace gets in its main database with --workspace-databases dump. The links of a WordPress dump to its live URL go to the workspace.") var workspaceDump: String?
+        @Option(name: .customLong("live-url"), help: "WordPress: another URL of the live site in the dump, for example https://staging.shop.com. Its links go to the workspace too. Repeat it for more URLs. These replace the current URLs.") var liveURLs: [String] = []
+        @Flag(help: "WordPress: remove each added live URL.") var noLiveURLs = false
         @Option(name: .customLong("workspace-seeders"), help: "on or off. With on, a Laravel site with an empty database runs php artisan db:seed in a new workspace.") var workspaceSeeders: OnOff?
         @Option(name: .customLong("document-root"), help: "The folder in the site folder that the web server serves, for example htdocs. Each workspace serves the same folder.") var documentRoot: String?
         @Flag(help: "Use the automatic document root again: public/ when the site folder has one.") var noDocumentRoot = false
@@ -1124,6 +1131,10 @@ struct SiteCommand: AsyncParsableCommand {
         func validate() throws {
             if documentRoot != nil, noDocumentRoot {
                 throw ValidationError("Give --document-root or --no-document-root, not both.")
+            }
+
+            if !liveURLs.isEmpty, noLiveURLs {
+                throw ValidationError("Give --live-url or --no-live-urls, not both.")
             }
         }
 
@@ -1168,7 +1179,8 @@ struct SiteCommand: AsyncParsableCommand {
                 documentRoot: noDocumentRoot ? "" : documentRoot,
                 removalCommands: removalChange,
                 workspaceFiles: filesChange,
-                workspaceDump: workspaceDump.map(absolutePath)
+                workspaceDump: workspaceDump.map(absolutePath),
+                workspaceDumpURLs: noLiveURLs ? [] : (liveURLs.isEmpty ? nil : liveURLs)
             )
 
             try finish(try await send(.editSite(host: host, change: change)))

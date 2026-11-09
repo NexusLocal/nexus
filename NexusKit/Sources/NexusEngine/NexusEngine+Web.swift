@@ -659,7 +659,10 @@ extension NexusEngine {
                 documentRootSetting: site.documentRootFolder,
                 removalCommands: site.removalCommands,
                 workspaceFiles: site.workspaceFiles,
-                workspaceDump: site.workspaceDump
+                workspaceDump: site.workspaceDump,
+                workspaceDumpURLs: site.workspaceDumpURLs,
+                workspaceDumpCheck: shownDumpCheck(of: site),
+                workspaceDumpChecking: dumpCheckProgress[site.host]
             ))
         }
 
@@ -891,16 +894,15 @@ extension NexusEngine {
         if let workspaceDump = change.workspaceDump {
             site.workspaceDump = try Self.workspaceDumpPath(workspaceDump)
         }
+        if let workspaceDumpURLs = change.workspaceDumpURLs {
+            site.workspaceDumpURLs = try Self.liveURLs(workspaceDumpURLs)
+        }
         if let workspaceDatabases = change.workspaceDatabases {
             site.workspaceDatabases = workspaceDatabases.kind
         }
         if site.workspaceDatabases == .dump {
             guard site.workspaceDump != nil else {
                 throw RuntimeError.unsupported("Choose the dump file first, for example: nexus site edit \(host) --workspace-dump ~/Dumps/shop.sql.gz")
-            }
-
-            guard !PHPProject.type(of: site).isWordPress else {
-                throw RuntimeError.unsupported("A WordPress site gets a dump file in each workspace in a later version of Nexus. Until then it gets a copy of its database.")
             }
         }
         if let workspaceSeeders = change.workspaceSeeders {
@@ -937,7 +939,7 @@ extension NexusEngine {
         // The Node line, the command and the workspace settings change no server. So they need no
         // new web configuration.
         let changesProcesses = change.backgroundCommands != nil || change.workspaceProcesses != nil || change.mainProcesses != nil || change.command != nil
-        let changesDatabases = change.workspaceDatabases != nil || change.workspaceSeeders != nil || change.workspaceDump != nil
+        let changesDatabases = change.workspaceDatabases != nil || change.workspaceSeeders != nil || change.workspaceDump != nil || change.workspaceDumpURLs != nil
         let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil || change.workspaceCommands != nil || change.removalCommands != nil || change.workspaceFiles != nil || changesProcesses || changesDatabases
         let changesServers = change.php != nil || change.server != nil || change.aliases != nil || change.address != nil || change.documentRoot != nil || edited.kind != kindBefore
         let onlySettings = hasSetting && !changesServers
@@ -975,6 +977,11 @@ extension NexusEngine {
 
         if change.workspaceDatabases != nil {
             notes.append(await workspaceDatabaseNote(for: edited))
+        }
+
+        // A WordPress dump gets its check at once, so the first workspace does not wait for it.
+        if changesDatabases, edited.workspaceDatabases == .dump, edited.workspaceDump != nil, PHPProject.type(of: edited).isWordPress {
+            checkWordPressDumpSoon(edited.host)
         }
 
         return await siteMessage(edited, warnings: notes)

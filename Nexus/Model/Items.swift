@@ -196,6 +196,10 @@ struct SiteItem: Identifiable, Hashable {
     var removalCommands: [String] = []
     var workspaceFiles: [String] = []
     var workspaceDump: String?
+    // WordPress: the added live URLs, the last check of the dump file, and a check that runs now.
+    var workspaceDumpURLs: [String] = []
+    var workspaceDumpCheck: WordPressDumpCheck?
+    var workspaceDumpChecking: WorkspaceDumpProgress?
 
     var id: String { host }
 

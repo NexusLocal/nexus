@@ -39,7 +39,12 @@ extension NexusEngine {
     // A second setup keeps a finished clone, because that clone holds the data of the workspace. A
     // clone that did not end is no use, so it gets a new run. With emptying, each database of the
     // application on the clone is made again without tables, one time for each server.
-    func prepareServer(of tools: DatabaseTools, port: Int, databases: [WorkspaceDatabase], workspace: String, key: String, emptying: Bool = false, dump: URL? = nil, owner: String = "") async throws {
+    // The dump comes only when the server loads it. So a workspace that has its data needs neither
+    // the file nor its check. A WordPress dump goes through the filter of its links. The tables that
+    // the filter did not change go into the record before the server counts as done, so WP-CLI
+    // changes them also after a stop of nexusd.
+    @discardableResult
+    func prepareServer(of tools: DatabaseTools, port: Int, databases: [WorkspaceDatabase], workspace: String, key: String, emptying: Bool = false, dump: WorkspaceDumpSource? = nil, owner: String = "") async throws -> WorkspaceLinks? {
         let record = await stateStore.current().worktrees[key]?.workspaces.first { $0.name == workspace }
         var server = record?.servers.first { $0.instance == tools.id }
 
@@ -56,14 +61,14 @@ extension NexusEngine {
                     throw RuntimeError.unsupported("\(tools.id) has no data. Import a database, and then retry.")
                 }
 
-                return
+                return nil
             }
 
             server = try await cloneInstance(tools, port: port, workspace: workspace, key: key)
         }
 
         guard let server else {
-            return
+            return nil
         }
 
         try await updateRecord(of: workspace, key: key) { record in
@@ -82,19 +87,31 @@ extension NexusEngine {
             let emptied = await stateStore.current().worktrees[key]?.workspaces.first { $0.name == workspace }?.emptiedServers.contains(server.folder) == true
 
             guard !emptied else {
-                return
+                return nil
             }
 
             try await emptyDatabases(databases.map(\.name), tools: tools, client: client)
 
             // The server counts as done only after the dump. So a retry after a failed load empties
             // the database again and loads the whole dump.
+            var links: WorkspaceLinks?
+
             if let dump, let main = databases.first(where: \.isDefault) {
-                try await loadWorkspaceDump(dump, into: try DatabaseName.validated(main.name), tools: tools, client: client, owner: owner)
+                let source = try await dump()
+                let report = try await loadWorkspaceDump(source.file, into: try DatabaseName.validated(main.name), tools: tools, client: client, owner: owner, links: source.links?.plan)
+
+                if let report, let dumpLinks = source.links {
+                    let changed = WorkspaceLinks(from: dumpLinks.fallbackURLs, to: dumpLinks.to, network: false, done: report.uncertainTables.isEmpty, tables: report.uncertainTables)
+                    links = changed
+
+                    try await updateRecord(of: workspace, key: key) { record in
+                        record.links = changed
+                    }
+                }
             }
 
             try await markEmptied(server, workspace: workspace, key: key)
-            return
+            return links
         }
 
         // A missing database of another connection does not matter, because the main site does not
@@ -109,6 +126,8 @@ extension NexusEngine {
                 throw RuntimeError.unsupported("\(tools.id) has no database \(database.name). Import it, and then retry.")
             }
         }
+
+        return nil
     }
 
     // A new clone without the database of the application holds no work of the user, and a retry

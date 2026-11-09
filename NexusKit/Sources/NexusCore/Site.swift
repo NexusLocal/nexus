@@ -61,6 +61,10 @@ public struct Site: Codable, Sendable, Equatable {
     public var workspaceFiles: [String]?
     // The dump file that a new workspace gets with the choice dump (owner, 2026-11-09).
     public var workspaceDump: String?
+    // WordPress: the live URLs that the user added, for example a staging site, and the last
+    // check of the dump file.
+    public var workspaceDumpURLs: [String]?
+    public var workspaceDumpCheck: WordPressDumpCheck?
 
     public init(
         host: String,

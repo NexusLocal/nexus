@@ -124,6 +124,10 @@ public actor NexusEngine {
     var linkProgress: [String: Double] = [:]
     // The load of the dump file into a new workspace, with the same key.
     var dumpProgress: [String: WorkspaceDumpProgress] = [:]
+    // The check of the dump file of a WordPress site, with the host as the key.
+    var dumpChecks: [String: Task<WordPressDumpCheck, Error>] = [:]
+    var dumpCheckProgress: [String: WorkspaceDumpProgress] = [:]
+    var dumpCheckFailures: [String: String] = [:]
     var runningCommand: (worktree: String, task: Task<CommandOutput, Error>)?
     // The background processes that nexusd started, the run of the sync that changes them, and what
     // stops one of them. An entry in processProblems has the owner of the process as its key.

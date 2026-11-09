@@ -203,7 +203,7 @@ extension NexusEngine {
         return output.split(whereSeparator: \.isNewline).map(String.init)
     }
 
-    private func archiveDumps(in file: URL, container: DumpContainer) async throws -> [String] {
+    func archiveDumps(in file: URL, container: DumpContainer) async throws -> [String] {
         guard let list = container.listArguments else {
             return []
         }
@@ -242,7 +242,7 @@ extension NexusEngine {
 
     // The first 64 KB tell the kind of the dump. The reader stops early, so its own error does not
     // count.
-    private func dumpFormat(of file: URL, container: DumpContainer, dump: String?) async throws -> DumpFormat? {
+    func dumpFormat(of file: URL, container: DumpContainer, dump: String?) async throws -> DumpFormat? {
         let script = "( \(container.readerScript(dump: dump)) ) 2>/dev/null | /usr/bin/head -c 65536; exit 0"
         let output = try await CommandRunner.run(Command(executable: URL(filePath: "/bin/bash"), arguments: ["-c", script, "reader", file.path(percentEncoded: false)] + (dump.map { [$0] } ?? [])))
 
@@ -255,13 +255,17 @@ extension NexusEngine {
         }
     }
 
-    // read gets the number of bytes of SQL that went to the client so far.
-    static func pipe(_ plan: DumpLoad, client: DatabaseClient, tools: DatabaseTools, read: @escaping @Sendable (Int64) -> Void) async throws {
-        let reader = Command(
+    static func reader(of file: URL, container: DumpContainer, dump: String?) -> Command {
+        Command(
             executable: URL(filePath: "/bin/bash"),
-            arguments: ["-c", plan.container.readerScript(dump: plan.dump), "reader", plan.file.path(percentEncoded: false)] + (plan.dump.map { [$0] } ?? []),
+            arguments: ["-c", container.readerScript(dump: dump), "reader", file.path(percentEncoded: false)] + (dump.map { [$0] } ?? []),
             name: "the dump"
         )
+    }
+
+    // read gets the number of bytes of SQL that went to the client so far.
+    static func pipe(_ plan: DumpLoad, client: DatabaseClient, tools: DatabaseTools, read: @escaping @Sendable (Int64) -> Void) async throws {
+        let reader = reader(of: plan.file, container: plan.container, dump: plan.dump)
         let counted = Mutex<Int64>(0)
 
         try await CommandRunner.pipe(reader, into: loader(for: plan, client: client, tools: tools)) { data in
@@ -314,9 +318,29 @@ extension NexusEngine {
         return URL(filePath: path).standardizedFileURL.path(percentEncoded: false)
     }
 
+    // The live URLs that a user adds to a WordPress dump. An empty list removes them.
+    static func liveURLs(_ values: [String]) throws -> [String]? {
+        var urls: [String] = []
+
+        for value in values where !value.trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let url = WordPressURL.liveURL(value) else {
+                throw RuntimeError.unsupported("\(value) is no URL of a site. Give a URL with http or https, for example https://staging.shop.com")
+            }
+
+            if !urls.contains(where: { WordPressURL.same($0, url) }) {
+                urls.append(url)
+            }
+        }
+
+        return urls.isEmpty ? nil : urls
+    }
+
     // A new workspace with the choice dump (owner, 2026-11-09). Its database is empty already. A
     // failure says so in its first sentence, and the Site screen shows that sentence as the state.
-    func loadWorkspaceDump(_ file: URL, into name: String, tools: DatabaseTools, client: DatabaseClient, owner: String) async throws {
+    // A WordPress dump goes through the filter of its links. The report then names the tables that
+    // WP-CLI must change after the load.
+    @discardableResult
+    func loadWorkspaceDump(_ file: URL, into name: String, tools: DatabaseTools, client: DatabaseClient, owner: String, links: SQLDumpFilter.Plan? = nil) async throws -> SQLDumpFilter.Report? {
         let path = file.path(percentEncoded: false)
 
         guard FileManager.default.fileExists(atPath: path) else {
@@ -337,7 +361,15 @@ extension NexusEngine {
             throw RuntimeError.unsupported("\(WorkspaceDumpText.failed) \(file.lastPathComponent) is a dump of \(format.displayName), and this database is on \(tools.kind.displayName).")
         }
 
-        let plan = DumpLoad(file: file, container: container, dump: dump, format: format, name: name, replacesTables: false)
+        guard links == nil || format == .mysql else {
+            throw RuntimeError.unsupported("\(WorkspaceDumpText.failed) \(file.lastPathComponent) is a dump of \(format.displayName). WordPress needs a dump of MySQL or MariaDB.")
+        }
+
+        let report = FileManager.default.temporaryDirectory.appending(path: "nexus-dump-report-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: report) }
+
+        let filter = try links.map { try DumpURLFilter(command: dumpFilterCommand(), plan: $0, report: report) }
+        let plan = DumpLoad(file: file, container: container, dump: dump, format: format, name: name, replacesTables: false, links: filter)
         let total = await Self.sqlSize(of: file, container: container)
         let done = Mutex<Int64>(0)
 
@@ -363,6 +395,16 @@ extension NexusEngine {
         } catch {
             throw RuntimeError.unsupported("\(WorkspaceDumpText.failed) \(ErrorText.plain(error)) Retry makes the database of this workspace empty and loads the dump again.")
         }
+
+        guard filter != nil else {
+            return nil
+        }
+
+        guard let data = try? Data(contentsOf: report), let result = try? JSONDecoder().decode(SQLDumpFilter.Report.self, from: data) else {
+            throw RuntimeError.unsupported("\(WorkspaceDumpText.failed) The filter of the links wrote no report. Retry makes the database of this workspace empty and loads the dump again.")
+        }
+
+        return result
     }
 
     private func reportDump(owner: String, completed: Int64, total: Int64?) {
@@ -380,11 +422,15 @@ extension NexusEngine {
         switch plan.format {
         case .mysql:
             let filter = [importFilter(prefix: nil, toMySQL: tools.kind == .mysql)] + (plan.replacesTables ? [replaceTablesFilter] : [])
+            let links = plan.links.map { links in
+                (#""$NEXUS_COMMAND" dump-filter --plan "$NEXUS_PLAN" --report "$NEXUS_REPORT" | "#, links.environment)
+            }
 
             return Command(
                 executable: URL(filePath: "/bin/bash"),
-                arguments: ["-c", #"set -o pipefail; LC_ALL=C /usr/bin/sed -E "$1" | "$2" "${@:3}""#, "load", filter.joined(separator: "\n"), tools.client.path(percentEncoded: false),
+                arguments: ["-c", #"set -o pipefail; "# + (links?.0 ?? "") + #"LC_ALL=C /usr/bin/sed -E "$1" | "$2" "${@:3}""#, "load", filter.joined(separator: "\n"), tools.client.path(percentEncoded: false),
                             "--defaults-file=\(client.options.path(percentEncoded: false))", "--default-character-set=utf8mb4", "--init-command=\(importSession)", plan.name],
+                environment: links?.1 ?? [:],
                 name: tools.client.lastPathComponent
             )
         case .postgresql:
@@ -426,4 +472,29 @@ struct DumpLoad: Sendable {
     let format: DumpFormat
     let name: String
     let replacesTables: Bool
+    var links: DumpURLFilter?
+}
+
+// nexus dump-filter between the reader and the client, with its plan and the file of its report.
+struct DumpURLFilter: Sendable {
+    let command: URL
+    let plan: SQLDumpFilter.Plan
+    let report: URL
+
+    init(command: URL, plan: SQLDumpFilter.Plan, report: URL) throws {
+        self.command = command
+        self.plan = plan
+        self.report = report
+        planText = String(decoding: try JSONEncoder().encode(plan), as: UTF8.self)
+    }
+
+    private let planText: String
+
+    var environment: [String: String] {
+        ["NEXUS_COMMAND": command.path(percentEncoded: false), "NEXUS_PLAN": planText, "NEXUS_REPORT": report.path(percentEncoded: false)]
+    }
+
+    func arguments(writes: Bool) -> [String] {
+        ["dump-filter", "--plan", planText, "--report", report.path(percentEncoded: false)] + (writes ? [] : ["--no-output"])
+    }
 }

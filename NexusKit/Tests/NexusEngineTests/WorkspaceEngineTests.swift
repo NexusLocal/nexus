@@ -804,7 +804,7 @@ extension NexusEngineTests {
         #expect(NexusEngine.commands(of: [Site(host: "other.test", folder: other, php: "8.5")], seeding: true).isEmpty)
     }
 
-    @Test func aNewWorkspaceGetsTheChoiceOfItsSiteAndAWordPressSiteAlwaysACopy() throws {
+    @Test func aNewWorkspaceGetsTheChoiceOfItsSiteAndAWordPressSiteACopyOrItsDump() throws {
         let root = workspaceRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = root.appending(path: "shop", directoryHint: .isDirectory)
@@ -817,6 +817,8 @@ extension NexusEngineTests {
         #expect(NexusEngine.newWorkspaceDatabases(of: [Site(host: "shop.test", folder: shop, php: "8.5")], settings: empty) == .empty)
         #expect(NexusEngine.newWorkspaceDatabases(of: [Site(host: "shop.test", folder: shop, php: "8.5", workspaceDatabases: .copy)], settings: empty) == .copy)
         #expect(NexusEngine.newWorkspaceDatabases(of: [Site(host: "blog.test", folder: blog, php: "8.5", workspaceDatabases: .empty)], settings: empty) == .copy)
+        #expect(NexusEngine.newWorkspaceDatabases(of: [Site(host: "blog.test", folder: blog, php: "8.5", workspaceDatabases: .dump)], settings: empty) == .copy)
+        #expect(NexusEngine.newWorkspaceDatabases(of: [Site(host: "blog.test", folder: blog, php: "8.5", workspaceDatabases: .dump, workspaceDump: "/Users/me/blog.sql.gz")], settings: empty) == .dump)
     }
 
     @Test func anEmptyDatabaseKeepsItsCharacterSetAndSkipsAStrangeValue() {

@@ -172,6 +172,7 @@ extension NexusEngineTests {
             serverPort: 20001,
             mainPort: 13307,
             url: "https://blog-fix.test",
+            siteURL: "https://blog-fix.test",
             mainURL: "https://blog.test",
             network: network,
             database: "blog",
