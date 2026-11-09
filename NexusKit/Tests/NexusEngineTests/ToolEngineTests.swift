@@ -60,6 +60,34 @@ extension NexusEngineTests {
         #expect(FileManager.default.fileExists(atPath: config.appending(path: "conf.d/00-nexus.ini").path(percentEncoded: false)))
     }
 
+    @Test func aFolderInTheArgumentsWinsWhenItIsInASite() async throws {
+        let root = toolRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try project("shop", in: root)
+        let blog = try project("blog", in: root)
+        let tools = try project("tools", in: root)
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: shop, php: "8.3"), Site(host: "blog.test", folder: blog, php: "8.4")]
+        state.siteDefaults = SiteDefaults(php: "8.5")
+        let engine = try makeSiteEngine(root: root, state: state, runtimes: [("php", "8.3"), ("php", "8.4"), ("php", "8.5")])
+
+        func php(in folder: URL, argumentFolder: URL?) async throws -> String {
+            let response = await engine.handle(.tool(.php, folder: folder.path(percentEncoded: false), argumentFolder: argumentFolder?.path(percentEncoded: false)))
+
+            guard case .tool(let command) = response else {
+                Issue.record("No command: \(response)")
+                throw CancellationError()
+            }
+
+            return command.executable
+        }
+
+        #expect(try await php(in: root, argumentFolder: shop) == (await runtimePath(engine, "php", "8.3", "bin/php")))
+        #expect(try await php(in: blog, argumentFolder: shop.appending(path: "app")) == (await runtimePath(engine, "php", "8.3", "bin/php")))
+        #expect(try await php(in: blog, argumentFolder: tools) == (await runtimePath(engine, "php", "8.4", "bin/php")))
+        #expect(try await php(in: root, argumentFolder: tools) == (await runtimePath(engine, "php", "8.5", "bin/php")))
+    }
+
     @Test func outsideASiteTheToolsUseTheDefaultsForANewSite() async throws {
         let root = toolRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -132,6 +160,7 @@ extension NexusEngineTests {
         #expect(try linkTarget(script) == phar)
         #expect(inSite.wordPressCore == "\(RealPath.of(shop))/wordpress")
         #expect(inSite.environment["PHP_INI_SCAN_DIR"] == scanFolders.joined(separator: ":"))
+        #expect(inSite.environment["HTTPS"] == "on")
         #expect(try String(contentsOf: paths.wpCLIConfigFolder.appending(path: WordPressCore.phpSettingsFileName), encoding: .utf8) == WordPressCore.phpSettings)
         #expect(inWorktree.wordPressCore == "\(RealPath.of(worktree))/wordpress")
         #expect(inCore.arguments == inSite.arguments)

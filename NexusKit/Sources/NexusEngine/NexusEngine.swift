@@ -338,8 +338,8 @@ public actor NexusEngine {
                 return .databaseSizes(try await sourceDatabases(source, instance: instance))
             case .stopTask(let id):
                 return .done(message: stopTask(id))
-            case .tool(let tool, let folder):
-                return .tool(try await toolCommand(tool, folder: folder))
+            case .tool(let tool, let folder, let argumentFolder):
+                return .tool(try await toolCommand(tool, folder: folder, argumentFolder: argumentFolder))
             case .probe(let folder, let php):
                 return .configuration(try await probeConfiguration(folder: folder, php: php))
             case .workspaceEnv(let host):

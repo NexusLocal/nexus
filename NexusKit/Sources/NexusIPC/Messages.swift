@@ -286,7 +286,7 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
 public struct ToolCommand: Codable, Sendable, Equatable {
     public let executable: String
     public let arguments: [String]
-    public let environment: [String: String]
+    public var environment: [String: String]
     public let path: [String]
     // The core folder of WordPress for nexus wp. The nexus command adds it as --path, because only
     // the nexus command sees the arguments of the user (Phase 4, 3c).
@@ -847,8 +847,10 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     // The databases on another server, read with the client of the instance.
     case sourceDatabases(source: DatabaseServer, instance: String)
     case stopTask(id: String)
-    // The command that a tool runs in this folder, with the versions of its site (D38).
-    case tool(ProjectTool, folder: String)
+    // The command that a tool runs in this folder, with the versions of its site (D38). The
+    // arguments can name the folder of another site, for example php /Sites/shop/artisan. That
+    // site wins then. An older nexus command sends no argumentFolder.
+    case tool(ProjectTool, folder: String, argumentFolder: String? = nil)
     // The configuration of the Laravel application that holds this folder (D43). php is a version
     // line. Without it the PHP of the site applies.
     case probe(folder: String, php: String?)

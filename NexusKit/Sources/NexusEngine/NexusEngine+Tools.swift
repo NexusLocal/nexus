@@ -13,11 +13,10 @@ import NexusRuntime
 // load WordPress. The setup of that workspace runs these tools after it wrote the values of the
 // workspace (Phase 4, 3e).
 extension NexusEngine {
-    func toolCommand(_ tool: ProjectTool, folder path: String, inSetup: Bool = false) async throws -> ToolCommand {
-        let folder = URL(filePath: path, directoryHint: .isDirectory)
+    func toolCommand(_ tool: ProjectTool, folder path: String, argumentFolder: String? = nil, inSetup: Bool = false) async throws -> ToolCommand {
         let state = await stateStore.current()
         let sites = resolvedSites(state).map(\.site)
-        let location = ProjectFolder.locate(folder, in: sites)
+        let (folder, location) = Self.toolFolder(path, argumentFolder: argumentFolder, sites: sites)
         let installed = await installer.installedRuntimes()
 
         if !inSetup, [.php, .composer, .wp].contains(tool), let workspace = Self.wordPressWorkspace(holding: folder, location: location, sites: sites, state: state), workspace.worktree != runningSetupWorktree {
@@ -48,7 +47,7 @@ extension NexusEngine {
             case .composer:
                 return try await phpCommand(php, script: try phar("composer", title: "Composer", in: installed))
             case .wp:
-                var command = try await phpCommand(php, script: try Self.pathWithoutSpaces(for: try phar("wp-cli", title: "WP-CLI", in: installed), in: paths.pharLinks), settingsFolder: try wpCLISettings())
+                var command = try await wpCLICommand(php, installed: installed)
                 command.wordPressCore = location.flatMap { WordPressCore.coreFolder(for: folder, in: $0.root) }
                 return command
             default:
@@ -76,6 +75,22 @@ extension NexusEngine {
         let description: String
     }
 
+    // An MCP server of an editor can start php /Sites/shop/artisan from another folder. The folder
+    // that the arguments name then decides when it is in a site. A script outside a site, for
+    // example a phar in ~/bin, keeps the site of the current folder.
+    static func toolFolder(_ path: String, argumentFolder: String?, sites: [Site]) -> (folder: URL, location: ProjectLocation?) {
+        if let argumentFolder {
+            let folder = URL(filePath: argumentFolder, directoryHint: .isDirectory)
+
+            if let location = ProjectFolder.locate(folder, in: sites) {
+                return (folder, location)
+            }
+        }
+
+        let folder = URL(filePath: path, directoryHint: .isDirectory)
+        return (folder, ProjectFolder.locate(folder, in: sites))
+    }
+
     // A Node.js app or a proxy site uses no PHP. So its folder gets the PHP of a new site.
     func phpLine(for location: ProjectLocation?, state: EngineState, installed: [InstalledRuntime]) throws -> String {
         if let php = location?.site.usedPHP {
@@ -88,9 +103,16 @@ extension NexusEngine {
     // WP-CLI with a PHP version of its own, for a worktree that is no site of Nexus.
     func wpCLITool(php line: String) async throws -> ToolCommand {
         let installed = await installer.installedRuntimes()
-        let php = try installedPHP(line, in: installed)
+        return try await wpCLICommand(try installedPHP(line, in: installed), installed: installed)
+    }
 
-        return try await phpCommand(php, script: try Self.pathWithoutSpaces(for: try phar("wp-cli", title: "WP-CLI", in: installed), in: paths.pharLinks), settingsFolder: try wpCLISettings())
+    // Nexus serves each site over HTTPS. A wp-config.php can stop each request without HTTPS, and
+    // WP-CLI then ends without output. The command line PHP puts the environment in $_SERVER. So
+    // wp-config.php sees HTTPS as on a request of the browser.
+    private func wpCLICommand(_ php: InstalledRuntime, installed: [InstalledRuntime]) async throws -> ToolCommand {
+        var command = try await phpCommand(php, script: try Self.pathWithoutSpaces(for: try phar("wp-cli", title: "WP-CLI", in: installed), in: paths.pharLinks), settingsFolder: try wpCLISettings())
+        command.environment["HTTPS"] = "on"
+        return command
     }
 
     private func phar(_ name: String, title: String, in installed: [InstalledRuntime]) throws -> URL {

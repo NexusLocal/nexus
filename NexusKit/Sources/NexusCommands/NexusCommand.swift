@@ -92,7 +92,7 @@ struct PHP: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "php",
         abstract: "Runs the PHP of the site in the current folder, for example: nexus php -v",
-        discussion: "Outside a site, nexus php uses the PHP version of a new site. A folder in a git worktree of a site uses the versions of that site."
+        discussion: "Outside a site, nexus php uses the PHP version of a new site. A folder in a git worktree of a site uses the versions of that site. A script in a site uses the PHP of that site, also from another folder, for example: php ~/Sites/shop/artisan. The same applies to the folder of composer --working-dir, npm --prefix and wp --path."
     )
 
     @Argument(parsing: .captureForPassthrough, help: "The arguments for PHP.") var arguments: [String] = []
@@ -183,7 +183,9 @@ private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bo
     }
 
     do {
-        response = try await NexusClient().send(.tool(tool, folder: FileManager.default.currentDirectoryPath))
+        let folder = FileManager.default.currentDirectoryPath
+        let argumentFolder = ToolArguments.folder(of: tool, in: arguments, currentFolder: folder)
+        response = try await NexusClient().send(.tool(tool, folder: folder, argumentFolder: argumentFolder))
     } catch let error as NexusClientError {
         guard let other = nextProgram() else {
             try fail("\(error)")
