@@ -17,6 +17,13 @@ Small items for the next release.
 - **Database commands.** `nexus db connection` shows the database connection of a site. Another
   command makes an empty database, for example a test database for an agent.
 - **A document root setting** for a project that does not use `public/`.
+- **Commands before the removal of a workspace,** for example `php artisan queue:clear`.
+- **A dump file for each new workspace.** A site can name a dump file, for example a scrubbed copy
+  of production. Each new workspace loads it into its own database.
+- **Better error pages:** a list of your sites for a name that Nexus does not know, and a wait page
+  while PHP restarts.
+- **Plain error texts.** Nexus shows each error as a plain sentence, not as a raw system text.
+- **`mailparse`** in each PHP version.
 
 ## Planned
 
@@ -30,8 +37,6 @@ In this order:
 3. **Xdebug only for debug requests.** A request with the Xdebug cookie goes to a PHP process with
    Xdebug. All other requests stay fast. One command can also run with Xdebug.
 4. **More for workspaces:**
-   - a dump file for each new workspace, for example a scrubbed copy of production;
-   - commands that run before the removal of a workspace;
    - a dev server that starts when you open the site and stops when nobody uses it;
    - stop idle workspaces, if you want: their database server and workers stop until the next
      request;
@@ -45,8 +50,7 @@ In this order:
 ## Packages
 
 - **PHP 8.6**, after its release.
-- **More PHP extensions:** `mailparse`, `gmp` and `memcached`, in each PHP version where they build
-  and load.
+- **More PHP extensions:** `gmp` and `memcached`, in each PHP version where they build and load.
 - **PostgreSQL extensions:** pgvector, PostGIS and pgRouting.
 - **MongoDB.** A database service with versions, as MySQL, MariaDB and PostgreSQL have. Each PHP
   version gets the `mongodb` extension.
@@ -54,8 +58,6 @@ In this order:
 
 ## Later
 
-- Better error pages: a list of your sites for a name that Nexus does not know, and a wait page
-  while PHP restarts.
 - Import a .wpress file with a password or with compression.
 - A log viewer for the logs of your apps.
 - Global keyboard shortcuts.
