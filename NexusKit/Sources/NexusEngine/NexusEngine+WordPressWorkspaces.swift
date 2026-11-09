@@ -598,7 +598,16 @@ extension NexusEngine {
             publishSites()
         }
 
-        let tables = links.tables
+        linkProgress[owner] = 0
+        publishSites()
+
+        let tables: [String]?
+
+        if let known = links.tables {
+            tables = known
+        } else {
+            tables = await tablesWithLinks(to: links.from + links.subsites.map(\.from), network: links.network ? links.to : nil, with: wpCLI)
+        }
 
         if let tables, tables.isEmpty {
             return
