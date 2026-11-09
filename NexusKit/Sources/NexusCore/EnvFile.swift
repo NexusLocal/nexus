@@ -4,9 +4,19 @@ import Foundation
 // with a space before it. A line can start with export. ${...} stays as text.
 public enum EnvFile {
     // The comment lines that "Send mail to Nexus" writes above a key. The first one holds the old
-    // line of a key that Nexus changed. The second one names a key that Nexus added.
-    public static let beforeNexus = "# Before Nexus: "
-    public static let addedByNexus = "# Added by Nexus: "
+    // line of a key that Nexus changed. The second one names a key that Nexus added. Each variant
+    // writes its own name. So Nexus and Nexus Dev do not take the lines of the other for their own
+    // in a project that is a site in both.
+    public static let beforeNexus = beforeNexus(for: .current)
+    public static let addedByNexus = addedByNexus(for: .current)
+
+    public static func beforeNexus(for variant: NexusVariant) -> String {
+        "# Before \(variant.name): "
+    }
+
+    public static func addedByNexus(for variant: NexusVariant) -> String {
+        "# Added by \(variant.name): "
+    }
 
     public static func values(of file: URL) -> [String: String] {
         guard let text = try? String(contentsOf: file, encoding: .utf8) else {

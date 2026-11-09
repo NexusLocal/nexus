@@ -46,14 +46,23 @@ struct NexusVariantTests {
         #expect(dev.firstAppPort == 41000)
         #expect(dev.firstWorkspacePort == 42000)
         #expect(ResolverFile.marker(for: dev) == "# Written by Nexus Dev. Nexus Dev removes this file when you remove Nexus Dev.")
+        #expect(EnvFile.beforeNexus(for: dev) == "# Before Nexus Dev: ")
+        #expect(EnvFile.addedByNexus(for: dev) == "# Added by Nexus Dev: ")
+        #expect(WordPressFiles.beforeNexus(for: dev) == "// Before Nexus Dev: ")
     }
 
-    @Test func neitherVariantTakesTheResolverFileOfTheOtherForItsOwn() {
-        let release = ResolverFile.marker(for: .release)
-        let dev = ResolverFile.marker(for: .dev)
+    @Test func neitherVariantTakesTheLinesOfTheOtherForItsOwn() {
+        let markers: [(NexusVariant) -> String] = [
+            ResolverFile.marker(for:),
+            EnvFile.beforeNexus(for:),
+            EnvFile.addedByNexus(for:),
+            WordPressFiles.beforeNexus(for:),
+        ]
 
-        #expect(!release.hasPrefix(dev))
-        #expect(!dev.hasPrefix(release))
+        for marker in markers {
+            #expect(!marker(.release).hasPrefix(marker(.dev)))
+            #expect(!marker(.dev).hasPrefix(marker(.release)))
+        }
     }
 
     @Test func theNamesOfTheInstalledNexusStayTheSameAsIn020() {
@@ -71,6 +80,9 @@ struct NexusVariantTests {
         #expect(SystemDNSFiles.hostsBegin == "# Nexus begin")
         #expect(SystemDNSFiles.hostsEnd == "# Nexus end")
         #expect(ShellPathLine.marker == "# Added by Nexus (Settings > General > Add Nexus to PATH)")
+        #expect(EnvFile.beforeNexus == "# Before Nexus: ")
+        #expect(EnvFile.addedByNexus == "# Added by Nexus: ")
+        #expect(WordPressFiles.beforeNexus == "// Before Nexus: ")
         #expect(LoginKeychainStore.label == "Nexus Root CA")
         #expect(LoginKeychainStore.tag == Data("nl.roodfruit.nexus.root-ca".utf8))
     }

@@ -162,7 +162,12 @@ public enum WordPressFiles {
         return config
     }
 
-    public static let beforeNexus = "// Before Nexus: "
+    public static let beforeNexus = beforeNexus(for: .current)
+
+    // Each variant writes its own name, as in a .env file.
+    public static func beforeNexus(for variant: NexusVariant) -> String {
+        "// Before \(variant.name): "
+    }
 
     // Gives a constant a new value with a click of the user, as "Send mail to Nexus" does for a .env
     // (D44). The old line stays above it as a comment line. A file with no line or with two lines
