@@ -19,7 +19,9 @@ public struct ApacheSettings: Sendable, Equatable {
 // sends each request over TLS, and each site has its own certificate. So mod_ssl sets HTTPS=on,
 // and a .htaccess rule that checks %{HTTPS} or %{SERVER_PORT} works as in production. Apache
 // takes the client IP from X-Forwarded-For, so PHP sees the real client without a change in the
-// application (D23).
+// application (D23). Apache gives a 503 of its own when PHP-FPM does not answer. Only that 503 gets
+// the wait page. A 503 of the site, such as the maintenance page of Laravel, goes to the browser as
+// it is, because ProxyErrorOverride is off.
 public enum ApacheConfig {
     // The modules that Apache needs to work behind nginx. The module toggles cannot remove them.
     public static let requiredModules = [
@@ -123,6 +125,7 @@ public enum ApacheConfig {
                 "    </Directory>",
                 "    <FilesMatch \"\\.php$\">",
                 "        SetHandler \(try ConfigText.socket(socket, prefix: "proxy:unix:").dropLast())|fcgi://\(socket.deletingPathExtension().lastPathComponent)\"",
+                "        ErrorDocument 503 \"\(ErrorPages.phpWaits)\"",
                 "    </FilesMatch>",
                 "</VirtualHost>",
             ]

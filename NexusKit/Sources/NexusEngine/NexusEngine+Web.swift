@@ -326,9 +326,12 @@ extension NexusEngine {
             modules: NginxConfig.dependencies.loadOrder(state.nginxModules, available: Self.nginxModules(of: nginx))
         )
 
-        for folder in ["client_body", "proxy", "fastcgi", "uwsgi", "scgi"] {
+        for folder in ["client_body", "proxy", "fastcgi", "uwsgi", "scgi", "pages"] {
             try FileManager.default.createDirectory(at: paths.run.appending(path: "nginx/\(folder)"), withIntermediateDirectories: true)
         }
+
+        let unknownSitePage = ErrorPages.unknownSite(hosts: plan.sites.compactMap(\.hosts.first), httpsPort: settings.httpsPort)
+        _ = try Self.writeIfChanged(unknownSitePage, to: settings.pages.appending(path: ErrorPages.unknownSiteFile))
 
         let nginxFolder = paths.nginxConfig.deletingLastPathComponent()
         try writeChecked(try NginxConfig.render(sites: plan.sites, settings: settings), to: paths.nginxConfig) {

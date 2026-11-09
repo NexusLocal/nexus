@@ -127,7 +127,7 @@ struct WebConfigTests {
         #expect(config.contains("proxy_set_header Host $http_host;"))
         #expect(!config.contains("location ~ /\\."))
         #expect(!config.contains("fastcgi_pass"))
-        #expect(!config.contains("error_page"))
+        #expect(!config.contains("error_page 502"))
     }
 
     @Test func aNodeAppGoesToItsUpstreamWithTheOtherAddressAsBackup() throws {
@@ -200,6 +200,69 @@ struct WebConfigTests {
 
         #expect(closed.contains("allow 127.0.0.1;\n    allow ::1;\n    deny all;"))
         #expect(!open.contains("deny all;"))
+    }
+
+    @Test func anUnknownNameGetsThePageWithTheSitesAndANotFoundStatus() throws {
+        let config = try NginxConfig.render(sites: [], settings: nginxSettings())
+
+        #expect(config.contains("ssl_reject_handshake on;\n        root \"/Nexus/run/nginx/pages/\";\n        error_page 404 /unknown-site.html;"))
+        #expect(config.contains("location / {\n            return 404;\n        }"))
+        #expect(config.contains("location = /unknown-site.html {\n            internal;"))
+        #expect(!config.contains("Nexus has no site with this name.\\n"))
+    }
+
+    @Test func thePageForAnUnknownNameLinksEachSiteOnce() {
+        let page = ErrorPages.unknownSite(hosts: ["shop.test", "blog.test", "*.network.test", "shop.test", "<b>.test"], httpsPort: 8443)
+
+        #expect(page.contains("<li><a href='https://blog.test:8443/'>blog.test</a></li>\n<li><a href='https://shop.test:8443/'>shop.test</a></li>"))
+        #expect(page.components(separatedBy: "https://shop.test").count == 2)
+        #expect(!page.contains("network.test"))
+        #expect(page.contains("&lt;b&gt;.test"))
+        #expect(!page.contains("<b>.test"))
+        #expect(page.contains("textContent = location.hostname"))
+    }
+
+    @Test func thePageForAnUnknownNameLinksWithoutThePort443() {
+        let page = ErrorPages.unknownSite(hosts: ["shop.test"], httpsPort: 443)
+
+        #expect(page.contains("<a href='https://shop.test/'>shop.test</a>"))
+    }
+
+    @Test func thePageForAnUnknownNameWithoutSitesSaysHowToAddOne() {
+        let page = ErrorPages.unknownSite(hosts: [], httpsPort: 443)
+
+        #expect(page.contains("Nexus has no sites yet."))
+        #expect(!page.contains("<ul>"))
+    }
+
+    @Test func anNginxSiteGetsAWaitPageWhilePHPDoesNotAnswer() throws {
+        let config = try NginxConfig.render(sites: [site(.nginx)], settings: nginxSettings())
+
+        #expect(config.contains("error_page 502 = @nexus_php_waits;"))
+        #expect(config.contains("location @nexus_php_waits {"))
+        #expect(config.contains("return 503 \"<!doctype html><meta charset='utf-8'><meta http-equiv='refresh' content='1'><title>PHP starts</title>"))
+        #expect(!config.contains("error_page 502 504 = @nexus_php_waits;"))
+    }
+
+    @Test func anApacheSiteGetsAWaitPageWhileApacheOrPHPDoesNotAnswer() throws {
+        let settings = ApacheSettings(port: 8081, runtime: URL(filePath: "/Nexus/runtimes/httpd/2.4"), runFolder: run, modules: [])
+
+        let nginx = try NginxConfig.render(sites: [site(.apache)], settings: nginxSettings())
+        let apache = try ApacheConfig.render(sites: [site(.apache)], settings: settings)
+
+        #expect(nginx.contains("error_page 502 = @nexus_apache_waits;"))
+        #expect(nginx.contains("<title>Apache starts</title>"))
+        #expect(apache.contains("fcgi://php-8.5\"\n        ErrorDocument 503 \"<!doctype html><meta charset='utf-8'><meta http-equiv='refresh' content='1'><title>PHP starts</title>"))
+    }
+
+    @Test func theWaitPagesHaveNoCharacterThatTheServersReadInASpecialWay() {
+        for page in [ErrorPages.phpWaits, ErrorPages.apacheWaits, ErrorPages.appWaits] {
+            #expect(!page.contains("\""))
+            #expect(!page.contains("$"))
+            #expect(!page.contains("%"))
+            #expect(!page.contains("\\"))
+            #expect(page.unicodeScalars.allSatisfy { $0.isASCII })
+        }
     }
 
     @Test func aTurnedOnModuleIsLoaded() throws {

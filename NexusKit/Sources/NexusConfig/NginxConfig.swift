@@ -19,6 +19,12 @@ public struct NginxSettings: Sendable, Equatable {
         self.runFolder = runFolder
         self.modules = modules
     }
+
+    // The pages that nginx serves itself. nginx reads a page at each request. So a new page needs
+    // no reload.
+    public var pages: URL {
+        runFolder.appending(path: "nginx/pages", directoryHint: .isDirectory)
+    }
 }
 
 // The front server. It listens on all addresses for HTTP and HTTPS, does TLS for every site,
@@ -92,7 +98,18 @@ public enum NginxConfig {
             "        listen \(settings.httpsPort) ssl default_server;",
             "        listen [::]:\(settings.httpsPort) ssl default_server;",
             "        ssl_reject_handshake on;",
-            "        return 404 \"Nexus has no site with this name.\\n\";",
+            "        root \(try ConfigText.quoted(settings.pages));",
+            "        error_page 404 /\(ErrorPages.unknownSiteFile);",
+            "",
+            "        location / {",
+            "            return 404;",
+            "        }",
+            "",
+            "        location = /\(ErrorPages.unknownSiteFile) {",
+            "            internal;",
+            "            default_type text/html;",
+            "            add_header Cache-Control no-store always;",
+            "        }",
             "    }",
         ]
 
@@ -199,6 +216,7 @@ public enum NginxConfig {
                 "        deny all;",
                 "    }",
             ]
+            lines += waitLocation(on: [502], name: "nexus_php_waits", page: ErrorPages.phpWaits)
         case .php(.apache, _, _):
             let httpsPort = settings.httpsPort == 443 ? "" : ":\(settings.httpsPort)"
             lines += [
@@ -213,13 +231,15 @@ public enum NginxConfig {
             ]
             lines += site.isWordPress ? uploadsRule + [""] : []
             lines += proxyLocation(to: "https://127.0.0.1:\(settings.apachePort)", extra: apacheTLS)
+            lines += waitLocation(on: [502], name: "nexus_apache_waits", page: ErrorPages.apacheWaits)
         case .notice(let title, let text):
             lines += noticePage(title: title, text: text)
         // A dev server serves files in folders with a dot, for example node_modules/.vite. So
-        // these sites get no rule for such folders.
+        // these sites get no rule for such folders. The client of a dev server reloads the page as
+        // soon as nginx answers, also with a 502. So the wait page also covers a 504.
         case .app(_, let framework):
             lines += proxyLocation(to: "http://nexus_app_\(index)", origin: framework?.checksOrigin == true ? "$nexus_origin_\(index)" : nil)
-            lines += appWaitPage
+            lines += waitLocation(on: [502, 504], name: "nexus_app_waits", page: ErrorPages.appWaits)
         case .proxy(let address):
             lines += proxyLocation(to: address)
         }
@@ -283,21 +303,22 @@ public enum NginxConfig {
         ]
     }
 
-    // A Node.js app does not answer while it starts or after a crash, and Nexus starts it again.
-    // The client of a dev server reloads the page as soon as nginx answers, also with a 502. So
-    // nginx gives a page that tries again each second, and the page of the app comes back without
-    // a reload by hand.
-    private static let appWaitPage = [
-        "",
-        "    error_page 502 504 = @nexus_app_waits;",
-        "",
-        "    location @nexus_app_waits {",
-        "        default_type text/html;",
-        "        add_header Cache-Control no-store always;",
-        "        add_header Retry-After 1 always;",
-        "        return 503 \"<!doctype html><meta http-equiv='refresh' content='1'><title>The app starts</title><p style='font-family: -apple-system, sans-serif'>The app does not answer yet. Nexus starts it, and this page tries again each second. The Site screen of Nexus shows the state and the log of the app.</p>\";",
-        "    }",
-    ]
+    // A backend that does not answer gives a page that tries again each second. So the page of the
+    // site comes back without a reload by hand. Only an error of nginx itself gets this page. An
+    // error page of the site goes to the browser as it is, because nginx intercepts no errors.
+    private static func waitLocation(on codes: [Int], name: String, page: String) -> [String] {
+        [
+            "",
+            "    error_page \(codes.map(String.init).joined(separator: " ")) = @\(name);",
+            "",
+            "    location @\(name) {",
+            "        default_type text/html;",
+            "        add_header Cache-Control no-store always;",
+            "        add_header Retry-After 1 always;",
+            "        return 503 \"\(page)\";",
+            "    }",
+        ]
+    }
 
     // nginx sends a request to Apache over TLS, with the name of the site for the certificate. So
     // a .htaccess rule that checks %{HTTPS} or %{SERVER_PORT} sees HTTPS, as in production, and
