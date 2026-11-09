@@ -30,8 +30,9 @@
 - 🔒 **HTTPS for every site.** Each site gets a `.test` domain with a trusted certificate.
 - ⚡ **Every service in one click.** PHP, Node, nginx, Apache, MySQL, MariaDB, PostgreSQL, Redis, DNS
   and mail. Choose the versions that you need.
-- 🌳 **A workspace for each git worktree.** Each branch gets its own database server, domain, Redis
-  indexes and workers. So several Claude Code sessions can work at the same time.
+- 🌳 **A workspace for each branch.** Each branch gets its own database server, domain, Redis indexes
+  and workers. It starts with a copy of your data, an empty database or your own dump file. So
+  several Claude Code sessions can work at the same time.
 - 🧱 **WordPress, done right.** Bedrock, multisite on subdomains and WP-CLI. Change the URLs in one
   click. Changed your mind? Undo it.
 - 📥 **Import a WordPress backup.** From Local, Studio, Jetpack or All-in-One WP Migration.
@@ -43,20 +44,23 @@
 
 ![The Site screen of a WordPress site with its database, its mail and the workspace of the branch fix](.github/wordpress-workspaces.png)
 
-Make a git worktree of a site. Nexus makes the workspace by itself:
+In the folder of a site, make a workspace for a branch:
 
 ```sh
-git worktree add ../shop-ticket-1 -b ticket-1
-cd ../shop-ticket-1
-nexus workspace wait
+nexus workspace create ticket-1
+nexus workspace wait ticket-1
 ```
 
-The last command prints the URL, for example `https://shop-ticket-1.test`.
+Nexus makes the git worktree and the workspace. The last command prints the URL, for example
+`https://shop-ticket-1.test`. "New workspace…" on the Site screen does the same. A worktree that you
+or an agent make with `git worktree add` gets a workspace too.
 
 Each workspace gets:
 
 - **Database:** a server of its own on a copy of your data. You can also start with an empty
-  database. Then your migrations and seeders run from zero. An agent never sees customer data.
+  database. Then your migrations and seeders run from zero. Or each workspace loads your own dump
+  file, for example a scrubbed copy of production. With these two choices an agent never sees
+  customer data.
 - **Domain:** a `.test` domain of its own with HTTPS.
 - **Redis:** indexes of its own.
 - **Programs:** its own queue worker, scheduler, Reverb server and Vite server, when the application
@@ -109,6 +113,8 @@ nexus site edit shop.test --workspace-key SCOUT_PORT={port:scout}
 - Multisite works, also on subdomains.
 - `nexus wp` runs WP-CLI with the PHP version of the site.
 - Change the URLs of a site to its Nexus URL in one click. Undo it with one click too.
+- Give each workspace a dump of your live site. Nexus changes the links to the live URL while the
+  dump loads, also in serialized data and JSON. So the workspace opens with its own URL at once.
 - Nexus warns when a plugin sends real mail. It can turn that plugin off for you.
 
 **📥 Import a site:** drop a backup on the Overview. Nexus reads exports of Local, Studio and Jetpack,
@@ -134,8 +140,9 @@ sent it. Read your mails in Nexus, or open the web inbox of Mailpit.
 
 ![The Packages screen with the versions of nginx, Apache, PHP, MySQL and MariaDB](.github/packages.png)
 
-Install a version of PHP, Node or a database with one click. Nexus shows the updates. It also tells
-you when a version gets no more security fixes.
+Install a version of PHP, Node or a database with one click. Updates in the same version line install
+by themselves, for example a security fix of PHP. Nexus also tells you when a version gets no more
+security fixes.
 
 ## Install
 
@@ -171,14 +178,17 @@ The site opens on `https://shop.test`. To make each folder in `~/Sites` a site, 
 
 ## Bring a database
 
-Open a database service in the app and choose Import database. You can also run this command:
+Open a database service in the app and choose Import database. Copy a database from another server,
+or load a dump file: `.sql`, `.sql.gz`, or a `.zip` or `.tar` with a dump. In the terminal:
 
 ```sh
-nexus db copy shop --to mysql-8.4
+nexus db copy shop --to mysql-8.4         # from another server
+nexus db import ~/Downloads/shop.sql.gz   # into the database of the site in this folder
 ```
 
-Nexus reads the other server and changes nothing on it. The default account of a new instance is
-`root` without a password.
+Nexus reads the other server and changes nothing on it. A database that exists changes only after
+your choice. Nexus then puts a copy of the old database in the trash first. The default account of a
+new instance is `root` without a password.
 
 ## Command line
 
