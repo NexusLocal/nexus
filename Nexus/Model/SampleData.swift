@@ -411,7 +411,7 @@ extension AppModel {
             package("Redis", "Redis 7.2", "7.2.11"),
             package("Redis", "Redis 8.2", "8.2.3", .installed),
             package("Redis", "Redis 8.10", "8.10.0"),
-            package("Mail", "Mailpit 1", "1.33.0", .installed),
+            package("Mail", "Mailpit", "1.33.0", .installed),
             package("Tools", "Node 22", "22.21.1", lts: true),
             package("Tools", "Node 24", "24.11.0", .update("24.11.1"), lts: true),
             package("Tools", "Node 26", "26.1.0"),

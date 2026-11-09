@@ -173,11 +173,12 @@ extension AppModel {
     }
 
     // Redis 8 is the newest Redis 8. So its row shows the version line of its build, for
-    // example Redis 8.10.
+    // example Redis 8.10. Composer, WP-CLI and Mailpit have one version line. So their row shows
+    // only the name, and the column next to it shows the version, for example 1.33.1.
     static func packageName(_ name: String, line: String, version: String = "") -> String {
         switch name {
         case "redis" where line == "8" && !version.isEmpty: "Redis \(version.split(separator: ".").prefix(2).joined(separator: "."))"
-        case "composer", "wp-cli": packageTitle(name)
+        case "composer", "wp-cli", "mailpit": packageTitle(name)
         default: "\(packageTitle(name)) \(line)"
         }
     }
