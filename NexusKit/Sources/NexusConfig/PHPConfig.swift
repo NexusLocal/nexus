@@ -17,14 +17,14 @@ public enum PHPConfig {
     // PCOV with pcov.enabled = 1 runs every line of PHP through its own code, also without a test.
     // A page then took about 70% more time in PHP, and a loop on the command line 3 times more
     // (measured on 2026-11-09). So PCOV loads with pcov.enabled = 0 (owner, 2026-11-09). The nexus
-    // command adds this folder after conf.d for a command with --coverage, for example
-    // pest --coverage. A PHP that the command starts gets the folder too, because it is in the
+    // command adds this folder after conf.d for a command with --coverage, --tia or --mutate, for
+    // example pest --tia. A PHP that the command starts gets the folder too, because it is in the
     // environment. A custom setting pcov.enabled = 1 turns it on for each command and each page.
     public static let coverageFolderName = "coverage.d"
     public static let coverageIniName = "00-nexus-coverage.ini"
 
     public static let coverageIni = """
-        ; Nexus writes this file. The nexus command reads it only for a command with --coverage.
+        ; Nexus writes this file. The nexus command reads it only for a command with --coverage, --tia or --mutate.
         pcov.enabled = 1
 
         """

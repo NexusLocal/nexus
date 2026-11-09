@@ -369,9 +369,13 @@ public struct ToolCommand: Codable, Sendable, Equatable {
         self.coverageFolder = coverageFolder
     }
 
-    // phpunit, pest, paratest and php artisan test name each coverage report with --coverage.
+    // phpunit, pest, paratest and php artisan test name each coverage report with --coverage. The
+    // test impact analysis of Pest (--tia) and its mutation tests (--mutate) need a coverage
+    // driver too. Without one, --tia runs every test and says nothing.
     public static func asksForCoverage(_ arguments: [String]) -> Bool {
-        arguments.contains { $0.hasPrefix("--coverage") }
+        arguments.contains { argument in
+            ["--coverage", "--tia", "--mutate"].contains { argument.hasPrefix($0) }
+        }
     }
 
     // A PHP that the command starts, for example php artisan test, gets the folder too, because it

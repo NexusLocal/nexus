@@ -8,6 +8,8 @@ struct ToolCommandTests {
         ["vendor/bin/pest", "--coverage"],
         ["artisan", "test", "--coverage", "--min=80"],
         ["vendor/bin/phpunit", "--coverage-html", "build"],
+        ["vendor/bin/pest", "--tia"],
+        ["vendor/bin/pest", "--mutate", "--parallel"],
     ])
     func aCommandWithCoverageReadsTheFolderOfPCOVLast(arguments: [String]) {
         #expect(command.environment(for: arguments)["PHP_INI_SCAN_DIR"] == "/config/8.5/conf.d:/config/8.5/coverage.d")
