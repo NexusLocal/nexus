@@ -61,6 +61,13 @@ struct SiteTests {
         #expect(throws: DocumentRootError.missing("dist")) { try Site.documentRootFolder("dist", in: site) }
     }
 
+    @Test func aWorkspaceFileIsAPathInTheProjectFolder() throws {
+        #expect(try Site.workspaceFile(" /storage/certs/ ") == "storage/certs")
+        #expect(throws: WorkspaceFileError.invalid("../secrets")) { try Site.workspaceFile("../secrets") }
+        #expect(throws: WorkspaceFileError.automatic(".env")) { try Site.workspaceFile(".env") }
+        #expect(throws: WorkspaceFileError.automatic("vendor/bin")) { try Site.workspaceFile("vendor/bin") }
+    }
+
     @Test func aWorkspaceServesTheSameDocumentRoot() {
         let main = Site(host: "shop.test", folder: URL(filePath: "/w/shop", directoryHint: .isDirectory), php: "8.5", documentRootFolder: "htdocs")
         let workspace = Workspace(name: "fix", worktree: "/w/fix", folder: "/w/fix")

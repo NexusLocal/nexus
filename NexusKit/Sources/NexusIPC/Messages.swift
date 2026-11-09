@@ -58,6 +58,8 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let documentRootSetting: String?
     // The commands that run in a workspace before Nexus removes it.
     public let removalCommands: [String]?
+    // The paths that git ignores and that each workspace gets as a clone.
+    public let workspaceFiles: [String]?
 
     public init(
         hosts: [String],
@@ -92,10 +94,12 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         workspaceSeeders: Bool? = nil,
         migrationCommand: String? = nil,
         documentRootSetting: String? = nil,
-        removalCommands: [String]? = nil
+        removalCommands: [String]? = nil,
+        workspaceFiles: [String]? = nil
     ) {
         self.documentRootSetting = documentRootSetting
         self.removalCommands = removalCommands
+        self.workspaceFiles = workspaceFiles
         self.hosts = hosts
         self.folder = folder
         self.documentRoot = documentRoot
@@ -385,6 +389,7 @@ public struct SiteChange: Codable, Sendable, Equatable {
     // A folder in the site folder. An empty value gives the automatic document root again.
     public var documentRoot: String?
     public var removalCommands: [String]?
+    public var workspaceFiles: [String]?
 
     public init(
         php: String? = nil,
@@ -403,10 +408,12 @@ public struct SiteChange: Codable, Sendable, Equatable {
         workspaceDatabases: WorkspaceDatabaseChoice? = nil,
         workspaceSeeders: Bool? = nil,
         documentRoot: String? = nil,
-        removalCommands: [String]? = nil
+        removalCommands: [String]? = nil,
+        workspaceFiles: [String]? = nil
     ) {
         self.documentRoot = documentRoot
         self.removalCommands = removalCommands
+        self.workspaceFiles = workspaceFiles
         self.php = php
         self.server = server
         self.aliases = aliases

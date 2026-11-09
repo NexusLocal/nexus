@@ -19,6 +19,8 @@ struct SiteScreen: View {
     @FocusState private var focusedCommand: Int?
     @State private var removalCommands: [String]
     @FocusState private var focusedRemovalCommand: Int?
+    @State private var workspaceFiles: [String]
+    @FocusState private var focusedWorkspaceFile: Int?
     @State private var asksForBranch = false
     @State private var newBranch = ""
     @State private var workspaceProcesses: Bool
@@ -52,6 +54,7 @@ struct SiteScreen: View {
         _ownKeys = State(initialValue: site.workspaceKeys)
         _commands = State(initialValue: site.workspaceCommands)
         _removalCommands = State(initialValue: site.removalCommands)
+        _workspaceFiles = State(initialValue: site.workspaceFiles)
         _workspaceProcesses = State(initialValue: site.workspaceProcesses)
         _mainProcesses = State(initialValue: site.mainProcesses)
         _backgroundCommands = State(initialValue: site.backgroundCommands ?? [])
@@ -644,9 +647,20 @@ struct SiteScreen: View {
         }
     }
 
+    private var workspaceFilesSection: some View {
+        Section {
+            CommandRows(commands: $workspaceFiles, saved: site.workspaceFiles, focusedRow: $focusedWorkspaceFile, prompt: ".env.testing", save: saveWorkspaceFiles)
+        } header: {
+            Text("Extra files")
+        } footer: {
+            Text("Each workspace gets a clone of these paths in the project folder, for example .env.testing or auth.json. git must ignore them. A .env file such as .env.testing gets the database, Redis and URL keys of the workspace, so tests in a workspace do not use the servers of the main site. A value of its own, such as DB_DATABASE=:memory:, stays. A change saves when you press Return or click outside the field. Existing workspaces then get the change.")
+        }
+    }
+
     @ViewBuilder
     private var workspaceSetupSections: some View {
         commandsSection
+        workspaceFilesSection
         removalCommandsSection
 
         Section {
@@ -718,6 +732,11 @@ struct SiteScreen: View {
                 saveRemovalCommands()
             }
         }
+        .onChange(of: focusedWorkspaceFile) { old, _ in
+            if old != nil {
+                saveWorkspaceFiles()
+            }
+        }
         .onChange(of: focusedBackgroundCommand) { old, _ in
             if old != nil {
                 saveBackgroundCommands()
@@ -731,6 +750,7 @@ struct SiteScreen: View {
             saveOwnKeys()
             saveCommands()
             saveRemovalCommands()
+            saveWorkspaceFiles()
             saveBackgroundCommands()
             saveAppCommand()
             saveAddress()
@@ -807,6 +827,11 @@ struct SiteScreen: View {
         .onChange(of: site.workspaceCommands) {
             if focusedCommand == nil, site.workspaceCommands != completeCommands {
                 commands = site.workspaceCommands
+            }
+        }
+        .onChange(of: site.workspaceFiles) {
+            if focusedWorkspaceFile == nil, site.workspaceFiles != CommandRows.complete(workspaceFiles) {
+                workspaceFiles = site.workspaceFiles
             }
         }
         .onChange(of: site.removalCommands) {
@@ -1022,6 +1047,16 @@ struct SiteScreen: View {
         }
 
         change(SiteChange(backgroundCommands: completeBackgroundCommands)) { backgroundCommands = site.backgroundCommands ?? preset }
+    }
+
+    private func saveWorkspaceFiles() {
+        let complete = CommandRows.complete(workspaceFiles)
+
+        guard complete != site.workspaceFiles else {
+            return
+        }
+
+        change(SiteChange(workspaceFiles: complete)) { workspaceFiles = site.workspaceFiles }
     }
 
     private func saveRemovalCommands() {

@@ -273,6 +273,7 @@ extension NexusEngine {
             }
 
             if let written {
+                await rewriteChosenEnvFiles(written, in: &workspace)
                 try await checkConfiguration(of: written, in: &workspace, key: key)
             }
 
@@ -464,6 +465,8 @@ extension NexusEngine {
         var warnings: [String] = []
         // What the check of a WordPress workspace needs (Phase 4, 3e).
         var wordPress: WordPressWrite?
+        // The changes of the .env, for the .env files that a site names as workspace files.
+        var envRewrite: (hosts: [HostRewrite], keys: [String: String])?
     }
 
     // Returns nil when the workspace has no .env, so nothing after this step applies to it.
@@ -586,7 +589,8 @@ extension NexusEngine {
             isolatingKeys: plan.isolatingKeys,
             mainFolder: mainFolder,
             repositoryHoldsApplication: ProjectFolder.repository(of: site).map { RealPath.contains($0.root, mainFolder) } ?? false,
-            warnings: plan.warnings
+            warnings: plan.warnings,
+            envRewrite: (hosts, keys)
         )
     }
 

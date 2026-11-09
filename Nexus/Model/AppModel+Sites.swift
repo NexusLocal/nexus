@@ -41,7 +41,8 @@ extension SiteItem {
             migrationCommand: info.migrationCommand,
             offersEmptyDatabases: info.offersEmptyDatabases,
             documentRootSetting: info.documentRootSetting,
-            removalCommands: info.removalCommands ?? []
+            removalCommands: info.removalCommands ?? [],
+            workspaceFiles: info.workspaceFiles ?? []
         )
     }
 }

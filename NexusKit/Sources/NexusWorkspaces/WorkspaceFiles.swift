@@ -29,6 +29,23 @@ public enum WorkspaceFiles {
         }
     }
 
+    // The ignored entries that the paths of a site name (owner, 2026-11-09). git lists a folder
+    // that it ignores as a whole, so a path in such a folder becomes an entry of its own.
+    public static func chosen(_ entries: [String], paths: [String]) -> [String] {
+        paths.flatMap { path in
+            let inside = entries.filter { entry in
+                let trimmed = RealPath.trimmed(entry)
+                return trimmed == path || trimmed.hasPrefix("\(path)/")
+            }
+
+            guard inside.isEmpty else {
+                return inside
+            }
+
+            return entries.contains { $0.hasSuffix("/") && path.hasPrefix($0) } ? [path] : []
+        }
+    }
+
     // A WordPress repository often ignores the core, the plugins or both (Phase 4, 3e). So each
     // ignored path of the project counts. The configuration of the workspace comes from Nexus, and
     // a cache of the main site holds its URLs.

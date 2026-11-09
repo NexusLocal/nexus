@@ -34,7 +34,8 @@ public enum SiteKind: String, Codable, Sendable, CaseIterable {
 // address when it runs as another kind, so a change back restores them. workspaceDatabases of nil
 // follows Settings > Workspaces. workspaceSeeders of nil is off. documentRootFolder is a folder in
 // the site folder that the user chose. So a workspace serves the same folder in its worktree.
-// removalCommands run in a workspace before Nexus removes it. nil is none.
+// removalCommands run in a workspace before Nexus removes it. nil is none. workspaceFiles are paths
+// in the project folder that git ignores, for example .env.testing. Each workspace gets a clone.
 public struct Site: Codable, Sendable, Equatable {
     public static let commandFromProject = "project"
 
@@ -57,6 +58,7 @@ public struct Site: Codable, Sendable, Equatable {
     public var workspaceSeeders: Bool?
     public var documentRootFolder: String?
     public var removalCommands: [String]?
+    public var workspaceFiles: [String]?
 
     public init(
         host: String,
@@ -77,7 +79,8 @@ public struct Site: Codable, Sendable, Equatable {
         workspaceDatabases: WorkspaceDatabaseKind? = nil,
         workspaceSeeders: Bool? = nil,
         documentRootFolder: String? = nil,
-        removalCommands: [String]? = nil
+        removalCommands: [String]? = nil,
+        workspaceFiles: [String]? = nil
     ) {
         self.host = host
         self.folder = folder
@@ -98,6 +101,24 @@ public struct Site: Codable, Sendable, Equatable {
         self.workspaceSeeders = workspaceSeeders
         self.documentRootFolder = documentRootFolder
         self.removalCommands = removalCommands
+        self.workspaceFiles = workspaceFiles
+    }
+
+    // A path of the list is a path in the project folder, without a / at the start or the end.
+    // Nexus writes .env itself, and it clones vendor and node_modules already.
+    public static func workspaceFile(_ value: String) throws -> String {
+        let path = value.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let parts = path.split(separator: "/")
+
+        guard !path.isEmpty, !parts.contains(".."), !parts.contains(".") else {
+            throw WorkspaceFileError.invalid(value)
+        }
+
+        guard path != ".env", parts.first != "vendor", parts.first != "node_modules" else {
+            throw WorkspaceFileError.automatic(path)
+        }
+
+        return path
     }
 
     public var kind: SiteKind {
@@ -345,6 +366,20 @@ extension SiteLayoutEntry {
             .site(HostName.movingTLD(host, from: old, to: new))
         case .group(let name, let hosts):
             .group(name: name, hosts: hosts.map { HostName.movingTLD($0, from: old, to: new) })
+        }
+    }
+}
+
+public enum WorkspaceFileError: Error, Equatable, CustomStringConvertible {
+    case invalid(String)
+    case automatic(String)
+
+    public var description: String {
+        switch self {
+        case .invalid(let path):
+            "\(path) is not a path in the project folder. Give a path such as .env.testing or storage/certs."
+        case .automatic(let path):
+            "Each workspace gets \(path) already. Nexus writes .env itself, and it clones vendor and node_modules."
         }
     }
 }

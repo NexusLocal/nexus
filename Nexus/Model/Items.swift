@@ -194,6 +194,7 @@ struct SiteItem: Identifiable, Hashable {
     // The document root that the user chose. nil is automatic.
     var documentRootSetting: String?
     var removalCommands: [String] = []
+    var workspaceFiles: [String] = []
 
     var id: String { host }
 

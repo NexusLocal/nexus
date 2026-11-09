@@ -77,7 +77,7 @@ extension NexusEngine {
 
     private func clone(in folders: FileFolders, git: URL, leavingOut leftOut: [String] = []) async -> [String] {
         do {
-            return try await cloneEntries(in: folders, git: git, leavingOut: leftOut)
+            return try await cloneEntries(in: folders, git: git, leavingOut: leftOut, chosen: await chosenWorkspaceFiles(mainFolder: folders.main))
         } catch {
             return ["Nexus cannot read which files git ignores: \(error)"]
         }
@@ -153,7 +153,60 @@ extension NexusEngine {
         )
     }
 
-    private func cloneEntries(in folders: FileFolders, git: URL, leavingOut leftOut: [String]) async throws -> [String] {
+    // The paths of the sites of the project in this folder of the main checkout. A repository can
+    // hold the project in a subfolder, and a site can be on the public folder of the project.
+    private func chosenWorkspaceFiles(mainFolder: String) async -> [String] {
+        let sites = resolvedSites(await stateStore.current()).map(\.site)
+        let own = sites.filter { site in
+            let project = ProjectFolder.projectFolder(of: site)
+            return RealPath.contains(mainFolder, project) || RealPath.contains(project, mainFolder)
+        }
+
+        return Self.distinct(own.flatMap { $0.workspaceFiles ?? [] })
+    }
+
+    // A cloned .env file such as .env.testing names the servers of the main site, so tests in the
+    // workspace would write to them (owner, 2026-11-09). A key gets the value of the workspace when
+    // the file has the value of the main .env, or when the file does not have the key, because the
+    // default of the configuration can be the server of the main site. A value of its own, for
+    // example DB_DATABASE=:memory:, stays.
+    static func chosenEnvKeys(_ keys: [String: String], file: [String: String], main: [String: String]) -> [String: String] {
+        keys.filter { key, _ in
+            guard let value = file[key] else {
+                return true
+            }
+
+            return value == main[key]
+        }
+    }
+
+    func rewriteChosenEnvFiles(_ written: WrittenEnv, in workspace: inout Workspace) async {
+        guard let rewrite = written.envRewrite else {
+            return
+        }
+
+        let main = EnvFile.values(of: URL(filePath: "\(written.mainFolder)/.env"))
+        let envFiles = await chosenWorkspaceFiles(mainFolder: written.mainFolder).filter { ($0 as NSString).lastPathComponent.hasPrefix(".env.") }
+
+        for path in envFiles where FileManager.default.fileExists(atPath: "\(written.folder)/\(path)") {
+            guard (try? await GitTool.ignores(path, in: written.folder, git: written.git)) == true else {
+                workspace.warnings.append("git does not ignore \(path) in this worktree, so Nexus does not change its keys.")
+                continue
+            }
+
+            do {
+                let file = "\(written.folder)/\(path)"
+                let text = try Self.envText(of: file)
+                let keys = Self.chosenEnvKeys(rewrite.keys, file: EnvFile.values(in: text), main: main)
+
+                try Data(EnvRewrite.apply(to: text, hosts: rewrite.hosts, keys: keys).utf8).write(to: URL(filePath: file), options: .atomic)
+            } catch {
+                workspace.warnings.append("Nexus did not change the keys in \(path) of this worktree: \(error)")
+            }
+        }
+    }
+
+    private func cloneEntries(in folders: FileFolders, git: URL, leavingOut leftOut: [String], chosen: [String]) async throws -> [String] {
         let exists = { (path: String) in (try? FileManager.default.attributesOfItem(atPath: path)) != nil }
         let worktree = folders.worktree
         let ignoredInMain = try await GitTool.ignoredEntries(in: folders.main, git: git)
@@ -165,7 +218,8 @@ extension NexusEngine {
             let path = "\(folders.main)/\(RealPath.trimmed(entry))"
             return worktrees.contains { $0 == path || $0.hasPrefix("\(path)/") }
         }
-        let entries = (isWordPress ? WorkspaceFiles.clonableForWordPress(ignoredInMain) : WorkspaceFiles.clonable(ignoredInMain))
+        let automatic = isWordPress ? WorkspaceFiles.clonableForWordPress(ignoredInMain) : WorkspaceFiles.clonable(ignoredInMain)
+        let entries = Self.distinct(automatic + WorkspaceFiles.chosen(ignoredInMain, paths: chosen))
             .filter { entry in !exists("\(worktree)/\(entry)") && !leftOut.contains { entry.hasPrefix($0) } && !holdsWorktree(entry) }
         let ignored = try await GitTool.ignored(entries.filter { !Self.isBehindLink($0, in: worktree) }, in: worktree, git: git)
         var warnings = Self.warning(for: entries.filter { !ignored.contains($0) })

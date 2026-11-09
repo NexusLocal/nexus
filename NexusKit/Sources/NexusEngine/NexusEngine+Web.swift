@@ -650,7 +650,8 @@ extension NexusEngine {
                 workspaceSeeders: site.runsWorkspaceSeeders,
                 migrationCommand: nodeProject?.migrationCommand,
                 documentRootSetting: site.documentRootFolder,
-                removalCommands: site.removalCommands
+                removalCommands: site.removalCommands,
+                workspaceFiles: site.workspaceFiles
             ))
         }
 
@@ -884,6 +885,9 @@ extension NexusEngine {
         if let removalCommands = change.removalCommands {
             site.removalCommands = Self.uniqueCommands(removalCommands)
         }
+        if let workspaceFiles = change.workspaceFiles {
+            site.workspaceFiles = Self.distinct(try workspaceFiles.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map(Site.workspaceFile))
+        }
         if let documentRoot = change.documentRoot {
             site.documentRootFolder = try Site.documentRootFolder(documentRoot, in: site.folder)
         }
@@ -910,7 +914,7 @@ extension NexusEngine {
         // new web configuration.
         let changesProcesses = change.backgroundCommands != nil || change.workspaceProcesses != nil || change.mainProcesses != nil || change.command != nil
         let changesDatabases = change.workspaceDatabases != nil || change.workspaceSeeders != nil
-        let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil || change.workspaceCommands != nil || change.removalCommands != nil || changesProcesses || changesDatabases
+        let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil || change.workspaceCommands != nil || change.removalCommands != nil || change.workspaceFiles != nil || changesProcesses || changesDatabases
         let changesServers = change.php != nil || change.server != nil || change.aliases != nil || change.address != nil || change.documentRoot != nil || edited.kind != kindBefore
         let onlySettings = hasSetting && !changesServers
         var notes = onlySettings ? [] : try await changeWeb(.sites, store)
@@ -928,7 +932,7 @@ extension NexusEngine {
 
         // A new {port:<name>} needs a port from a setup, and {port:reverb} also changes the .env. A
         // Node.js app needs {port:app} in each workspace.
-        if change.workspaceKeys != nil || change.aliases != nil || change.backgroundCommands != nil || change.command != nil || changesKind {
+        if change.workspaceKeys != nil || change.workspaceFiles != nil || change.aliases != nil || change.backgroundCommands != nil || change.command != nil || changesKind {
             try await setUpWorkspacesAgain(keys: [ProjectFolder.workspaceKey(of: edited)])
         }
 

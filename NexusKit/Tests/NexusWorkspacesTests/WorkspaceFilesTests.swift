@@ -195,4 +195,14 @@ struct WorkspaceFilesTests {
 
         #expect(ignored.isEmpty)
     }
+
+    @Test func aChosenPathGetsItsIgnoredEntries() {
+        let entries = [".env", ".env.testing", "auth.json", "storage/certs/", "secrets/"]
+
+        #expect(WorkspaceFiles.chosen(entries, paths: [".env.testing", "storage/certs", "secrets/key.pem"]) == [".env.testing", "storage/certs/", "secrets/key.pem"])
+    }
+
+    @Test func aChosenPathThatGitDoesNotIgnoreGetsNoEntry() {
+        #expect(WorkspaceFiles.chosen([".env"], paths: ["README.md"]).isEmpty)
+    }
 }

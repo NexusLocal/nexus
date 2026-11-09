@@ -1109,6 +1109,8 @@ struct SiteCommand: AsyncParsableCommand {
         @Flag(help: "Remove every command of new workspaces.") var noWorkspaceCommands = false
         @Option(name: .customLong("removal-command"), help: "A command that runs in a workspace before Nexus removes it, for example \"php artisan queue:clear\". It can use the same values as --workspace-command. Repeat it for more commands. These replace the current commands.") var removalCommands: [String] = []
         @Flag(help: "Remove every command before the removal of a workspace.") var noRemovalCommands = false
+        @Option(name: .customLong("workspace-file"), help: "A path in the project folder that git ignores, for example .env.testing or auth.json. Each workspace gets a clone. A .env file gets the database, Redis and URL keys of the workspace. Repeat it for more paths. These replace the current paths.") var workspaceFiles: [String] = []
+        @Flag(help: "Remove every extra file of the workspaces.") var noWorkspaceFiles = false
         @Option(name: .customLong("background-command"), help: "A background process of each workspace. It can use {workspace}, {host}, {database} and {port:<name>}. {port:database} is the port of the database server of the workspace. Repeat it for more processes. These replace the current processes.") var backgroundCommands: [String] = []
         @Flag(help: "Remove every background process.") var noBackgroundCommands = false
         @Option(name: .customLong("workspace-processes"), help: "on or off. With on, each workspace runs the background processes.") var workspaceProcesses: OnOff?
@@ -1126,6 +1128,10 @@ struct SiteCommand: AsyncParsableCommand {
 
         private var commandChange: [String]? {
             noWorkspaceCommands ? [] : (workspaceCommands.isEmpty ? nil : workspaceCommands)
+        }
+
+        private var filesChange: [String]? {
+            noWorkspaceFiles ? [] : (workspaceFiles.isEmpty ? nil : workspaceFiles)
         }
 
         private var removalChange: [String]? {
@@ -1159,7 +1165,8 @@ struct SiteCommand: AsyncParsableCommand {
                 workspaceDatabases: workspaceDatabases,
                 workspaceSeeders: workspaceSeeders.map { $0 == .on },
                 documentRoot: noDocumentRoot ? "" : documentRoot,
-                removalCommands: removalChange
+                removalCommands: removalChange,
+                workspaceFiles: filesChange
             )
 
             try finish(try await send(.editSite(host: host, change: change)))

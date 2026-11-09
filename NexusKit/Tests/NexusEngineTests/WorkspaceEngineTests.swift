@@ -1476,6 +1476,14 @@ extension NexusEngineTests {
         #expect(status.trimmed.isEmpty)
     }
 
+    @Test func aChosenEnvFileGetsTheKeysOfTheWorkspaceOnlyWhereItSharesTheMainValue() {
+        let keys = ["DB_PORT": "42001", "REDIS_DB": "3", "DB_DATABASE": "/w/fix/database.sqlite"]
+        let main = ["DB_PORT": "3306", "REDIS_DB": "0", "DB_DATABASE": "/w/shop/database.sqlite"]
+        let testing = ["DB_PORT": "3306", "DB_DATABASE": ":memory:"]
+
+        #expect(NexusEngine.chosenEnvKeys(keys, file: testing, main: main) == ["DB_PORT": "42001", "REDIS_DB": "3"])
+    }
+
     @Test func theExcludeFileGetsTheWorktreeFolderOneTime() {
         #expect(NexusEngine.excludeText(adding: "/.claude/worktrees/", to: "") == "/.claude/worktrees/\n")
         #expect(NexusEngine.excludeText(adding: "/.claude/worktrees/", to: "# git ls-files\n*.log") == "# git ls-files\n*.log\n/.claude/worktrees/\n")
