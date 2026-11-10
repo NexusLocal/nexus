@@ -54,6 +54,15 @@ public enum NexusVariant: Sendable {
         }
     }
 
+    // The name of the MCP server and of its entry in the settings of an agent. So both apps can be
+    // on in one agent.
+    public var mcpServerName: String {
+        switch self {
+        case .release: "nexus"
+        case .dev: "nexus-dev"
+        }
+    }
+
     public func port(_ port: Int) -> Int {
         switch self {
         case .release: port

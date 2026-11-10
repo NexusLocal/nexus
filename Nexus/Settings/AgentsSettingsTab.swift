@@ -2,30 +2,16 @@ import AppKit
 import NexusMCP
 import SwiftUI
 
-extension AgentLevel {
-    var summary: String {
-        [abilities, limits].filter { !$0.isEmpty }.joined(separator: " ")
-    }
+// The pop-up button "Agents can" of the settings and of the first run.
+struct AgentLevelPicker: View {
+    @Binding var level: AgentLevel
 
-    // The first run has no switch "Ask me before agents look". So its text says that agents ask
-    // before a change.
-    var firstRunSummary: String {
-        self == .read ? abilities : [abilities, "Most agents ask you before each change.", limits].joined(separator: " ")
-    }
-
-    private var abilities: String {
-        switch self {
-        case .read: "Agents see your sites, services, logs and mail. They cannot change anything in Nexus."
-        case .change: "Agents see your sites, services, logs and mail. They can also start services, install PHP and make databases, workspaces and sites."
-        case .remove: "Agents can do all that \"Look and set up\" allows. They can also remove workspaces and sites, stop services and delete mail."
-        }
-    }
-
-    private var limits: String {
-        switch self {
-        case .read: ""
-        case .change: "No agent can delete a database or your files."
-        case .remove: "No agent can delete a database or your files. A removed workspace keeps a copy of its database for 7 days."
+    var body: some View {
+        Picker("Agents can", selection: $level) {
+            ForEach(AgentLevel.allCases, id: \.self) { level in
+                Text(level.title)
+                    .tag(level)
+            }
         }
     }
 }
@@ -70,12 +56,7 @@ struct AgentsSettingsTab: View {
             }
 
             Section {
-                Picker("Agents can", selection: Binding(get: { agents.settings.level }, set: { agents.setLevel($0) })) {
-                    ForEach(AgentLevel.allCases, id: \.self) { level in
-                        Text(level.title)
-                            .tag(level)
-                    }
-                }
+                AgentLevelPicker(level: Binding(get: { agents.settings.level }, set: { agents.setLevel($0) }))
 
                 Toggle("Ask me before agents look", isOn: Binding(get: { agents.settings.askBeforeLooking }, set: { agents.setAskBeforeLooking($0) }))
                     .toggleStyle(.switch)
@@ -108,19 +89,9 @@ struct AgentsSettingsTab: View {
         let addable = agents.addable
 
         return Menu("Add agent…") {
-            if !addable.onThisMac.isEmpty {
-                Section("On this Mac") {
-                    ForEach(addable.onThisMac) { agent in
-                        Button(agent.name) {
-                            agents.add(agent)
-                        }
-                    }
-                }
-            }
-
-            if !addable.notFound.isEmpty {
-                Section("Not found on this Mac") {
-                    ForEach(addable.notFound) { agent in
+            ForEach([("On this Mac", addable.onThisMac), ("Not found on this Mac", addable.notFound)].filter { !$0.1.isEmpty }, id: \.0) { title, kinds in
+                Section(title) {
+                    ForEach(kinds) { agent in
                         Button(agent.name) {
                             agents.add(agent)
                         }

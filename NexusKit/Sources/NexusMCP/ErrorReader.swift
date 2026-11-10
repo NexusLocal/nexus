@@ -150,6 +150,7 @@ public enum ErrorReader {
         let serious: Set<String> = ["ERROR", "CRITICAL", "ALERT", "EMERGENCY"]
         var errors: [SiteError] = []
         var current: (time: String, level: String, lines: [Substring])?
+        let dates = formatter("yyyy-MM-dd HH:mm:ss", timeZone: timeZone)
 
         func close() {
             guard let entry = current, serious.contains(entry.level.uppercased()), let first = entry.lines.first else {
@@ -158,7 +159,7 @@ public enum ErrorReader {
 
             let frames = entry.lines.dropFirst().filter { $0.hasPrefix("#") }.prefix(100).map { String($0.prefix(2000)) }
             let message = String(first.drop { $0 != ":" }.dropFirst().prefix(messageLength)).trimmingCharacters(in: .whitespaces)
-            errors.append(SiteError(source: "laravel", time: entry.time, level: entry.level.uppercased(), message: message, trace: frames.isEmpty ? nil : frames, file: file, date: date(entry.time, format: "yyyy-MM-dd HH:mm:ss", timeZone: timeZone)))
+            errors.append(SiteError(source: "laravel", time: entry.time, level: entry.level.uppercased(), message: message, trace: frames.isEmpty ? nil : frames, file: file, date: dates.date(from: entry.time)))
         }
 
         for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -197,6 +198,7 @@ public enum ErrorReader {
         let serious = /PHP (Fatal error|Parse error|Recoverable fatal error)|Uncaught |WordPress database error/
         let stamp = /^\[(\d{2}-\w{3}-\d{4} \d{2}:\d{2}:\d{2})(?: ([^\]]+))?\]\s*/
         var errors: [SiteError] = []
+        var formatters: [TimeZone: DateFormatter] = [:]
 
         for line in text.split(separator: "\n").reversed() where errors.count < limit {
             guard line.contains(serious), belongs(line) else {
@@ -207,7 +209,9 @@ public enum ErrorReader {
             let time = match.map { String($0.output.1) }
             let zone = match?.output.2.flatMap { TimeZone(identifier: String($0)) ?? TimeZone(abbreviation: String($0)) } ?? .current
             let message = match.map { line[$0.range.upperBound...] } ?? line
-            errors.append(SiteError(source: source, time: time, message: String(message.prefix(messageLength)), file: file, date: time.flatMap { date($0, format: "dd-MMM-yyyy HH:mm:ss", timeZone: zone) }))
+            let dates = formatters[zone] ?? formatter("dd-MMM-yyyy HH:mm:ss", timeZone: zone)
+            formatters[zone] = dates
+            errors.append(SiteError(source: source, time: time, message: String(message.prefix(messageLength)), file: file, date: time.flatMap(dates.date(from:))))
         }
 
         return errors
@@ -216,6 +220,7 @@ public enum ErrorReader {
     // The access log of nginx: 127.0.0.1 - - [10/Nov/2026:11:00:00 +0100] "GET / HTTP/2.0" 500 ...
     static func failedRequests(in file: URL, limit: Int) -> [SiteError] {
         let entry = #/\[([^\]]+)\] "([A-Z]+) ([^ "]+)[^"]*" (\d{3})\s/#
+        let dates = formatter("dd/MMM/yyyy:HH:mm:ss Z", timeZone: .current)
         var errors: [SiteError] = []
 
         for line in tail(of: file).split(separator: "\n").reversed() where errors.count < limit {
@@ -224,7 +229,7 @@ public enum ErrorReader {
             }
 
             let time = String(match.output.1)
-            errors.append(SiteError(source: "request", time: time, level: "\(status)", message: "\(match.output.2) \(match.output.3) gave status \(status)", file: file, date: date(time, format: "dd/MMM/yyyy:HH:mm:ss Z", timeZone: .current)))
+            errors.append(SiteError(source: "request", time: time, level: "\(status)", message: "\(match.output.2) \(match.output.3) gave status \(status)", file: file, date: dates.date(from: time)))
         }
 
         return errors
@@ -252,35 +257,20 @@ public enum ErrorReader {
         return errors
     }
 
-    // The first line can start in the middle of a line of the file. So it goes away.
     public static func tail(of file: URL, bytes: Int = tailBytes) -> String {
-        guard let handle = try? FileHandle(forReadingFrom: file) else {
-            return ""
-        }
-
-        defer { try? handle.close() }
-
-        let size = (try? handle.seekToEnd()) ?? 0
-        let start = size > UInt64(bytes) ? size - UInt64(bytes) : 0
-        try? handle.seek(toOffset: start)
-        let text = String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
-
-        guard start > 0, let newline = text.firstIndex(of: "\n") else {
-            return text
-        }
-
-        return String(text[text.index(after: newline)...])
+        TerminalOutput.tailText(of: file, maximumBytes: bytes)
     }
 
     private static func modified(_ file: URL) -> Date {
         (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
     }
 
-    private static func date(_ text: String, format: String, timeZone: TimeZone) -> Date? {
+    // A log full of errors has many entries. Each parser makes its formatter once.
+    private static func formatter(_ format: String, timeZone: TimeZone) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = timeZone
         formatter.dateFormat = format
-        return formatter.date(from: text)
+        return formatter
     }
 }

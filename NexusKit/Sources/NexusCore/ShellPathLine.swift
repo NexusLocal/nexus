@@ -74,9 +74,7 @@ public struct ShellPathLine: Sendable {
     // the link stays. The file keeps its permissions. A file that is not UTF-8 stays as it is.
     private func change(_ transform: (String) -> String) throws {
         let target = file.resolvingSymlinksInPath()
-        let path = target.path(percentEncoded: false)
-        let fileManager = FileManager.default
-        let exists = fileManager.fileExists(atPath: path)
+        let exists = FileManager.default.fileExists(atPath: target.path(percentEncoded: false))
         let text = exists ? try String(contentsOf: target, encoding: .utf8) : ""
         let changed = transform(text)
 
@@ -84,12 +82,7 @@ public struct ShellPathLine: Sendable {
             return
         }
 
-        let permissions = exists ? try fileManager.attributesOfItem(atPath: path)[.posixPermissions] : nil
-        try Data(changed.utf8).write(to: target, options: .atomic)
-
-        if let permissions {
-            try fileManager.setAttributes([.posixPermissions: permissions], ofItemAtPath: path)
-        }
+        try FileText.write(changed, to: target, newFilePermissions: 0o644)
     }
 
     // The folder in double quotes. A folder in the home folder starts with $HOME. So the line still

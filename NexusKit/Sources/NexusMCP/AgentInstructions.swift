@@ -26,7 +26,7 @@ public enum AgentInstructions {
             ]
 
             if let tests, tests.usesDevelopmentDatabase {
-                rules.append("- Warning: the tests of this project use \(tests.developmentDatabase ?? "the database of .env"), the development database. A test that resets the database removes all development data. Do not run such tests until the user chooses a test database in Nexus.")
+                rules.append("- Warning: the tests of this project use \(tests.developmentDatabaseLabel), the development database. A test that resets the database removes all development data. Do not run such tests until the user chooses a test database in Nexus.")
             }
         case .notASite:
             parts.append("This folder is not a Nexus site. Call list_sites to see the sites, or add_site to serve this folder.")

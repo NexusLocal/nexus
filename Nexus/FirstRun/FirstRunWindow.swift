@@ -1343,14 +1343,9 @@ private struct AgentsStep: View {
                     HStack {
                         Text("Agents can")
                         Spacer()
-                        Picker("Agents can", selection: $level) {
-                            ForEach(AgentLevel.allCases, id: \.self) { level in
-                                Text(level.title)
-                                    .tag(level)
-                            }
-                        }
-                        .labelsHidden()
-                        .fixedSize()
+                        AgentLevelPicker(level: $level)
+                            .labelsHidden()
+                            .fixedSize()
                     }
                 }
 

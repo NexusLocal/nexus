@@ -66,10 +66,10 @@ struct AddSiteSheet: View {
                     .fontWeight(.semibold)
 
                 HStack(spacing: 10) {
-                    FolderTypeCard(title: "One project", detail: "The folder becomes one site.", selected: folderType == .oneProject) {
+                    ChoiceCard(title: "One project", detail: "The folder becomes one site.", selected: folderType == .oneProject) {
                         folderType = .oneProject
                     }
-                    FolderTypeCard(title: "Many projects", detail: "Each folder inside becomes a site. New folders become sites later too.", selected: folderType == .manyProjects) {
+                    ChoiceCard(title: "Many projects", detail: "Each folder inside becomes a site. New folders become sites later too.", selected: folderType == .manyProjects) {
                         folderType = .manyProjects
                     }
                 }
@@ -331,7 +331,7 @@ struct AddSiteSheet: View {
     }
 
     private static func projectFolder(of folder: URL) -> URL {
-        URL(filePath: NexusCore.ProjectFolder.projectFolder(ofSiteFolder: folder), directoryHint: .isDirectory)
+        NexusCore.ProjectFolder.projectFolderURL(ofSiteFolder: folder)
     }
 
     private static func suggestedHost(for folder: URL, tld: String) -> String {
@@ -422,39 +422,3 @@ nonisolated enum ProjectFolder {
     }
 }
 
-private struct FolderTypeCard: View {
-    let title: String
-    let detail: String
-    let selected: Bool
-    let select: () -> Void
-
-    var body: some View {
-        Button(action: select) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : .secondary)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .fontWeight(.semibold)
-                    Text(detail)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 0)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(selected ? Color.accentSoft : Color.clear, in: .rect(cornerRadius: 10))
-            .background(.fill.quaternary, in: .rect(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 1.5)
-            }
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-    }
-}

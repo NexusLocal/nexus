@@ -14,6 +14,7 @@ struct SiteDatabasesSection: View {
     @State private var databases: [SiteDatabase]?
     @State private var problem: String?
     @State private var tests: TestDatabaseCheck?
+    @State private var projectFolder: URL?
     @State private var choosesTestDatabase = false
 
     private var warnsAboutTests: Bool {
@@ -52,7 +53,7 @@ struct SiteDatabasesSection: View {
         }
         .sheet(isPresented: $choosesTestDatabase) {
             if let tests {
-                TestDatabaseSheet(site: site, check: tests, server: testServer) { action in
+                TestDatabaseSheet(site: site, folder: projectFolder ?? site.projectFolder, check: tests, server: testServer) { action in
                     Task {
                         await model.apply(action, to: site)
                         await load()
@@ -115,7 +116,7 @@ struct SiteDatabasesSection: View {
             Image(systemName: "exclamationmark.triangle")
                 .foregroundStyle(Color.statusOrange)
 
-            Text("The tests use \(tests.developmentDatabase ?? "the database of .env"), your development database. A test that resets the database removes your local data.")
+            Text("The tests use \(tests.developmentDatabaseLabel), your development database. A test that resets the database removes your local data.")
                 .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 12)
@@ -131,7 +132,7 @@ struct SiteDatabasesSection: View {
     private func testsRow(_ tests: TestDatabaseCheck) -> some View {
         let server = tests.onDevelopmentServer ? testServer?.name : nil
         let value: String = switch tests.kind {
-        case .development: "\(tests.developmentDatabase ?? "The database of .env"), the development database"
+        case .development: "\(tests.developmentDatabaseLabel), the development database"
         case .sqliteMemory: "SQLite in memory, from \(tests.source)"
         case .separate: "\(tests.database ?? "Another database")\(server.map { " on \($0)" } ?? ""), from \(tests.source)"
         }
@@ -154,14 +155,19 @@ struct SiteDatabasesSection: View {
     }
 
     private func load() async {
-        let folder = URL(filePath: site.folder, directoryHint: .isDirectory)
-        tests = await Task.detached { TestDatabaseCheck.check(projectFolder: folder) }.value
+        let siteFolder = URL(filePath: site.folder, directoryHint: .isDirectory)
+        async let check = Task.detached { () -> (URL, TestDatabaseCheck?) in
+            let project = NexusCore.ProjectFolder.projectFolderURL(ofSiteFolder: siteFolder)
+            return (project, TestDatabaseCheck.check(projectFolder: project))
+        }.value
+        let found = await model.siteDatabases(of: site)
+        (projectFolder, tests) = await check
 
         if tests?.usesDevelopmentDatabase != true {
             model.setKeepsTestDatabase(false, of: site)
         }
 
-        switch await model.siteDatabases(of: site) {
+        switch found {
         case .success(let found):
             databases = found
             problem = nil

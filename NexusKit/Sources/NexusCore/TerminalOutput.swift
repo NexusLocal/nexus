@@ -36,8 +36,13 @@ public enum TerminalOutput {
 
     // The end of a log file. A large file is read from its end only.
     public static func tail(of file: URL, lines count: Int, maximumBytes: Int = 16_384) -> [String] {
+        Array(lines(tailText(of: file, maximumBytes: maximumBytes)).suffix(count))
+    }
+
+    // The read can start in the middle of a line. So that part line goes away.
+    public static func tailText(of file: URL, maximumBytes: Int) -> String {
         guard let handle = try? FileHandle(forReadingFrom: file) else {
-            return []
+            return ""
         }
 
         defer { try? handle.close() }
@@ -45,14 +50,13 @@ public enum TerminalOutput {
         let size = (try? handle.seekToEnd()) ?? 0
         let start = size > UInt64(maximumBytes) ? size - UInt64(maximumBytes) : 0
         try? handle.seek(toOffset: start)
+        let text = String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
 
-        var text = String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
-
-        if start > 0, let newline = text.firstIndex(of: "\n") {
-            text = String(text[text.index(after: newline)...])
+        guard start > 0, let newline = text.firstIndex(of: "\n") else {
+            return text
         }
 
-        return Array(lines(text).suffix(count))
+        return String(text[text.index(after: newline)...])
     }
 
     // The label of the spinner that runs now, for example "Setting up frontend dependencies with

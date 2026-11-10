@@ -82,6 +82,10 @@ public enum ProjectFolder {
         }
     }
 
+    public static func projectFolderURL(ofSiteFolder folder: URL) -> URL {
+        URL(filePath: projectFolder(ofSiteFolder: folder), directoryHint: .isDirectory)
+    }
+
     // The key of the workspace record of a site. It leaves out /public. So the key stays the same
     // when composer.json comes or goes, and the sites of one project share a record. The web/
     // folder of Bedrock is left out too.

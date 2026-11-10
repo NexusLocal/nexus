@@ -73,7 +73,7 @@ struct OverviewScreen: View {
         }
         .screenTitle("Overview", subtitle: model.runningSummary)
         .task {
-            await model.agents.load()
+            await model.agents.loadForNotice()
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

@@ -57,15 +57,7 @@ struct WorkspaceDetails: Encodable {
         redisIndexes = workspace.redisIndexes ?? [:]
         ports = workspace.ports ?? [:]
         warnings = workspace.warnings ?? []
-
-        switch workspace.state {
-        case .ready:
-            state = "ready"
-        case .notIsolated:
-            state = "not_isolated"
-        case .preparing, nil:
-            state = "preparing"
-        }
+        state = (workspace.state ?? .preparing).name
     }
 
     var json: String {

@@ -10,13 +10,9 @@ public enum WorkspaceKeys {
         return Array(Set(names)).sorted()
     }
 
-    // A SQLite path can hold a space, and the shell of a command would split that path.
+    // A SQLite path can hold a space. The shell of a command would split that path.
     public static func shellWord(_ text: String) -> String {
-        guard text.wholeMatch(of: #/[A-Za-z0-9_\/.:=@%+,-]*/#) == nil else {
-            return text
-        }
-
-        return "'\(text.replacing("'", with: #"'\''"#))'"
+        ShellWord.quoted(text)
     }
 
     public static func expanded(_ keys: [WorkspaceEnvKey], workspace: String, host: String, database: String?, ports: [String: Int]) -> [String: String] {

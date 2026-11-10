@@ -104,6 +104,17 @@ public enum AgentKind: String, CaseIterable, Codable, Sendable, Identifiable {
         return self == .vsCode ? "VS Code starts Nexus at the next chat." : "A new session of \(name) uses Nexus."
     }
 
+    // Only the claude command changes the settings of Claude Code. So the user runs a command and
+    // does not paste an entry.
+    public var entryIsCommand: Bool {
+        self == .claudeCode
+    }
+
+    // The name in the CLI, for example claude-code.
+    public var argument: String {
+        rawValue.replacing("_", with: "-")
+    }
+
     public init?(argument: String) {
         self.init(rawValue: argument.lowercased().replacing("-", with: "_"))
     }
@@ -127,17 +138,26 @@ public enum AgentState: Equatable, Sendable {
     public var mayHaveEntry: Bool {
         self != .notConnected
     }
+
+    // The app and nexus mcp status show the same words.
+    public func summary(serverName: String) -> String {
+        switch self {
+        case .connected: "Connected"
+        case .otherCommand: "Its entry \(serverName) runs another command"
+        case .notConnected: "Not connected"
+        case .unreadable: "Nexus cannot read its settings file"
+        }
+    }
 }
 
 public struct AgentSetupError: Error, CustomStringConvertible, Equatable {
-    public let agent: AgentKind
     public let file: String
     public let reason: String
     public let instruction: String
     public let entry: String
 
     public var description: String {
-        "Nexus does not change \(file), because \(reason). \(instruction)\n\(entry)"
+        ["Nexus does not change \(file), because \(reason). \(instruction)", entry].filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 }
 
@@ -173,7 +193,7 @@ public struct AgentSetup: Sendable {
 
         return AgentSetup(
             home: home,
-            serverName: NexusVariant.current == .dev ? "nexus-dev" : "nexus",
+            serverName: NexusVariant.current.mcpServerName,
             command: NexusPaths.standard.bin.appending(path: "nexus").path(percentEncoded: false),
             applicationFolders: [URL(filePath: "/Applications"), home.appending(path: "Applications")],
             commandFolders: commandFolders,
@@ -239,7 +259,7 @@ public struct AgentSetup: Sendable {
         case .codex:
             return (["[mcp_servers.\(serverName)]"] + codexKeys(askBeforeLooking: true).map { "\($0.name) = \($0.value)" }).joined(separator: "\n")
         case .claudeCode:
-            return shellCommand(["claude", "mcp", "add", "--scope", "user", serverName, "--", command, "mcp"])
+            return shellCommand(["claude"] + claudeAddArguments(command))
         default:
             return JSONText.object([(agent.serversKey, .object([(serverName, entry(for: agent))]))]).rendered(indent: "", unit: "  ")
         }
@@ -257,13 +277,13 @@ public struct AgentSetup: Sendable {
             try setClaudeCodeRules(askBeforeLooking: askBeforeLooking)
         case .codex:
             for file in targetFiles(of: agent) {
-                try change(file, of: agent, instruction: addInstruction(agent), entry: entryText(for: agent)) { text in
+                try change(file, instruction:addInstruction(agent), entry: entryText(for: agent)) { text in
                     try TOMLTextEdit.setting(["mcp_servers", serverName], keys: codexKeys(askBeforeLooking: askBeforeLooking), in: text)
                 }
             }
         default:
             for file in targetFiles(of: agent) {
-                try change(file, of: agent, instruction: addInstruction(agent), entry: entryText(for: agent)) { text in
+                try change(file, instruction:addInstruction(agent), entry: entryText(for: agent)) { text in
                     try JSONTextEdit.setting([agent.serversKey, serverName], to: entry(for: agent), in: text)
                 }
             }
@@ -283,7 +303,7 @@ public struct AgentSetup: Sendable {
             try setClaudeCodeRules(askBeforeLooking: true)
         default:
             for file in files(of: agent) where exists(file) {
-                try change(file, of: agent, instruction: "Remove the entry \(serverName) from it yourself.", entry: "") { text in
+                try change(file, instruction:"Remove the entry \(serverName) from it yourself.", entry: "") { text in
                     agent == .codex
                         ? try TOMLTextEdit.removing(["mcp_servers", serverName], in: text)
                         : try JSONTextEdit.removing([agent.serversKey, serverName], in: text)
@@ -311,30 +331,36 @@ public struct AgentSetup: Sendable {
         case .connected:
             return
         case .unreadable(let file):
-            throw AgentSetupError(agent: .claudeCode, file: file, reason: "Nexus cannot read it", instruction: "Run this command in Terminal:", entry: entryText(for: .claudeCode))
+            throw AgentSetupError(file: file, reason: "Nexus cannot read it", instruction: Self.terminalInstruction, entry: entryText(for: .claudeCode))
         case .otherCommand(let old):
             try await runClaude(["mcp", "remove", "--scope", "user", serverName])
 
             do {
-                try await runClaude(["mcp", "add", "--scope", "user", serverName, "--", command, "mcp"])
+                try await runClaude(claudeAddArguments(command))
             } catch {
-                try? await runClaude(["mcp", "add", "--scope", "user", serverName, "--", old, "mcp"])
+                try? await runClaude(claudeAddArguments(old))
                 throw error
             }
         case .notConnected:
-            try await runClaude(["mcp", "add", "--scope", "user", serverName, "--", command, "mcp"])
+            try await runClaude(claudeAddArguments(command))
         }
+    }
+
+    private static let terminalInstruction = "Run this command in Terminal:"
+
+    private func claudeAddArguments(_ command: String) -> [String] {
+        ["mcp", "add", "--scope", "user", serverName, "--", command, "mcp"]
     }
 
     private func runClaude(_ arguments: [String]) async throws {
         guard let claude else {
-            throw AgentSetupError(agent: .claudeCode, file: "~/.claude.json", reason: "Nexus does not find the claude command", instruction: "Run this command in Terminal:", entry: shellCommand(["claude"] + arguments))
+            throw AgentSetupError(file: "~/.claude.json", reason: "Nexus does not find the claude command", instruction: Self.terminalInstruction, entry: shellCommand(["claude"] + arguments))
         }
 
         do {
             try await claude(arguments)
         } catch {
-            throw AgentSetupError(agent: .claudeCode, file: "~/.claude.json", reason: "the claude command failed: \(error)", instruction: "Run this command in Terminal:", entry: shellCommand(["claude"] + arguments))
+            throw AgentSetupError(file: "~/.claude.json", reason: "the claude command failed: \(error)", instruction: Self.terminalInstruction, entry: shellCommand(["claude"] + arguments))
         }
     }
 
@@ -348,7 +374,7 @@ public struct AgentSetup: Sendable {
 
         let instruction = askBeforeLooking ? "Remove these rules from permissions.allow yourself:" : "Add these rules to permissions.allow yourself:"
 
-        try change(file, of: .claudeCode, instruction: instruction, entry: rules.joined(separator: "\n")) { text in
+        try change(file, instruction: instruction, entry: rules.joined(separator: "\n")) { text in
             askBeforeLooking
                 ? try JSONTextEdit.removingStrings(Set(rules), fromArrayAt: ["permissions", "allow"], in: text)
                 : try JSONTextEdit.addingStrings(rules, toArrayAt: ["permissions", "allow"], in: text)
@@ -360,7 +386,7 @@ public struct AgentSetup: Sendable {
         NexusTools.readToolNames.map { "mcp__\(serverName)__\($0)" }
     }
 
-    public func claudeCodeRules() -> [String] {
+    func claudeCodeRules() -> [String] {
         let file = home.appending(path: ".claude/settings.json")
         let text = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
         let allowed = ((try? JSONTextEdit.value(at: ["permissions", "allow"], in: text)) as? [Any])?.compactMap { $0 as? String } ?? []
@@ -398,9 +424,7 @@ public struct AgentSetup: Sendable {
     }
 
     private func shellCommand(_ words: [String]) -> String {
-        words.map { word in
-            word.allSatisfy { $0.isLetter || $0.isNumber || "-_./".contains($0) } ? word : "'\(word.replacing("'", with: "'\\''"))'"
-        }.joined(separator: " ")
+        words.map(ShellWord.quoted).joined(separator: " ")
     }
 
     // MARK: Files
@@ -437,30 +461,23 @@ public struct AgentSetup: Sendable {
         return (entry["command"] as? String) ?? ((entry["command"] as? [String: Any])?["path"] as? String) ?? ""
     }
 
-    // A link, for example into a dotfiles folder, stays a link: Nexus writes the file that it
-    // points to. A new file gets 0600, because the settings of an agent can hold keys.
-    private func change(_ file: URL, of agent: AgentKind, instruction: String, entry: String, _ edit: (String) throws -> String) throws {
+    private func change(_ file: URL, instruction: String, entry: String, _ edit: (String) throws -> String) throws {
         let target = file.resolvingSymlinksInPath()
-        let path = target.path(percentEncoded: false)
-        let existed = FileManager.default.fileExists(atPath: path)
         let changed: String
         let text: String
 
         do {
-            text = existed ? try String(contentsOf: target, encoding: .utf8) : ""
+            text = exists(target) ? try String(contentsOf: target, encoding: .utf8) : ""
             changed = try edit(text)
         } catch {
-            throw AgentSetupError(agent: agent, file: display(file), reason: "\(error)", instruction: instruction, entry: entry)
+            throw AgentSetupError(file: display(file), reason: "\(error)", instruction: instruction, entry: entry)
         }
 
         guard changed != text else {
             return
         }
 
-        let permissions = (try? FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int) ?? 0o600
-        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data(changed.utf8).write(to: target, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: path)
+        try FileText.write(changed, to: target)
     }
 
     private func exists(_ file: URL) -> Bool {

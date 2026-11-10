@@ -149,6 +149,15 @@ struct NexusToolboxTests {
         #expect(AgentSettings.load(from: paths).searched)
     }
 
+    @Test func anAgentGetsOneRowInTheList() {
+        var settings = AgentSettings(listed: ["codex"])
+
+        settings.list([.codex, .claudeCode])
+        settings.list([.claudeCode])
+
+        #expect(settings.listed == ["codex", "claude_code"])
+    }
+
     @Test func aWorkspaceGivesTheDocumentRootOfItsWorktree() {
         let site = SiteInfo(hosts: ["shop.test"], folder: "/w/shop", documentRoot: "/w/shop/public", php: "8.4", server: .nginx, parked: false, url: "https://shop.test", projectType: .laravel)
         let workspace = WorkspaceInfo(name: "fix", worktree: "/w/shop-fix", folder: "/w/shop-fix", documentRoot: "/w/shop-fix/public")

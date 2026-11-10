@@ -52,12 +52,20 @@ public enum LogReader {
             return nil
         }
 
-        let all = ErrorReader.tail(of: URL(filePath: log.file), bytes: 2 * 1024 * 1024).split(separator: "\n")
+        // The last 64 KB hold the default 50 lines. A filter or many long lines need more of the file.
+        let wantedLines = min(max(count, 1), mostLines)
+        let file = URL(filePath: log.file)
+        var all = ErrorReader.tail(of: file, bytes: filter == nil ? 64 * 1024 : 2 * 1024 * 1024).split(separator: "\n")
+
+        if filter == nil, all.count < wantedLines, log.bytes > 64 * 1024 {
+            all = ErrorReader.tail(of: file, bytes: 2 * 1024 * 1024).split(separator: "\n")
+        }
+
         let matching = filter.map { text in all.filter { $0.localizedCaseInsensitiveContains(text) } } ?? all
         var lines: [String] = []
         var length = 0
 
-        for line in matching.suffix(min(max(count, 1), mostLines)).reversed() {
+        for line in matching.suffix(wantedLines).reversed() {
             let shortened = String(line.prefix(lineLength))
 
             guard length + shortened.count < resultLength else {
@@ -68,8 +76,7 @@ public enum LogReader {
             lines.insert(shortened, at: 0)
         }
 
-        let wanted = min(max(count, 1), mostLines, matching.count)
-        let note = lines.count < wanted ? "Only the last \(lines.count) lines fit in one result. Use contains to find a line." : nil
+        let note = lines.count < min(wantedLines, matching.count) ? "Only the last \(lines.count) lines fit in one result. Use contains to find a line." : nil
         return LogLines(log: name, file: log.file, lines: lines, note: note)
     }
 

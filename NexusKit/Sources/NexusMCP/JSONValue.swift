@@ -102,8 +102,22 @@ public enum JSONValue: Codable, Sendable, Equatable {
         return value
     }
 
-    public static func encoding(_ value: some Encodable) throws -> JSONValue {
-        try JSONDecoder().decode(JSONValue.self, from: try JSONEncoder.mcp.encode(value))
+    public var array: [JSONValue]? {
+        guard case .array(let value) = self else {
+            return nil
+        }
+
+        return value
+    }
+
+    // A value as the CLI prints it.
+    public var text: String? {
+        switch self {
+        case .string(let text): text
+        case .int(let number): String(number)
+        case .bool(let flag): String(flag)
+        default: nil
+        }
     }
 }
 

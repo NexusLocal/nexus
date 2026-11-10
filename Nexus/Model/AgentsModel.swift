@@ -28,19 +28,27 @@ final class AgentsModel {
     private(set) var failures: [AgentKind: AgentSetupError] = [:]
     // The first run can start several changes. Each failure gets its own alert.
     var alerts: [AgentAlert] = []
+    // The desktop apps that still run without Nexus, because they started before the connect.
+    private(set) var restartNeeded: Set<AgentKind> = []
     @ObservationIgnored private var connectedAt: [AgentKind: Date] = [:]
-    @ObservationIgnored private var sampleRestarts: Set<AgentKind> = []
     @ObservationIgnored private let setup: AgentSetup?
 
     init(setup: AgentSetup?) {
         self.setup = setup
 
-        if setup == nil {
+        guard setup != nil else {
             let sample: [AgentKind: AgentState] = [.claudeCode: .connected, .codex: .connected, .cursor: .connected, .vsCode: .notConnected]
             states = Dictionary(uniqueKeysWithValues: AgentKind.allCases.map { ($0, sample[$0] ?? .notConnected) })
             onThisMac = Set(sample.keys)
             settings = AgentSettings(listed: sample.keys.map(\.rawValue), searched: true)
-            sampleRestarts = [.cursor]
+            restartNeeded = [.cursor]
+            return
+        }
+
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.updateRestarts()
+            }
         }
     }
 
@@ -83,6 +91,20 @@ final class AgentsModel {
         onThisMac = snapshot.onThisMac
         states = snapshot.states
         failures = [:]
+        updateRestarts()
+    }
+
+    // The notice needs the files of the agents only until it showed once.
+    func loadForNotice() async {
+        guard setup != nil else {
+            return
+        }
+
+        settings = AgentSettings.load()
+
+        if !settings.noticeShown {
+            await load()
+        }
     }
 
     // The list fills itself once with the agents on this Mac. After that, only "Find agents" adds
@@ -103,18 +125,21 @@ final class AgentsModel {
 
     func status(of agent: AgentKind) -> (text: String, warns: Bool, help: String?) {
         if let failure = failures[agent] {
-            return (agent == .claudeCode ? "Nexus cannot change its settings" : "Nexus cannot change its settings file", true, failure.description)
+            return (agent.entryIsCommand ? "Nexus cannot change its settings" : "Nexus cannot change its settings file", true, failure.description)
         }
 
-        switch states[agent] {
+        let state = states[agent] ?? .notConnected
+        let text = state.summary(serverName: serverName)
+
+        switch state {
         case .connected:
-            return needsRestart(agent) ? ("Restart \(agent.name) to use Nexus", true, nil) : ("Connected", false, nil)
+            return restartNeeded.contains(agent) ? ("Restart \(agent.name) to use Nexus", true, nil) : (text, false, nil)
         case .otherCommand(let command):
-            return ("Its entry \(serverName) runs another command", true, "The entry runs \(command). Turn on the switch to use this Nexus.")
+            return (text, true, "The entry runs \(command). Turn on the switch to use this Nexus.")
         case .unreadable(let file):
-            return ("Nexus cannot read its settings file", true, "Nexus cannot read \(file). Copy the entry and paste it into the file yourself.")
-        case .notConnected, nil:
-            return ("Not connected", false, nil)
+            return (text, true, "Nexus cannot read \(file). Copy the entry and paste it into the file yourself.")
+        case .notConnected:
+            return (text, false, nil)
         }
     }
 
@@ -132,7 +157,7 @@ final class AgentsModel {
     }
 
     func copyLabel(for agent: AgentKind) -> String {
-        agent == .claudeCode ? "Copy command" : "Copy entry"
+        agent.entryIsCommand ? "Copy command" : "Copy entry"
     }
 
     func setConnected(_ agent: AgentKind, _ on: Bool, place: ActionPlace = .settings) {
@@ -148,9 +173,7 @@ final class AgentsModel {
     // Nexus adds the entry of an agent that the user chooses from "Add agent…" and turns it on.
     func add(_ agent: AgentKind) {
         update(place: .settings) { settings in
-            if !settings.listed.contains(agent.rawValue) {
-                settings.listed.append(agent.rawValue)
-            }
+            settings.list([agent])
         }
 
         setConnected(agent, true)
@@ -263,10 +286,10 @@ final class AgentsModel {
     }
 
     private func listFoundAgents(place: ActionPlace) {
-        let found = found.map(\.rawValue)
+        let found = found
 
         update(place: place) { settings in
-            settings.listed += found.filter { !settings.listed.contains($0) }
+            settings.list(found)
             settings.searched = true
         }
     }
@@ -321,6 +344,7 @@ final class AgentsModel {
             guard let failure else {
                 if on, !wasConnected {
                     connectedAt[agent] = .now
+                    updateRestarts()
                 }
 
                 done?()
@@ -337,33 +361,30 @@ final class AgentsModel {
         }
     }
 
-    // A desktop app reads its settings only at its start. An app that started before the change
-    // still runs without Nexus.
-    private func needsRestart(_ agent: AgentKind) -> Bool {
+    // A desktop app reads its settings only at its start. An app that started before the connect
+    // still runs without Nexus. A quit of the app ends the hint.
+    private func updateRestarts() {
         guard setup != nil else {
-            return sampleRestarts.contains(agent)
-        }
-
-        guard agent.needsRestart, let connected = connectedAt[agent] else {
-            return false
-        }
-
-        return NSWorkspace.shared.runningApplications.contains { app in
-            guard let name = app.bundleURL?.lastPathComponent, agent.apps.contains(name), let launched = app.launchDate else {
-                return false
-            }
-
-            return launched < connected
-        }
-    }
-
-    private func show(_ error: any Error, title: String, place: ActionPlace) {
-        guard let setupError = error as? AgentSetupError else {
-            alerts.append(AgentAlert(title: title, message: ErrorText.plain(error), copyText: "", place: place))
             return
         }
 
-        let message = "Nexus does not change \(setupError.file), because \(setupError.reason). \(setupError.instruction)\n\n\(setupError.entry)"
-        alerts.append(AgentAlert(title: title, message: message.trimmingCharacters(in: .whitespacesAndNewlines), copyText: setupError.entry, place: place))
+        let running = NSWorkspace.shared.runningApplications
+
+        restartNeeded = Set(connectedAt.compactMap { agent, connected in
+            let startedBefore = running.contains { app in
+                guard let name = app.bundleURL?.lastPathComponent, agent.apps.contains(name), let launched = app.launchDate else {
+                    return false
+                }
+
+                return launched < connected
+            }
+
+            return agent.needsRestart && states[agent] == .connected && startedBefore ? agent : nil
+        })
+    }
+
+    private func show(_ error: any Error, title: String, place: ActionPlace) {
+        let setupError = error as? AgentSetupError
+        alerts.append(AgentAlert(title: title, message: setupError?.description ?? ErrorText.plain(error), copyText: setupError?.entry ?? "", place: place))
     }
 }

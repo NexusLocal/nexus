@@ -35,9 +35,13 @@ public struct TestDatabaseCheck: Codable, Sendable, Equatable {
         kind == .development
     }
 
+    public var developmentDatabaseLabel: String {
+        developmentDatabase ?? "the database of .env"
+    }
+
     // When phpunit.xml itself names the development database, Nexus changes no file. The user
     // changes that line.
-    public var phpunitNamesDevelopmentDatabase: Bool {
+    var phpunitNamesDevelopmentDatabase: Bool {
         kind == .development && source == phpunitFile
     }
 

@@ -36,29 +36,61 @@ public struct TestDatabasePlan: Sendable, Equatable {
         return "\(lines.dropLast().joined(separator: ", ")) and \(last)"
     }
 
-    // Nil when an env file cannot help: phpunit.xml sets another value for a key of the plan, or it
-    // sets no APP_ENV. Without APP_ENV the tests read .env.
+    // The env files that a plan needs. A sheet reads them once for all its plans.
+    public struct Files: Sendable {
+        let folder: URL
+        let file: String
+        let exists: Bool
+        let development: [String: String]
+        // The values of the env file of the tests, or of .env when that file does not exist yet.
+        let current: [String: String]
+
+        // Nil without APP_ENV in phpunit.xml. The tests then read .env itself.
+        public static func read(check: TestDatabaseCheck, projectFolder: URL) -> Files? {
+            guard let file = check.testEnvFile else {
+                return nil
+            }
+
+            let fileURL = projectFolder.appending(path: file)
+            let exists = FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false))
+            let development = EnvFile.values(of: projectFolder.appending(path: ".env"))
+            return Files(folder: projectFolder, file: file, exists: exists, development: development, current: exists ? EnvFile.values(of: fileURL) : development)
+        }
+    }
+
     public static func make(for target: Target, check: TestDatabaseCheck, projectFolder: URL) -> TestDatabasePlan? {
-        guard let file = check.testEnvFile, phpunitConflicts(for: target, check: check, projectFolder: projectFolder).isEmpty else {
+        Files.read(check: check, projectFolder: projectFolder).flatMap { make(for: target, check: check, files: $0) }
+    }
+
+    // Nil when phpunit.xml sets another value for a key of the plan.
+    public static func make(for target: Target, check: TestDatabaseCheck, files: Files) -> TestDatabasePlan? {
+        let wanted = wanted(for: target, development: files.development)
+
+        guard phpunitConflicts(in: wanted, check: check).isEmpty else {
             return nil
         }
 
-        let fileURL = projectFolder.appending(path: file)
-        let exists = FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false))
-        let current = EnvFile.values(of: exists ? fileURL : projectFolder.appending(path: ".env"))
-        let changes = wanted(for: target, projectFolder: projectFolder).filter { change in
-            check.phpunitDatabaseValues[change.key] == nil && (current[change.key] ?? (change.key == "DB_URL" ? "" : nil)) != change.value
+        let changes = wanted.filter { change in
+            check.phpunitDatabaseValues[change.key] == nil && (files.current[change.key] ?? (change.key == "DB_URL" ? "" : nil)) != change.value
         }
 
-        return TestDatabasePlan(file: file, createsFile: !exists, changes: changes, backupFile: exists ? freeName(for: "\(file).backup", in: projectFolder) : nil)
+        return TestDatabasePlan(file: files.file, createsFile: !files.exists, changes: changes, backupFile: files.exists ? freeName(for: "\(files.file).backup", in: files.folder) : nil)
+    }
+
+    public static func phpunitConflicts(for target: Target, check: TestDatabaseCheck, projectFolder: URL) -> [String] {
+        phpunitConflicts(in: wanted(for: target, development: EnvFile.values(of: projectFolder.appending(path: ".env"))), check: check)
+    }
+
+    public static func phpunitConflicts(for target: Target, check: TestDatabaseCheck, files: Files) -> [String] {
+        phpunitConflicts(in: wanted(for: target, development: files.development), check: check)
     }
 
     // A value of phpunit.xml wins over the env files. A DB_URL there wins over all other keys.
-    public static func phpunitConflicts(for target: Target, check: TestDatabaseCheck, projectFolder: URL) -> [String] {
+    private static func phpunitConflicts(in wanted: [Change], check: TestDatabaseCheck) -> [String] {
         let phpunit = check.phpunitDatabaseValues
         let url = phpunit["DB_URL"].map { $0.isEmpty ? [] : ["DB_URL"] } ?? []
 
-        return wanted(for: target, projectFolder: projectFolder)
+        return wanted
             .filter { $0.key != "DB_URL" && phpunit[$0.key] != nil && phpunit[$0.key] != $0.value }
             .map(\.key) + url
     }
@@ -66,10 +98,9 @@ public struct TestDatabasePlan: Sendable, Equatable {
     // A database that Nexus makes or lists is on the server of the development database. So the
     // tests get the server and the account of .env too, also when .env.testing names another
     // server. A DB_URL wins over the other keys, so it must be empty.
-    private static func wanted(for target: Target, projectFolder: URL) -> [Change] {
+    private static func wanted(for target: Target, development: [String: String]) -> [Change] {
         switch target {
         case .database(let name):
-            let development = EnvFile.values(of: projectFolder.appending(path: ".env"))
             let server = ["DB_CONNECTION", "DB_HOST", "DB_PORT", "DB_USERNAME", "DB_PASSWORD"].compactMap { key in
                 development[key].map { Change(key: key, value: $0) }
             }
@@ -80,12 +111,13 @@ public struct TestDatabasePlan: Sendable, Equatable {
         }
     }
 
-    // An existing file keeps a backup next to it. The name of the backup is free, so no backup
-    // replaces an older one. Returns the name of the backup.
     public var changesNothing: Bool {
         !createsFile && changes.isEmpty
     }
 
+    // An existing file keeps a backup next to it. The name of the backup is free. So no backup
+    // replaces an older one. The backup holds the text of the file, also when the file is a link.
+    // Returns the name of the backup.
     @discardableResult
     public func apply(projectFolder: URL) throws -> String? {
         guard !changesNothing else {
@@ -93,20 +125,21 @@ public struct TestDatabasePlan: Sendable, Equatable {
         }
 
         let fileURL = projectFolder.appending(path: file)
-        let source = createsFile ? projectFolder.appending(path: ".env") : fileURL
-        let text = try String(contentsOf: source, encoding: .utf8)
+        let env = projectFolder.appending(path: ".env").resolvingSymlinksInPath()
+        let text = try String(contentsOf: createsFile ? env : fileURL, encoding: .utf8)
         let changed = EnvRewrite.apply(to: text, hosts: [], keys: Dictionary(uniqueKeysWithValues: changes.map { ($0.key, $0.value) }))
-        let permissions = (try? FileManager.default.attributesOfItem(atPath: source.path(percentEncoded: false))[.posixPermissions] as? Int) ?? 0o600
         var backup: String?
 
         if !createsFile {
             let name = Self.freeName(for: "\(file).backup", in: projectFolder)
-            try FileManager.default.copyItem(at: fileURL, to: projectFolder.appending(path: name))
+            try FileManager.default.copyItem(at: fileURL.resolvingSymlinksInPath(), to: projectFolder.appending(path: name))
             backup = name
         }
 
-        try Data(changed.utf8).write(to: fileURL, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: fileURL.path(percentEncoded: false))
+        // A new copy of .env gets the permissions of .env. So a test run as another user can still
+        // read it.
+        let envPermissions = (try? FileManager.default.attributesOfItem(atPath: env.path(percentEncoded: false)))?[.posixPermissions] as? Int ?? 0o600
+        try FileText.write(changed, to: fileURL, newFilePermissions: envPermissions)
         return backup
     }
 
@@ -117,19 +150,26 @@ public struct TestDatabasePlan: Sendable, Equatable {
     }
 
     // A copy of .env holds its keys. Git does not ignore .env.testing in a new Laravel project. So
-    // the user must know before a commit. Nil when the folder is no git repository.
-    public static func gitState(of file: String, in folder: URL) async -> GitState? {
+    // the user must know before a commit. A file is missing from the result when the folder is no
+    // git repository.
+    public static func gitStates(of files: [String], in folder: URL) async -> [String: GitState] {
         let path = folder.path(percentEncoded: false)
 
-        guard let git = await GitTool.executable(), let ignored = try? await GitTool.ignores(file, in: path, git: git) else {
-            return nil
+        guard let git = await GitTool.executable() else {
+            return [:]
         }
 
-        if ignored {
-            return .ignored
+        var states: [String: GitState] = [:]
+
+        for file in files {
+            guard let ignored = try? await GitTool.ignores(file, in: path, git: git) else {
+                continue
+            }
+
+            states[file] = ignored ? .ignored : (try? await GitTool.tracks(file, in: path, git: git)) == true ? .tracked : .shown
         }
 
-        return (try? await GitTool.tracks(file, in: path, git: git)) == true ? .tracked : .shown
+        return states
     }
 
     static func freeName(for name: String, in folder: URL) -> String {

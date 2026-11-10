@@ -3,10 +3,22 @@ import NexusCore
 import NexusIPC
 import NexusMCP
 
+struct NewTestDatabase {
+    let name: String
+    let instance: String
+}
+
 // What the user chose in the sheet "Choose a database for the tests".
 enum TestDatabaseAction {
-    case use(TestDatabasePlan, makes: String?, on: String?)
+    case use(TestDatabasePlan, makes: NewTestDatabase?)
     case keep
+}
+
+extension SiteItem {
+    // A site on public/ has phpunit.xml and the env files one folder up, in the project folder.
+    var projectFolder: URL {
+        NexusCore.ProjectFolder.projectFolderURL(ofSiteFolder: URL(filePath: folder, directoryHint: .isDirectory))
+    }
 }
 
 // The help for tests that use the development database. The user is in charge. Nexus only
@@ -30,20 +42,20 @@ extension AppModel {
         switch action {
         case .keep:
             setKeepsTestDatabase(true, of: site)
-        case .use(let plan, let database, let instance):
-            if let database, let instance {
+        case .use(let plan, let database):
+            if let database {
                 guard isLive else {
-                    failure = ActionFailure(title: "Nexus did not make the database \(database)", message: "Nexus cannot reach its background service.", place: .window)
+                    failure = ActionFailure(title: "Nexus did not make the database \(database.name)", message: "Nexus cannot reach its background service.", place: .window)
                     return
                 }
 
-                guard await perform(.createDatabase(.instance(instance), name: database), failure: "Nexus did not make the database \(database)", place: .window) != nil else {
+                guard await perform(.createDatabase(.instance(database.instance), name: database.name), failure: "Nexus did not make the database \(database.name)", place: .window) != nil else {
                     return
                 }
             }
 
             do {
-                let backup = try plan.apply(projectFolder: URL(filePath: site.folder, directoryHint: .isDirectory))
+                let backup = try plan.apply(projectFolder: site.projectFolder)
                 ActivityTracker.log.write("tests", "\(site.host): \(plan.file) has \(plan.changeText)\(backup.map { ", backup \($0)" } ?? "")")
                 setKeepsTestDatabase(false, of: site)
             } catch {

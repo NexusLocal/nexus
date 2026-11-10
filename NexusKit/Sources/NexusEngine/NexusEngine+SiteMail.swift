@@ -141,13 +141,9 @@ extension NexusEngine {
         return file
     }
 
-    // The file keeps its permissions. wp-config.php often has 0600 or 0640. A symbolic link stays a
-    // link, and the change goes into the file that it points to.
+    // wp-config.php often has 0600 or 0640. It keeps them.
     static func write(_ text: String, to file: String) throws {
-        let target = URL(filePath: file).resolvingSymlinksInPath().path(percentEncoded: false)
-        let permissions = permissions(of: target)
-        try Data(text.utf8).write(to: URL(filePath: target), options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: target)
+        try FileText.write(text, to: URL(filePath: file))
     }
 
     private func laravelRoot(of site: Site) -> URL? {

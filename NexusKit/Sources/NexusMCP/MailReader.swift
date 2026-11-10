@@ -153,11 +153,21 @@ public struct MailReader: Sendable {
             return terms.isEmpty ? try await inbox.newest(limit: limit) : try await inbox.search(terms.joined(separator: " "), limit: limit)
         }
 
+        // A site with workspaces has a tag for each workspace. wait asks again each half second.
+        // So the searches run at the same time.
+        let inbox = inbox
         var found: [String: MailpitAPI.Summary] = [:]
 
-        for tag in tags {
-            for summary in try await inbox.search((terms + ["tag:\(Self.quoted(tag))"]).joined(separator: " "), limit: limit) {
-                found[summary.id] = summary
+        try await withThrowingTaskGroup(of: [MailpitAPI.Summary].self) { group in
+            for tag in tags {
+                let query = (terms + ["tag:\(Self.quoted(tag))"]).joined(separator: " ")
+                group.addTask { try await inbox.search(query, limit: limit) }
+            }
+
+            for try await summaries in group {
+                for summary in summaries {
+                    found[summary.id] = summary
+                }
             }
         }
 

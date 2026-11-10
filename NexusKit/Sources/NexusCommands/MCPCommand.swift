@@ -24,14 +24,13 @@ struct MCPCommand: AsyncParsableCommand {
 
             for agent in AgentKind.allCases {
                 let place = setup.isOnThisMac(agent) ? "on this Mac" : "not found"
-                let state = switch setup.state(of: agent) {
-                case .connected: "connected"
-                case .otherCommand(let command): "connected to another nexus: \(command)"
-                case .notConnected: "not connected"
-                case .unreadable(let file): "Nexus cannot read \(file)"
+                let state = setup.state(of: agent)
+                let detail = switch state {
+                case .otherCommand(let command), .unreadable(let command): ": \(command)"
+                case .connected, .notConnected: ""
                 }
 
-                print([agent.rawValue.replacing("_", with: "-").padding(to: 13), place.padding(to: 13), state].joined(separator: " "))
+                print([agent.argument.padding(to: 13), place.padding(to: 13), state.summary(serverName: setup.serverName) + detail].joined(separator: " "))
             }
         }
     }
@@ -42,7 +41,7 @@ struct MCPCommand: AsyncParsableCommand {
             discussion: "Without --agent, Nexus connects each agent that it finds on this Mac. Nexus adds only its own entry to the settings of an agent. With \"Ask me before agents look\" off, Claude Code and Codex read from Nexus without a question."
         )
 
-        @Option(name: .customLong("agent"), help: "claude, claude-code, codex, cursor, gemini-cli, junie, opencode, vs-code, windsurf or zed. Repeat it for more agents.") var agents: [AgentKind] = []
+        @Option(name: .customLong("agent"), help: ArgumentHelp("\(AgentKind.allCases.dropLast().map(\.argument).joined(separator: ", ")) or \(AgentKind.allCases.last!.argument). Repeat it for more agents.")) var agents: [AgentKind] = []
 
         func run() async throws {
             let setup = AgentSetup.standard
@@ -58,10 +57,7 @@ struct MCPCommand: AsyncParsableCommand {
             for agent in chosen {
                 do {
                     print(try await setup.connect(agent, askBeforeLooking: settings.askBeforeLooking))
-
-                    if !settings.listed.contains(agent.rawValue) {
-                        settings.listed.append(agent.rawValue)
-                    }
+                    settings.list([agent])
                 } catch {
                     FileHandle.standardError.write(Data("\(error)\n".utf8))
                     failed = true
@@ -115,7 +111,7 @@ struct MCPCommand: AsyncParsableCommand {
             let output = StandardOutput()
             let server = MCPServer(
                 handler: NexusToolbox(folder: Self.projectFolder(), activity: ActivityLog(file: NexusPaths.standard.activityLog, source: "nexus mcp")),
-                name: NexusVariant.current == .dev ? "nexus-dev" : "nexus",
+                name: NexusVariant.current.mcpServerName,
                 version: NexusVersion.current(),
                 write: { await output.write($0) }
             )

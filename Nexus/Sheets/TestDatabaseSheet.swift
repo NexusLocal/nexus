@@ -18,6 +18,7 @@ struct TestDatabaseSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppModel.self) private var model
     let site: SiteItem
+    let folder: URL
     let check: TestDatabaseCheck
     let server: ServiceVersion?
     let choose: (TestDatabaseAction) -> Void
@@ -26,16 +27,13 @@ struct TestDatabaseSheet: View {
     @State private var databases: [DatabaseSize]?
     @State private var listed = false
     @State private var otherDatabase = ""
+    @State private var files: TestDatabasePlan.Files?
     @State private var plans: [TestDatabaseChoice: TestDatabasePlan] = [:]
     @State private var conflicts: [TestDatabaseChoice: [String]] = [:]
     @State private var gitStates: [String: TestDatabasePlan.GitState] = [:]
 
-    private var folder: URL {
-        URL(filePath: site.folder, directoryHint: .isDirectory)
-    }
-
     private var development: String {
-        check.developmentDatabase ?? "the database of .env"
+        check.developmentDatabaseLabel
     }
 
     private var testName: String {
@@ -143,7 +141,11 @@ struct TestDatabaseSheet: View {
         .padding(20)
         .frame(width: 520)
         .task {
+            files = TestDatabasePlan.Files.read(check: check, projectFolder: folder)
             updatePlans()
+
+            let written = [check.testEnvFile, plans.values.compactMap(\.backupFile).first].compactMap { $0 }
+            async let states = TestDatabasePlan.gitStates(of: written, in: folder)
 
             if let server {
                 databases = await model.databaseSizes(on: server.id)
@@ -151,11 +153,7 @@ struct TestDatabaseSheet: View {
             }
 
             listed = true
-            updatePlans()
-
-            for file in [check.testEnvFile, plans.values.compactMap(\.backupFile).first].compactMap({ $0 }) {
-                gitStates[file] = await TestDatabasePlan.gitState(of: file, in: folder)
-            }
+            gitStates = await states
         }
         .onChange(of: otherDatabase) {
             updatePlans()
@@ -184,12 +182,8 @@ struct TestDatabaseSheet: View {
 
         switch choice {
         case .make:
-            guard let server else {
-                return "The development database is not on a server of Nexus."
-            }
-
-            if listed, databases == nil {
-                return "Nexus cannot list the databases of \(server.name). Start \(server.name) first."
+            guard serverProblem == nil, let server else {
+                return serverProblem ?? ""
             }
 
             return testDatabaseExists
@@ -198,12 +192,8 @@ struct TestDatabaseSheet: View {
         case .sqliteMemory:
             return "The tests use no database server. Some migrations do not work on SQLite."
         case .other:
-            guard let server else {
-                return "The development database is not on a server of Nexus."
-            }
-
-            if listed, databases == nil {
-                return "Nexus cannot list the databases of \(server.name). Start \(server.name) first."
+            guard serverProblem == nil, let server else {
+                return serverProblem ?? ""
             }
 
             return otherDatabases.isEmpty && listed ? "\(server.name) has no database that no site uses." : "Choose a database on \(server.name) that no site uses."
@@ -212,6 +202,15 @@ struct TestDatabaseSheet: View {
                 ? "The tests keep using \(development). Nexus does not show this warning again for this site. Agents still get the warning."
                 : "The tests keep using \(current)."
         }
+    }
+
+    // Why the sheet cannot make or list a database on the server of the development database.
+    private var serverProblem: String? {
+        guard let server else {
+            return "The development database is not on a server of Nexus."
+        }
+
+        return listed && databases == nil ? "Nexus cannot list the databases of \(server.name). Start \(server.name) first." : nil
     }
 
     private var buttonTitle: String {
@@ -237,8 +236,8 @@ struct TestDatabaseSheet: View {
         selected.map(isAvailable) ?? false
     }
 
-    // Each plan reads the env files. So the sheet makes the plans once for each change and not for
-    // each draw.
+    // The sheet makes the plans once for each change and not for each draw. Without APP_ENV there
+    // is no plan, but the lines of phpunit.xml still explain each choice.
     private func updatePlans() {
         let targets: [TestDatabaseChoice: TestDatabasePlan.Target] = [
             .make: .database(testName),
@@ -246,8 +245,13 @@ struct TestDatabaseSheet: View {
             .other: .database(otherDatabase.isEmpty ? testName : otherDatabase),
         ]
 
-        plans = targets.compactMapValues { TestDatabasePlan.make(for: $0, check: check, projectFolder: folder) }
-        conflicts = targets.mapValues { TestDatabasePlan.phpunitConflicts(for: $0, check: check, projectFolder: folder) }
+        guard let files else {
+            conflicts = targets.mapValues { TestDatabasePlan.phpunitConflicts(for: $0, check: check, projectFolder: folder) }
+            return
+        }
+
+        plans = targets.compactMapValues { TestDatabasePlan.make(for: $0, check: check, files: files) }
+        conflicts = targets.mapValues { TestDatabasePlan.phpunitConflicts(for: $0, check: check, files: files) }
     }
 
     // Each line that Nexus adds or changes shows before Nexus writes it.
@@ -293,36 +297,13 @@ struct TestDatabaseSheet: View {
     }
 
     private func option(_ value: TestDatabaseChoice, title: String, description: String) -> some View {
-        let isSelected = selected == value
         let isAvailable = isAvailable(value)
 
-        return Button {
+        return ChoiceCard(title: title, detail: description, selected: selected == value) {
             choice = value
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .fontWeight(.semibold)
-                    Text(description)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 0)
-            }
-            .padding(10)
-            .contentShape(.rect)
-            .background(isSelected ? Color.accentSoft : Color.clear, in: .rect(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isSelected ? Color.accentColor : Color.secondary.opacity(0.25)))
         }
-        .buttonStyle(.plain)
         .disabled(!isAvailable)
         .opacity(isAvailable ? 1 : 0.5)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private func finish() {
@@ -343,8 +324,8 @@ struct TestDatabaseSheet: View {
             return
         }
 
-        let makes = selected == .make && !testDatabaseExists ? testName : nil
+        let makes = server.flatMap { selected == .make && !testDatabaseExists ? NewTestDatabase(name: testName, instance: $0.id) : nil }
         dismiss()
-        choose(.use(plan, makes: makes, on: server?.id))
+        choose(.use(plan, makes: makes))
     }
 }

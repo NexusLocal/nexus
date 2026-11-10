@@ -41,7 +41,7 @@ struct CommandLineScreen: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer()
                             Button("Copy path") {
-                                copyToPasteboard(Self.shellWord(Self.commandPath))
+                                copyToPasteboard(ShellWord.quoted(Self.commandPath))
                             }
                             .help("Copies the path of the nexus command in the app: \(Self.commandPath)")
                             openSettingsButton
@@ -98,10 +98,4 @@ struct CommandLineScreen: View {
         }
     }
 
-    // A path with a space or another special character works in a terminal only in quotes.
-    private static func shellWord(_ path: String) -> String {
-        let isPlain = path.allSatisfy { $0.isLetter || $0.isNumber || "/._-+".contains($0) }
-
-        return isPlain ? path : "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'"
-    }
 }

@@ -30,20 +30,11 @@ enum ReadTool {
     }
 
     static func text(_ value: JSONValue?) -> String? {
-        switch value {
-        case .string(let text): text
-        case .int(let number): String(number)
-        case .bool(let flag): String(flag)
-        default: nil
-        }
+        value?.text
     }
 
     static func list(_ value: JSONValue?) -> [JSONValue] {
-        guard case .array(let items) = value else {
-            return []
-        }
-
-        return items
+        value?.array ?? []
     }
 }
 

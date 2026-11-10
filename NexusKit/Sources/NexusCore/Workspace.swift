@@ -13,6 +13,15 @@ public enum WorkspaceState: Codable, Sendable, Hashable {
 
         return false
     }
+
+    // The name in the JSON of nexus workspace info and of the MCP server.
+    public var name: String {
+        switch self {
+        case .preparing: "preparing"
+        case .ready: "ready"
+        case .notIsolated: "not_isolated"
+        }
+    }
 }
 
 // A key that a site adds to the .env of each workspace (D45). The value can use {workspace}, {host},

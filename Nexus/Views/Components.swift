@@ -255,6 +255,46 @@ extension WarningBanner where Details == Text {
     }
 }
 
+// One choice of a group, with a title and a line of detail, for example "One project" in the Add
+// Site sheet.
+struct ChoiceCard: View {
+    let title: String
+    let detail: String
+    let selected: Bool
+    let select: () -> Void
+
+    var body: some View {
+        Button(action: select) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .fontWeight(.semibold)
+                    Text(detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(selected ? Color.accentSoft : Color.clear, in: .rect(cornerRadius: 10))
+            .background(.fill.quaternary, in: .rect(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 1.5)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
 struct InfoBanner<Actions: View>: View {
     let text: String
     @ViewBuilder var actions: Actions

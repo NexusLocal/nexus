@@ -44,12 +44,7 @@ public struct AgentWorkspace: Codable, Sendable, Equatable {
         branch = workspace.branch
         folder = workspace.folder
         problem = workspace.isolationMessage ?? workspace.problem
-
-        switch workspace.state {
-        case .ready: state = "ready"
-        case .notIsolated: state = "not_isolated"
-        case .preparing, nil: state = "preparing"
-        }
+        state = (workspace.state ?? .preparing).name
     }
 }
 
@@ -74,7 +69,7 @@ public struct AgentTestDatabase: Codable, Sendable, Equatable {
 
         switch check.kind {
         case .development:
-            note = "Warning: the tests use \(check.developmentDatabase ?? "the database") of .env, the development database. A test that resets the database removes all development data. Do not run such tests. Ask the user to choose a test database in Nexus (the Site screen, section Databases)."
+            note = "Warning: the tests use \(check.developmentDatabaseLabel), the development database. A test that resets the database removes all development data. Do not run such tests. Ask the user to choose a test database in Nexus (the Site screen, section Databases)."
         case .sqliteMemory:
             note = "The tests use SQLite in memory. They do not touch the development database."
         case .separate:

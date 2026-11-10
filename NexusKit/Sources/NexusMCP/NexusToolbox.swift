@@ -149,10 +149,10 @@ public struct NexusToolbox: MCPHandler {
 
     private func siteInfo(_ arguments: CallArguments) async throws -> MCPToolResult {
         let target = try await target(arguments.string("site"))
-        let connections = (try? await databaseConnections(target)) ?? []
-        let mail = try? await siteMail(host: target.siteHost)
+        async let connections = try? await databaseConnections(target)
+        async let mail = try? await siteMail(host: target.siteHost)
 
-        return try .value(AgentSite(target: target, connections: connections, mail: mail, testDatabase: testDatabase(of: target)))
+        return try .value(AgentSite(target: target, connections: await connections ?? [], mail: await mail, testDatabase: testDatabase(of: target)))
     }
 
     // Only the main folder of a Laravel site, because a workspace has its own database.
@@ -172,8 +172,9 @@ public struct NexusToolbox: MCPHandler {
         }
 
         let required = ComposerExtensions.required(in: URL(filePath: target.projectFolder, directoryHint: .isDirectory))
+        async let toggleList = try? await extensionToggles(php: target.site.php)
         let loaded = try await loadedModules(of: target)
-        let toggles = (try? await extensionToggles(php: target.site.php)) ?? []
+        let toggles = await toggleList ?? []
         let states = required.keys.sorted().map { name in
             let toggle = toggles.first { ComposerExtensions.normalized($0.name) == name }
             let on = loaded.contains(name)
@@ -269,6 +270,7 @@ public struct NexusToolbox: MCPHandler {
 
     private func status() async throws -> MCPToolResult {
         let list: ServiceList
+        async let taskAnswer = try? await send(.tasks)
 
         do {
             let response = try await send(.serviceList)
@@ -282,7 +284,7 @@ public struct NexusToolbox: MCPHandler {
             return try .value(StatusResult(running: false, services: [], tasks: [], problems: [Self.notRunning]))
         }
 
-        let tasks: [TaskRow] = if case .tasks(let running)? = try? await send(.tasks) {
+        let tasks: [TaskRow] = if case .tasks(let running)? = await taskAnswer {
             running.tasks.map(TaskRow.init)
         } else {
             []
@@ -301,13 +303,14 @@ public struct NexusToolbox: MCPHandler {
     }
 
     private func packages() async throws -> MCPToolResult {
+        async let availableAnswer = send(.available)
         let installedResponse = try await send(.installed)
 
         guard case .installed(let installed) = installedResponse else {
             throw failure(installedResponse)
         }
 
-        let availableResponse = try await send(.available)
+        let availableResponse = try await availableAnswer
         var available: [PackageRow] = []
 
         if case .available(let packages) = availableResponse {
@@ -325,8 +328,9 @@ public struct NexusToolbox: MCPHandler {
     // MARK: Mail
 
     private func listMail(_ arguments: CallArguments) async throws -> MCPToolResult {
+        async let scopeAnswer = mailScope(arguments.string("site"))
         let reader = try await mailReader()
-        let scope = try await mailScope(arguments.string("site"))
+        let scope = try await scopeAnswer
         let limit = min(max(arguments.int("limit") ?? 20, 1), 100)
         let mails = try await reader.list(tags: scope.tags, limit: limit).map(MailRow.init)
         var note: String?
@@ -709,14 +713,14 @@ enum AgentName {
         }
 
         let lower = client.lowercased()
-        let known: [(String, String)] = [
-            ("claude-code", "Claude Code"), ("claude code", "Claude Code"), ("claude", "Claude"), ("codex", "Codex"),
-            ("cursor", "Cursor"), ("gemini", "Gemini CLI"), ("junie", "Junie"), ("opencode", "OpenCode"),
-            ("visual studio code", "VS Code"), ("vscode", "VS Code"), ("copilot", "VS Code"), ("windsurf", "Windsurf"), ("zed", "Zed"),
+        let known: [(String, AgentKind)] = [
+            ("claude-code", .claudeCode), ("claude code", .claudeCode), ("claude", .claude), ("codex", .codex),
+            ("cursor", .cursor), ("gemini", .geminiCLI), ("junie", .junie), ("opencode", .openCode),
+            ("visual studio code", .vsCode), ("vscode", .vsCode), ("copilot", .vsCode), ("windsurf", .windsurf), ("zed", .zed),
         ]
 
-        if let name = known.first(where: { lower.contains($0.0) })?.1 {
-            return name
+        if let agent = known.first(where: { lower.contains($0.0) })?.1 {
+            return agent.name
         }
 
         return String(client.filter { $0.isLetter || $0.isNumber || " -_.".contains($0) }.prefix(40))
