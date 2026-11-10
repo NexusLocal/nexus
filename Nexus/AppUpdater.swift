@@ -19,6 +19,16 @@ final class AppUpdater {
         }
     }
 
+    // The same setting as the checkbox "Download and install updates automatically from now on" in
+    // the update window of Sparkle.
+    var installsAutomatically: Bool {
+        didSet {
+            controller.updater.automaticallyDownloadsUpdates = installsAutomatically
+        }
+    }
+
+    let readyPrompt = UpdateReadyPrompt()
+
     private let controller: SPUStandardUpdaterController
     private var observer: AnyCancellable?
 
@@ -29,9 +39,18 @@ final class AppUpdater {
         let starts = true
         #endif
 
-        controller = SPUStandardUpdaterController(startingUpdater: starts, updaterDelegate: nil, userDriverDelegate: nil)
+        controller = SPUStandardUpdaterController(startingUpdater: starts, updaterDelegate: readyPrompt, userDriverDelegate: nil)
         lastCheck = controller.updater.lastUpdateCheckDate
         checksAutomatically = controller.updater.automaticallyChecksForUpdates
+        installsAutomatically = controller.updater.automaticallyDownloadsUpdates
+
+        #if DEBUG
+        if CommandLine.arguments.contains("--alert"), CommandLine.arguments.contains("update-ready") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [readyPrompt] in
+                readyPrompt.preview(version: "0.2.6")
+            }
+        }
+        #endif
 
         observer = controller.updater.publisher(for: \.canCheckForUpdates)
             .receive(on: DispatchQueue.main)

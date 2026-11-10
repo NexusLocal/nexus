@@ -841,6 +841,8 @@ private struct UpdatesSettings: View {
         Form {
             Section {
                 Toggle("Check for updates automatically", isOn: $updater.checksAutomatically)
+                Toggle("Install updates automatically", isOn: $updater.installsAutomatically)
+                    .disabled(!updater.checksAutomatically)
                 LabeledContent("Last check") {
                     HStack {
                         Text(updater.lastCheck?.formatted(date: .abbreviated, time: .shortened) ?? "Never")
@@ -856,7 +858,7 @@ private struct UpdatesSettings: View {
             } header: {
                 Text(verbatim: NexusVariant.current.name)
             } footer: {
-                Text(verbatim: "\(NexusVariant.current.name) \(version). Updates come from \(AppUpdater.repository).")
+                Text(verbatim: "Nexus checks for updates every hour. With automatic install, Nexus downloads an update by itself and then asks you to restart. \(NexusVariant.current.name) \(version) comes from \(AppUpdater.repository).")
             }
 
             Section {

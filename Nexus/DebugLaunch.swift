@@ -5,12 +5,13 @@ import NexusCore
 // Launch arguments of a debug build that open one screen. They let a check of the look work
 // without clicks: --screen service:mysql --sheet port --appearance light --settings network. The
 // Add Site sheet can read another folder: --sheet add-site --folder /path. The New site sheet can
-// start at a template: --sheet new-site --template wordpress
+// start at a template: --sheet new-site --template wordpress. --alert update-ready shows the window
+// of an update that is ready to install.
 // The services of the sample data, such as the port problem of --sheet port, need --sample.
 enum DebugLaunch {
     // A check of the look does not get the first run on top of the screen that it checks.
     static var checksTheLook: Bool {
-        ["--sample", "--screen", "--sheet", "--settings", "--appearance", "--version"].contains(where: CommandLine.arguments.contains)
+        ["--sample", "--screen", "--sheet", "--settings", "--appearance", "--version", "--alert"].contains(where: CommandLine.arguments.contains)
     }
 
     static func apply(to model: AppModel, openSettings: () -> Void) {
