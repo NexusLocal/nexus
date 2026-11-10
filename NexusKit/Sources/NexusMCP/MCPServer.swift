@@ -1,6 +1,6 @@
 import Foundation
 
-// A tool as tools/list gives it. The client adds mcp__nexus__ in front of the name itself.
+// The names have no prefix, because the client adds mcp__nexus__ itself.
 public struct MCPTool: Sendable, Equatable {
     public let name: String
     public let title: String
@@ -76,8 +76,6 @@ public struct MCPToolResult: Sendable, Equatable {
     }
 }
 
-// What the Nexus part of the server answers. agent is the name of the client, for example
-// claude-code, or nil when the client gives none.
 public protocol MCPHandler: Sendable {
     func instructions(agent: String?) async -> String
     func tools(agent: String?) async -> [MCPTool]
@@ -87,7 +85,6 @@ public protocol MCPHandler: Sendable {
     func knows(_ name: String) -> Bool
 }
 
-// The JSON-RPC id of a request: a number or a string.
 enum MCPRequestID: Hashable, Sendable {
     case int(Int)
     case string(String)
@@ -307,6 +304,14 @@ public actor MCPServer {
 
         result["resultType"] = "complete"
         result["_meta"] = [Self.serverInfoKey: serverInfo]
+
+        // The access level can change at any moment, and the instructions name the site of the
+        // user. So a client must not keep these results and must not share them.
+        if method == "server/discover" || method == "tools/list" {
+            result["ttlMs"] = 0
+            result["cacheScope"] = "private"
+        }
+
         return .object(result)
     }
 

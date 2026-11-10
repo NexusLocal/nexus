@@ -3,8 +3,8 @@ import Foundation
 import NexusCore
 import NexusMCP
 
-// The commands with the same code as the read tools of the MCP server (plan item 18). An agent
-// without MCP gets the same help in the terminal. --json prints what the tool gives.
+// These commands run the read tools of the MCP server. So an agent without MCP gets the same help
+// in the terminal.
 enum ReadTool {
     static func run(_ name: String, _ arguments: [String: JSONValue], json: Bool, lines: (JSONValue) -> [String]) async throws {
         let folder = RealPath.of(URL(filePath: FileManager.default.currentDirectoryPath, directoryHint: .isDirectory))

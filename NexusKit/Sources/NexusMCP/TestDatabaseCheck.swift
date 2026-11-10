@@ -1,9 +1,8 @@
 import Foundation
 import NexusCore
 
-// The database that the tests of a Laravel project use (owner incident: a migrate:fresh of a test
-// run removed all development data). PHPUnit sets the <env> and <server> values of phpunit.xml
-// first. The immutable dotenv of Laravel does not replace them. With APP_ENV=testing Laravel reads
+// A migrate:fresh in a test run can remove all development data. PHPUnit sets the <env> and
+// <server> values of phpunit.xml first. The immutable dotenv of Laravel does not replace them. With APP_ENV=testing Laravel reads
 // .env.testing instead of .env and not both. So a key of the tests comes from phpunit.xml, else
 // from the env file that the tests load.
 public struct TestDatabaseCheck: Codable, Sendable, Equatable {

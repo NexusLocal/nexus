@@ -12,7 +12,6 @@ public protocol NexusConnecting: Sendable {
 
 extension NexusClient: NexusConnecting {}
 
-// A sentence for the agent that says what went wrong and what to do.
 public struct ToolFailure: Error, CustomStringConvertible, Equatable {
     public let description: String
 
@@ -24,7 +23,6 @@ public struct ToolFailure: Error, CustomStringConvertible, Equatable {
 // nexusd does not answer. The status tool reports it as a state and not as an error.
 struct NexusNotRunning: Error {}
 
-// The Nexus part of the MCP server: the instructions, the tools of the access level and each call.
 // folder is the project folder of the session: CLAUDE_PROJECT_DIR, else the working directory.
 public struct NexusToolbox: MCPHandler {
     public static let notRunning = "Nexus does not run now. Ask the user to open Nexus."
@@ -157,7 +155,7 @@ public struct NexusToolbox: MCPHandler {
         return try .value(AgentSite(target: target, connections: connections, mail: mail, testDatabase: testDatabase(of: target)))
     }
 
-    // Only the main folder of a Laravel site. A workspace has its own database (owner, 2026-11-10).
+    // Only the main folder of a Laravel site, because a workspace has its own database.
     func testDatabase(of target: SiteTarget) -> TestDatabaseCheck? {
         guard target.workspace == nil, target.site.kind == .php, target.site.projectType == .laravel else {
             return nil
@@ -671,7 +669,7 @@ public struct NexusToolbox: MCPHandler {
     }
 }
 
-// The arguments of one call. An empty text counts as no value.
+// An empty text counts as no value.
 struct CallArguments {
     let values: [String: JSONValue]
 
@@ -704,7 +702,6 @@ struct CallArguments {
     }
 }
 
-// The name of the agent for activity.log, from the clientInfo of MCP.
 enum AgentName {
     static func display(_ client: String?) -> String {
         guard let client, !client.isEmpty else {

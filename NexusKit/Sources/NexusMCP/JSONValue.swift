@@ -1,7 +1,6 @@
 import Foundation
 
-// A JSON value of any shape. The messages of MCP hold arguments and results whose shape only the
-// tool knows. A whole number stays an integer. So an id 1 goes back as 1 and not as 1.0.
+// A whole number stays an integer. So an id 1 goes back as 1 and not as 1.0.
 public enum JSONValue: Codable, Sendable, Equatable {
     case null
     case bool(Bool)
@@ -103,7 +102,6 @@ public enum JSONValue: Codable, Sendable, Equatable {
         return value
     }
 
-    // Any Encodable value as a JSON value, for the structured content of a tool result.
     public static func encoding(_ value: some Encodable) throws -> JSONValue {
         try JSONDecoder().decode(JSONValue.self, from: try JSONEncoder.mcp.encode(value))
     }

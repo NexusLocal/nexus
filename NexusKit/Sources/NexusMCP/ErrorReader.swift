@@ -1,8 +1,6 @@
 import Foundation
 import NexusCore
 
-// One error of a site. source is one of laravel, wordpress, php, request and node. trace holds the
-// first frames of the stack trace of a Laravel error.
 public struct SiteError: Codable, Sendable, Equatable {
     public let source: String
     public let time: String?
@@ -27,9 +25,8 @@ public struct SiteError: Codable, Sendable, Equatable {
         self.date = date
     }
 
-    // A path in the project folder becomes a path from the project folder, for example
-    // routes/web.php:9. A frame in vendor/ goes away, except the first frame. The agent fixes the
-    // code of the project. Also the result stays short.
+    // The agent fixes the code of the project. So a frame in vendor/ seldom helps it. Short paths
+    // and fewer frames also keep the result small.
     func relative(to project: String) -> SiteError {
         let prefixes = ErrorReader.folderPrefixes(of: project)
 
@@ -61,9 +58,8 @@ public struct SiteError: Codable, Sendable, Equatable {
     }
 }
 
-// The newest errors of a site from its logs (plan item 12). Each reader reads only the end of a
-// log, because a log can be large. A message and a frame stop at a length that keeps the result
-// below the warning size of Claude Code.
+// Each reader reads only the end of a log, because a log can be large. A message and a frame stop
+// at a length that keeps the result below the warning size of Claude Code.
 public enum ErrorReader {
     public static let tailBytes = 512 * 1024
     static let messageLength = 1500
@@ -105,7 +101,6 @@ public enum ErrorReader {
             .sorted { $0.count > $1.count }
     }
 
-    // Newest first. An error without a time comes last.
     public static func errors(in sources: Sources, limit: Int) -> [SiteError] {
         var all: [SiteError] = []
 
@@ -257,7 +252,7 @@ public enum ErrorReader {
         return errors
     }
 
-    // The last bytes of a file as text. The first line can be cut. So it goes away.
+    // The first line can start in the middle of a line of the file. So it goes away.
     public static func tail(of file: URL, bytes: Int = tailBytes) -> String {
         guard let handle = try? FileHandle(forReadingFrom: file) else {
             return ""

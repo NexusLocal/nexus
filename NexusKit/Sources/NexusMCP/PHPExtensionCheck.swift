@@ -1,6 +1,5 @@
 import Foundation
 
-// One PHP extension that a project requires. on tells if the PHP of the site has it.
 public struct ExtensionState: Codable, Sendable, Equatable {
     public let name: String
     public let requiredBy: [String]
@@ -8,10 +7,7 @@ public struct ExtensionState: Codable, Sendable, Equatable {
     public let canTurnOn: Bool
 }
 
-// The ext-* requirements of composer.json and composer.lock (plan item 7, php_extensions).
 public enum ComposerExtensions {
-    // The name of each extension with the places that require it, for example composer.json or
-    // composer.lock: laravel/framework.
     public static func required(in project: URL) -> [String: [String]] {
         var required: [String: [String]] = [:]
 
@@ -44,7 +40,6 @@ public enum ComposerExtensions {
         name.lowercased().replacing(" ", with: "_").replacing("-", with: "_")
     }
 
-    // The modules in the output of php -m, without the section titles.
     public static func modules(inPHPOutput output: String) -> Set<String> {
         Set(output.split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }

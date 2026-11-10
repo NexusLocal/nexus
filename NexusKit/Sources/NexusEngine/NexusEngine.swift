@@ -868,7 +868,7 @@ public actor NexusEngine {
         }
 
         _ = try await stop(id, disable: false)
-        return try await start(id, enable: false)
+        return "Nexus restarted \(id). \(try await start(id, enable: false))"
     }
 
     // The services stop at the same time, so a database that writes its data to disk does not

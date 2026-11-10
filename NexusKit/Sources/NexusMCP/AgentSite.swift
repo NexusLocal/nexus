@@ -83,7 +83,7 @@ public struct AgentTestDatabase: Codable, Sendable, Equatable {
     }
 }
 
-// What site_info gives: a smaller shape than SiteInfo, with only what an agent needs.
+// SiteInfo holds much that an agent does not need. Each extra key costs room in its context.
 public struct AgentSite: Codable, Sendable, Equatable {
     public let site: String
     public let workspace: AgentWorkspace?

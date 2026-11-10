@@ -1,6 +1,5 @@
 import Foundation
 
-// A link of a mail with the text that the mail shows for it.
 public struct MailLink: Codable, Sendable, Equatable {
     public let url: String
     public let text: String?
@@ -11,12 +10,8 @@ public struct MailLink: Codable, Sendable, Equatable {
     }
 }
 
-// The links, the codes and the plain text of a mail, for an agent that tests a sign-up or a
-// password reset. Nexus never opens a link, because a link can confirm a sign-up. The agent
-// opens it.
+// Nexus never opens a link, because a link can confirm a sign-up. The agent opens it.
 public enum MailContent {
-    // The links of the HTML part with their text first, then the other links of the text part.
-    // Each link comes once.
     public static func links(html: String, text: String) -> [MailLink] {
         var links: [MailLink] = []
         var seen: Set<String> = []
@@ -45,9 +40,8 @@ public enum MailContent {
         return links
     }
 
-    // Numbers of 4 to 8 digits near a word such as code, verification or PIN, for example a
-    // login code. 123 456 and 123-456 count as 123456. A year in a date does not count, because it
-    // is not near such a word.
+    // Only a number near a word such as code or PIN counts. A year or an order number is then no
+    // code.
     public static func codes(in text: String) -> [String] {
         let words = /(?i)\b(code|codes|verification|verify|verificatie|one[- ]time|otp|pin|passcode|token|security|login|sign[- ]in|confirm)/
         var codes: [String] = []
@@ -98,7 +92,6 @@ public enum MailContent {
         return !(joiners.contains(after) && next < text.endIndex && text[next].isNumber)
     }
 
-    // The text of an HTML mail without its tags, styles and scripts, with one space between words.
     public static func plainText(html: String) -> String {
         let withoutBlocks = html
             .replacing(/<(style|script|head)\b[\s\S]*?<\/\1\s*>/.ignoresCase(), with: " ")

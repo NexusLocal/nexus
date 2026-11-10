@@ -1,7 +1,6 @@
 import Foundation
 import NexusCore
 
-// What coding agents can do in Nexus (owner, 2026-11-10). One setting for all agents.
 public enum AgentLevel: String, Codable, Sendable, CaseIterable, Comparable {
     case read
     case change
@@ -19,7 +18,6 @@ public enum AgentLevel: String, Codable, Sendable, CaseIterable, Comparable {
         }
     }
 
-    // The error of a tool that this level does not offer.
     public var refusal: String {
         switch self {
         case .read: "Nexus lets agents only look. The user can change this in Nexus > Settings > Agents."
@@ -29,10 +27,9 @@ public enum AgentLevel: String, Codable, Sendable, CaseIterable, Comparable {
     }
 }
 
-// The settings of the coding agents are in agents.json in the data folder of Nexus. The app
-// writes them. The MCP server reads them at each call. So a change works at once, also in an
-// agent session that runs. listed holds the agents in the list of Settings > Agents, also the
-// agents that are off. A file that is missing or broken gives the defaults.
+// The MCP server reads agents.json at each call. So a change in the app works at once, also in an
+// agent session that runs. listed also holds the agents that are off, because a removed agent
+// must not come back by itself.
 public struct AgentSettings: Codable, Sendable, Equatable {
     public var level: AgentLevel
     public var askBeforeLooking: Bool

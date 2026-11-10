@@ -658,7 +658,11 @@ extension NexusEngineTests {
             let restarted = await engine.handle(.restart(service: "redis-1.0"))
             let after = pid(services(await engine.handle(.status))["redis-1.0"]?.state)
 
-            if case .done = restarted {} else { Issue.record("the restart failed: \(restarted)") }
+            if case .done(let message) = restarted {
+                #expect(message.hasPrefix("Nexus restarted redis-1.0. "))
+            } else {
+                Issue.record("the restart failed: \(restarted)")
+            }
             #expect(before != nil)
             #expect(after != nil)
             #expect(after != before)

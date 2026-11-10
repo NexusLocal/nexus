@@ -86,6 +86,15 @@ struct MCPServerTests {
         #expect(result?["resultType"] == "complete")
         #expect(result?["instructions"] == "Instructions for claude-code")
         #expect(result?["_meta"]?["io.modelcontextprotocol/serverInfo"]?["name"] == "nexus")
+        #expect(result?["ttlMs"] == 0)
+        #expect(result?["cacheScope"] == "private")
+    }
+
+    @Test func aModernToolListMustNotBeKept() async {
+        let lines = await run([#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}"#])
+
+        #expect(lines.first?["result"]?["ttlMs"] == 0)
+        #expect(lines.first?["result"]?["cacheScope"] == "private")
     }
 
     @Test func aModernRequestCarriesTheNameOfTheClient() async {

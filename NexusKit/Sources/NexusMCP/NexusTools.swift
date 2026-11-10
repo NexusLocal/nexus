@@ -1,8 +1,8 @@
 import Foundation
 import NexusCore
 
-// The 20 tools of Nexus (plan item 7). The agent reads these texts to choose a tool. So they must
-// be exact. The level of a tool is the lowest access level that offers it.
+// The agent reads these texts to choose a tool. So they must be exact. The level of a tool is the
+// lowest access level that offers it.
 public struct NexusToolSpec: Sendable {
     public let name: String
     public let title: String

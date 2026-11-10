@@ -42,7 +42,6 @@ public struct MailAttachmentInfo: Codable, Sendable, Equatable {
     public let size: Int
 }
 
-// One mail for an agent: the text, each link with its text and the codes.
 public struct AgentMail: Codable, Sendable, Equatable {
     public static let textLimit = 20_000
 
@@ -77,9 +76,7 @@ public struct AgentMail: Codable, Sendable, Equatable {
     }
 }
 
-// Reads the mail of a site through its tags. tags nil means the whole inbox. A site has one tag
-// for each host of the site and of its workspaces. Mailpit has no OR in a search. So each tag is
-// one search.
+// tags nil means the whole inbox. Mailpit has no OR in a search. So each tag is one search.
 public struct MailReader: Sendable {
     public static let lookBack: TimeInterval = 60
     public static let defaultWait = 30

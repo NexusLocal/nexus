@@ -106,6 +106,9 @@ extension CommandSection {
         ]),
         CommandSection(title: "Coding agents", commands: [
             CommandItem(command: "nexus mcp", help: "The MCP server of Nexus. A coding agent such as Claude Code, Codex or Cursor starts it. Settings > Agents connects the agents."),
+            CommandItem(command: "nexus mcp status", help: "Shows which coding agents are on this Mac and which ones use Nexus."),
+            CommandItem(command: "nexus mcp install --agent claude-code", help: "Connects coding agents to Nexus. Without --agent, each agent on this Mac."),
+            CommandItem(command: "nexus mcp uninstall --agent codex", help: "Removes the entry of Nexus from the settings of a coding agent."),
         ]),
         CommandSection(title: "Domains and certificates", commands: [
             CommandItem(command: "nexus tld internal", help: "Gives every site a name in another dev domain."),

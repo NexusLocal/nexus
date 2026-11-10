@@ -2,7 +2,6 @@ import Foundation
 import NexusCore
 import NexusIPC
 
-// A log of Nexus that read_log can give. name is what the agent passes as log.
 public struct LogInfo: Codable, Sendable, Equatable {
     public let name: String
     public let about: String
@@ -18,12 +17,6 @@ public struct LogLines: Codable, Sendable, Equatable {
     public let note: String?
 }
 
-// The logs of Nexus by name:
-// - nexus: activity.log.
-// - errors: the full output of each program that failed.
-// - The name of a service, for example php-8.5 or mysql-8.4.
-// - access:<host>: the requests of a site or a workspace.
-// - app:<host>: the output of a Node.js app.
 public enum LogReader {
     public static let defaultLines = 50
     public static let mostLines = 500

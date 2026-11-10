@@ -2,9 +2,7 @@ import Foundation
 import NexusCore
 import NexusIPC
 
-// The instructions that an agent gets when it connects (plan item 14). Claude Code cuts them at
-// 4096 characters. So the text stays below 2500. The server builds the text at each connection
-// for the project folder of the session.
+// Claude Code cuts the instructions at 4096 characters. So the text stays below 2500.
 public enum AgentInstructions {
     public static let longest = 2500
 
