@@ -42,6 +42,8 @@ In this order:
 
 ## Done recently
 
+- **0.2.5:** PCOV also for `pest --tia` and `pest --mutate`, and a check for app updates every
+  hour.
 - **0.2.4:** import a dump file, a dump file for each new workspace (WordPress links change during
   the load), a workspace in one step, extra files and removal commands for workspaces, `nexus open`,
   `nexus edit` and database commands, a document root setting, better error pages, plain error
