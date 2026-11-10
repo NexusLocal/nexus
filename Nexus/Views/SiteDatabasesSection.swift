@@ -1,15 +1,24 @@
 import NexusCore
+import NexusMCP
 import SwiftUI
 
 // The database connections of a Laravel site, from the configuration of the application (owner,
 // 2026-11-07). The design is the section "Databases" of the frame "Site" in nexus.pen. A connection
-// to a server outside Nexus has no Open button, because Nexus does not know its account.
+// to a server outside Nexus has no Open button, because Nexus does not know its account. The row
+// "tests" and the warning of the design "Site Databases Section · Test database" show the database
+// of the tests. A workspace has its own database, so only the main folder gets them.
 struct SiteDatabasesSection: View {
     @Environment(AppModel.self) private var model
     let site: SiteItem
 
     @State private var databases: [SiteDatabase]?
     @State private var problem: String?
+    @State private var tests: TestDatabaseCheck?
+    @State private var choosesTestDatabase = false
+
+    private var warnsAboutTests: Bool {
+        tests?.usesDevelopmentDatabase == true && !model.keepsTestDatabase(of: site)
+    }
 
     var body: some View {
         Section {
@@ -28,10 +37,28 @@ struct SiteDatabasesSection: View {
                 Text("Checking…")
                     .foregroundStyle(.secondary)
             }
+
+            if let tests {
+                if warnsAboutTests {
+                    testsWarning(tests)
+                } else {
+                    testsRow(tests)
+                }
+            }
         } header: {
             Text("Databases")
         } footer: {
-            Text("Nexus finds these connections in the configuration of the application. \"Import dump…\" loads a dump file into that database. \"Open\" uses the app of Settings > Databases > Open with.")
+            Text("Nexus finds these connections in the configuration of the application. \"Import dump…\" loads a dump file into that database. \"Open\" uses the app of Settings > Databases > Open with.\(tests != nil && !warnsAboutTests ? " \"tests\" is the database of the tests." : "")")
+        }
+        .sheet(isPresented: $choosesTestDatabase) {
+            if let tests {
+                TestDatabaseSheet(site: site, check: tests, server: testServer) { action in
+                    Task {
+                        await model.apply(action, to: site)
+                        await load()
+                    }
+                }
+            }
         }
         .task(id: "\(site.host) \(site.php) \(site.folder) \(instancePorts)") {
             await load()
@@ -77,7 +104,63 @@ struct SiteDatabasesSection: View {
         database.port.map { "\(database.host):\($0)" } ?? database.host
     }
 
+    // The Nexus server of the development database. Nil for a database on another server or in a
+    // SQLite file. The sheet then offers no database of a server.
+    private var testServer: ServiceVersion? {
+        (databases ?? []).first { $0.database == tests?.developmentDatabase && $0.instance != nil }?.instance.flatMap(model.service)
+    }
+
+    private func testsWarning(_ tests: TestDatabaseCheck) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(Color.statusOrange)
+
+            Text("The tests use \(tests.developmentDatabase ?? "the database of .env"), your development database. A test that resets the database removes your local data.")
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 12)
+
+            Button("Choose test database…") {
+                choosesTestDatabase = true
+            }
+        }
+        .padding(10)
+        .background(Color.warningBackground, in: .rect(cornerRadius: 8))
+    }
+
+    private func testsRow(_ tests: TestDatabaseCheck) -> some View {
+        let server = tests.onDevelopmentServer ? testServer?.name : nil
+        let value: String = switch tests.kind {
+        case .development: "\(tests.developmentDatabase ?? "The database of .env"), the development database"
+        case .sqliteMemory: "SQLite in memory, from \(tests.source)"
+        case .separate: "\(tests.database ?? "Another database")\(server.map { " on \($0)" } ?? ""), from \(tests.source)"
+        }
+
+        return LabeledContent {
+            HStack {
+                Text(value)
+                    .foregroundStyle(tests.usesDevelopmentDatabase ? Color.orangeText : .secondary)
+                    .rowValue()
+
+                Button("Change…") {
+                    choosesTestDatabase = true
+                }
+            }
+        } label: {
+            Text(verbatim: "tests")
+                .font(.system(.body, design: .monospaced))
+        }
+        .labeledContentStyle(.rowValue)
+    }
+
     private func load() async {
+        let folder = URL(filePath: site.folder, directoryHint: .isDirectory)
+        tests = await Task.detached { TestDatabaseCheck.check(projectFolder: folder) }.value
+
+        if tests?.usesDevelopmentDatabase != true {
+            model.setKeepsTestDatabase(false, of: site)
+        }
+
         switch await model.siteDatabases(of: site) {
         case .success(let found):
             databases = found

@@ -20,8 +20,16 @@ public struct TestDatabaseCheck: Codable, Sendable, Equatable {
     public let developmentDatabase: String?
     // The file of PHPUnit that Nexus read: phpunit.xml or phpunit.xml.dist.
     public let phpunitFile: String
+    // The env file that Laravel reads in tests, for example .env.testing, also when it does not
+    // exist yet. Nil when phpunit.xml sets no APP_ENV. The tests then read .env.
+    public let testEnvFile: String?
+    // The tests use the server of the development database, with the same or another database.
+    public let onDevelopmentServer: Bool
+    // The DB_ keys that phpunit.xml sets. They win over each env file.
+    public let phpunitDatabaseValues: [String: String]
 
-    static let keys = ["DB_CONNECTION", "DB_URL", "DB_HOST", "DB_PORT", "DB_DATABASE"]
+    static let serverKeys = ["DB_CONNECTION", "DB_URL", "DB_HOST", "DB_PORT"]
+    static let keys = serverKeys + ["DB_DATABASE"]
 
     public var usesDevelopmentDatabase: Bool {
         kind == .development
@@ -53,6 +61,8 @@ public struct TestDatabaseCheck: Codable, Sendable, Equatable {
         return decide(phpunit: phpunit, phpunitFile: phpunitName, testEnv: testEnv, testEnvFile: testEnvLabel, development: development)
     }
 
+    // testEnvFile is the file that the tests read now: the env file of APP_ENV when it exists,
+    // else .env.
     static func decide(phpunit: [String: String], phpunitFile: String, testEnv: [String: String], testEnvFile: String, development: [String: String]) -> TestDatabaseCheck {
         func test(_ key: String) -> String? {
             phpunit[key] ?? testEnv[key]
@@ -70,7 +80,17 @@ public struct TestDatabaseCheck: Codable, Sendable, Equatable {
             .separate
         }
 
-        return TestDatabaseCheck(kind: kind, connection: connection, database: database, source: source, developmentDatabase: development["DB_DATABASE"], phpunitFile: phpunitFile)
+        return TestDatabaseCheck(
+            kind: kind,
+            connection: connection,
+            database: database,
+            source: source,
+            developmentDatabase: development["DB_DATABASE"],
+            phpunitFile: phpunitFile,
+            testEnvFile: phpunit["APP_ENV"].map { ".env.\($0)" },
+            onDevelopmentServer: serverKeys.allSatisfy { isSame($0, test($0), development[$0]) },
+            phpunitDatabaseValues: phpunit.filter { $0.key.hasPrefix("DB_") }
+        )
     }
 
     // Only a clear difference makes the tests safe. A key that one side does not set counts as the

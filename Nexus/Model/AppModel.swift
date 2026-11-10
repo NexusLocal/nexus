@@ -104,6 +104,7 @@ enum AppPreference {
     static let mysqlApp = "mysqlApp"
     static let postgresqlApp = "postgresqlApp"
     static let firstRunDone = "firstRunDone"
+    static let keptTestDatabases = "keptTestDatabases"
 
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
@@ -288,6 +289,8 @@ final class AppModel {
     @ObservationIgnored var newestNotifiedMail: String?
     // The coding agents and their entry of Nexus. They need no nexusd.
     var agents = AgentsModel(setup: nil)
+    // The project folders whose tests keep the development database after "Keep it as it is".
+    var keptTestDatabases = Set(UserDefaults.standard.stringArray(forKey: AppPreference.keptTestDatabases) ?? [])
 
     @ObservationIgnored private(set) var client: NexusClient?
     @ObservationIgnored private var feed: NexusEventFeed?

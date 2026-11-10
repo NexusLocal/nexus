@@ -42,6 +42,8 @@ struct TestDatabaseCheckTests {
         #expect(check.kind == .separate)
         #expect(check.database == "db_finly_testing")
         #expect(check.source == ".env.testing")
+        #expect(check.testEnvFile == ".env.testing")
+        #expect(check.onDevelopmentServer)
     }
 
     @Test func phpunitThatNamesTheDevelopmentDatabaseSaysSo() {
@@ -66,6 +68,8 @@ struct TestDatabaseCheckTests {
         let check = TestDatabaseCheck.decide(phpunit: ["DB_PORT": "3307"], phpunitFile: "phpunit.xml", testEnv: mysql, testEnvFile: ".env", development: mysql)
 
         #expect(check.kind == .separate)
+        #expect(!check.onDevelopmentServer)
+        #expect(check.testEnvFile == nil)
     }
 
     @Test func theSQLiteFileOfANewLaravelSiteIsTheDevelopmentDatabase() {

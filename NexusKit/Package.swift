@@ -53,7 +53,7 @@ let package = Package(
         .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig", "NexusLaravel", "NexusWorkspaces", "NexusMail"]),
         // The MCP server of nexus mcp, the tools that agents call, and the setup of each agent.
         // The app uses the setup and the settings of the agents.
-        .target(name: "NexusMCP", dependencies: ["NexusCore", "NexusIPC", "NexusMail", "NexusRuntime", "NexusSupervisor"]),
+        .target(name: "NexusMCP", dependencies: ["NexusCore", "NexusIPC", "NexusLaravel", "NexusMail", "NexusRuntime", "NexusSupervisor", "NexusWorkspaces"]),
         .target(name: "NexusCommands", dependencies: [
             "NexusCore",
             "NexusIPC",
