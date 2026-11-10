@@ -2,6 +2,7 @@ import AppKit
 import NexusCore
 import NexusIPC
 import NexusMail
+import NexusMCP
 import NexusRuntime
 import NexusSupervisor
 import Observation
@@ -285,6 +286,8 @@ final class AppModel {
     var openMail: MailpitAPI.Message?
     var mailProblem: String?
     @ObservationIgnored var newestNotifiedMail: String?
+    // The coding agents and their entry of Nexus. They need no nexusd.
+    var agents = AgentsModel(setup: nil)
 
     @ObservationIgnored private(set) var client: NexusClient?
     @ObservationIgnored private var feed: NexusEventFeed?
@@ -319,6 +322,7 @@ final class AppModel {
         model.mailStatus = nil
         model.openMailID = nil
         model.openMail = nil
+        model.agents = AgentsModel(setup: .standard)
         model.findApps()
 
         // An app that the user installs or removes while Nexus runs then shows in the lists.

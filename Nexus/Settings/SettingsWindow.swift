@@ -32,6 +32,11 @@ struct SettingsWindow: View {
                 MailSettingsTab()
             }
 
+            // SF Symbols has no robot as in the design.
+            Tab("Agents", systemImage: "sparkles", value: "agents") {
+                AgentsSettingsTab()
+            }
+
             Tab("Network", systemImage: "network", value: "network") {
                 NetworkSettings()
             }

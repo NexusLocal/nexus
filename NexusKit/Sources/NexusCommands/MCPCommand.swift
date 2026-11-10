@@ -83,7 +83,7 @@ struct MCPCommand: AsyncParsableCommand {
 
         func run() async throws {
             let setup = AgentSetup.standard
-            let chosen = agents.isEmpty ? AgentKind.allCases.filter { setup.state(of: $0).hasEntry } : agents
+            let chosen = agents.isEmpty ? AgentKind.allCases.filter { setup.state(of: $0).mayHaveEntry } : agents
             var failed = false
 
             guard !chosen.isEmpty else {

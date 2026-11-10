@@ -29,17 +29,20 @@ public enum AgentLevel: String, Codable, Sendable, CaseIterable, Comparable {
 
 // The MCP server reads agents.json at each call. So a change in the app works at once, also in an
 // agent session that runs. listed also holds the agents that are off, because a removed agent
-// must not come back by itself.
+// must not come back by itself. Until searched is true, the app fills the list once with the
+// agents on this Mac.
 public struct AgentSettings: Codable, Sendable, Equatable {
     public var level: AgentLevel
     public var askBeforeLooking: Bool
     public var listed: [String]
+    public var searched: Bool
     public var noticeShown: Bool
 
-    public init(level: AgentLevel = .change, askBeforeLooking: Bool = false, listed: [String] = [], noticeShown: Bool = false) {
+    public init(level: AgentLevel = .change, askBeforeLooking: Bool = false, listed: [String] = [], searched: Bool = false, noticeShown: Bool = false) {
         self.level = level
         self.askBeforeLooking = askBeforeLooking
         self.listed = listed
+        self.searched = searched
         self.noticeShown = noticeShown
     }
 
@@ -48,6 +51,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         level = (try? container.decodeIfPresent(AgentLevel.self, forKey: .level)) ?? .change
         askBeforeLooking = (try? container.decodeIfPresent(Bool.self, forKey: .askBeforeLooking)) ?? false
         listed = (try? container.decodeIfPresent([String].self, forKey: .listed)) ?? []
+        searched = (try? container.decodeIfPresent(Bool.self, forKey: .searched)) ?? false
         noticeShown = (try? container.decodeIfPresent(Bool.self, forKey: .noticeShown)) ?? false
     }
 

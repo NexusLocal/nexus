@@ -42,6 +42,10 @@ struct OverviewScreen: View {
                     ProblemBanner(service: blocked.service, holder: blocked.holder)
                 }
 
+                if model.agents.showsNotice, AppPreference.isOn(AppPreference.firstRunDone) {
+                    AgentsNotice()
+                }
+
                 DropArea()
 
                 if !model.activities.isEmpty {
@@ -68,6 +72,9 @@ struct OverviewScreen: View {
             .padding(20)
         }
         .screenTitle("Overview", subtitle: model.runningSummary)
+        .task {
+            await model.agents.load()
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 MoreMenu {
@@ -93,6 +100,52 @@ struct OverviewScreen: View {
                 }
             }
         }
+    }
+}
+
+// The design is "Overview Coding Agents Notice" in nexus.pen. A user who has Nexus already never
+// sees the first run. So this notice shows once. "Set up…" and the close button both hide it for
+// good.
+private struct AgentsNotice: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.title3)
+                .foregroundStyle(Color.accentText)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Let your coding agent use Nexus")
+                    .fontWeight(.semibold)
+                Text("Claude Code, Codex, Cursor and other agents can then see the URL, database, logs and mail of each project.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            Button("Set up…") {
+                model.agents.hideNotice()
+                UserDefaults.standard.set("agents", forKey: SettingsWindow.tabKey)
+                NSApplication.shared.activate()
+                openSettings()
+            }
+
+            Button {
+                model.agents.hideNotice()
+            } label: {
+                Image(systemName: "xmark")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Hide this notice")
+            .accessibilityLabel("Hide this notice")
+        }
+        .padding(12)
+        .background(Color.accentSoft, in: .rect(cornerRadius: 10))
     }
 }
 

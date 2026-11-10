@@ -143,8 +143,9 @@ struct NexusToolboxTests {
         try Data("{\"level\":\"everything\",\"askBeforeLooking\":true}".utf8).write(to: AgentSettings.file(in: paths))
         #expect(AgentSettings.load(from: paths) == AgentSettings(level: .change, askBeforeLooking: true))
 
-        try AgentSettings(level: .remove, listed: ["codex"]).save(to: paths)
+        try AgentSettings(level: .remove, listed: ["codex"], searched: true).save(to: paths)
         #expect(AgentSettings.load(from: paths).level == .remove)
         #expect(AgentSettings.load(from: paths).listed == ["codex"])
+        #expect(AgentSettings.load(from: paths).searched)
     }
 }

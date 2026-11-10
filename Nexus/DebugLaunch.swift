@@ -6,12 +6,13 @@ import NexusCore
 // without clicks: --screen service:mysql --sheet port --appearance light --settings network. The
 // Add Site sheet can read another folder: --sheet add-site --folder /path. The New site sheet can
 // start at a template: --sheet new-site --template wordpress. --alert update-ready shows the window
-// of an update that is ready to install.
+// of an update that is ready to install. --agents-notice shows the notice of the coding agents on
+// the Overview.
 // The services of the sample data, such as the port problem of --sheet port, need --sample.
 enum DebugLaunch {
     // A check of the look does not get the first run on top of the screen that it checks.
     static var checksTheLook: Bool {
-        ["--sample", "--screen", "--sheet", "--settings", "--appearance", "--version", "--alert"].contains(where: CommandLine.arguments.contains)
+        ["--sample", "--screen", "--sheet", "--settings", "--appearance", "--version", "--alert", "--agents-notice"].contains(where: CommandLine.arguments.contains)
     }
 
     static func apply(to model: AppModel, openSettings: () -> Void) {
@@ -29,6 +30,10 @@ enum DebugLaunch {
 
         if let screen = value(of: "--screen") {
             model.selection = selection(screen)
+        }
+
+        if CommandLine.arguments.contains("--agents-notice") {
+            model.agents.showsNoticeForCheck = true
         }
 
         if let version = value(of: "--version"), let service = model.service(version) {

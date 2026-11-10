@@ -76,6 +76,7 @@ struct MainWindow: View {
             Text(ErrorDetails.split(failure.message).text)
         }
         .errorDetailsSheet(model: model, place: .window)
+        .agentAlert(model.agents, place: .window)
         .alert(groupNamingTitle, isPresented: showsGroupNaming, presenting: model.groupNaming) { naming in
             TextField("Name", text: $groupName)
             Button(namingButton(naming)) {

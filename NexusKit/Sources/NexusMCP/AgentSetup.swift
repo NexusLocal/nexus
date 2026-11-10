@@ -62,7 +62,7 @@ public enum AgentKind: String, CaseIterable, Codable, Sendable, Identifiable {
         }
     }
 
-    var apps: [String] {
+    public var apps: [String] {
         switch self {
         case .claude: ["Claude.app"]
         case .codex: ["Codex.app"]
@@ -89,12 +89,19 @@ public enum AgentKind: String, CaseIterable, Codable, Sendable, Identifiable {
     }
 
     // A desktop app reads its settings only at its start.
-    public var restartHint: String {
+    public var needsRestart: Bool {
         switch self {
-        case .claude, .cursor, .windsurf, .zed: "Restart \(name) to use Nexus."
-        case .vsCode: "VS Code starts Nexus at the next chat."
-        case .claudeCode, .codex, .geminiCLI, .junie, .openCode: "A new session of \(name) uses Nexus."
+        case .claude, .cursor, .windsurf, .zed: true
+        case .claudeCode, .codex, .geminiCLI, .junie, .openCode, .vsCode: false
         }
+    }
+
+    public var restartHint: String {
+        if needsRestart {
+            return "Restart \(name) to use Nexus."
+        }
+
+        return self == .vsCode ? "VS Code starts Nexus at the next chat." : "A new session of \(name) uses Nexus."
     }
 
     public init?(argument: String) {
@@ -113,6 +120,12 @@ public enum AgentState: Equatable, Sendable {
         case .connected, .otherCommand: true
         case .notConnected, .unreadable: false
         }
+    }
+
+    // A file that Nexus cannot read can hold the entry too. A removal then tries and tells the user
+    // what to do.
+    public var mayHaveEntry: Bool {
+        self != .notConnected
     }
 }
 
@@ -263,7 +276,7 @@ public struct AgentSetup: Sendable {
     public func disconnect(_ agent: AgentKind) async throws -> String {
         switch agent {
         case .claudeCode:
-            if state(of: .claudeCode).hasEntry {
+            if state(of: .claudeCode).mayHaveEntry {
                 try await runClaude(["mcp", "remove", "--scope", "user", serverName])
             }
 

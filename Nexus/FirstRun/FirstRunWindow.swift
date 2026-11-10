@@ -1,6 +1,7 @@
 import AppKit
 import NexusCore
 import NexusIPC
+import NexusMCP
 import SwiftUI
 
 // The first run shows at each launch until the user clicks "Done". A Mac that is set up already
@@ -13,12 +14,14 @@ struct FirstRunWindow: View {
         case permissions = 1
         case packages
         case settings
+        case agents
 
         var title: String {
             switch self {
             case .permissions: "Permissions"
             case .packages: "Packages"
             case .settings: "Settings"
+            case .agents: "Coding agents"
             }
         }
     }
@@ -38,6 +41,18 @@ struct FirstRunWindow: View {
     @State private var resolverOwner = ResolverFileOwner.missing
     @State private var startAtLogin = true
     @State private var addToPath = false
+    // Nil until the user changes the selection. Until then each found agent is selected.
+    @State private var selectedAgents: Set<AgentKind>?
+    @State private var agentLevel = AgentLevel.change
+
+    // A Mac without a coding agent does not get the step.
+    private var steps: [Step] {
+        model.agents.found.isEmpty ? Step.allCases.filter { $0 != .agents } : Step.allCases
+    }
+
+    private var agentsToConnect: Set<AgentKind> {
+        steps.contains(.agents) ? selectedAgents ?? Set(model.agents.found) : []
+    }
 
     // The rows need the manifest and the installed packages. Without the installed packages, an
     // installed version shows as a download.
@@ -89,6 +104,8 @@ struct FirstRunWindow: View {
             return model.versions(of: .dns).first?.isActive == false
                 ? ("Start DNS to continue.", false)
                 : ("Waiting for the helper…", true)
+        case .agents:
+            return nil
         }
     }
 
@@ -97,7 +114,7 @@ struct FirstRunWindow: View {
         let pickedPackages = picked ?? choice.preselection
 
         HStack(spacing: 0) {
-            StepList(step: step)
+            StepList(step: step, steps: steps)
                 .frame(width: 200)
 
             Divider()
@@ -110,6 +127,8 @@ struct FirstRunWindow: View {
                     PackagesStep(choice: choice, picked: Binding(get: { pickedPackages }, set: { picked = $0 }), types: $types, loaded: packagesLoaded)
                 case .settings:
                     SettingsStep(startAtLogin: $startAtLogin, addToPath: $addToPath, resolverOwner: $resolverOwner, helperReady: helperReady, started: started)
+                case .agents:
+                    AgentsStep(selected: Binding(get: { agentsToConnect }, set: { selectedAgents = $0 }), level: $agentLevel)
                 }
 
                 Spacer(minLength: 16)
@@ -127,6 +146,11 @@ struct FirstRunWindow: View {
 
             if AppPreference.isOn(AppPreference.firstRunDone) {
                 startAtLogin = background.login.isOn
+            }
+
+            Task {
+                await model.agents.load()
+                agentLevel = model.agents.settings.level
             }
         }
         .onDisappear {
@@ -185,7 +209,7 @@ struct FirstRunWindow: View {
                     .foregroundStyle(.secondary)
             }
 
-            Button(step == .settings ? "Done" : "Continue") {
+            Button(step == steps.last ? "Done" : "Continue") {
                 next(choice: choice, picked: picked)
             }
             .buttonStyle(.borderedProminent)
@@ -215,6 +239,7 @@ struct FirstRunWindow: View {
         case .permissions: permissionsReady
         case .packages: packagesLoaded && choice.hasRequired(picked: picked)
         case .settings: helperReady
+        case .agents: true
         }
     }
 
@@ -229,29 +254,46 @@ struct FirstRunWindow: View {
             started += downloads.map(\.id).filter { !started.contains($0) }
             step = .settings
         case .settings:
+            guard applySettings() else {
+                return
+            }
+
+            if steps.contains(.agents) {
+                step = .agents
+            } else {
+                finish(services: choice.services(picked: pickedPackages))
+            }
+        case .agents:
             finish(services: choice.services(picked: pickedPackages))
         }
     }
 
     // "Start Nexus at login" is on by default (D5). "Add Nexus to PATH" is off by default (D39).
-    // A login item that macOS refuses keeps the window open. A ~/.zshrc that Nexus cannot change
-    // does the same. So the user sees why. The user picked the services to use them, so they
-    // start now. A download that still runs starts its service when it ends.
-    private func finish(services: Set<String>) {
+    // A login item that macOS refuses keeps the window on the Settings step. A ~/.zshrc that Nexus
+    // cannot change does the same. So the user sees why.
+    private func applySettings() -> Bool {
         if startAtLogin != background.login.isOn {
             background.login.setOn(startAtLogin)
 
             guard background.login.lastError == nil else {
-                return
+                return false
             }
         }
 
         if addToPath != (model.pathSetting != .off) {
             guard model.setAddToPath(addToPath) else {
-                return
+                return false
             }
         }
 
+        return true
+    }
+
+    // The user picked the services to use them, so they start now. A download that still runs
+    // starts its service when it ends. The changes of the agents end after the window closes. So
+    // the main window shows their failures.
+    private func finish(services: Set<String>) {
+        model.agents.finishFirstRun(connecting: agentsToConnect, level: agentLevel)
         UserDefaults.standard.set(true, forKey: AppPreference.firstRunDone)
         model.startAfterFirstRun(services)
         openWindow(id: MainWindow.id)
@@ -465,6 +507,7 @@ struct FirstRunPackages {
 
 private struct StepList: View {
     let step: FirstRunWindow.Step
+    let steps: [FirstRunWindow.Step]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -477,7 +520,7 @@ private struct StepList: View {
             }
             .padding(.bottom, 16)
 
-            ForEach(FirstRunWindow.Step.allCases, id: \.self) { item in
+            ForEach(steps, id: \.self) { item in
                 HStack(spacing: 8) {
                     marker(for: item)
                     Text(item.title)
@@ -1262,6 +1305,75 @@ private struct SettingsStep: View {
                 model.install(package, from: .firstRun)
             }
         }
+    }
+}
+
+// The design is "First Run 4 Coding agents" in nexus.pen. The step shows only the agents on this
+// Mac, all selected.
+private struct AgentsStep: View {
+    @Environment(AppModel.self) private var model
+    @Binding var selected: Set<AgentKind>
+    @Binding var level: AgentLevel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Coding agents")
+                    .font(.largeTitle.weight(.semibold))
+                Text("Let your coding agent use Nexus. It then knows the URL, database and mail of each project. You can change this later in the Nexus settings.")
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 8)
+
+                RowGroup {
+                    ForEach(model.agents.found) { agent in
+                        Toggle(agent.name, isOn: binding(for: agent))
+                            .toggleStyle(SwitchAtTrailingStyle())
+                    }
+                }
+
+                Text("Nexus found these agents on this Mac. It adds one entry \"\(model.agents.serverName)\" to the settings of each agent that you turn on. For Claude Code, it also lets the tools that only look run without a question. It changes nothing else.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                Text("What can agents do in Nexus?")
+                    .fontWeight(.semibold)
+                    .padding(.top, 16)
+
+                RowGroup {
+                    HStack {
+                        Text("Agents can")
+                        Spacer()
+                        Picker("Agents can", selection: $level) {
+                            ForEach(AgentLevel.allCases, id: \.self) { level in
+                                Text(level.title)
+                                    .tag(level)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                }
+
+                Text(level.firstRunSummary)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    private func binding(for agent: AgentKind) -> Binding<Bool> {
+        Binding(
+            get: { selected.contains(agent) },
+            set: { isOn in
+                if isOn {
+                    selected.insert(agent)
+                } else {
+                    selected.remove(agent)
+                }
+            }
+        )
     }
 }
 

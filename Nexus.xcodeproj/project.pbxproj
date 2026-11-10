@@ -22,6 +22,7 @@
 		0000000000000000000000EC /* NexusSupervisor in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000DC /* NexusSupervisor */; };
 		0000000000000000000000ED /* NexusCrashReports in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000DD /* NexusCrashReports */; };
 		0000000000000000000000EE /* NexusCrashReports in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000DE /* NexusCrashReports */; };
+		0000000000000000000000EF /* NexusMCP in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000DF /* NexusMCP */; };
 		0000000000000000000000F2 /* nexusd in Embed Executables */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B2 /* nexusd */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0000000000000000000000F3 /* nexus in Embed Command Line Tool */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B3 /* nexus */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0000000000000000000000F4 /* NexusHelper in Embed Executables */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B4 /* NexusHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
@@ -120,6 +121,7 @@
 				0000000000000000000000EC /* NexusSupervisor in Frameworks */,
 				0000000000000000000000FA /* Sparkle in Frameworks */,
 				0000000000000000000000ED /* NexusCrashReports in Frameworks */,
+				0000000000000000000000EF /* NexusMCP in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -230,6 +232,7 @@
 				0000000000000000000000DC /* NexusSupervisor */,
 				0000000000000000000000FC /* Sparkle */,
 				0000000000000000000000DD /* NexusCrashReports */,
+				0000000000000000000000DF /* NexusMCP */,
 			);
 			productName = Nexus;
 			productReference = 0000000000000000000000B1 /* Nexus.app */;
@@ -841,6 +844,10 @@
 		0000000000000000000000DE /* NexusCrashReports */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = NexusCrashReports;
+		};
+		0000000000000000000000DF /* NexusMCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NexusMCP;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
