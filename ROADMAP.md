@@ -7,23 +7,20 @@ needs research and a plan before the work starts.
 
 In this order:
 
-1. **An MCP server.** A coding agent can read the state of Nexus: the sites, the workspaces, the
-   logs and the mail. It can also wait for a mail and open its links. So an agent can test a
-   sign-up or a password reset from start to end.
-2. **A viewer for dumps.** Nexus catches `dump()`, `dd()` and similar calls of each site and
+1. **A viewer for dumps.** Nexus catches `dump()`, `dd()` and similar calls of each site and
    workspace, without a change in your code. The app shows them for each request.
-3. **Xdebug only for debug requests.** A request with the Xdebug cookie goes to a PHP process with
+2. **Xdebug only for debug requests.** A request with the Xdebug cookie goes to a PHP process with
    Xdebug. All other requests stay fast. One command can also run with Xdebug.
-4. **More for workspaces:**
+3. **More for workspaces:**
    - a dev server that starts when you open the site and stops when nobody uses it;
    - stop idle workspaces, if you want: their database server and workers stop until the next
      request;
    - a list of old workspaces, with a button to remove them.
-5. **Help for a project that you add.** Nexus offers to point its database, its Redis and its
+4. **Help for a project that you add.** Nexus offers to point its database, its Redis and its
    `APP_URL` to Nexus, with a backup of the old values.
-6. **Your own nginx and Apache lines** for each site, as `nexus ini` gives for PHP. Also a
+5. **Your own nginx and Apache lines** for each site, as `nexus ini` gives for PHP. Also a
    `redis.conf` that you can edit, as `my.cnf` is for MySQL.
-7. **Share a site through a tunnel.** A local site gets a public link, for example for a client or
+6. **Share a site through a tunnel.** A local site gets a public link, for example for a client or
    for a webhook.
 
 ## Packages
@@ -43,6 +40,8 @@ In this order:
 
 ## Done recently
 
+- **0.3.0:** an MCP server for coding agents such as Claude Code, Codex and Cursor, with Settings >
+  Agents, and help for a separate database for the tests of a Laravel site.
 - **0.2.6:** automatic updates that ask for a restart, so an update does not wait until you quit
   Nexus.
 - **0.2.5:** PCOV also for `pest --tia` and `pest --mutate`, and a check for app updates every
