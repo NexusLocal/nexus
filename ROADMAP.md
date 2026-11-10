@@ -42,6 +42,8 @@ In this order:
 
 ## Done recently
 
+- **0.2.6:** automatic updates that ask for a restart, so an update does not wait until you quit
+  Nexus.
 - **0.2.5:** PCOV also for `pest --tia` and `pest --mutate`, and a check for app updates every
   hour.
 - **0.2.4:** import a dump file, a dump file for each new workspace (WordPress links change during
