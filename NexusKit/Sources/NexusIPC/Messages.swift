@@ -1139,6 +1139,22 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case siteMail(host: String)
     case sendMailToNexus(host: String)
     case restoreMailSettings(host: String)
+    // The services with their versions and problems for the MCP server (0.3.0). Also the tasks
+    // that run. The app gets the same lists as events.
+    case serviceList
+    case tasks
+    // A request of a coding agent through nexus mcp. nexusd handles the request inside and names
+    // the agent in activity.log.
+    indirect case fromAgent(agent: String, request: NexusRequest)
+
+    // The request that nexusd handles.
+    public var inner: NexusRequest {
+        guard case .fromAgent(_, let request) = self else {
+            return self
+        }
+
+        return request.inner
+    }
 }
 
 // Where a site sends its mail, for the Site screen. warning names a provider that can reach a real
@@ -1298,6 +1314,8 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case siteCreated(CreatedSite)
     case siteNotCreated(SiteCreationFailure)
     case backup(BackupInfo)
+    case serviceList(ServiceList)
+    case tasks(TaskList)
 }
 
 // What the Site screen of a WordPress site shows (Phase 4, 3b). configFile is nil without a

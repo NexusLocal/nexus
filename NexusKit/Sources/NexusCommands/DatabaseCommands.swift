@@ -2,6 +2,7 @@ import ArgumentParser
 import Foundation
 import NexusCore
 import NexusIPC
+import NexusMCP
 
 // nexus db connection, nexus db databases, nexus db create and nexus db import (owner, 2026-11-09,
 // Herd item 19). They follow the site or the workspace of the current folder. Only an import with
@@ -195,21 +196,6 @@ struct ConnectionDetails: Encodable {
         let url = connection.url.map { ["URL        \($0.absoluteString)"] } ?? []
 
         return ["Database   \(name) on \(server)\(port)\(label)"] + url
-    }
-}
-
-extension DatabaseTarget {
-    // The server of the first connection on a server of Nexus. A workspace uses its own server.
-    static func server(of target: SiteTarget, connections: [DatabaseConnectionInfo]) -> DatabaseTarget? {
-        guard let instance = connections.lazy.compactMap(\.instance).first else {
-            return nil
-        }
-
-        guard let workspace = target.workspace else {
-            return .instance(instance)
-        }
-
-        return .workspace(site: target.siteHost, name: workspace.name, instance: instance)
     }
 }
 

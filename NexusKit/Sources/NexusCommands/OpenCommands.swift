@@ -2,73 +2,7 @@ import ArgumentParser
 import Foundation
 import NexusCore
 import NexusIPC
-
-struct SiteTargetError: Error, CustomStringConvertible {
-    let description: String
-}
-
-// The site or the workspace that nexus open, nexus edit and the database commands mean. A host
-// names a site or a workspace. Without a host, the workspace of the current folder comes first,
-// then its site.
-struct SiteTarget: Equatable {
-    let site: SiteInfo
-    let workspace: WorkspaceInfo?
-
-    static func find(host: String?, folder: String, in sites: [SiteInfo], example: String) throws -> SiteTarget {
-        if let host {
-            return try named(host, in: sites)
-        }
-
-        if let target = try? WorkspaceTarget.find(name: nil, site: nil, folder: folder, in: sites) {
-            return SiteTarget(site: target.site, workspace: target.workspace)
-        }
-
-        guard let site = WorkspaceTarget.currentSite(folder: folder, in: sites) else {
-            throw SiteTargetError(description: "\(folder) is in no site of Nexus. Give a host, for example: \(example)")
-        }
-
-        return SiteTarget(site: site, workspace: nil)
-    }
-
-    private static func named(_ host: String, in sites: [SiteInfo]) throws -> SiteTarget {
-        if let site = sites.first(where: { $0.hosts.contains(host) }) {
-            return SiteTarget(site: site, workspace: nil)
-        }
-
-        for site in sites {
-            if let workspace = site.workspaces?.first(where: { $0.hosts?.contains(host) == true }) {
-                return SiteTarget(site: site, workspace: workspace)
-            }
-        }
-
-        throw SiteTargetError(description: "Nexus has no site or workspace \(host). See: nexus site list")
-    }
-
-    var siteHost: String {
-        site.hosts.first ?? ""
-    }
-
-    var host: String {
-        workspace.map { $0.hosts?.first ?? $0.name } ?? siteHost
-    }
-
-    var url: String? {
-        guard let workspace else {
-            return site.url
-        }
-
-        return workspace.url
-    }
-
-    var folder: String {
-        workspace?.folder ?? site.folder
-    }
-
-    // A site on the public folder of a project opens the project in the editor.
-    var projectFolder: String {
-        ProjectFolder.projectFolder(ofSiteFolder: URL(filePath: folder, directoryHint: .isDirectory))
-    }
-}
+import NexusMCP
 
 // The code editor of nexus edit, as the app chooses it in Settings > General. A chosen app that
 // is not installed anymore gives the first known editor, as in the app.

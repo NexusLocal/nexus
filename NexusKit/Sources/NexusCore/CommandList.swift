@@ -29,6 +29,8 @@ extension CommandSection {
     public static let all: [CommandSection] = [
         CommandSection(title: "Sites", commands: [
             CommandItem(command: "nexus site list", help: "Lists the sites."),
+            CommandItem(command: "nexus site info", help: "Shows the URL, the databases with the password, the test database, the mail and the workspaces of the site of the current folder. --json prints JSON."),
+            CommandItem(command: "nexus errors", help: "Shows the newest errors of the site of the current folder: the Laravel log, the PHP errors and the requests that failed."),
             CommandItem(command: "nexus open", help: "Opens the site or the workspace of the current folder in the browser. nexus open shop.test opens another one."),
             CommandItem(command: "nexus edit", help: "Opens the folder of the site or the workspace in the code editor of Settings > General."),
             CommandItem(command: "nexus site add . --php 8.4", help: "Adds the current folder as a site."),
@@ -93,12 +95,17 @@ extension CommandSection {
             CommandItem(command: "nexus mail", help: "Opens the inbox of the mail service in the browser."),
             CommandItem(command: "nexus mail list --site shop.test", help: "Lists the newest mails, of one site or workspace with --site. --json prints JSON."),
             CommandItem(command: "nexus mail show latest", help: "Shows a mail with its text. --json gives the HTML, the headers and the files too."),
+            CommandItem(command: "nexus mail wait --to ann@example.com", help: "Waits for a mail and shows its codes and links. A mail of the last minute counts too."),
+            CommandItem(command: "nexus mail links latest", help: "Shows the links and the codes of a mail, for example the link of a password reset."),
             CommandItem(command: "nexus mail remove latest", help: "Removes one mail from the inbox, or more with more ids."),
             CommandItem(command: "nexus mail clear", help: "Removes all mails from the inbox."),
             CommandItem(command: "nexus mail outbox", help: "Shows the mails that wait for the mail service. --clear removes them."),
             CommandItem(command: "nexus mail settings --outbox-mails 500", help: "Changes the limits of the outbox and the inbox. Without options it shows them."),
             CommandItem(command: "nexus site mail shop.test", help: "Shows where a site sends its mail. --send-to-nexus sends the mail of a Laravel site to the inbox. --restore puts the old mail settings back. --turn-off-plugins turns off the mail plugins of a WordPress site."),
             CommandItem(command: "nexus sendmail -S 127.0.0.1:1025 -t", help: "Gives the mail on the input to the mail service. PHP runs it for mail()."),
+        ]),
+        CommandSection(title: "Coding agents", commands: [
+            CommandItem(command: "nexus mcp", help: "The MCP server of Nexus. A coding agent such as Claude Code, Codex or Cursor starts it. Settings > Agents connects the agents."),
         ]),
         CommandSection(title: "Domains and certificates", commands: [
             CommandItem(command: "nexus tld internal", help: "Gives every site a name in another dev domain."),

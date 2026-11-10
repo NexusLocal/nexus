@@ -1,6 +1,7 @@
 import Foundation
 import NexusCore
 import NexusIPC
+import NexusMCP
 import Testing
 @testable import NexusCommands
 

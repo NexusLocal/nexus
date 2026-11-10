@@ -194,13 +194,23 @@ public struct MailpitAPI: Sendable {
     // A search gives the number of its matches in messages_count, and the list of all mails gives
     // it in total.
     public func page(tag: String? = nil, limit: Int = 50) async throws -> Page {
-        let path = tag.map { "api/v1/search?limit=\(limit)&query=" + "tag:\"\($0)\"".addingPercentEncoding(withAllowedCharacters: .alphanumerics)! } ?? "api/v1/messages?limit=\(limit)"
+        try await page(query: tag.map { "tag:\"\($0)\"" }, limit: limit)
+    }
+
+    // A search of Mailpit, for example to:"ann@example.com" subject:"Reset". The terms must all
+    // match. The newest mail comes first.
+    public func search(_ query: String, limit: Int = 50) async throws -> [Summary] {
+        try await page(query: query, limit: limit).messages
+    }
+
+    private func page(query: String?, limit: Int) async throws -> Page {
+        let path = query.map { "api/v1/search?limit=\(limit)&query=" + $0.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! } ?? "api/v1/messages?limit=\(limit)"
         let list = try JSONDecoder().decode(List.self, from: try await data(path))
         let messages = list.messages.map { item in
             Summary(id: item.id, from: item.from?.text ?? "", to: (item.to ?? []).map(\.text), subject: item.subject, tags: item.tags ?? [], created: item.created, snippet: item.snippet ?? "")
         }
 
-        return Page(messages: messages, total: (tag == nil ? list.total : list.messagesCount) ?? messages.count)
+        return Page(messages: messages, total: (query == nil ? list.total : list.messagesCount) ?? messages.count)
     }
 
     public func message(id: String) async throws -> Message {

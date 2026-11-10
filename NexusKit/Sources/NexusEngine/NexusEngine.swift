@@ -252,6 +252,8 @@ public actor NexusEngine {
     }
 
     public func handle(_ request: NexusRequest) async -> NexusResponse {
+        let request = request.inner
+
         guard !stoppingForUpdate else {
             return .failure(message: "nexusd starts again for an update of Nexus. Try again in a few seconds.")
         }
@@ -444,6 +446,12 @@ public actor NexusEngine {
                 return .done(message: try await sendMailToNexus(host: host))
             case .restoreMailSettings(let host):
                 return .done(message: try await restoreMailSettings(host: host))
+            case .serviceList:
+                return .serviceList(try await serviceList())
+            case .tasks:
+                return .tasks(taskList())
+            case .fromAgent:
+                return .unreadableRequest
             }
         } catch let conflict as PortConflict {
             return .portInUse(conflict)
@@ -1258,7 +1266,7 @@ extension NexusEngine {
             return
         }
 
-        let list = TaskList(tasks: runningTasks.values.map(\.info).sorted { ($0.started, $0.id) < ($1.started, $1.id) })
+        let list = taskList()
 
         guard list != publishedTasks else {
             return
@@ -1268,6 +1276,10 @@ extension NexusEngine {
         for watcher in watchers.values {
             watcher.yield(.tasks(list))
         }
+    }
+
+    func taskList() -> TaskList {
+        TaskList(tasks: runningTasks.values.map(\.info).sorted { ($0.started, $0.id) < ($1.started, $1.id) })
     }
 
     private func removeWatcher(_ id: UUID) {
@@ -1369,7 +1381,8 @@ extension NexusEngine {
 private extension NexusRequest {
     var onlyReads: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .siteDatabases, .databaseConnections, .serverDatabases, .createDatabase, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines: true
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .siteDatabases, .databaseConnections, .serverDatabases, .createDatabase, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines, .serviceList, .tasks: true
+        case .fromAgent(_, let inner): inner.onlyReads
         default: false
         }
     }

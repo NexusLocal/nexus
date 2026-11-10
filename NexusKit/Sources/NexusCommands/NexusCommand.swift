@@ -2,6 +2,7 @@ import ArgumentParser
 import Foundation
 import NexusCore
 import NexusIPC
+import NexusMCP
 import NexusRuntime
 import NexusSupervisor
 
@@ -85,8 +86,8 @@ struct NexusCommand: AsyncParsableCommand {
         subcommands: [
             Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Installed.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
-            SiteCommand.self, WorkspaceCommand.self, OpenSite.self, EditSite.self, New.self, Import.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
-            Database.self, PHP.self, Composer.self, Node.self, NPM.self, WP.self, MailCommand.self, Sendmail.self,
+            SiteCommand.self, WorkspaceCommand.self, OpenSite.self, EditSite.self, Errors.self, New.self, Import.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
+            Database.self, PHP.self, Composer.self, Node.self, NPM.self, WP.self, MailCommand.self, Sendmail.self, MCPCommand.self,
         ]
     )
 }
@@ -709,7 +710,7 @@ struct SiteCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "site",
         abstract: "Adds, lists, changes and removes sites.",
-        subcommands: [List.self, Add.self, Edit.self, Remove.self, Defaults.self, Probe.self, Mail.self, WordPress.self],
+        subcommands: [List.self, Info.self, Add.self, Edit.self, Remove.self, Defaults.self, Probe.self, Mail.self, WordPress.self],
         defaultSubcommand: List.self
     )
 

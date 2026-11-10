@@ -10,7 +10,7 @@ struct MailCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "mail",
         abstract: "Opens and reads the inbox of the mail service. Shows the outbox and the settings too.",
-        subcommands: [Open.self, List.self, Show.self, Remove.self, Clear.self, Outbox.self, Settings.self],
+        subcommands: [Open.self, List.self, Show.self, Wait.self, Links.self, Remove.self, Clear.self, Outbox.self, Settings.self],
         defaultSubcommand: Open.self
     )
 

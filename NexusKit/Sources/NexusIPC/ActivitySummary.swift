@@ -21,6 +21,7 @@ extension NexusRequest {
         case .importSite(let site): "importSite \(site.name)"
         case .createDatabase(_, let name): "createDatabase \(name)"
         case .importDump(let request): "importDump \(request.name)\(request.existing.map { " \($0.rawValue)" } ?? "")"
+        case .fromAgent(let agent, let request): "\(request.activitySummary) (\(agent))"
         default: Mirror(reflecting: self).children.first?.label ?? "\(self)"
         }
     }
@@ -30,8 +31,10 @@ extension NexusRequest {
         switch self {
         case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules,
              .customSettings, .databases, .databaseSizes, .sourceDatabases, .workspaceEnv, .siteDatabases, .databaseConnections, .serverDatabases, .wordPressSite, .backgroundPreset,
-             .workspaceSettings, .dumps, .probe, .tool, .inspectBackup, .inspectDump:
+             .workspaceSettings, .dumps, .probe, .tool, .inspectBackup, .inspectDump, .serviceList, .tasks, .mailStatus, .siteMail:
             true
+        case .fromAgent(_, let request):
+            request.onlyReads
         case .lan(let enabled):
             enabled == nil
         case .tld(let value):

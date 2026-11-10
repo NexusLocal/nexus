@@ -14,6 +14,7 @@ let package = Package(
         .library(name: "NexusIPC", targets: ["NexusIPC"]),
         .library(name: "NexusEngine", targets: ["NexusEngine"]),
         .library(name: "NexusCommands", targets: ["NexusCommands"]),
+        .library(name: "NexusMCP", targets: ["NexusMCP"]),
         .library(name: "NexusDNS", targets: ["NexusDNS"]),
         .library(name: "NexusMail", targets: ["NexusMail"]),
         .library(name: "NexusTLS", targets: ["NexusTLS"]),
@@ -50,10 +51,14 @@ let package = Package(
         .target(name: "NexusLaravel", dependencies: ["NexusCore", "NexusSupervisor"]),
         .target(name: "NexusWorkspaces", dependencies: ["NexusCore", "NexusSupervisor"]),
         .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig", "NexusLaravel", "NexusWorkspaces", "NexusMail"]),
+        // The MCP server of nexus mcp, the tools that agents call, and the setup of each agent.
+        // The app uses the setup and the settings of the agents.
+        .target(name: "NexusMCP", dependencies: ["NexusCore", "NexusIPC", "NexusMail", "NexusRuntime", "NexusSupervisor"]),
         .target(name: "NexusCommands", dependencies: [
             "NexusCore",
             "NexusIPC",
             "NexusMail",
+            "NexusMCP",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]),
         .testTarget(name: "NexusCoreTests", dependencies: ["NexusCore"]),
@@ -70,10 +75,12 @@ let package = Package(
         .testTarget(name: "NexusLaravelTests", dependencies: ["NexusLaravel", "NexusCore"]),
         .testTarget(name: "NexusWorkspacesTests", dependencies: ["NexusWorkspaces", "NexusCore", "NexusSupervisor"]),
         .testTarget(name: "NexusIPCTests", dependencies: ["NexusIPC", "NexusSupervisor"], exclude: ["Releases"]),
+        .testTarget(name: "NexusMCPTests", dependencies: ["NexusMCP", "NexusCore", "NexusIPC", "NexusMail"]),
         .testTarget(name: "NexusCommandsTests", dependencies: [
             "NexusCommands",
             "NexusCore",
             "NexusMail",
+            "NexusMCP",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]),
         .testTarget(name: "NexusTLSTests", dependencies: [
