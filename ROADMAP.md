@@ -21,7 +21,8 @@ In this order:
    - a list of old workspaces, with a button to remove them.
 5. **Help for a project that you add.** Nexus offers to point its database, its Redis and its
    `APP_URL` to Nexus, with a backup of the old values.
-6. **Your own nginx and Apache lines** for each site, as `nexus ini` gives for PHP.
+6. **Your own nginx and Apache lines** for each site, as `nexus ini` gives for PHP. Also a
+   `redis.conf` that you can edit, as `my.cnf` is for MySQL.
 7. **Share a site through a tunnel.** A local site gets a public link, for example for a client or
    for a webhook.
 
