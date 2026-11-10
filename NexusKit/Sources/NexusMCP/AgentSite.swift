@@ -115,7 +115,7 @@ public struct AgentSite: Codable, Sendable, Equatable {
         php = site.kind == .php ? site.php : nil
         node = site.kind == .node ? site.node : nil
         webServer = site.kind == .php ? site.server.rawValue : nil
-        documentRoot = site.kind == .php ? site.documentRoot : nil
+        documentRoot = site.kind == .php ? target.workspace.map(\.documentRoot) ?? site.documentRoot : nil
         databases = connections.map { AgentDatabase($0, inWorkspace: target.workspace != nil) }
         self.mail = mail.map { Self.mailSetting($0, tag: target.host) }
         self.testDatabase = testDatabase.map(AgentTestDatabase.init)

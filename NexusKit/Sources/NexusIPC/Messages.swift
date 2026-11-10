@@ -272,6 +272,7 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
     public let app: AppProcessInfo?
     public let links: WorkspaceLinkInfo?
     public let dump: WorkspaceDumpProgress?
+    public let documentRoot: String?
 
     public var id: String { name }
 
@@ -290,9 +291,11 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         ports: [String: Int]? = nil,
         app: AppProcessInfo? = nil,
         links: WorkspaceLinkInfo? = nil,
-        dump: WorkspaceDumpProgress? = nil
+        dump: WorkspaceDumpProgress? = nil,
+        documentRoot: String? = nil
     ) {
         self.dump = dump
+        self.documentRoot = documentRoot
         self.name = name
         self.worktree = worktree
         self.folder = folder

@@ -271,13 +271,15 @@ extension NexusEngine {
 
         return workspaces.map { workspace in
             let site = workspace.site(of: sites, tld: state.tld)
+            let layout = site.map { SiteLayout(of: $0) }
             let owner = Self.processOwner(key: key, workspace: workspace.name)
             let links = workspace.links.flatMap { links in
                 links.done ? nil : WorkspaceLinkInfo(from: links.from, to: links.to, progress: linkProgress[owner] ?? 0)
             }
             let problem = conflicts[workspace] ?? site.flatMap { workspaceSite in
-                let layout = SiteLayout(of: workspaceSite)
-                return Self.problem(of: workspaceSite, installed: installed, layout: layout) ?? applyProblem(of: workspaceSite, appPorts: appPorts, noticeHosts: noticeHosts, layout: layout)
+                layout.flatMap { layout in
+                    Self.problem(of: workspaceSite, installed: installed, layout: layout) ?? applyProblem(of: workspaceSite, appPorts: appPorts, noticeHosts: noticeHosts, layout: layout)
+                }
             }
             let app = site.flatMap { $0.kind == .node ? appInfo(owner: Self.processOwner(key: key, workspace: workspace.name), port: workspace.ports[NodeAppLaunch.portName], host: $0.host) : nil }
 
@@ -298,7 +300,8 @@ extension NexusEngine {
                 ports: workspace.ports,
                 app: app,
                 links: links,
-                dump: dumpProgress[owner]
+                dump: dumpProgress[owner],
+                documentRoot: layout.map { Self.displayPath($0.documentRoot) }
             )
         }
     }

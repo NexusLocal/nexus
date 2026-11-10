@@ -64,7 +64,8 @@ extension NexusEngineTests {
         try await settle(engine)
 
         let path = RealPath.of(worktree)
-        #expect(await workspaces(engine) == [WorkspaceInfo(name: "ticket-123", worktree: path, folder: path, branch: "ticket", hosts: ["shop-ticket-123.test"], problem: "Every site needs nginx, and nginx is not installed. Run: nexus install nginx 1.30", state: .ready, warnings: [], databases: [], redisIndexes: [:], ports: [:])])
+        let documentRoot = RealPath.trimmed(URL(filePath: path, directoryHint: .isDirectory).standardizedFileURL.path(percentEncoded: false))
+        #expect(await workspaces(engine) == [WorkspaceInfo(name: "ticket-123", worktree: path, folder: path, branch: "ticket", hosts: ["shop-ticket-123.test"], problem: "Every site needs nginx, and nginx is not installed. Run: nexus install nginx 1.30", state: .ready, warnings: [], databases: [], redisIndexes: [:], ports: [:], documentRoot: documentRoot)])
 
         try await git("worktree", "remove", worktree.path(percentEncoded: false), in: shop)
         try await settle(engine)

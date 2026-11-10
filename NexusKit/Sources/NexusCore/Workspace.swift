@@ -512,7 +512,26 @@ extension Workspace {
         }
 
         let hosts = hosts(of: sites, tld: tld)
-        return Site(host: hosts[0], folder: URL(filePath: folder, directoryHint: .isDirectory), aliases: Array(hosts.dropFirst()), php: main.php, server: main.server, node: main.node, runsAs: main.runsAs, command: main.command, address: main.address, documentRootFolder: main.documentRootFolder)
+        return Site(host: hosts[0], folder: URL(filePath: folder, directoryHint: .isDirectory), aliases: Array(hosts.dropFirst()), php: main.php, server: main.server, node: main.node, runsAs: main.runsAs, command: main.command, address: main.address, documentRootFolder: Self.documentRootFolder(of: main))
+    }
+
+    // A chosen document root is a path from the folder of the main site. The workspace folder is
+    // the folder of the worktree that matches the project folder. A site on public/ of the project
+    // has its folder below that. So the path in the worktree starts with public.
+    static func documentRootFolder(of main: Site) -> String? {
+        guard let chosen = main.documentRootFolder, let repository = ProjectFolder.repository(of: main) else {
+            return main.documentRootFolder
+        }
+
+        let matched = repository.root + repository.subfolder
+        let siteFolder = RealPath.of(main.folder)
+
+        guard siteFolder != matched, RealPath.contains(matched, siteFolder) else {
+            return chosen
+        }
+
+        let offset = String(siteFolder.dropFirst(matched.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return "\(offset)/\(chosen)"
     }
 }
 

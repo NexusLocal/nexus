@@ -75,6 +75,40 @@ struct SiteTests {
         #expect(workspace.site(of: [main], tld: "test")?.documentRoot.path(percentEncoded: false) == "/w/fix/htdocs/")
     }
 
+    @Test func aWorkspaceOfASiteOnPublicServesTheChosenFolderInPublic() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try makeFolder("shop/.git")
+        _ = try makeFolder("shop/public/sub")
+        try Data("{}".utf8).write(to: root.appending(path: "shop/composer.json"))
+        let main = Site(host: "shop.test", folder: root.appending(path: "shop/public", directoryHint: .isDirectory), php: "8.5", documentRootFolder: "sub")
+        let workspace = Workspace(name: "fix", worktree: "/w/fix", folder: "/w/fix")
+
+        #expect(main.documentRoot.path(percentEncoded: false).hasSuffix("/shop/public/sub/"))
+        #expect(workspace.site(of: [main], tld: "test")?.documentRoot.path(percentEncoded: false) == "/w/fix/public/sub/")
+    }
+
+    @Test func aWorkspaceOfASiteInAMonorepoServesTheChosenFolderInPublic() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try makeFolder("repo/.git")
+        _ = try makeFolder("repo/apps/shop/public/sub")
+        try Data("{}".utf8).write(to: root.appending(path: "repo/apps/shop/composer.json"))
+        let main = Site(host: "shop.test", folder: root.appending(path: "repo/apps/shop/public", directoryHint: .isDirectory), php: "8.5", documentRootFolder: "sub")
+        let workspace = Workspace(name: "fix", worktree: "/w/fix", folder: "/w/fix/apps/shop")
+
+        #expect(workspace.site(of: [main], tld: "test")?.documentRoot.path(percentEncoded: false) == "/w/fix/apps/shop/public/sub/")
+    }
+
+    @Test func aWorkspaceOfAPublicFolderWithItsOwnRepositoryKeepsTheChosenFolder() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try makeFolder("shop/public/.git")
+        _ = try makeFolder("shop/public/sub")
+        try Data("{}".utf8).write(to: root.appending(path: "shop/composer.json"))
+        let main = Site(host: "shop.test", folder: root.appending(path: "shop/public", directoryHint: .isDirectory), php: "8.5", documentRootFolder: "sub")
+        let workspace = Workspace(name: "fix", worktree: "/w/fix", folder: "/w/fix")
+
+        #expect(workspace.site(of: [main], tld: "test")?.documentRoot.path(percentEncoded: false) == "/w/fix/sub/")
+    }
+
     @Test func eachSubfolderOfAParkedFolderIsASite() throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let parked = try makeFolder("parked")
