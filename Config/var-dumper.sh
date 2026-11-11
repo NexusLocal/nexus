@@ -111,6 +111,9 @@ printf 'symfony/var-dumper %s\ncommit %s\n' "$TAG" "$COMMIT" > "$NEW/VERSION"
 echo "The test runs with PHP $("$PHP" -n -r 'echo PHP_VERSION;')."
 "$PHP" -n "$ROOT/NexusPHP/dumps/tests/var-dumper-test.php" "$NEW"
 
+# The tests of the prepend file and its library use the new copy too.
+"$PHP" -n "$ROOT/NexusPHP/dumps/tests/run.php" "$NEW"
+
 # Only a copy that passed all checks replaces the old copy.
 rm -rf "$TARGET"
 mv "$NEW" "$TARGET"

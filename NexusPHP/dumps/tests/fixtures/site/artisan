@@ -1,0 +1,14 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Console\Events\CommandFinished;
+
+$app = require __DIR__.'/bootstrap.php';
+
+dump(['command' => $argv[1] ?? 'list']);
+
+$app->make('events')->dispatch(new CommandFinished(3));
+
+exit(3);
