@@ -547,6 +547,24 @@ struct NexusEngineTests {
 
         #expect(state.manifestURL == URL(string: "https://github.com/NexusLocal/binaries/releases/latest/download/manifest.json"))
     }
+
+    @Test func aStateFileWithoutTheDumpSettingsGetsTheirDefaults() throws {
+        let old = #"{"tld":"test","mailSettings":{"outboxMails":20}}"#
+
+        let state = try JSONDecoder().decode(EngineState.self, from: Data(old.utf8))
+
+        #expect(state.dumpSettings == DumpSettings())
+        #expect(state.mailSettings.outboxMails == 20)
+    }
+
+    @Test func theDumpSettingsSurviveASaveOfTheState() throws {
+        var state = EngineState()
+        state.dumpSettings = DumpSettings(catchDumps: false, pageMode: .always, commands: false)
+
+        let saved = try JSONDecoder().decode(EngineState.self, from: JSONEncoder().encode(state))
+
+        #expect(saved.dumpSettings == state.dumpSettings)
+    }
 }
 
 // Keeps each service list that the engine sends. next(where:) waits up to 5 seconds and drops

@@ -51,6 +51,7 @@ public struct EngineState: Codable, Sendable, Equatable {
     // workspace keeps its port in its record.
     public var appPorts: [String: Int] = [:]
     public var mailSettings = MailSettings()
+    public var dumpSettings = DumpSettings()
     // The last change of the URLs of each WordPress site, by its host (Phase 4, 3d).
     public var wordPressURLChanges: [String: WordPressURLChange] = [:]
 
@@ -86,9 +87,12 @@ public struct EngineState: Codable, Sendable, Equatable {
         // An entry from before part 8m names a database copy and no server, so Nexus cannot do it.
         // Such an entry must not make the whole file unreadable.
         databaseRemovals = (try? container.decodeIfPresent([DatabaseRemoval].self, forKey: .databaseRemovals)) ?? defaults.databaseRemovals
-        workspaceSettings = try container.decodeIfPresent(WorkspaceSettings.self, forKey: .workspaceSettings) ?? defaults.workspaceSettings
+        // A settings group with a wrong value gets its defaults. It must not make the whole file
+        // unreadable, because nexusd then starts without sites.
+        workspaceSettings = (try? container.decodeIfPresent(WorkspaceSettings.self, forKey: .workspaceSettings)) ?? defaults.workspaceSettings
         appPorts = try container.decodeIfPresent([String: Int].self, forKey: .appPorts) ?? defaults.appPorts
-        mailSettings = try container.decodeIfPresent(MailSettings.self, forKey: .mailSettings) ?? defaults.mailSettings
+        mailSettings = (try? container.decodeIfPresent(MailSettings.self, forKey: .mailSettings)) ?? defaults.mailSettings
+        dumpSettings = (try? container.decodeIfPresent(DumpSettings.self, forKey: .dumpSettings)) ?? defaults.dumpSettings
         wordPressURLChanges = (try? container.decodeIfPresent([String: WordPressURLChange].self, forKey: .wordPressURLChanges)) ?? defaults.wordPressURLChanges
     }
 }

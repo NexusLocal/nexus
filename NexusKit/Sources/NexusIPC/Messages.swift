@@ -1281,6 +1281,29 @@ public struct MailStatus: Codable, Sendable, Equatable {
     }
 }
 
+// What the Dumps screen and nexus dumps show. requests has the newest request first. The coding of
+// the messages drops fractions of a second. So the app keeps this order and does not sort by
+// started.
+public struct DumpList: Codable, Sendable, Equatable {
+    public let requests: [DumpedRequest]
+    public let settings: DumpSettings
+    public let blocked: [DumpBlock]
+    public let receiving: Bool
+    public let problem: String?
+
+    public init(requests: [DumpedRequest], settings: DumpSettings, blocked: [DumpBlock] = [], receiving: Bool, problem: String? = nil) {
+        self.requests = requests
+        self.settings = settings
+        self.blocked = blocked
+        self.receiving = receiving
+        self.problem = problem
+    }
+
+    public var dumpCount: Int {
+        requests.reduce(0) { $0 + $1.dumpCount }
+    }
+}
+
 public enum NexusResponse: Codable, Sendable, Equatable {
     case done(message: String)
     case services([ServiceStatus])

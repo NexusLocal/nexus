@@ -24,9 +24,10 @@ public struct NexusPaths: Sendable, Equatable {
     public var trash: URL { folder("trash") }
     public var bin: URL { folder("bin") }
     public var mail: URL { folder("mail") }
+    public var php: URL { folder("php") }
 
     public var allFolders: [URL] {
-        [runtimes, config, data, run, logs, certs, trash, bin, mail]
+        [runtimes, config, data, run, logs, certs, trash, bin, mail, php]
     }
 
     // The mails that wait while the inbox does not run (Phase 3, 3b). nexus sendmail writes here
@@ -89,6 +90,22 @@ public struct NexusPaths: Sendable, Equatable {
 
     public func phpSocket(line: String) -> URL {
         run.appending(path: "php-\(line).sock", directoryHint: .notDirectory)
+    }
+
+    // The prepend file of PHP sends each dump to this socket. Its path must stay below the 104
+    // bytes of a Unix socket path.
+    public var dumpSocket: URL {
+        run.appending(path: "dumps.sock", directoryHint: .notDirectory)
+    }
+
+    public var dumpLog: URL {
+        logs.appending(path: "dumps.jsonl", directoryHint: .notDirectory)
+    }
+
+    // nexusd copies the PHP library of the dump viewer here from the app. So the path stays the
+    // same when the app moves. An update of the app also does not replace a file that PHP uses.
+    public var dumpLibrary: URL {
+        php.appending(path: "dumps", directoryHint: .isDirectory)
     }
 
     public func databaseConfig(_ kind: DatabaseKind, line: String) -> URL {

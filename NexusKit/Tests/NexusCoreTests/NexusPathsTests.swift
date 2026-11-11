@@ -34,6 +34,24 @@ struct NexusPathsTests {
         #expect(file.path(percentEncoded: false) == "/tmp/Nexus Test/logs/redis-8.2.log")
     }
 
+    @Test func theDumpFilesHaveTheirOwnPlaces() {
+        let paths = NexusPaths(root: URL(filePath: "/tmp/Nexus Test", directoryHint: .isDirectory))
+
+        #expect(paths.dumpSocket.path(percentEncoded: false) == "/tmp/Nexus Test/run/dumps.sock")
+        #expect(paths.dumpLog.path(percentEncoded: false) == "/tmp/Nexus Test/logs/dumps.jsonl")
+        #expect(paths.dumpLibrary.path(percentEncoded: false) == "/tmp/Nexus Test/php/dumps/")
+    }
+
+    @Test(arguments: [NexusVariant.release, .dev])
+    func theDumpSocketFitsInAUnixSocketPathOfEachVariant(variant: NexusVariant) {
+        let paths = NexusPaths(root: .applicationSupportDirectory.appending(path: variant.name, directoryHint: .isDirectory))
+
+        let socket = paths.dumpSocket.path(percentEncoded: false)
+
+        #expect(socket.hasSuffix("/Library/Application Support/\(variant.name)/run/dumps.sock"))
+        #expect(socket.utf8.count <= 103)
+    }
+
     @Test func createFoldersMakesEveryFolderInAPathWithSpaces() throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "Nexus Paths \(UUID().uuidString)", directoryHint: .isDirectory)
