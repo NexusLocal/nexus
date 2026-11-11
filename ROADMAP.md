@@ -8,7 +8,8 @@ needs research and a plan before the work starts.
 In this order:
 
 1. **A viewer for dumps.** Nexus catches `dump()`, `dd()` and similar calls of each site and
-   workspace, without a change in your code. The app shows them for each request.
+   workspace, without a change in your code. The app shows them for each request. A later part
+   adds the database queries, the log lines and the queue jobs of each request.
 2. **Xdebug only for debug requests.** A request with the Xdebug cookie goes to a PHP process with
    Xdebug. All other requests stay fast. One command can also run with Xdebug.
 3. **More for workspaces:**
