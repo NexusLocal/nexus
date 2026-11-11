@@ -32,13 +32,14 @@ extension NexusEngine {
         }
 
         do {
-            return try await toolCommand(tool, folder: folder, location: location, state: state, installed: installed)
+            return try await toolCommand(tool, folder: folder, location: location, state: state, installed: installed, inSetup: inSetup)
         } catch where !installed.contains(where: { $0.name == tool.package }) {
             throw ToolNotInstalled(description: ErrorText.plain(error))
         }
     }
 
-    private func toolCommand(_ tool: ProjectTool, folder: URL, location: ProjectLocation?, state: EngineState, installed: [InstalledRuntime]) async throws -> ToolCommand {
+    // A command of a setup is a PHP run of Nexus. So it gets no folder of the dump viewer.
+    private func toolCommand(_ tool: ProjectTool, folder: URL, location: ProjectLocation?, state: EngineState, installed: [InstalledRuntime], inSetup: Bool) async throws -> ToolCommand {
         switch tool {
         case .php, .composer, .wp:
             let php = try installedPHP(try phpLine(for: location, state: state, installed: installed), in: installed)
@@ -51,7 +52,9 @@ extension NexusEngine {
                 command.wordPressCore = location.flatMap { WordPressCore.coreFolder(for: folder, in: $0.root) }
                 return command
             default:
-                return try await phpCommand(php)
+                var command = try await phpCommand(php)
+                command.dumpsFolder = inSetup ? nil : commandDumpsFolder(line: php.line)
+                return command
             }
         case .node, .npm:
             let choice = nodeChoice(for: folder, in: location, state: state, installed: installed.filter { $0.name == "node" }.map(\.line))

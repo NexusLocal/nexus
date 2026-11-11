@@ -357,7 +357,6 @@ extension NexusEngine {
             try Data(PHPConfig.initialIni(template: template, timezone: TimeZone.current.identifier).utf8).write(to: ini)
         }
 
-        let fpm = try PHPConfig.fpmConfig(socket: paths.phpSocket(line: line), pidFile: paths.run.appending(path: "php-\(line).pid"))
         let enabled = state.phpExtensions[line] ?? PHPConfig.defaultExtensions
         let (directory, available) = Self.phpExtensions(of: runtime)
         let smtpPort = try await smtpPort(in: state)
@@ -365,15 +364,41 @@ extension NexusEngine {
         let nexusIni = try PHPConfig.nexusIni(extensionDirectory: directory, extensions: PHPConfig.extensionsToLoad(enabled: enabled, available: available), mailLines: mailLines)
 
         let customIni = PHPConfig.customIni(lines: state.phpCustomSettings[line] ?? [])
+        let poolUsesStub = await poolUsesDumpStub(line: line)
 
-        let coverageFolder = folder.appending(path: PHPConfig.coverageFolderName, directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: coverageFolder, withIntermediateDirectories: true)
-        _ = try Self.writeIfChanged(PHPConfig.coverageIni, to: coverageFolder.appending(path: PHPConfig.coverageIniName))
+        // No await from here on. So no other write of this PHP version comes between the stub and
+        // the pool that names it.
+        let dumps = writeDumpFiles(line: line, state: state, keepingStub: poolUsesStub)
+        let fpm = try PHPConfig.fpmConfig(socket: paths.phpSocket(line: line), pidFile: paths.run.appending(path: "php-\(line).pid"), prepend: dumps.stub)
+
+        try Self.writeScanFolder(named: PHPConfig.coverageFolderName, iniName: PHPConfig.coverageIniName, ini: PHPConfig.coverageIni, in: folder)
 
         let fpmChanged = try Self.writeIfChanged(fpm, to: folder.appending(path: "php-fpm.conf"))
         let iniChanged = try Self.writeIfChanged(nexusIni, to: confD.appending(path: PHPConfig.nexusIniName))
         let customChanged = try Self.writeIfChanged(customIni, to: confD.appending(path: PHPConfig.customIniName))
-        return fpmChanged || iniChanged || customChanged
+        phpLinesWrittenAtStart?.insert(line)
+        return fpmChanged || iniChanged || customChanged || dumps.stubChanged
+    }
+
+    // Each PHP version writes its configuration again. A running PHP-FPM reads it at once. The
+    // result holds the error of each version that failed. The caller runs it inside serialWeb, as
+    // each other change of the PHP configuration.
+    func rewritePHPConfigs() async -> [(line: String, error: any Error)] {
+        var failures: [(line: String, error: any Error)] = []
+
+        for runtime in await installer.installedRuntimes() where runtime.name == "php" {
+            let id = ServiceCatalog.phpID(line: runtime.line)
+
+            do {
+                if try await writePHPConfig(line: runtime.line, state: await stateStore.current()), await supervisor.state(of: id)?.isActive == true {
+                    await supervisor.signal(id, SIGUSR2)
+                }
+            } catch {
+                failures.append((runtime.line, error))
+            }
+        }
+
+        return failures
     }
 
     // The extension folder has a name with the API version, for example
@@ -566,7 +591,21 @@ extension NexusEngine {
         }
     }
 
-    private static func writeIfChanged(_ contents: String, to file: URL) throws -> Bool {
+    // A folder that only commands add to PHP_INI_SCAN_DIR, for example coverage.d. Without an ini
+    // the folder goes. A change does not count for PHP-FPM, because PHP-FPM does not read it.
+    static func writeScanFolder(named name: String, iniName: String, ini: String?, in folder: URL) throws {
+        let scanFolder = folder.appending(path: name, directoryHint: .isDirectory)
+
+        guard let ini else {
+            try? FileManager.default.removeItem(at: scanFolder)
+            return
+        }
+
+        try FileManager.default.createDirectory(at: scanFolder, withIntermediateDirectories: true)
+        _ = try writeIfChanged(ini, to: scanFolder.appending(path: iniName))
+    }
+
+    static func writeIfChanged(_ contents: String, to file: URL) throws -> Bool {
         if (try? String(contentsOf: file, encoding: .utf8)) == contents {
             return false
         }

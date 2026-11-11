@@ -16,15 +16,29 @@ namespace Nexus\Dumps {
         return \in_array(\PHP_SAPI, ['cli', 'phpdbg', 'embed'], true);
     }
 
-    function hasUserPrepend(): bool
+    // PHP finds a relative prepend file through include_path, as without Nexus. An absolute path
+    // stays as it is.
+    function userPrepend(): ?string
     {
         $file = SETTINGS['userPrepend'] ?? null;
 
         if (!\is_string($file)) {
-            return false;
+            return null;
         }
 
-        return \is_file($file);
+        if ($file === '') {
+            return null;
+        }
+
+        if (!\str_starts_with($file, '/')) {
+            $file = \stream_resolve_include_path($file);
+        }
+
+        if ($file === false) {
+            return null;
+        }
+
+        return \is_file($file) ? $file : null;
     }
 
     // A class name of this namespace that does not exist must not stop the script with an error.
@@ -61,8 +75,9 @@ namespace {
     }
 
     // The prepend file of the user runs first and in the global scope, as PHP runs it without Nexus.
-    if (\Nexus\Dumps\hasUserPrepend()) {
-        include_once \Nexus\Dumps\SETTINGS['userPrepend'];
+    // A variable here would be a global variable of the site. So the path is found two times.
+    if (\Nexus\Dumps\userPrepend() !== null) {
+        include_once \Nexus\Dumps\userPrepend();
     }
 
     if ((\Nexus\Dumps\SETTINGS['version'] ?? null) !== 1) {

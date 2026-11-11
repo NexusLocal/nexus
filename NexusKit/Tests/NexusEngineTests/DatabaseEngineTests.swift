@@ -15,12 +15,6 @@ import Testing
 extension NexusEngineTests {
     private static let initialization = "mkdir -p \"$datadir/mysql\" && cp \"$init_file\" \"$datadir/init.sql\" && exit 0"
 
-    // A socket path may have 103 bytes, and the temporary folder of the tests is longer. So
-    // these tests use a short folder in /tmp, with the space of "Application Support".
-    private func databaseRoot() -> URL {
-        URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
-    }
-
     private func databasePaths(_ root: URL) -> NexusPaths {
         NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
     }
@@ -88,7 +82,7 @@ extension NexusEngineTests {
     }
 
     @Test func aNewInstanceGetsItsDataFolderOnceAndKeepsIt() async throws {
-        let root = databaseRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let port = freePort()
         let engine = try await makeDatabaseEngine(root: root, package: try makeFakeMySQL(in: root), port: port)
@@ -113,7 +107,7 @@ extension NexusEngineTests {
     }
 
     @Test func aFailedInitializationLeavesNoDataFolder() async throws {
-        let root = databaseRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let failing = "mkdir -p \"$datadir/partial\"; echo 'the disk is full' >&2; exit 1"
         let engine = try await makeDatabaseEngine(root: root, package: try makeFakeMySQL(in: root, initialization: failing), port: freePort())
@@ -131,7 +125,7 @@ extension NexusEngineTests {
     }
 
     @Test func aDataFolderWithOtherFilesIsNeverReplaced() async throws {
-        let root = databaseRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try await makeDatabaseEngine(root: root, package: try makeFakeMySQL(in: root), port: freePort())
         let data = databasePaths(root).dataFolder(service: "mysql", line: "1.0")
@@ -150,7 +144,7 @@ extension NexusEngineTests {
     }
 
     @Test func theDatabaseListGivesThePortAndTheAccount() async throws {
-        let root = databaseRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let port = freePort()
         let engine = try await makeDatabaseEngine(root: root, package: try makeFakeMySQL(in: root), port: port)
@@ -171,7 +165,7 @@ extension NexusEngineTests {
     }
 
     @Test func anInstanceThatNexusMadeBeforeTheAccountsKeepsRootWithThePasswordRoot() async throws {
-        let root = databaseRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try await makeDatabaseEngine(root: root, package: try makeFakeMySQL(in: root), port: freePort())
         let data = databasePaths(root).dataFolder(service: "mysql", line: "1.0")
@@ -188,7 +182,7 @@ extension NexusEngineTests {
     }
 
     @Test func anAccountWithALineBreakOrAnOddUserNameIsRefused() async throws {
-        let root = databaseRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try await makeDatabaseEngine(root: root, package: try makeFakeMySQL(in: root), port: freePort())
 
@@ -202,7 +196,7 @@ extension NexusEngineTests {
     }
 
     @Test func aPasswordOnPostgreSQLChangesOnlyTheHostLinesOfPgHba() throws {
-        let root = databaseRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let original = """
@@ -232,7 +226,7 @@ extension NexusEngineTests {
     }
 
     @Test func aCopyThatCannotWorkIsRefusedBeforeAnythingStarts() async throws {
-        let root = databaseRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let port = freePort()
         let engine = try await makeDatabaseEngine(root: root, package: try makeFakeMySQL(in: root), port: port)

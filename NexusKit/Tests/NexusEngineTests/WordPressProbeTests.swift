@@ -7,7 +7,7 @@ import Testing
 struct WordPressProbeTests {
     private static let realRuntimes = ProcessInfo.processInfo.environment["NEXUS_REAL_RUNTIMES"]
 
-    private let root = URL(filePath: "/tmp/nx-wp-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+    private let root = shortTemporaryRoot()
 
     private func file(_ path: String, _ text: String) throws -> URL {
         let url = root.appending(path: path)

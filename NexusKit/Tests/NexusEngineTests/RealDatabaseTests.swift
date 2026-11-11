@@ -19,7 +19,7 @@ extension NexusEngineTests {
         let parts = runtime.split(separator: "/").map(String.init)
         let (name, line) = (parts[0], parts[1])
         let id = "\(name)-\(line)"
-        let root = URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
         try paths.createFolders()
@@ -86,7 +86,7 @@ extension NexusEngineTests {
         let parts = runtime.split(separator: "/").map(String.init)
         let (name, line) = (parts[0], parts[1])
         let id = "\(name)-\(line)"
-        let root = URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
         try paths.createFolders()

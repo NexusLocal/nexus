@@ -7,10 +7,6 @@ import Testing
 @testable import NexusEngine
 
 extension NexusEngineTests {
-    private func wordPressRoot() -> URL {
-        URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
-    }
-
     private func runGit(_ arguments: String..., in folder: URL) async throws {
         _ = try await CommandRunner.run(Command(
             executable: URL(filePath: "/usr/bin/git"),
@@ -46,7 +42,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorkspaceOfAWordPressSiteThatIsNotIsolatedRunsNoPHP() async throws {
-        let root = wordPressRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await wordPressRepository(in: root)
         var state = EngineState()
@@ -89,7 +85,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorktreeInsideTheMainCheckoutRunsNoPHPEither() async throws {
-        let root = wordPressRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await wordPressRepository(in: root)
         var state = EngineState()
@@ -114,7 +110,7 @@ extension NexusEngineTests {
     }
 
     @Test func aReadyWorkspaceOfAWordPressSiteRunsPHP() async throws {
-        let root = wordPressRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await wordPressRepository(in: root)
         var state = EngineState()
@@ -139,7 +135,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorkspaceOfAWordPressSiteFromBeforeItsSetupGetsTheSetup() async throws {
-        let root = wordPressRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await wordPressRepository(in: root)
         var state = EngineState()
@@ -239,7 +235,7 @@ extension NexusEngineTests {
     }
 
     @Test func theNetworkRowNamesTheKindTheNumberAndASecondSite() throws {
-        let root = wordPressRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         try file("<?php\ndefine( 'MULTISITE', true );\ndefine( 'SUBDOMAIN_INSTALL', true );\n", at: "wp-config.php", in: root.appending(path: "sub"))
         try file("<?php", at: "wp-load.php", in: root.appending(path: "sub"))
@@ -289,7 +285,7 @@ extension NexusEngineTests {
     }
 
     @Test func nginxIsWrittenAgainWhenASiteBecomesWordPressOrGetsTheNotice() throws {
-        let root = wordPressRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let blog = root.appending(path: "blog", directoryHint: .isDirectory)
         try file("<?php", at: "index.php", in: blog)
@@ -305,7 +301,7 @@ extension NexusEngineTests {
     }
 
     @Test func theRecordOfABedrockSiteOnWebMovesToTheKeyOfItsProject() throws {
-        let root = wordPressRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let bedrock = root.appending(path: "bedrock", directoryHint: .isDirectory)
         let plain = root.appending(path: "plain", directoryHint: .isDirectory)
@@ -331,7 +327,7 @@ extension NexusEngineTests {
     }
 
     @Test func aNewWordPressSiteGetsApacheAndPHP84WhenTheyAreInstalled() async throws {
-        let root = wordPressRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let blog = root.appending(path: "blog", directoryHint: .isDirectory)
         let app = root.appending(path: "app", directoryHint: .isDirectory)
@@ -352,7 +348,7 @@ extension NexusEngineTests {
     }
 
     @Test func theWordPressValuesOfSettingsSitesWin() async throws {
-        let root = wordPressRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let blog = root.appending(path: "blog", directoryHint: .isDirectory)
         try file("<?php", at: "wp-load.php", in: blog)

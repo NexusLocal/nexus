@@ -354,6 +354,95 @@ struct WebConfigTests {
         #expect(config.contains("daemonize = no"))
     }
 
+    @Test func thePoolNamesTheStubOfTheDumpViewerOnlyWhenNexusGivesOne() throws {
+        let socket = URL(filePath: "/Nexus/run/php-8.5.sock")
+        let pidFile = URL(filePath: "/Nexus/run/php-8.5.pid")
+        let stub = URL(filePath: "/Nexus/config/php/8.5/nexus-prepend.php")
+
+        let without = try PHPConfig.fpmConfig(socket: socket, pidFile: pidFile)
+        let with = try PHPConfig.fpmConfig(socket: socket, pidFile: pidFile, prepend: stub)
+
+        #expect(!without.contains("auto_prepend_file"))
+        #expect(with == without + "php_value[auto_prepend_file] = \"/Nexus/config/php/8.5/nexus-prepend.php\"\n")
+        #expect(throws: ConfigError.self) {
+            try PHPConfig.fpmConfig(socket: socket, pidFile: pidFile, prepend: URL(filePath: "/Users/$me/nexus-prepend.php"))
+        }
+    }
+
+    @Test func theStubHoldsTheSettingsAndRequiresTheLibrary() throws {
+        let support = URL(filePath: "/Users/tim/Library/Application Support/Nexus", directoryHint: .isDirectory)
+
+        let stub = try PHPConfig.dumpStub(
+            pageMode: .automatic,
+            socket: support.appending(path: "run/dumps.sock"),
+            folder: support.appending(path: "run/dumps", directoryHint: .isDirectory),
+            library: support.appending(path: "php/dumps/4f1c9a0e", directoryHint: .isDirectory),
+            userPrepend: "/Users/tim/Sites/blog/wordfence-waf.php"
+        )
+
+        #expect(stub == #"""
+            <?php
+
+            // Nexus writes this file. Nexus writes it again when the settings of the dump viewer change.
+
+            namespace Nexus\Dumps;
+
+            const SETTINGS = [
+                'version' => 1,
+                'socket' => '/Users/tim/Library/Application Support/Nexus/run/dumps.sock',
+                'folder' => '/Users/tim/Library/Application Support/Nexus/run/dumps',
+                'page' => 'automatic',
+                'userPrepend' => '/Users/tim/Sites/blog/wordfence-waf.php',
+            ];
+
+            require '/Users/tim/Library/Application Support/Nexus/php/dumps/4f1c9a0e/prepend.php';
+
+            """#)
+    }
+
+    @Test func theStubEscapesABackslashAndAQuoteAndRefusesALineBreak() throws {
+        let socket = URL(filePath: "/Nexus/run/dumps.sock")
+        let folder = URL(filePath: "/Nexus/run/dumps", directoryHint: .isDirectory)
+
+        let quoted = try PHPConfig.dumpStub(pageMode: .never, socket: socket, folder: folder, library: URL(filePath: "/Users/o'brien/php/dumps/1", directoryHint: .isDirectory), userPrepend: #"/Sites/a\b.php"#)
+        let withoutPrepend = try PHPConfig.dumpStub(pageMode: .always, socket: socket, folder: folder, library: URL(filePath: "/Nexus/php/dumps/1", directoryHint: .isDirectory), userPrepend: nil)
+
+        #expect(quoted.contains(#"require '/Users/o\'brien/php/dumps/1/prepend.php';"#))
+        #expect(quoted.contains(#"'userPrepend' => '/Sites/a\\b.php',"#))
+        #expect(quoted.contains("'page' => 'never',"))
+        #expect(withoutPrepend.contains("'userPrepend' => null,"))
+        #expect(withoutPrepend.contains("'page' => 'always',"))
+        #expect(throws: ConfigError.self) {
+            try PHPConfig.dumpStub(pageMode: .automatic, socket: socket, folder: folder, library: URL(filePath: "/Nexus/php/dumps/1"), userPrepend: "/Sites/waf.php\nexit;")
+        }
+        #expect(throws: ConfigError.self) {
+            try PHPConfig.dumpStub(pageMode: .automatic, socket: URL(filePath: "/Nexus/run\t/dumps.sock"), folder: folder, library: URL(filePath: "/Nexus/php/dumps/1"), userPrepend: nil)
+        }
+    }
+
+    @Test func theIniOfACommandNamesTheStub() throws {
+        let ini = try PHPConfig.dumpsIni(stub: URL(filePath: "/Users/tim/Library/Application Support/Nexus/config/php/8.5/nexus-prepend.php"))
+
+        #expect(ini.hasPrefix(";"))
+        #expect(ini.contains("\nauto_prepend_file = \"/Users/tim/Library/Application Support/Nexus/config/php/8.5/nexus-prepend.php\"\n"))
+        #expect(throws: ConfigError.self) {
+            try PHPConfig.dumpsIni(stub: URL(filePath: "/Users/\"tim\"/nexus-prepend.php"))
+        }
+    }
+
+    @Test func theLastPrependFileOfPHPIniAndTheCustomLinesWins() {
+        #expect(PHPConfig.userPrepend(phpIni: "auto_prepend_file =\n", customLines: []) == nil)
+        #expect(PHPConfig.userPrepend(phpIni: "auto_prepend_file = \"/Sites/waf.php\"\n", customLines: []) == "/Sites/waf.php")
+        #expect(PHPConfig.userPrepend(phpIni: ";auto_prepend_file = /old.php\nauto_prepend_file = /Sites/waf.php ; the firewall\n", customLines: []) == "/Sites/waf.php")
+        #expect(PHPConfig.userPrepend(phpIni: "auto_prepend_file = /first.php\r\nauto_prepend_file = '/second.php'\r\n", customLines: []) == "/second.php")
+        #expect(PHPConfig.userPrepend(phpIni: "auto_prepend_file = /Sites/waf.php\n", customLines: ["memory_limit = 1G", "auto_prepend_file = /custom.php"]) == "/custom.php")
+        #expect(PHPConfig.userPrepend(phpIni: "auto_prepend_file = /Sites/waf.php\n", customLines: ["auto_prepend_file = None"]) == nil)
+        #expect(PHPConfig.userPrepend(phpIni: "auto_prepend_file = /Sites/waf.php\n", customLines: ["auto_prepend_file="]) == nil)
+        #expect(PHPConfig.userPrepend(phpIni: "auto_prepend_file = /Sites/waf.php\n", customLines: ["auto_prepend_file ="]) == nil)
+        #expect(PHPConfig.userPrepend(phpIni: "auto_prepend_file=/first.php\n", customLines: []) == "/first.php")
+        #expect(PHPConfig.userPrepend(phpIni: "auto_append_file = /end.php\nauto_prepend_file_x = /x.php\n", customLines: []) == nil)
+    }
+
     @Test func aModuleThatAnotherModuleNeedsLoadsFirst() {
         let apache = ApacheConfig.dependencies.loadOrder(["heartbeat", "rewrite"], available: ["heartbeat", "watchdog", "rewrite"])
         let nginx = NginxConfig.dependencies.loadOrder(["ngx_stream_js_module", "ngx_http_js_module"], available: ["ngx_stream_js_module", "ngx_stream_module", "ngx_http_js_module"])

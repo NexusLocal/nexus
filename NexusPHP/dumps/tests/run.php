@@ -892,6 +892,19 @@ function otherStubVersion(): void
     contains($result['stdout'], 'CHECK:{"dump":false,"userPrepend":"global"}', 'Another stub version only includes the prepend file of the user');
 }
 
+function relativeUserPrepend(): void
+{
+    $folder = Context::caseFolder();
+    $stub = writeStub("{$folder}/stub.php", settings($folder, ['userPrepend' => 'user-prepend.php']));
+    $check = Context::$fixtures.'/cli/check.php';
+
+    $found = runCli($stub, ['-d', 'include_path='.Context::$fixtures.'/cli', $check], cwd: $folder);
+    $missing = runCli($stub, ['-d', "include_path={$folder}", $check], cwd: $folder);
+
+    contains($found['stdout'], 'CHECK:{"dump":true,"userPrepend":"global"}', 'A relative prepend file of the user is found through include_path');
+    contains($missing['stdout'], 'CHECK:{"dump":true,"userPrepend":"missing"}', 'A relative prepend file that include_path does not find is skipped');
+}
+
 function pauseAfterAFailedConnect(): void
 {
     $folder = Context::caseFolder();
@@ -1188,6 +1201,7 @@ $tests = [
     'artisan through the VarDumper of the site' => artisanThroughTheSite(...),
     'test runs send nothing' => testRunsSendNothing(...),
     'another stub version' => otherStubVersion(...),
+    'a relative prepend file of the user' => relativeUserPrepend(...),
     'the pause after a failed connect' => pauseAfterAFailedConnect(...),
     'the deadline of a line' => writeDeadline(...),
 ];

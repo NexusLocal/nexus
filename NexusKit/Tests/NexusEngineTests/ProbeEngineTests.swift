@@ -8,10 +8,6 @@ import Testing
 extension NexusEngineTests {
     private static let realProbeRuntimes = ProcessInfo.processInfo.environment["NEXUS_REAL_RUNTIMES"]
 
-    private func probeRoot() -> URL {
-        URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
-    }
-
     private func write(_ text: String, to path: String, in root: URL) throws {
         let file = root.appending(path: path)
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -33,7 +29,7 @@ extension NexusEngineTests {
     }
 
     @Test func aFolderOutsideALaravelApplicationGivesAClearFailure() async throws {
-        let root = probeRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let folder = root.appending(path: "shop", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -45,7 +41,7 @@ extension NexusEngineTests {
     }
 
     @Test func aPHPThatIsNotInstalledGivesTheInstallCommand() async throws {
-        let root = probeRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let app = root.appending(path: "shop", directoryHint: .isDirectory)
         try laravelFiles(in: app)
@@ -57,7 +53,7 @@ extension NexusEngineTests {
     }
 
     @Test func theRootOfAnApplicationUsesThePHPOfASiteOnItsPublicFolder() async throws {
-        let root = probeRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let app = root.appending(path: "shop", directoryHint: .isDirectory)
         try laravelFiles(in: app)
@@ -73,7 +69,7 @@ extension NexusEngineTests {
     }
 
     @Test func aFolderOfAnotherSiteInTheApplicationUsesThePHPOfTheApplication() async throws {
-        let root = probeRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let app = root.appending(path: "shop", directoryHint: .isDirectory)
         try laravelFiles(in: app)
@@ -92,7 +88,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realProbeRuntimes != nil), .timeLimit(.minutes(1)))
     func aRealPHPReadsWhichKeyFeedsEachSettingAndChangesNoFile() async throws {
-        let root = probeRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root, runtimes: [("php", "8.5")])
         let php = await engine.paths.runtime("php", line: "8.5")

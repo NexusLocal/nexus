@@ -100,21 +100,7 @@ extension NexusEngine {
 
     // Each PHP version names the port in its sendmail_path. A running PHP reads it again at once.
     private func writePHPMailLines() async -> [String] {
-        var problems: [String] = []
-
-        for runtime in await installer.installedRuntimes() where runtime.name == "php" {
-            let id = ServiceCatalog.phpID(line: runtime.line)
-
-            do {
-                if try await writePHPConfig(line: runtime.line, state: await stateStore.current()), await supervisor.state(of: id)?.isActive == true {
-                    await supervisor.signal(id, SIGUSR2)
-                }
-            } catch {
-                problems.append("PHP \(runtime.line) still sends mail to the old port. \(ErrorText.plain(error))")
-            }
-        }
-
-        return problems
+        await rewritePHPConfigs().map { "PHP \($0.line) still sends mail to the old port. \(ErrorText.plain($0.error))" }
     }
 
     // nexus sendmail reads the limits from the outbox folder, because it also runs without nexusd.

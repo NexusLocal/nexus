@@ -200,11 +200,13 @@ extension NexusEngine {
         return commands.filter { seen.insert($0).inserted }
     }
 
-    // A program of a setup gets the PATH of the tool, and the links of nexus for the other tools.
+    // A program of a setup gets the PATH of the tool, and the links of nexus for the other tools. A
+    // background process also gets the folder of the dump viewer. toolCommand gives that folder to
+    // no command of a setup.
     func environment(of tool: ToolCommand?) -> [String: String] {
         let path = ((tool?.path ?? [commandLinks]) + [ChildEnvironment.path]).joined(separator: ":")
 
-        return (tool?.environment ?? [:]).merging(["PATH": path]) { _, new in new }
+        return (tool?.environment(for: []) ?? [:]).merging(["PATH": path]) { _, new in new }
     }
 
     // A command gets the PHP of the site. A site without its PHP version can still run a command that

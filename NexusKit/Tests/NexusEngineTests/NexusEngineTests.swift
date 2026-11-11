@@ -35,6 +35,10 @@ struct HalfDownloader: PackageDownloader {
     }
 }
 
+func shortTemporaryRoot() -> URL {
+    URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+}
+
 @Suite(.serialized)
 struct NexusEngineTests {
     private let workspace = FileManager.default.temporaryDirectory

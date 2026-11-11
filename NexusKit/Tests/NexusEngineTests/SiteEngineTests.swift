@@ -23,7 +23,7 @@ extension NexusEngineTests {
         }
     }
 
-    func makeSiteEngine(root: URL, state: EngineState = EngineState(), runtimes: [(name: String, line: String)] = [], processSupervisor: ProcessSupervisor = ProcessSupervisor()) throws -> NexusEngine {
+    func makeSiteEngine(root: URL, state: EngineState = EngineState(), runtimes: [(name: String, line: String)] = [], processSupervisor: ProcessSupervisor = ProcessSupervisor(), dumpLibrarySource: URL? = nil) throws -> NexusEngine {
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory), pharLinks: root)
         try paths.createFolders()
         var state = state
@@ -48,7 +48,8 @@ extension NexusEngineTests {
                 resolverFolder: root.appending(path: "etc/resolver", directoryHint: .isDirectory),
                 hostsFile: root.appending(path: "etc/hosts", directoryHint: .notDirectory)
             ),
-            workspaceFolderQuiet: .zero
+            workspaceFolderQuiet: .zero,
+            dumpLibrarySource: dumpLibrarySource
         )
     }
 
@@ -297,7 +298,7 @@ extension NexusEngineTests {
 extension NexusEngineTests {
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aNewRealProjectInAParkedFolderOpensOverHTTPSAndWaitsWhileStopAllIsInEffect() async throws {
-        let root = URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
         try paths.createFolders()
@@ -368,7 +369,7 @@ extension NexusEngineTests {
     // The "Done when" of part 6g: every site opens on its new name after a change of the dev TLD.
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func everyRealSiteOpensOnItsNewNameAfterAChangeOfTheTLD() async throws {
-        let root = URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
         try paths.createFolders()
@@ -422,7 +423,7 @@ extension NexusEngineTests {
     // A project with its public folder after a short wait, as composer create-project makes it.
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealNodeAppAndAProxySiteOpenOverHTTPSAndNextGetsItsOwnOrigin() async throws {
-        let root = URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
         try paths.createFolders()
@@ -483,7 +484,7 @@ extension NexusEngineTests {
     // a page with the text <name>-marker. The websocket of hot reload must open through nginx.
     @Test(.enabled(if: realRuntimes != nil && realNodeApps != nil), .timeLimit(.minutes(5)))
     func realNextNuxtAndViteAppsOpenOverHTTPSWithTheirWebsocket() async throws {
-        let root = URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
         try paths.createFolders()

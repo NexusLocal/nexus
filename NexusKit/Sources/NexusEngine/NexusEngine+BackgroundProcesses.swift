@@ -507,7 +507,8 @@ extension NexusEngine {
     // Programs of one owner share a log. A site without its PHP version can still run a command that
     // needs no PHP, as a command of a setup does. The link for npm chooses the Node line when a
     // program starts. The line goes into the environment, so a new line of the site restarts that
-    // program.
+    // program. The folder of the dump viewer is in the environment too. So a change of that setting
+    // restarts a queue worker.
     private func backgroundProcesses(of commands: [String], in list: BackgroundList) async -> [BackgroundProcess] {
         let tool = try? await toolCommand(.php, folder: list.folder)
         let added = [Self.processMarker: processMarkerValue, Self.nodeLineKey: list.node ?? ""]

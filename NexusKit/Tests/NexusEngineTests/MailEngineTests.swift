@@ -271,7 +271,7 @@ extension NexusEngineTests {
 
     // The socket of PHP-FPM must fit in 103 bytes, so this root is short.
     @Test func eachPHPVersionSendsItsMailToTheSMTPPortAndMovesWithIt() async throws {
-        let root = URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let ports = mailPorts()
         let engine = try makeMailEngine(root: root, ports: ports, runtimes: [("php", "8.5")])

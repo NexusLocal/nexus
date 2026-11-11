@@ -79,8 +79,12 @@ public struct NexusPaths: Sendable, Equatable {
         config.appending(path: "apache/httpd.conf", directoryHint: .notDirectory)
     }
 
+    public var phpConfigRoot: URL {
+        config.appending(path: "php", directoryHint: .isDirectory)
+    }
+
     public func phpConfigFolder(line: String) -> URL {
-        config.appending(path: "php/\(line)", directoryHint: .isDirectory)
+        phpConfigRoot.appending(path: line, directoryHint: .isDirectory)
     }
 
     // The PHP settings that only nexus wp reads, after the conf.d folder of the PHP version.

@@ -33,10 +33,13 @@ let activity = ActivityLog(file: paths.activityLog, source: "nexusd")
 activity.write("launch", "nexusd \(NexusVersion.current()) build \(NexusVersion.build())")
 ErrorDetails.write(to: paths.errorLog)
 
+// The build phase "Copy the PHP files of Nexus" puts the PHP library of the dump viewer in
+// Contents/Resources/php/dumps.
 let engine = NexusEngine(
     paths: paths,
     helper: HelperClient(),
     certificateAuthority: CertificateAuthority(paths: paths),
+    dumpLibrarySource: contents?.appending(path: "Resources/php/dumps", directoryHint: .isDirectory),
     activity: activity,
     unregister: BackgroundServices.unregisterAll,
     applyCrashReports: { isOn in CrashReports.apply(process: "nexusd", isOn: isOn) }

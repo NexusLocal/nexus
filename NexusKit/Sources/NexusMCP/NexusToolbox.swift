@@ -194,7 +194,8 @@ public struct NexusToolbox: MCPHandler {
     }
 
     // php -m with the PHP of the site, as the site runs it. A php.ini that makes PHP wait at its
-    // start must not hold the call. So PHP gets 10 seconds. A cancel of the call stops PHP.
+    // start must not hold the call. So PHP gets 10 seconds. A cancel of the call stops PHP. This is
+    // a PHP run of Nexus. So it gets no folder of the dump viewer.
     private func loadedModules(of target: SiteTarget) async throws -> Set<String> {
         let response = try await send(.tool(.php, folder: target.folder, argumentFolder: nil))
 
@@ -202,7 +203,7 @@ public struct NexusToolbox: MCPHandler {
             throw failure(response)
         }
 
-        var environment = tool.environment(for: ["-m"])
+        var environment = tool.environment
         environment["PATH"] = (tool.path + [ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"]).joined(separator: ":")
         let command = Command(executable: URL(filePath: tool.executable), arguments: tool.arguments + ["-m"], environment: environment, workingDirectory: URL(filePath: target.folder, directoryHint: .isDirectory), name: "php")
 

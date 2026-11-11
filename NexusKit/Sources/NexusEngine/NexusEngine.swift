@@ -215,6 +215,13 @@ public actor NexusEngine {
     // has an old port. So nexusd tries the outbox again while Mailpit runs.
     var mailRetry: Task<Void, Never>?
     var mailRetryInterval: Duration = .seconds(15)
+    // The PHP library of the dump viewer in the app, and its copy in php/dumps that the stubs name.
+    // A copy that failed is not tried again until nexusd starts again.
+    let dumpLibrarySource: URL?
+    var installedDumpLibrary: URL?
+    var dumpLibraryFailed = false
+    // The PHP versions whose configuration nexusd wrote during its start. nil after the start.
+    var phpLinesWrittenAtStart: Set<String>?
     // The setup of a workspace waits until vendor and node_modules have no change for this time.
     let workspaceFolderQuiet: Duration
 
@@ -229,6 +236,7 @@ public actor NexusEngine {
         systemFiles: SystemDNSFiles = SystemDNSFiles(),
         helperRetryDelay: Duration = .seconds(5),
         workspaceFolderQuiet: Duration = .seconds(6),
+        dumpLibrarySource: URL? = nil,
         activity: ActivityLog? = nil,
         unregister: @escaping @Sendable () -> Void = {},
         applyCrashReports: @escaping @Sendable (Bool) -> Void = { _ in }
@@ -248,6 +256,7 @@ public actor NexusEngine {
         self.systemFiles = systemFiles
         self.helperRetryDelay = helperRetryDelay
         self.workspaceFolderQuiet = workspaceFolderQuiet
+        self.dumpLibrarySource = dumpLibrarySource
         self.unregister = unregister
     }
 
@@ -494,8 +503,10 @@ public actor NexusEngine {
         _ = try? await startDNS()
         applyMailSettings(await stateStore.current().mailSettings)
         try? await startMailReceiver()
+        phpLinesWrittenAtStart = []
         _ = try? await serialWeb { await self.watchParkedFolders() }
         _ = try? await serialWeb { try await self.applyWeb(.automatic) }
+        _ = try? await serialWeb { await self.prepareDumpLibrary() }
         await updateMailFolders()
 
         let state = await stateStore.current()

@@ -1,4 +1,5 @@
 import Foundation
+import NexusCore
 
 // The configuration of one PHP version. php.ini belongs to the user: Nexus writes it one time and
 // then leaves it alone. conf.d/00-nexus.ini belongs to Nexus and holds the extension toggles
@@ -33,7 +34,29 @@ public enum PHPConfig {
     // of the file.
     public static let customIniHeaderLines = 1
 
-    public static func fpmConfig(socket: URL, pidFile: URL) throws -> String {
+    // The dump viewer. conf.d is shared by PHP-FPM and the command line. So the prepend file is not
+    // there. The pool of PHP-FPM names the stub of the PHP version. The nexus command adds dumps.d
+    // after conf.d only while the setting "Commands and queue workers" is on (see "Stub contract"
+    // in docs/dump-viewer-build.md).
+    public static let dumpsFolderName = "dumps.d"
+    public static let dumpsIniName = "00-nexus-dumps.ini"
+    public static let dumpStubName = "nexus-prepend.php"
+    public static let dumpStubVersion = 1
+    public static let dumpLibraryEntry = "prepend.php"
+
+    // php_value and not php_admin_value: the .user.ini of a site with its own prepend file still
+    // wins, for example the firewall of Wordfence (owner answer 3).
+    public static func fpmConfig(socket: URL, pidFile: URL, prepend: URL? = nil) throws -> String {
+        let config = try poolConfig(socket: socket, pidFile: pidFile)
+
+        guard let prepend else {
+            return config
+        }
+
+        return config + "php_value[auto_prepend_file] = \(try ConfigText.quoted(prepend))\n"
+    }
+
+    private static func poolConfig(socket: URL, pidFile: URL) throws -> String {
         """
         ; Nexus writes this file. Changes are lost at the next start of this PHP version.
         [global]
@@ -54,6 +77,88 @@ public enum PHPConfig {
         clear_env = no
 
         """
+    }
+
+    public static func dumpsIni(stub: URL) throws -> String {
+        """
+        ; Nexus writes this file. The nexus command and the background processes read it.
+        auto_prepend_file = \(try ConfigText.quoted(stub))
+
+        """
+    }
+
+    // The stub holds the settings of the dump viewer and one require of the library.
+    public static func dumpStub(pageMode: DumpPageMode, socket: URL, folder: URL, library: URL, userPrepend: String?) throws -> String {
+        let prepend = try userPrepend.map(phpString) ?? "null"
+
+        return """
+            <?php
+
+            // Nexus writes this file. Nexus writes it again when the settings of the dump viewer change.
+
+            namespace Nexus\\Dumps;
+
+            const SETTINGS = [
+                'version' => \(dumpStubVersion),
+                'socket' => \(try phpString(socket)),
+                'folder' => \(try phpString(folder)),
+                'page' => \(try phpString(pageMode.rawValue)),
+                'userPrepend' => \(prepend),
+            ];
+
+            require \(try phpString(library.appending(path: dumpLibraryEntry)));
+
+            """
+    }
+
+    // The pool and dumps.d replace the prepend file of php.ini and of the custom lines. So the stub
+    // includes that file first. The custom lines come after php.ini. The last line wins, as in PHP.
+    // An empty value or a word such as none turns the prepend file off.
+    public static func userPrepend(phpIni: String, customLines: [String]) -> String? {
+        let lines = phpIni.split(whereSeparator: \.isNewline) + customLines.map { Substring($0) }
+        let value = lines.compactMap { iniValue(of: "auto_prepend_file", in: $0) }.last
+
+        guard let value else {
+            return nil
+        }
+
+        return value.isEmpty ? nil : value
+    }
+
+    // PHP reads the value without its quotes. A value without quotes ends at a comment. A word such
+    // as off gives an empty value.
+    private static func iniValue(of key: String, in line: Substring) -> String? {
+        let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+
+        guard parts.count == 2 else {
+            return nil
+        }
+
+        guard parts[0].trimmingCharacters(in: .whitespaces) == key else {
+            return nil
+        }
+
+        let value = parts[1].trimmingCharacters(in: .whitespaces)
+
+        if let quote = value.first, "\"'".contains(quote) {
+            return String(value.dropFirst().prefix { $0 != quote })
+        }
+
+        let plain = value.prefix { $0 != ";" }.trimmingCharacters(in: .whitespaces)
+        return ["none", "null", "off", "no", "false"].contains(plain.lowercased()) ? "" : plain
+    }
+
+    private static func phpString(_ url: URL) throws -> String {
+        try phpString(RealPath.trimmed(url.path(percentEncoded: false)))
+    }
+
+    // A line break or another control character is refused, as in mailLines.
+    private static func phpString(_ text: String) throws -> String {
+        guard text.rangeOfCharacter(from: CharacterSet.controlCharacters.union(.newlines)) == nil else {
+            throw ConfigError.unsafePath(text)
+        }
+
+        return PHPString.quoted(text)
     }
 
     // The extensions that load in a valid order. They come from the toggles and the .so files.

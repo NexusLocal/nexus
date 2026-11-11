@@ -10,11 +10,7 @@ import Testing
 extension NexusEngineTests {
     private static let realToolRuntimes = ProcessInfo.processInfo.environment["NEXUS_REAL_RUNTIMES"]
 
-    private func toolRoot() -> URL {
-        URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
-    }
-
-    private func toolCommand(_ engine: NexusEngine, _ tool: ProjectTool, in folder: URL) async throws -> ToolCommand {
+    func toolCommand(_ engine: NexusEngine, _ tool: ProjectTool, in folder: URL) async throws -> ToolCommand {
         let response = await engine.handle(.tool(tool, folder: folder.path(percentEncoded: false)))
 
         guard case .tool(let command) = response else {
@@ -41,7 +37,7 @@ extension NexusEngineTests {
     }
 
     @Test func phpInAFolderOfASiteUsesThePHPAndTheSettingsOfThatSite() async throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try project("shop", in: root)
         var state = EngineState()
@@ -61,7 +57,7 @@ extension NexusEngineTests {
     }
 
     @Test func aFolderInTheArgumentsWinsWhenItIsInASite() async throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try project("shop", in: root)
         let blog = try project("blog", in: root)
@@ -89,7 +85,7 @@ extension NexusEngineTests {
     }
 
     @Test func outsideASiteTheToolsUseTheDefaultsForANewSite() async throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let other = try project("other", in: root, nvmrc: "22")
         var state = EngineState()
@@ -104,7 +100,7 @@ extension NexusEngineTests {
     }
 
     @Test func outsideASiteWithoutANodeDefaultTheFilesOfTheFolderDecide() async throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let other = try project("other", in: root, nvmrc: "22")
         let engine = try makeSiteEngine(root: root, runtimes: [("node", "22"), ("node", "24")])
@@ -115,7 +111,7 @@ extension NexusEngineTests {
     }
 
     @Test func composerRunsItsPharWithThePHPOfTheSite() async throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try project("shop", in: root)
         var state = EngineState()
@@ -130,7 +126,7 @@ extension NexusEngineTests {
     }
 
     @Test func wpRunsWPCLIWithThePHPOfTheSiteAndTheCoreFolderOfTheCheckout() async throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try project("shop", in: root)
         let worktree = try project("shop-fix", in: root)
@@ -173,7 +169,7 @@ extension NexusEngineTests {
     }
 
     @Test func wpCLIGetsAPathWithoutSpaces() throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let phar = root.appending(path: "Application Support/Nexus/runtimes/wp-cli/2/wp-cli.phar")
         let links = root.appending(path: "links", directoryHint: .isDirectory)
@@ -192,7 +188,7 @@ extension NexusEngineTests {
     }
 
     @Test func aPharThatAnOldNexusInstalledKeepsItsOldName() async throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root, runtimes: [("php", "8.5"), ("wp-cli", "2")])
         try Data("<?php\n".utf8).write(to: await engine.paths.runtime("wp-cli", line: "2").appending(path: "composer.phar"))
@@ -204,7 +200,7 @@ extension NexusEngineTests {
     }
 
     @Test func npmUsesTheNodeOfTheProjectUnlessTheSiteHasALine() async throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try project("shop", in: root, nvmrc: "24")
         let blog = try project("blog", in: root, nvmrc: "24")
@@ -222,7 +218,7 @@ extension NexusEngineTests {
     }
 
     @Test func aToolThatIsNotInstalledGivesTheInstallCommand() async throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try project("shop", in: root, nvmrc: "20.10.0")
         var state = EngineState()
@@ -241,7 +237,7 @@ extension NexusEngineTests {
     }
 
     @Test func theSiteListShowsTheNodeOfTheProjectAndTheChosenLine() async throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try project("shop", in: root, nvmrc: "22")
         let blog = try project("blog", in: root)
@@ -267,7 +263,7 @@ extension NexusEngineTests {
     }
 
     @Test func theSiteListReadsAVersionFileAgainOnlyAfterItChanged() async throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try project("shop", in: root, nvmrc: "22")
         var state = EngineState()
@@ -288,7 +284,7 @@ extension NexusEngineTests {
     }
 
     @Test func aNodeDefaultMustBeInstalled() async throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root, runtimes: [("php", "8.5"), ("node", "22")])
 
@@ -306,7 +302,7 @@ extension NexusEngineTests {
 extension NexusEngineTests {
     @Test(.enabled(if: realToolRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealSiteGetsANewNodeLineAndItsPHPReadsTheSettingsOfNexus() async throws {
-        let root = toolRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try project("shop", in: root)
         var state = EngineState()

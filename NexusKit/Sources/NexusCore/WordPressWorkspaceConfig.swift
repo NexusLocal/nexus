@@ -131,11 +131,7 @@ public enum WordPressWorkspaceConfig {
     // Only the index of Redis is a number. PHP reads a number with a 0 at its start as an octal
     // number. So a password such as 0123 stays a text.
     static func phpValue(_ value: String, of name: String) -> String {
-        name == "WP_REDIS_DATABASE" && Int(value) != nil ? value : phpString(value)
-    }
-
-    static func phpString(_ value: String) -> String {
-        "'\(value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'"))'"
+        name == "WP_REDIS_DATABASE" && Int(value) != nil ? value : PHPString.quoted(value)
     }
 
     // The lines of wp-config.php. open is the line with <?php. Code after <?php on that line goes to

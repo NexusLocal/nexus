@@ -10,10 +10,6 @@ import Testing
 @testable import NexusEngine
 
 extension NexusEngineTests {
-    private func workspaceRoot() -> URL {
-        URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
-    }
-
     private func git(_ arguments: String..., in folder: URL) async throws {
         _ = try await CommandRunner.run(Command(
             executable: URL(filePath: "/usr/bin/git"),
@@ -54,7 +50,7 @@ extension NexusEngineTests {
     }
 
     @Test func gitWorktreeAddGivesAWorkspaceAndGitWorktreeRemoveEndsIt() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -99,7 +95,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorkspaceGetsTheFilesThatGitIgnoresAndGitSeesNoChange() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await applicationWithFiles(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -123,7 +119,7 @@ extension NexusEngineTests {
     }
 
     @Test func manyPathsThatGitSeesGiveOneWarning() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let older = try await gitOutput("rev-parse", "HEAD", in: shop)
@@ -146,7 +142,7 @@ extension NexusEngineTests {
     }
 
     @Test func aFolderThatGitIgnoresAsAWholeLosesTheViteFileAndItsLinkToTheMainCheckout() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         try writeFile("public\n", to: ".gitignore", in: shop)
@@ -173,7 +169,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealRepositoryInThePublicFolderGetsTheFilesThatItIgnores() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = root.appending(path: "shop", directoryHint: .isDirectory)
         let publicFolder = shop.appending(path: "public", directoryHint: .isDirectory)
@@ -209,7 +205,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealStopOfNexusdEndsARunningInstall() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let composer = #"{"name":"shop/app","version":"1.0.0","scripts":{"post-install-cmd":"sleep 37"}}"#
         let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("composer", "2"), lockFile: "composer.lock", main: Self.composerLock, branch: Self.composerLock + "\n", composer: composer)
@@ -242,7 +238,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealRemovalDuringAnInstallLeavesNoFolder() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let composer = #"{"name":"shop/app","version":"1.0.0","scripts":{"post-install-cmd":"sleep 38"}}"#
         let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("composer", "2"), lockFile: "composer.lock", main: Self.composerLock, branch: Self.composerLock + "\n", composer: composer)
@@ -275,7 +271,7 @@ extension NexusEngineTests {
     }
 
     @Test func aNewWorkspaceRunsTheCommandsOfItsSiteOneTimeInItsWorktree() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithCommands(["echo {workspace} {host} >> ran.txt", "pwd"], root: root, shop: shop)
@@ -296,7 +292,7 @@ extension NexusEngineTests {
     }
 
     @Test func aCorrectionOfACommandThatFailedReachesTheNextSetup() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithCommands(["echo first >> ran.txt", "wrong-program"], root: root, shop: shop)
@@ -316,7 +312,7 @@ extension NexusEngineTests {
     }
 
     @Test func theLogHoldsTheWholeOutputOfACommandThatFails() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithCommands(["echo progress; echo problem >&2; exit 3"], root: root, shop: shop)
@@ -332,7 +328,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealStartDuringAStopOfNexusdRunsNoCommand() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithCommands(["touch ran.txt"], root: root, shop: shop)
@@ -348,7 +344,7 @@ extension NexusEngineTests {
     }
 
     @Test func aCommandThatFailsStopsTheListAndARetryGoesOnFromThere() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithCommands(["echo first >> ran.txt", "test -f allowed", "echo last >> ran.txt"], root: root, shop: shop)
@@ -375,7 +371,7 @@ extension NexusEngineTests {
     }
 
     @Test func aCommandThatASiteGetsLaterDoesNotRunInAWorkspaceThatExists() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithCommands([], root: root, shop: shop)
@@ -391,7 +387,7 @@ extension NexusEngineTests {
     }
 
     @Test func aSiteThatIsNoLaravelApplicationGetsThePortsOfItsCommands() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithCommands(["echo {port:scout} > ran.txt"], root: root, shop: shop)
@@ -406,7 +402,7 @@ extension NexusEngineTests {
     }
 
     @Test func aCommandThatChangedDuringTheSetupGetsItsPort() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         var state = EngineState()
@@ -426,7 +422,7 @@ extension NexusEngineTests {
     }
 
     @Test func aCommandThatNeedsADatabaseDoesNotRunWithoutOne() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithCommands(["echo {database} > ran.txt"], root: root, shop: shop)
@@ -443,7 +439,7 @@ extension NexusEngineTests {
     }
 
     @Test func aCommandWithoutThePHPOfItsSiteStillGetsTheLinksOfNexus() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithCommands(["echo $PATH > ran.txt"], root: root, shop: shop)
@@ -460,7 +456,7 @@ extension NexusEngineTests {
     }
 
     @Test func aFolderThatIsGoneGivesAWarningAndRunsNoCommand() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithCommands(["touch ran.txt"], root: root, shop: shop)
@@ -474,7 +470,7 @@ extension NexusEngineTests {
     }
 
     @Test func twoSitesWithTheSameCommandRunItOneTime() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         var state = EngineState()
@@ -493,7 +489,7 @@ extension NexusEngineTests {
     }
 
     @Test func anEmptyCommandIsNoCommandOfTheSite() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithCommands([], root: root, shop: shop)
@@ -510,7 +506,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealCommandUsesThePHPOfTheSiteAndThePlaceholdersOfTheWorkspace() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n*.txt\n")
         let scout = #"php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION."\n";' > version.txt; echo {database} {port:scout} > values.txt"#
@@ -532,7 +528,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceThatIsNotIsolatedRunsNoCommands() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         try writeFile("DB_PORT=1\nDB_DATABASE=shop\n", to: ".env", in: shop)
@@ -557,7 +553,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)))
     func aRealApplicationWithAFixedPortIsNotIsolatedAndRunsNoProcessUntilTheFix() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         let port = freePort()
@@ -614,7 +610,7 @@ extension NexusEngineTests {
         (name: "env('CMS_PORT', '3306')", reason: "The key CMS_PORT is not in the configuration of the main checkout. So Nexus does not change it."),
     ])
     func aRealBranchWithAnotherConfigurationIsNotIsolatedAndRunsNothing(name: String, reason: String) async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         let port = freePort()
@@ -653,7 +649,7 @@ extension NexusEngineTests {
     }
 
     @Test func theConfigurationDigestFollowsTheFilesThatTheProbeReads() throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         try writeFile("DB_DATABASE=shop\n", to: ".env", in: root)
         try writeFile("<?php return [];", to: "config/database.php", in: root)
@@ -676,7 +672,7 @@ extension NexusEngineTests {
     }
 
     @Test func theConfigurationDigestOfASubfolderFollowsTheGitignoreOfTheWorktree() throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let application = root.appending(path: "backend", directoryHint: .isDirectory)
         try writeFile(".env\n", to: ".gitignore", in: root)
@@ -690,7 +686,7 @@ extension NexusEngineTests {
     }
 
     @Test func theConfigurationDigestFollowsTheGitignoreOfEachFolderAboveTheApplication() throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let application = root.appending(path: "apps/backend", directoryHint: .isDirectory)
         try writeFile(".env\n", to: "apps/.gitignore", in: root)
@@ -714,7 +710,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealChangeInAReadyWorktreeStopsTheProcessesAndARevertStartsThem() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await readyApplication(in: root, commands: ["exec sleep 300"])
 
@@ -750,7 +746,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealFixInTheMainCheckoutStartsTheProcessesWithoutARetry() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await readyApplication(in: root, commands: ["exec sleep 300"])
         let clean = try #require(text(of: shop.appending(path: "config/database.php")))
@@ -777,7 +773,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRepositoryInThePublicFolderHasNoMigrateCommand() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = root.appending(path: "shop", directoryHint: .isDirectory)
         let publicFolder = shop.appending(path: "public", directoryHint: .isDirectory)
@@ -791,7 +787,7 @@ extension NexusEngineTests {
     }
 
     @Test func theSeedersRunAfterTheCommandsOfALaravelSite() throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = root.appending(path: "shop", directoryHint: .isDirectory)
         let other = root.appending(path: "other", directoryHint: .isDirectory)
@@ -806,7 +802,7 @@ extension NexusEngineTests {
     }
 
     @Test func aNewWorkspaceGetsTheChoiceOfItsSiteAndAWordPressSiteACopyOrItsDump() throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = root.appending(path: "shop", directoryHint: .isDirectory)
         let blog = root.appending(path: "blog", directoryHint: .isDirectory)
@@ -844,7 +840,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealFixAboveARepositoryInThePublicFolderNeedsNoRetry() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = root.appending(path: "shop", directoryHint: .isDirectory)
         let publicFolder = shop.appending(path: "public", directoryHint: .isDirectory)
@@ -881,7 +877,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealMainCheckoutWithoutItsApplicationKeepsTheCheckOfAWorkspace() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await readyApplication(in: root, commands: ["exec sleep 300"])
 
@@ -914,7 +910,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealRetryAcceptsASiteThatIsNoLaravelApplicationAnyMore() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await readyApplication(in: root, commands: [])
 
@@ -945,7 +941,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealChangeInTheMainCheckoutLeavesAReadyWorkspace() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await readyApplication(in: root, commands: ["exec sleep 300"])
 
@@ -966,7 +962,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealEditOfTheEnvFileGetsTheValueOfTheWorkspaceBack() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await readyApplication(in: root, commands: [])
         let env = worktree.appending(path: ".env")
@@ -985,7 +981,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealSetupGivesNoSecondSetup() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await readyApplication(in: root, commands: ["exec sleep 300"])
 
@@ -1004,7 +1000,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealRecordWithoutADigestGetsNoNewSetup() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await readyApplication(in: root, commands: [])
 
@@ -1023,7 +1019,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aChangeInAWorktreeThatGitRemovesGetsNoNewSetup() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await readyApplication(in: root, commands: [])
 
@@ -1044,7 +1040,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aFailedCommandThatChangesTheEnvFileRunsOneTime() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await readyApplication(in: root, commands: [])
         try await engine.stateStore.update { $0.sites[0].workspaceCommands = ["echo run >> runs.txt; echo X$$=1 >> .env; exit 1"] }
@@ -1063,7 +1059,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aFailedCommandThatReplacesTheEnvFileGivesTheValueOfTheWorkspaceBack() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await readyApplication(in: root, commands: [])
         let mainEnv = shop.appending(path: ".env")
@@ -1081,7 +1077,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aChangeStopsTheProcessesDuringTheSetupOfAnotherWorkspace() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await readyApplication(in: root, commands: ["exec sleep 300"])
         try await engine.stateStore.update { $0.sites[0].workspaceCommands = [#"[ "$(basename "$PWD")" != slow ] || sleep 30"#] }
@@ -1103,7 +1099,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aChangeInAWorktreeWithoutItsGitFileGetsNoNewSetup() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await readyApplication(in: root, commands: [])
 
@@ -1140,7 +1136,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)), arguments: [("mysql", "8.4", "mysql"), ("mariadb", "11.4", "mariadb"), ("postgresql", "17", "pgsql")])
     func aRealRemovalKeepsADumpRemovesTheCloneAndTheDumpRestores(name: String, line: String, driver: String) async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree, port) = try await databaseApplication(in: root, driver: driver, runtime: (name, line))
         let id = "\(name)-\(line)"
@@ -1193,7 +1189,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)))
     func aRealNewWorktreeWithTheNameOfARemovedOneGetsANewCopy() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree, port) = try await databaseApplication(in: root, driver: "mysql", runtime: ("mysql", "8.4"))
 
@@ -1220,7 +1216,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)))
     func aRealDatabaseWithoutADumpStaysAndTheSiteShowsWhy() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree, port) = try await databaseApplication(in: root, driver: "mysql", runtime: ("mysql", "8.4"))
         let trash = await engine.paths.trash.path(percentEncoded: false)
@@ -1263,7 +1259,7 @@ extension NexusEngineTests {
     }
 
     @Test func aCloneThatDidNotEndGoesWithoutADump() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root)
         let clone = root.appending(path: "clones/one/mysql-8.4", directoryHint: .isDirectory)
@@ -1279,7 +1275,7 @@ extension NexusEngineTests {
     }
 
     @Test func aPackageWithTheServerOfAWorkspaceStays() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let server = WorkspaceDatabaseServer(instance: "mysql-8.4", folder: "/clones/one/mysql-8.4", port: 20000, account: .standard, isComplete: true)
         var state = EngineState()
@@ -1293,7 +1289,7 @@ extension NexusEngineTests {
     }
 
     @Test func aPackageThatARemovalNeedsStays() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let server = WorkspaceDatabaseServer(instance: "mysql-8.4", folder: "/clones/one/mysql-8.4", port: 20000, account: .standard, isComplete: true)
         var state = EngineState()
@@ -1315,7 +1311,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRemovedWorkspaceNamesItsServersInTheStateAtOnce() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let finished = WorkspaceDatabaseServer(instance: "mysql-8.4", folder: "/clones/one/mysql-8.4", port: 20000, account: .standard, isComplete: true)
         let half = WorkspaceDatabaseServer(instance: "postgresql-17", folder: "/clones/two/postgresql-17", port: 20001, account: .standard)
@@ -1333,7 +1329,7 @@ extension NexusEngineTests {
     }
 
     @Test func createMakesAWorkspaceWhenTheSwitchOfTheSiteIsOff() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop, automatic: false)
@@ -1353,7 +1349,7 @@ extension NexusEngineTests {
     }
 
     @Test func createDirectlyAfterAMoveKeepsTheWorkspace() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -1373,7 +1369,7 @@ extension NexusEngineTests {
     }
 
     @Test func createExplainsAFolderWithoutAWorktreeOrASite() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let other = root.appending(path: "other", directoryHint: .isDirectory)
@@ -1395,7 +1391,7 @@ extension NexusEngineTests {
     }
 
     @Test func createInANewSiteLeavesItsOtherWorktreesAlone() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let first = root.appending(path: "first", directoryHint: .isDirectory)
@@ -1414,7 +1410,7 @@ extension NexusEngineTests {
     }
 
     @Test func createRefusesAWorktreeOfAnotherRepositoryInTheFolderOfASite() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let other = root.appending(path: "other", directoryHint: .isDirectory)
@@ -1435,7 +1431,7 @@ extension NexusEngineTests {
     }
 
     @Test func removeAsksGitAndKeepsAWorktreeWithChanges() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -1460,7 +1456,7 @@ extension NexusEngineTests {
     }
 
     @Test func aBranchGetsAWorktreeInTheProjectThatGitStatusDoesNotShow() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop, automatic: false)
@@ -1494,7 +1490,7 @@ extension NexusEngineTests {
     }
 
     @Test func anExistingBranchKeepsItsCommitsAndABadNameIsRefused() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop, automatic: false)
@@ -1511,7 +1507,7 @@ extension NexusEngineTests {
     }
 
     @Test func removalCommandsRunBeforeTheRemovalAndAFailureIsAWarning() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -1543,7 +1539,7 @@ extension NexusEngineTests {
     }
 
     @Test func removeNamesAnUnknownWorkspace() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -1553,7 +1549,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRemovedSiteAlsoRemovesTheServerOfAWorktreeThatStillExists() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
         try writeFile("gitdir: /w/.git/worktrees/fix\n", to: ".git", in: worktree)
@@ -1568,7 +1564,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRemovalWaitsForThePackageWhileItsCloneExists() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root)
         let clone = root.appending(path: "clones/one/mysql-8.4", directoryHint: .isDirectory)
@@ -1588,7 +1584,7 @@ extension NexusEngineTests {
     }
 
     @Test func oldDumpsLeaveTheTrashWithoutAChangeInNexus() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root)
         let trash = await engine.paths.trash
@@ -1605,7 +1601,7 @@ extension NexusEngineTests {
     }
 
     @Test func oldDumpsLeaveTheTrashAndEmptyTrashRemovesTheRest() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root)
         let trash = await engine.paths.trash
@@ -1627,7 +1623,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRunOfTheRemovalsRemovesAHalfDumpOfACrash() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root)
         let trash = await engine.paths.trash
@@ -1641,7 +1637,7 @@ extension NexusEngineTests {
     }
 
     @Test func aProblemWithoutARemovalLeavesTheList() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root)
 
@@ -1653,7 +1649,7 @@ extension NexusEngineTests {
     }
 
     @Test func theTrashKeepsADumpForAtLeastOneDay() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root)
 
@@ -1663,7 +1659,7 @@ extension NexusEngineTests {
     }
 
     @Test func aGoneHostLeavesItsLogsAndCertificates() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -1702,7 +1698,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealBranchWithAConnectionToASQLiteFileOfTheMainCheckoutIsNotIsolated() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let shared = RealPath.of(root) + "/shop/database/analytics.sqlite"
@@ -1729,7 +1725,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealBranchWithoutArtisanStillGetsTheCheckOfItsConfiguration() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await worktreeOfBranch(in: root) { shop in
             try FileManager.default.removeItem(at: shop.appending(path: "artisan"))
@@ -1747,7 +1743,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealBranchWithAnotherConfigurationAndANewLockFileRunsNoInstallScript() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n")
         try writeFile(#"{"name":"shop/app","version":"1.0.0","scripts":{"post-install-cmd":"touch script.txt"}}"#, to: "composer.json", in: shop)
@@ -1777,7 +1773,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealBranchThatLoadsOnlyAfterComposerRunsNoScriptOfNpm() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ".env\nvendor\nnode_modules\n*.sqlite\n")
         try writeFile(#"{"name":"shop/app","version":"1.0.0","autoload":{"files":["bootstrappers.php"]},"scripts":{"post-install-cmd":"echo '<?php' > from-composer.php"}}"#, to: "composer.json", in: shop)
@@ -1855,7 +1851,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorkspaceRunsItsOwnProcessAndARemovalEndsIt() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["echo {workspace} {host} {port:web} > started.txt; exec sleep 300"], root: root, shop: shop)
@@ -1881,7 +1877,7 @@ extension NexusEngineTests {
     }
 
     @Test func twoWorkspacesRunTheSameCommandOnTwoPorts() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["echo {port:vite} > port.txt; exec sleep 300"], root: root, shop: shop)
@@ -1904,7 +1900,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorkspaceThatIsNotIsolatedRunsNoProcess() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -1923,7 +1919,7 @@ extension NexusEngineTests {
     }
 
     @Test func theSwitchOfASiteStopsAndStartsTheProcessesOfItsWorkspaces() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -1944,7 +1940,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRetryStartsAProcessAgain() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -1964,7 +1960,7 @@ extension NexusEngineTests {
     }
 
     @Test func aNewListStartsItsCommandsAndGivesANewPort() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -1986,7 +1982,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRemovalEndsTheProcessesAtOnceAndARefusedRemovalStartsThemAgain() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2016,7 +2012,7 @@ extension NexusEngineTests {
     }
 
     @Test func aChangeInAWorktreeWithoutARemovalKeepsItsProcesses() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2042,7 +2038,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRemovalThatDeletedTheGitFileStartsNoProcessesAgain() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2070,7 +2066,7 @@ extension NexusEngineTests {
     }
 
     @Test func aChangeDeepInAWorktreeGivesACheck() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2100,7 +2096,7 @@ extension NexusEngineTests {
     }
 
     @Test func aStopOfTheProcessesEndsTheWatchOfTheirWorktrees() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2118,7 +2114,7 @@ extension NexusEngineTests {
     }
 
     @Test func aMainCheckoutOfASiteInALinkedWorktreeGetsAWatch() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let linked = root.appending(path: "linked", directoryHint: .isDirectory)
@@ -2137,7 +2133,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRefusedRemovalLeavesNoRecheck() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2159,7 +2155,7 @@ extension NexusEngineTests {
     }
 
     @Test func aChangeDuringTheSyncAfterARemovalGetsItsOwnCheck() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2243,7 +2239,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRemovalDeletesTheCacheThatViteWroteDuringTheDeleteOfGit() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2262,7 +2258,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRemovalKeepsAFolderWithAFileOfTheUser() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2283,7 +2279,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorktreeOfARemovedSiteKeepsItsViteCache() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2302,7 +2298,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorkspaceKeepsAPortThatItsListLost() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["echo {port:reverb}; exec sleep 300"], root: root, shop: shop)
@@ -2322,7 +2318,7 @@ extension NexusEngineTests {
     }
 
     @Test func stopAllServicesWithNoServiceThatRunsStopsTheProcessesUntilAServiceStarts() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2344,7 +2340,7 @@ extension NexusEngineTests {
     }
 
     @Test func aProcessThatKeepsStoppingShowsAWarningUntilItsListChanges() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let policy = RestartPolicy(firstDelay: .milliseconds(10), maximumDelay: .milliseconds(20), stableAfter: .seconds(60), maximumQuickRestarts: 2, stopTimeout: .seconds(2))
@@ -2370,7 +2366,7 @@ extension NexusEngineTests {
     }
 
     @Test func aStartOfAServiceStartsAProcessAgainThatFailed() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let policy = RestartPolicy(firstDelay: .milliseconds(10), maximumDelay: .milliseconds(20), stableAfter: .seconds(60), maximumQuickRestarts: 2, stopTimeout: .seconds(2))
@@ -2393,7 +2389,7 @@ extension NexusEngineTests {
     }
 
     @Test func aFailedProbeOfTheMainCheckoutWaitsUntilItsSwitchChanges() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         try writeFile("", to: "artisan", in: shop)
@@ -2427,7 +2423,7 @@ extension NexusEngineTests {
     }
 
     @Test func aProcessThatNeedsADatabaseGetsAWarningInAWorkspaceWithoutOne() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["dump {database}", "exec sleep 300"], root: root, shop: shop)
@@ -2443,7 +2439,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRecordFromBeforeThisPartStartsNoProcessUntilItsNextSetup() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2464,7 +2460,7 @@ extension NexusEngineTests {
     }
 
     @Test func theMainCheckoutRunsTheListOnlyWithItsSwitchAndWithItsOwnPort() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["echo {workspace} {host} {port:web} > started.txt; exec sleep 300"], root: root, shop: shop)
@@ -2487,7 +2483,7 @@ extension NexusEngineTests {
     }
 
     @Test func theMainCheckoutKeepsItsProcessAndItsPortAfterAChangeOfTheOtherSwitch() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let listener = "echo {port:web} > port.txt; exec /usr/bin/nc -l 127.0.0.1 {port:web}"
@@ -2513,7 +2509,7 @@ extension NexusEngineTests {
     }
 
     @Test func aProcessThatDoesNotStartShowsItsReason() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2534,7 +2530,7 @@ extension NexusEngineTests {
     }
 
     @Test func aProcessGetsTheHostOfTheSetupWhenTheFirstSiteHasItsSwitchOff() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         var state = EngineState()
@@ -2555,7 +2551,7 @@ extension NexusEngineTests {
     }
 
     @Test func stopAllServicesStopsTheProcessesUntilTheServicesStartAgain() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2576,7 +2572,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRememberedServiceThatRunsOrThatIsGoneDoesNotHoldBackTheProcesses() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2596,7 +2592,7 @@ extension NexusEngineTests {
     }
 
     @Test func aStopOfNexusdEndsTheProcesses() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2614,7 +2610,7 @@ extension NexusEngineTests {
     }
 
     @Test func aNewStartEndsTheProcessesThatACrashLeft() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let sleeper = root.appending(path: "sleeper")
@@ -2636,7 +2632,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRunOfAnotherRootKeepsItsProcesses() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let running = try await engineWithProcesses(["exec sleep 300"], root: root, shop: shop)
@@ -2682,7 +2678,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceGetsThePresetOfItsApplicationAndAPortForReverb() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await reverbApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n/public/build/\n/public/hot\n")
 
@@ -2717,7 +2713,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealPresetLeavesOutViteWhenGitSeesWhatItWrites() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (_, engine, _) = try await reverbApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n/public/hot\n")
 
@@ -2731,7 +2727,7 @@ extension NexusEngineTests {
     }
 
     @Test func aDifferentYarnLockFileGivesAWarning() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         try writeFile("one", to: "yarn.lock", in: shop)
@@ -2753,7 +2749,7 @@ extension NexusEngineTests {
     }
 
     @Test func aCloneChangesAloneFromTheMainCheckout() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await applicationWithFiles(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -2767,7 +2763,7 @@ extension NexusEngineTests {
     }
 
     @Test func theStorageLinkOfAWorkspaceDoesNotLeadToTheMainCheckout() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await applicationWithFiles(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -2782,7 +2778,7 @@ extension NexusEngineTests {
     }
 
     @Test func aPathBehindALinkOfTheWorktreeLeavesTheOtherClones() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         try writeFile("vendor\n/public/assets/*.js\n", to: ".gitignore", in: shop)
@@ -2810,7 +2806,7 @@ extension NexusEngineTests {
     }
 
     @Test func aLockFileGivesNoInstallWhenGitDoesNotIgnoreItsFolder() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let older = try await gitOutput("rev-parse", "HEAD", in: shop)
@@ -2834,7 +2830,7 @@ extension NexusEngineTests {
     }
 
     @Test func aLinkToAFolderOutsideTheProjectGivesAWarning() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await applicationWithFiles(in: root)
         let link = shop.appending(path: "public/storage").path(percentEncoded: false)
@@ -2853,7 +2849,7 @@ extension NexusEngineTests {
     }
 
     @Test func aSecondSetupKeepsWhatAWorkspaceChanged() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await applicationWithFiles(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -2870,7 +2866,7 @@ extension NexusEngineTests {
     }
 
     @Test func aFolderWithAStarPatternGetsItsFiles() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         try writeFile("/vendor/*\n/dist/*\n!/dist/.gitkeep\n", to: ".gitignore", in: shop)
@@ -2894,7 +2890,7 @@ extension NexusEngineTests {
     }
 
     @Test func aPathThatTheBranchOfTheWorktreeDoesNotIgnoreGivesAWarning() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await applicationWithFiles(in: root)
         let older = try await gitOutput("rev-parse", "HEAD", in: shop)
@@ -2944,7 +2940,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceRunsComposerOneTimeWhenItsLockFileIsDifferent() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("composer", "2"), lockFile: "composer.lock", main: Self.composerLock, branch: Self.composerLock + "\n")
 
@@ -2974,7 +2970,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceRunsComposerWhenItsLockFileGoesBackToTheOneOfTheMainCheckout() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("composer", "2"), lockFile: "composer.lock", main: Self.composerLock, branch: Self.composerLock + "\n")
 
@@ -2996,7 +2992,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceRunsNpmCiWhenItsLockFileIsDifferent() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("node", "24"), lockFile: "package-lock.json", main: Self.npmLock, branch: Self.npmLock + "\n")
 
@@ -3012,7 +3008,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceWithTheSameLockFileRunsNoInstall() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("composer", "2"), lockFile: "composer.lock", main: Self.composerLock, branch: Self.composerLock)
 
@@ -3028,7 +3024,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealInstallThatFailsGivesAWarningAndAWorkspaceThatStaysReady() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await applicationWithLockFiles(in: root, tool: ("node", "24"), lockFile: "package-lock.json", main: Self.npmLock, branch: "no json")
 
@@ -3163,7 +3159,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealCacheWriteInAWorkspaceIsNotInTheMainSiteAndTheRemovalEmptiesItsIndexes() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
 
@@ -3198,7 +3194,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceSkipsAnIndexWithKeysAndTheIndexesOfTheMainSite() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort(), env: "REDIS_DB=16\n")
 
@@ -3216,7 +3212,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceStaysOffAnIndexInTheEnvFileOfAnotherSiteAndItsRemovalKeepsThatIndex() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
         let blog = root.appending(path: "blog", directoryHint: .isDirectory)
@@ -3244,7 +3240,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealRemovalKeepsAnIndexThatTheConfigurationOfTheMainSiteFixesNow() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
 
@@ -3277,7 +3273,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealRemovalWithoutAProbeKeepsTheIndexesAndSaysWhy() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
 
@@ -3302,7 +3298,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceDoesNotGetAWriteThatACrashEnded() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n*.sqlite-wal\n*.sqlite-shm\n")
         let main = shop.appending(path: "database/database.sqlite").path(percentEncoded: false)
@@ -3344,7 +3340,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceStaysOffAFixedIndexInTheConfigurationOfAnotherSite() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
         let blog = root.appending(path: "blog", directoryHint: .isDirectory)
@@ -3365,7 +3361,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealSetupDoesNotChooseAnIndexThatNexusEmptiesNow() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
 
@@ -3382,7 +3378,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealRemovalChangesTheServerBlocksBeforeRedisAnswers() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
         let httpPort = freePort()
@@ -3417,7 +3413,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealSetupDuringAnUpdateOfItsInstanceIsNotIsolated() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
 
@@ -3434,7 +3430,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealStopOfNexusdDuringASetupKeepsTheWorkspaceInPreparing() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
 
@@ -3463,7 +3459,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealPostgreSQLThatTakesNoQueriesEndsTheWaitWithAnError() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root)
         try await link(("postgresql", "17"), in: engine)
@@ -3483,7 +3479,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)))
     func aRealCloneUsesThePortOfTheRunningInstanceAfterAChangeOfThePort() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         let runningPort = freePort()
@@ -3508,7 +3504,7 @@ extension NexusEngineTests {
     }
 
     @Test func aChangeOfTheWorktreesKeepsWhatASetupWroteDuringTheRunOfGit() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let store = EngineStateStore(paths: NexusPaths(root: root))
         let copy = WorkspaceDatabaseCopy(instance: "mysql-8.4", name: "shop_fix")
@@ -3529,7 +3525,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealRemovalRunsAStoppedRedisOnlyForTheEmptyStep() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
 
@@ -3559,7 +3555,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealRemovalWithABusyPortKeepsTheIndexAndShowsNoPortConflict() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let port = freePort()
         let (shop, engine, worktree) = try await redisApplication(in: root, port: port)
@@ -3583,7 +3579,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealSetupAfterStopAllKeepsTheServiceInTheStopAllList() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
 
@@ -3602,7 +3598,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceWithoutAFreeRedisIndexIsNotIsolatedAndHasNoEnvFile() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
         let indexes = Dictionary(uniqueKeysWithValues: (16..<ServiceCatalog.redisDatabaseCount).map { ("KEY_\($0)", $0) })
@@ -3624,7 +3620,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealRedisThatNexusCannotStartGivesAWorkspaceThatIsNotIsolated() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let port = freePort()
         let (shop, engine, worktree) = try await redisApplication(in: root, port: port)
@@ -3650,7 +3646,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealPortOfARemovedRedisIsNoNexusInstance() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort(), installed: false)
 
@@ -3665,7 +3661,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealRetryEmptiesAnIndexThatTheWorkspaceNoLongerUses() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await redisApplication(in: root, port: freePort())
 
@@ -3691,7 +3687,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealRetryGivesUpAnIndexThatTheMainSiteUsesNowAndKeepsItsKeys() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let port = freePort()
         let (shop, engine, worktree) = try await redisApplication(in: root, port: port)
@@ -3714,7 +3710,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealRunningRedisKeepsItsPortUntilARestart() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let port = freePort()
         let (_, engine, _) = try await redisApplication(in: root, port: port)
@@ -3729,7 +3725,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealCloneOfASQLiteFileRemovesAnOldWriteAheadFile() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n*.sqlite-wal\n*.sqlite-shm\n")
         try await sqlite(shop.appending(path: "database/database.sqlite").path(percentEncoded: false), "CREATE TABLE orders(id);")
@@ -3752,7 +3748,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealIndexThatDoesNotExistLeavesTheIndexOfTheMainSite() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (_, engine, _) = try await redisApplication(in: root, port: freePort())
 
@@ -3771,7 +3767,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceGetsTheLastChangesOfASQLiteFileInWriteAheadMode() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n*.sqlite-wal\n*.sqlite-shm\n")
         let main = shop.appending(path: "database/database.sqlite").path(percentEncoded: false)
@@ -3802,7 +3798,7 @@ extension NexusEngineTests {
     }
 
     @Test func aChangeOfTheWorktreesNamesTheWorkspacesThatWentAway() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let store = EngineStateStore(paths: NexusPaths(root: root))
         let staying = Workspace(name: "staying", worktree: "/w/staying", folder: "/w/staying")
@@ -3856,7 +3852,7 @@ extension NexusEngineTests {
             return
         }
 
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         try writeFile(databaseConfig(driver: driver), to: "config/database.php", in: shop)
@@ -3914,7 +3910,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)))
     func aRealRetryMakesACloneAgainThatDidNotEnd() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         let port = freePort()
@@ -3952,7 +3948,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealInstanceOfAnotherConnectionWithoutDataGetsNoServer() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         try writeFile(#"""
@@ -3985,7 +3981,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealCopyOntoADatabaseThatExistsGivesAnErrorThatTheSetupCanRecognize() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         let port = freePort()
@@ -4005,7 +4001,7 @@ extension NexusEngineTests {
     }
 
     @Test func aCloneDoesNotMakeTheFolderOfAWorktreeThatWentAway() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root)
         let source = root.appending(path: "main.sqlite")
@@ -4025,7 +4021,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealStartForASetupDuringAStopOfNexusdStartsNothing() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (_, engine, _) = try await redisApplication(in: root, port: freePort())
 
@@ -4041,7 +4037,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)))
     func aRealSecondSetupKeepsAFinishedCloneWithoutTheDefaultDatabase() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree, port) = try await databaseApplication(in: root, driver: "mysql", runtime: ("mysql", "8.4"))
 
@@ -4065,7 +4061,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)))
     func aRealRetryAfterAnImportMakesANewCloneOfTheInstance() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         let port = freePort()
@@ -4098,7 +4094,7 @@ extension NexusEngineTests {
             return
         }
 
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree, port) = try await databaseApplication(in: root, driver: driver, runtime: (name, line))
         let id = "\(name)-\(line)"
@@ -4140,7 +4136,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealFreezeThatTheServerRefusesNamesTheError() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (_, engine, _, port) = try await databaseApplication(in: root, driver: "mysql", runtime: ("mysql", "8.4"))
 
@@ -4161,7 +4157,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealCommandGetsThePortOfTheServerOfTheWorkspace() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree, port) = try await databaseApplication(in: root, driver: "mysql", runtime: ("mysql", "8.4"))
 
@@ -4182,7 +4178,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealLongStatementGivesAWarningAndARetryWorksAfterIt() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree, port) = try await databaseApplication(in: root, driver: "mysql", runtime: ("mysql", "8.4"))
 
@@ -4213,7 +4209,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)))
     func aRealBranchWithAFixedPortOfTheMainServerIsNotIsolated() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         let port = freePort()
@@ -4243,7 +4239,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)))
     func aRealWorkspaceClonesAStoppedInstanceAndLeavesItStopped() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         let port = freePort()
@@ -4286,7 +4282,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceClonesTheFileBehindASymbolicLink() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n")
         let shared = root.appending(path: "shared.sqlite")
@@ -4307,7 +4303,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceClonesNoSQLiteFileWhenGitSeesItsWriteAheadFile() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ".env\nvendor\n*.sqlite\n")
         try writeFile("the data", to: "database/database.sqlite", in: shop)
@@ -4327,7 +4323,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)), arguments: [true, false])
     func aRealWorkspaceGetsACloneOfASQLiteFileThatGitIgnores(ignored: Bool) async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (shop, engine, worktree) = try await sqliteApplication(in: root, ignoring: ignored ? ".env\nvendor\n*.sqlite\n" : ".env\nvendor\n")
         try writeFile("the data", to: "database/database.sqlite", in: shop)
@@ -4353,7 +4349,7 @@ extension NexusEngineTests {
     }
 
     @Test func aSiteThatIsNoLaravelApplicationIsReadyWithoutAnEnvFile() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -4367,7 +4363,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorkspaceThatWaitsFromBeforeARestartGetsItsSetup() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
@@ -4384,7 +4380,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorkspaceWithoutItsFoldersWaitsForItsSetup() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let shop = root.appending(path: "disk/shop", directoryHint: .isDirectory)
@@ -4400,7 +4396,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceWithItsOwnCachedConfigurationIsNotIsolated() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\nbootstrap/cache\n")
         var state = EngineState()
@@ -4420,7 +4416,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealKeyOfTheSiteThatReplacesThePortOfTheServerIsNotIsolated() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         try writeFile("DB_PORT=13999\nDB_DATABASE=shop\n", to: ".env", in: shop)
@@ -4440,7 +4436,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealNewKeyOfASiteReachesAWorkspaceThatExistsAndKeepsItsPort() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         var state = EngineState()
@@ -4468,7 +4464,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWrongEnvKeyNameGivesAnErrorAndChangesNothing() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         var state = EngineState()
@@ -4484,7 +4480,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceKeepsAnEnvFileThatNexusCannotRead() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         var state = EngineState()
@@ -4506,7 +4502,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceGetsTheKeysOfEverySiteOfItsProject() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         try writeFile("<?php", to: "public/index.php", in: shop)
@@ -4532,7 +4528,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRetryAfterTheFixOfTheCauseClearsNotIsolated() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\nbootstrap/cache\n")
         try writeFile("<?php return [];", to: "bootstrap/cache/config.php", in: shop)
@@ -4553,7 +4549,7 @@ extension NexusEngineTests {
     }
 
     @Test func aCachedConfigurationOfTheMainCheckoutGivesAWorkspaceThatIsNotIsolated() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\nbootstrap/cache\n")
         try writeFile("<?php return [];", to: "bootstrap/cache/config.php", in: shop)
@@ -4570,7 +4566,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceGetsAnEnvFileWithOnlyTheExpectedChanges() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         let databasePort = freePort()
@@ -4626,7 +4622,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceWritesNoEnvFileThatGitSees() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: "vendor\n")
         var state = EngineState()
@@ -4646,7 +4642,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceThatIsNotIsolatedRunsNoInstall() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await committedLaravelApplication(in: root, ignoring: "vendor\n")
         try writeFile("main", to: "composer.lock", in: shop)
@@ -4672,7 +4668,7 @@ extension NexusEngineTests {
     }
 
     @Test func aFailedAutomaticChangeShowsAtTheWorkspaceThatItLeftOut() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop, runtimes: [("php", "8.4"), ("nginx", "1.30")])
@@ -4686,7 +4682,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorkspaceThatCanRunHasAURL() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         var state = EngineState()
@@ -4701,7 +4697,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorkspaceWithoutItsPHPVersionHasNoURLAndSaysWhy() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         var state = EngineState()
@@ -4716,7 +4712,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorkspaceRunsAsASiteWithThePHPAndTheServerOfItsProject() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root)
         var state = EngineState()
@@ -4730,7 +4726,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorkspaceWhoseHostIsTakenIsLeftOutWithAWarning() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root)
         var state = EngineState()
@@ -4747,7 +4743,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorkspaceThatDoesNotRunHasNoURLAndNamesTheHostThatIsTaken() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         var state = EngineState()
@@ -4775,7 +4771,7 @@ extension NexusEngineTests {
 
     @Test(.timeLimit(.minutes(1)))
     func aCheckoutInAnEmptyWorktreeGivesADocumentRootInItsPublicFolder() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let publicFolder = shop.appending(path: "public", directoryHint: .isDirectory)
@@ -4803,7 +4799,7 @@ extension NexusEngineTests {
     }
 
     @Test func twoSitesOfOneProjectShareOneBlockForAWorkspace() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let publicFolder = root.appending(path: "public", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: publicFolder, withIntermediateDirectories: true)
@@ -4819,7 +4815,7 @@ extension NexusEngineTests {
 
     @Test(.timeLimit(.minutes(1)))
     func aMergeInAWorktreeThatAddsThePublicFolderChangesTheDocumentRoot() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -4846,7 +4842,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceDoesNotStartAWebServerThatTheUserStopped() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         var state = EngineState()
@@ -4874,7 +4870,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
     func aRealWorkspaceOpensOverHTTPSWithTheFilesOfItsWorktree() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let publicFolder = shop.appending(path: "public", directoryHint: .isDirectory)
@@ -4915,7 +4911,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorktreeThatStaysLockedAfterItsCheckoutGetsAWorkspace() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -4929,7 +4925,7 @@ extension NexusEngineTests {
     }
 
     @Test func aLockedWorktreeWithoutACheckoutWaits() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -4943,7 +4939,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorktreeThatWasThereBeforeTheSiteGetsNoWorkspace() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         try await git("worktree", "add", "-q", "-b", "old", root.appending(path: "old").path(percentEncoded: false), in: shop)
@@ -4954,7 +4950,7 @@ extension NexusEngineTests {
     }
 
     @Test func aFolderThatGitNoLongerReadsKeepsItsWorkspaces() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -4971,7 +4967,7 @@ extension NexusEngineTests {
     }
 
     @Test func theSettingOfASiteChangesWithAnEditWithoutANewWebConfiguration() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -4995,7 +4991,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRemovedSiteTakesItsWorkspaceRecordWithIt() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -5008,7 +5004,7 @@ extension NexusEngineTests {
     }
 
     @Test func aRemovedSiteTakesItsRecordAlsoWhenAnotherSiteIsInItsFolder() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let backend = shop.appending(path: "backend", directoryHint: .isDirectory)
@@ -5029,7 +5025,7 @@ extension NexusEngineTests {
     }
 
     @Test func theMessageOfTheSettingCountsTheOtherSiteOfTheProject() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let publicFolder = shop.appending(path: "public", directoryHint: .isDirectory)
@@ -5053,7 +5049,7 @@ extension NexusEngineTests {
     }
 
     @Test func aSiteOnAPublicFolderKeepsItsWorkspacesWhileComposerJSONIsGone() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let publicFolder = shop.appending(path: "public", directoryHint: .isDirectory)
@@ -5079,7 +5075,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWorktreeAfterALaterGitInitGetsAWorkspace() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = root.appending(path: "shop", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: shop, withIntermediateDirectories: true)
@@ -5095,7 +5091,7 @@ extension NexusEngineTests {
 
     @Test(.timeLimit(.minutes(1)))
     func theWatchOfASiteFindsAGitInitWithoutARequest() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = root.appending(path: "shop", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: shop, withIntermediateDirectories: true)
@@ -5118,7 +5114,7 @@ extension NexusEngineTests {
     }
 
     @Test func aFolderThatDoesNotExistKeepsItsWorkspaceRecord() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -5133,7 +5129,7 @@ extension NexusEngineTests {
 
     @Test(arguments: [("a.test", "b.test"), ("b.test", "a.test")])
     func twoSitesOfOneProjectGiveAWorkspaceWhenOneHasTheSettingOn(on: String, off: String) async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let publicFolder = shop.appending(path: "public", directoryHint: .isDirectory)
@@ -5155,7 +5151,7 @@ extension NexusEngineTests {
 
     @Test(.timeLimit(.minutes(1)))
     func theWatchOfTheGitFolderFindsANewWorktreeWithoutARequest() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let engine = try await worktreeEngine(root: root, shop: shop)
@@ -5212,7 +5208,7 @@ extension NexusEngineTests {
     }
 
     @Test func aNodeAppRunsInTheMainCheckoutAndInEachWorkspaceOnItsOwnPort() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let (engine, port) = try await nodeAppEngine(root: root, shop: shop, command: "echo {workspace} $PORT {port:app} $__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS > started.txt; exec sleep 300")
@@ -5232,7 +5228,7 @@ extension NexusEngineTests {
     }
 
     @Test func aNodeAppStartsAgainAfterACrashAndAfterARestart() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         let (engine, port) = try await nodeAppEngine(root: root, shop: shop, command: "exec sleep 300")
@@ -5259,7 +5255,7 @@ extension NexusEngineTests {
     }
 
     @Test func aNodeAppWithoutAScriptOrACommandGetsAProblem() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
         try Data(#"{"scripts":{"build":"vite build"}}"#.utf8).write(to: shop.appending(path: "package.json"))
@@ -5307,7 +5303,7 @@ extension NexusEngineTests {
     }
 
     @Test func aNodeWorkspaceGetsTheEnvFilesOfTheMainCheckoutWithItsOwnHosts() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await nodeApplication(in: root, files: [
             ".env": "APP_URL=https://shop.test\nSECRET=one\n",
@@ -5332,7 +5328,7 @@ extension NexusEngineTests {
     }
 
     @Test func anOwnKeyGoesIntoEachEnvFileOfANodeAppThatHasIt() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await nodeApplication(in: root, files: [
             ".env": "SECRET=one\n",
@@ -5355,7 +5351,7 @@ extension NexusEngineTests {
     }
 
     @Test func anOwnKeyInATrackedEnvFileOfANodeAppIsNotIsolated() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await nodeApplication(in: root, files: [".env": "SECRET=one\n"], tracked: [".env.development": "APP_NAME=main\n"])
         let engine = try nodeEngine(root: root, shop: shop, keys: [WorkspaceEnvKey(key: "APP_NAME", value: "{workspace}")])
@@ -5385,7 +5381,7 @@ extension NexusEngineTests {
     }
 
     @Test func aNodeWorkspaceWithADatabaseClientAndNoKeyGetsAWarning() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await nodeApplication(in: root, files: [".env": "SECRET=one\n"], package: #"{"scripts":{"dev":"sleep 300"},"dependencies":{"pg":"^8.0.0"}}"#)
         let engine = try nodeEngine(root: root, shop: shop)
@@ -5404,7 +5400,7 @@ extension NexusEngineTests {
     }
 
     @Test func aDatabaseKeyInATrackedEnvFileOfANodeAppIsNotIsolated() async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let port = freePort()
         let shop = try await nodeApplication(in: root, files: [:], tracked: [".env.development": "DATABASE_URL=postgresql://root@127.0.0.1:\(port)/shop\n"])
@@ -5425,7 +5421,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(3)), arguments: [("postgresql", "17", "postgresql"), ("mysql", "8.4", "mysql")])
     func aRealNodeWorkspaceGetsItsOwnDatabaseServerAndRedisIndex(name: String, line: String, scheme: String) async throws {
-        let root = workspaceRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let id = "\(name)-\(line)"
         let port = freePort()

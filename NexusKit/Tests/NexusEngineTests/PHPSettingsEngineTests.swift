@@ -71,12 +71,8 @@ extension NexusEngineTests {
             .appending(path: "conf.d/99-custom.ini")
     }
 
-    private func phpRoot() -> URL {
-        URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
-    }
-
     @Test func aWrongCustomLineKeepsTheOldLinesAndNamesTheLine() async throws {
-        let root = phpRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makePHPEngine(root: root, package: try makeFakeCheckingPHP(in: root))
         _ = await engine.handle(.install(name: "php", line: "8.5"))
@@ -92,7 +88,7 @@ extension NexusEngineTests {
     }
 
     @Test func aWarningWithoutALineGetsTheFirstLineThatCausesIt() async throws {
-        let root = phpRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makePHPEngine(root: root, package: try makeFakeCheckingPHP(in: root))
         _ = await engine.handle(.install(name: "php", line: "8.5"))
@@ -104,7 +100,7 @@ extension NexusEngineTests {
     }
 
     @Test func theServiceListHasTheExtensionsTheCustomLinesTheDNSNoteAndTheLANSetting() async throws {
-        let root = phpRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makePHPEngine(root: root, package: try makeFakeCheckingPHP(in: root))
         _ = await engine.handle(.install(name: "php", line: "8.5"))
@@ -128,7 +124,7 @@ extension NexusEngineTests {
 
     @Test(.enabled(if: realRuntimes != nil))
     func aRealPHPRefusesAWrongLineAndKeepsAGoodOne() async throws {
-        let root = phpRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makePHPEngine(root: root)
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
@@ -166,7 +162,7 @@ extension NexusEngineTests {
     }
 
     @Test func theCacheKeepsTheNamesUntilTheFolderChanges() async throws {
-        let root = phpRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makePHPEngine(root: root, package: try makeFakeCheckingPHP(in: root))
         _ = await engine.handle(.install(name: "php", line: "8.5"))
@@ -189,7 +185,7 @@ extension NexusEngineTests {
 
     @Test(.timeLimit(.minutes(1)))
     func aListRequestThatFindsANewExtensionSendsTheServiceListAgain() async throws {
-        let root = phpRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makePHPEngine(root: root, package: try makeFakeCheckingPHP(in: root))
         _ = await engine.handle(.install(name: "php", line: "8.5"))
@@ -210,7 +206,7 @@ extension NexusEngineTests {
     }
 
     @Test func anExtensionThatLoadsForAnotherOneStaysOnWhenTheOtherOneTurnsOff() async throws {
-        let root = phpRoot()
+        let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makePHPEngine(root: root, package: try makeFakeCheckingPHP(in: root))
         _ = await engine.handle(.install(name: "php", line: "8.5"))

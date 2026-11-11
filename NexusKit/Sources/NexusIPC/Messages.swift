@@ -362,14 +362,19 @@ public struct ToolCommand: Codable, Sendable, Equatable {
     // The folder with pcov.enabled = 1 (owner, 2026-11-09). The nexus command adds it to
     // PHP_INI_SCAN_DIR for a command with --coverage.
     public var coverageFolder: String?
+    // The folder with the prepend file of the dump viewer. nexusd gives it only to php of the user
+    // and to the background processes while the setting "Commands and queue workers" is on. A test
+    // run sends no dump, because the prepend file finds the test run itself.
+    public var dumpsFolder: String?
 
-    public init(executable: String, arguments: [String] = [], environment: [String: String] = [:], path: [String] = [], wordPressCore: String? = nil, coverageFolder: String? = nil) {
+    public init(executable: String, arguments: [String] = [], environment: [String: String] = [:], path: [String] = [], wordPressCore: String? = nil, coverageFolder: String? = nil, dumpsFolder: String? = nil) {
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
         self.path = path
         self.wordPressCore = wordPressCore
         self.coverageFolder = coverageFolder
+        self.dumpsFolder = dumpsFolder
     }
 
     // phpunit, pest, paratest and php artisan test name each coverage report with --coverage. The
@@ -381,15 +386,25 @@ public struct ToolCommand: Codable, Sendable, Equatable {
         }
     }
 
-    // A PHP that the command starts, for example php artisan test, gets the folder too, because it
-    // is in the environment.
+    // A PHP that the command starts gets the folders too, because they are in the environment. An
+    // example is the PHP of php artisan test.
     public func environment(for arguments: [String]) -> [String: String] {
-        guard let coverageFolder, Self.asksForCoverage(arguments) else {
+        var folders: [String] = []
+
+        if let coverageFolder, Self.asksForCoverage(arguments) {
+            folders.append(coverageFolder)
+        }
+
+        if let dumpsFolder {
+            folders.append(dumpsFolder)
+        }
+
+        guard !folders.isEmpty else {
             return environment
         }
 
         var changed = environment
-        changed["PHP_INI_SCAN_DIR"] = [changed["PHP_INI_SCAN_DIR"], coverageFolder].compactMap { $0 }.joined(separator: ":")
+        changed["PHP_INI_SCAN_DIR"] = ([changed["PHP_INI_SCAN_DIR"]].compactMap { $0 } + folders).joined(separator: ":")
         return changed
     }
 }
