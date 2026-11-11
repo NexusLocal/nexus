@@ -79,7 +79,7 @@ public enum ProxyAddress {
             var name = [CChar](repeating: 0, count: Int(NI_MAXHOST))
 
             if getnameinfo(address, socklen_t(address.pointee.sa_len), &name, socklen_t(name.count), nil, 0, NI_NUMERICHOST) == 0 {
-                let text = String(decoding: name.prefix { $0 != 0 }.map(UInt8.init), as: UTF8.self)
+                let text = String(decoding: name.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
                 addresses.insert(text.split(separator: "%").first.map(String.init) ?? text)
             }
         }

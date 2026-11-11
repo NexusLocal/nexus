@@ -63,17 +63,18 @@ extension NexusEngine {
         let filled = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<Int32>.size))
 
         return pids.prefix(Int(max(filled, 0))).compactMap { pid in
-            var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
             var info = proc_bsdinfo()
             let infoSize = Int32(MemoryLayout<proc_bsdinfo>.size)
 
-            guard pid > 0,
-                  proc_pidpath(pid, &path, UInt32(path.count)) > 0,
-                  proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, infoSize) == infoSize else {
+            guard pid > 0, let path = PortInspector.executablePath(of: pid) else {
                 return nil
             }
 
-            return RunningProgram(pid: pid, parent: Int32(info.pbi_ppid), path: String(cString: path))
+            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, infoSize) == infoSize else {
+                return nil
+            }
+
+            return RunningProgram(pid: pid, parent: Int32(info.pbi_ppid), path: path)
         }
     }
 

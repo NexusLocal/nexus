@@ -31,7 +31,6 @@ public enum FileClone {
     // prepare gets the path of the part. A later setup keeps a clone with its final name, so what
     // must change in a clone changes before that name.
     public static func clone(_ source: String, to target: String, preparing prepare: (String) throws -> Void = { _ in }) throws {
-        let manager = FileManager.default
         let part = try partPath(of: target)
         defer { removeFolder(of: part) }
 

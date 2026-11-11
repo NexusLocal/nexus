@@ -184,7 +184,7 @@ extension NexusEngine {
             _ = try await wpCLI(["config", "set", "WP_ENVIRONMENT_TYPE", "local", "--type=constant"])
         } catch {
             try? FileManager.default.removeItem(at: core.appending(path: "wp-config.php"))
-            try? await client.query("DROP DATABASE \(Self.sqlName(plan.name))")
+            _ = try? await client.query("DROP DATABASE \(Self.sqlName(plan.name))")
             throw error
         }
 

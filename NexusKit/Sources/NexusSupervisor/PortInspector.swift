@@ -222,7 +222,7 @@ public enum PortInspector {
         )
     }
 
-    static func executablePath(of pid: Int32) -> String? {
+    public static func executablePath(of pid: Int32) -> String? {
         var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
         let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
 

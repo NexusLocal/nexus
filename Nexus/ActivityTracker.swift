@@ -5,7 +5,7 @@ import NexusCore
 // the name of a control and of a window. It never reads a value or a key press, so typed text and
 // passwords stay out of the log.
 enum ActivityTracker {
-    static let log = ActivityLog(file: NexusPaths.standard.activityLog, source: "app")
+    nonisolated static let log = ActivityLog(file: NexusPaths.standard.activityLog, source: "app")
 
     private static let textRoles: Set<NSAccessibility.Role> = [.staticText, .textField, .textArea]
     private static var clickMonitor: Any?
@@ -20,15 +20,25 @@ enum ActivityTracker {
 
         let center = NotificationCenter.default
 
+        // The queue is the main queue. So the menu item is safe to read on the main actor, although
+        // the compiler cannot see that.
         center.addObserver(forName: NSMenu.didSendActionNotification, object: nil, queue: .main) { notification in
-            if let item = notification.userInfo?["MenuItem"] as? NSMenuItem {
-                log.write("menu", item.title)
+            nonisolated(unsafe) let item = notification.userInfo?["MenuItem"] as? NSMenuItem
+
+            MainActor.assumeIsolated {
+                if let item {
+                    log.write("menu", item.title)
+                }
             }
         }
 
         center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { notification in
-            if let window = notification.object as? NSWindow {
-                log.write("window", window.title.isEmpty ? "A window without a title" : window.title)
+            let window = notification.object as? NSWindow
+
+            MainActor.assumeIsolated {
+                if let window {
+                    log.write("window", window.title.isEmpty ? "A window without a title" : window.title)
+                }
             }
         }
 

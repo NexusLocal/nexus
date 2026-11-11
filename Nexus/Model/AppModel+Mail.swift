@@ -289,7 +289,7 @@ extension AppModel {
             return
         }
 
-        for mail in newest.prefix { $0.id != seen }.reversed() {
+        for mail in newest.prefix(while: { $0.id != seen }).reversed() {
             let tag = mail.tags.first.map { " for \($0)" } ?? ""
             Notifier.post("New mail\(tag)", "\(mail.subject)\n\(mail.from)", setting: AppPreference.notifyNewMail)
         }

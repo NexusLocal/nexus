@@ -74,7 +74,7 @@ public enum TOMLTextEdit {
         var insertAt = range.lowerBound + 1
         var missing: [String] = []
 
-        for (index, line) in own where index < ownEnd {
+        for index in own.map(\.0) where index < ownEnd {
             if !isBlank(lines[index]), !lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("#") {
                 insertAt = index + 1
             }
