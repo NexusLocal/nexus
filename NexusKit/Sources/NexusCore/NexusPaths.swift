@@ -98,6 +98,12 @@ public struct NexusPaths: Sendable, Equatable {
         run.appending(path: "dumps.sock", directoryHint: .notDirectory)
     }
 
+    // PHP touches files in this folder, for example the pause file after a failed send. All PHP
+    // processes of Nexus share them.
+    public var dumpFolder: URL {
+        run.appending(path: "dumps", directoryHint: .isDirectory)
+    }
+
     public var dumpLog: URL {
         logs.appending(path: "dumps.jsonl", directoryHint: .notDirectory)
     }

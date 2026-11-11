@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import NexusCore
 
 public enum SupervisorError: Error, Equatable, CustomStringConvertible {
     case portInUse(port: Int, owner: PortOwner?)
@@ -325,15 +326,7 @@ public enum LogFile {
     // Programs can share one log. With O_APPEND each write goes to the end of the file, so no
     // program writes over the output of another program.
     public static func openForAppending(_ file: URL) throws -> FileHandle {
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-
-        let descriptor = open(file.path(percentEncoded: false), O_WRONLY | O_APPEND | O_CREAT, 0o644)
-
-        guard descriptor >= 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
-
-        return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        FileHandle(fileDescriptor: try AppendingFile.open(file, mode: 0o644), closeOnDealloc: true)
     }
 }
 

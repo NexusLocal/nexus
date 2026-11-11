@@ -3,14 +3,11 @@ import NexusCore
 
 public enum ConfigError: Error, Equatable, CustomStringConvertible {
     case unsafePath(String)
-    case socketPathTooLong(String)
 
     public var description: String {
         switch self {
         case .unsafePath(let path):
             "Nexus cannot use \(path) in a configuration file. The path has a character that the web servers read in a special way: a quote, a backslash, $, ;, *, ?, a brace, a bracket or a line break. Rename the folder."
-        case .socketPathTooLong(let path):
-            "The socket path \(path) is longer than the 103 bytes that macOS permits."
         }
     }
 }
@@ -86,12 +83,7 @@ enum ConfigText {
     }
 
     static func socket(_ url: URL, prefix: String = "") throws -> String {
-        let path = url.path(percentEncoded: false)
-
-        guard path.utf8.count <= 103 else {
-            throw ConfigError.socketPathTooLong(path)
-        }
-
+        try SocketError.checkPath(url)
         return try quoted(url, prefix: prefix)
     }
 }

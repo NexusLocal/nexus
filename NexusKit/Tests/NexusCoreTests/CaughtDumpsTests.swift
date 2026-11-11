@@ -141,6 +141,21 @@ struct CaughtDumpsTests {
         #expect(try roundTrip(command) == command)
     }
 
+    @Test func aRequestKeepsItsRoot() throws {
+        let page = DumpedRequest(id: "65f1c2a9e3b1", kind: .http, method: "GET", target: "/checkout", host: "shop.test", root: "/Users/x/Sites/shop/public", started: Self.started)
+
+        #expect(try roundTrip(page).root == "/Users/x/Sites/shop/public")
+    }
+
+    @Test func aRequestWithoutARootStillDecodes() throws {
+        let json = #"{"id":"a1b2c3","kind":"command","target":"php artisan migrate","started":0,"dumpCount":1,"hasDD":false}"#
+
+        let request = try JSONDecoder().decode(DumpedRequest.self, from: Data(json.utf8))
+
+        #expect(request.root == nil)
+        #expect(request.target == "php artisan migrate")
+    }
+
     @Test func aCommandShowsCLIAsItsMethod() {
         let page = DumpedRequest(id: "65f1c2a9e3b1", kind: .http, method: "POST", target: "/livewire/update", started: Self.started)
         let command = DumpedRequest(id: "a1b2c3", kind: .command, target: "php artisan import:products", started: Self.started)

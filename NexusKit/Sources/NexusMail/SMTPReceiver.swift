@@ -1,6 +1,7 @@
 import Darwin
 import Dispatch
 import Foundation
+import NexusCore
 import Synchronization
 
 // The SMTP server of nexusd on 127.0.0.1. Each connection runs on its own thread with blocking

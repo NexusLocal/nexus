@@ -38,6 +38,7 @@ struct NexusPathsTests {
         let paths = NexusPaths(root: URL(filePath: "/tmp/Nexus Test", directoryHint: .isDirectory))
 
         #expect(paths.dumpSocket.path(percentEncoded: false) == "/tmp/Nexus Test/run/dumps.sock")
+        #expect(paths.dumpFolder.path(percentEncoded: false) == "/tmp/Nexus Test/run/dumps/")
         #expect(paths.dumpLog.path(percentEncoded: false) == "/tmp/Nexus Test/logs/dumps.jsonl")
         #expect(paths.dumpLibrary.path(percentEncoded: false) == "/tmp/Nexus Test/php/dumps/")
     }

@@ -282,7 +282,7 @@ struct WebConfigTests {
     @Test func aSocketPathLongerThanMacOSPermitsIsRefused() {
         let long = site(.php(server: .nginx, documentRoot: URL(filePath: "/Sites/shop"), socket: URL(filePath: "/" + String(repeating: "a", count: 110) + ".sock")))
 
-        #expect(throws: ConfigError.self) {
+        #expect(throws: SocketError.pathTooLong("/" + String(repeating: "a", count: 110) + ".sock")) {
             try NginxConfig.render(sites: [long], settings: nginxSettings())
         }
     }

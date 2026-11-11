@@ -65,14 +65,8 @@ public final class ActivityLog: Sendable {
 
     static func append(_ line: String, to file: URL, limit: Int) {
         let path = file.path(percentEncoded: false)
-        var descriptor = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o600)
 
-        if descriptor < 0, errno == ENOENT {
-            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            descriptor = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o600)
-        }
-
-        guard descriptor >= 0 else {
+        guard let descriptor = try? AppendingFile.open(file, mode: 0o600) else {
             return
         }
 

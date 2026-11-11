@@ -5,12 +5,16 @@ import Foundation
 // file gets 0600 by default, because such files often hold keys or passwords.
 public enum FileText {
     public static func write(_ text: String, to file: URL, newFilePermissions: Int = 0o600) throws {
+        try write(Data(text.utf8), to: file, newFilePermissions: newFilePermissions)
+    }
+
+    public static func write(_ data: Data, to file: URL, newFilePermissions: Int = 0o600) throws {
         let target = file.resolvingSymlinksInPath()
         let path = target.path(percentEncoded: false)
         let permissions = (try? FileManager.default.attributesOfItem(atPath: path))?[.posixPermissions] as? Int ?? newFilePermissions
 
         try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data(text.utf8).write(to: target, options: .atomic)
+        try data.write(to: target, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: path)
     }
 }

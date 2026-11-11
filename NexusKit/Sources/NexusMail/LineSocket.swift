@@ -1,17 +1,6 @@
 import Darwin
 import Foundation
-
-enum SocketError: Error, CustomStringConvertible {
-    case system(String, Int32)
-    case lineTooLong
-
-    var description: String {
-        switch self {
-        case .system(let call, let code): "\(call) failed: \(String(cString: strerror(code)))"
-        case .lineTooLong: "A line is longer than the limit."
-        }
-    }
-}
+import NexusCore
 
 // A TCP socket that reads and writes lines that end in CRLF. A bare LF also ends a line. The
 // timeout ends a read or a write that waits too long, so a client that stops cannot keep a thread.

@@ -86,10 +86,7 @@ extension NexusEngine {
         let line = tools.runtime.line
         let socket = paths.databaseSocket(tools.kind, line: line, port: try await port(of: tools))
 
-        guard socket.path(percentEncoded: false).utf8.count <= 103 else {
-            throw ConfigError.socketPathTooLong(socket.path(percentEncoded: false))
-        }
-
+        try SocketError.checkPath(socket)
         try FileManager.default.createDirectory(at: paths.run, withIntermediateDirectories: true)
 
         if tools.kind.usesMySQLProtocol {

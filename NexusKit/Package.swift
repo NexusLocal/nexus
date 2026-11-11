@@ -39,6 +39,8 @@ let package = Package(
         .target(name: "NexusDNS", dependencies: ["NexusCore"]),
         .target(name: "NexusMail", dependencies: ["NexusCore"]),
         .target(name: "NexusConfig", dependencies: ["NexusCore"]),
+        // The receiver and the store of the dumps that the prepend file of PHP sends.
+        .target(name: "NexusDumps", dependencies: ["NexusCore"]),
         .target(name: "NexusTLS", dependencies: [
             "NexusCore",
             .product(name: "X509", package: "swift-certificates"),
@@ -50,7 +52,7 @@ let package = Package(
         .target(name: "NexusIPC", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusMail"]),
         .target(name: "NexusLaravel", dependencies: ["NexusCore", "NexusSupervisor"]),
         .target(name: "NexusWorkspaces", dependencies: ["NexusCore", "NexusSupervisor"]),
-        .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig", "NexusLaravel", "NexusWorkspaces", "NexusMail"]),
+        .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig", "NexusLaravel", "NexusWorkspaces", "NexusMail", "NexusDumps"]),
         // The MCP server of nexus mcp, the tools that agents call, and the setup of each agent.
         // The app uses the setup and the settings of the agents.
         .target(name: "NexusMCP", dependencies: ["NexusCore", "NexusIPC", "NexusLaravel", "NexusMail", "NexusRuntime", "NexusSupervisor", "NexusWorkspaces"]),
@@ -71,6 +73,7 @@ let package = Package(
         .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusMail", "NexusTestSupport"]),
         .testTarget(name: "NexusDNSTests", dependencies: ["NexusDNS", "NexusTestSupport"]),
         .testTarget(name: "NexusMailTests", dependencies: ["NexusMail"]),
+        .testTarget(name: "NexusDumpsTests", dependencies: ["NexusDumps", "NexusCore"]),
         .testTarget(name: "NexusConfigTests", dependencies: ["NexusConfig"]),
         .testTarget(name: "NexusLaravelTests", dependencies: ["NexusLaravel", "NexusCore"]),
         .testTarget(name: "NexusWorkspacesTests", dependencies: ["NexusWorkspaces", "NexusCore", "NexusSupervisor"]),

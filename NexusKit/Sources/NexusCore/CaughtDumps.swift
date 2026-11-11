@@ -80,6 +80,10 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
     public let target: String
     public let url: String?
     public let host: String?
+    // The document root of a web request or the working folder of a command. nexusd finds the
+    // site and the workspace again from the host and this folder when a site changes. A request
+    // of an older nexusd has none.
+    public let root: String?
     public var site: String?
     public var workspace: String?
     public let started: Date
@@ -92,13 +96,14 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
     public var dumpCount: Int
     public var hasDD: Bool
 
-    public init(id: String, kind: Kind, method: String? = nil, target: String, url: String? = nil, host: String? = nil, site: String? = nil, workspace: String? = nil, started: Date, status: Int? = nil, exitCode: Int? = nil, duration: TimeInterval? = nil, dumpCount: Int = 0, hasDD: Bool = false) {
+    public init(id: String, kind: Kind, method: String? = nil, target: String, url: String? = nil, host: String? = nil, root: String? = nil, site: String? = nil, workspace: String? = nil, started: Date, status: Int? = nil, exitCode: Int? = nil, duration: TimeInterval? = nil, dumpCount: Int = 0, hasDD: Bool = false) {
         self.id = id
         self.kind = kind
         self.method = method
         self.target = target
         self.url = url
         self.host = host
+        self.root = root
         self.site = site
         self.workspace = workspace
         self.started = started
