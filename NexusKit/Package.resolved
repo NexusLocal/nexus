@@ -1,5 +1,5 @@
 {
-  "originHash" : "695113cec647512e6cd1ee26a2210746b72c64bf39d4fa08a350e1fbdc5eac60",
+  "originHash" : "bc6495ee222def3f677dab303fe69c6ddb3b090b45e45b750fc56eecfb13767f",
   "pins" : [
     {
       "identity" : "sentry-cocoa",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-asn1",
       "state" : {
-        "revision" : "3b6410f7dee09eb33cdd26260c5fd47fda19b0e2",
-        "version" : "1.7.3"
+        "revision" : "917b472dbe53ba699cbb0495f9a95a084bc6364d",
+        "version" : "1.7.4"
       }
     },
     {
