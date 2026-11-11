@@ -639,7 +639,7 @@ extension NexusEngine {
             try FileManager.default.createSymbolicLink(at: bin.appending(path: "php"), withDestinationURL: Self.phpBinary(php))
 
             if let composer = Self.newest("composer", in: installed) {
-                let script = "#!/bin/sh\nexec \(WorkspaceKeys.shellWord(Self.phpBinary(php).path(percentEncoded: false))) \(WorkspaceKeys.shellWord(composer.pharFile.path(percentEncoded: false))) \"$@\"\n"
+                let script = "#!/bin/sh\nexec \(ShellWord.quoted(Self.phpBinary(php).path(percentEncoded: false))) \(ShellWord.quoted(composer.pharFile.path(percentEncoded: false))) \"$@\"\n"
                 let file = bin.appending(path: "composer")
                 try Data(script.utf8).write(to: file)
                 try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path(percentEncoded: false))

@@ -110,7 +110,6 @@ public enum AgentKind: String, CaseIterable, Codable, Sendable, Identifiable {
         self == .claudeCode
     }
 
-    // The name in the CLI, for example claude-code.
     public var argument: String {
         rawValue.replacing("_", with: "-")
     }
@@ -277,13 +276,13 @@ public struct AgentSetup: Sendable {
             try setClaudeCodeRules(askBeforeLooking: askBeforeLooking)
         case .codex:
             for file in targetFiles(of: agent) {
-                try change(file, instruction:addInstruction(agent), entry: entryText(for: agent)) { text in
+                try change(file, instruction: addInstruction(agent), entry: entryText(for: agent)) { text in
                     try TOMLTextEdit.setting(["mcp_servers", serverName], keys: codexKeys(askBeforeLooking: askBeforeLooking), in: text)
                 }
             }
         default:
             for file in targetFiles(of: agent) {
-                try change(file, instruction:addInstruction(agent), entry: entryText(for: agent)) { text in
+                try change(file, instruction: addInstruction(agent), entry: entryText(for: agent)) { text in
                     try JSONTextEdit.setting([agent.serversKey, serverName], to: entry(for: agent), in: text)
                 }
             }
@@ -303,7 +302,7 @@ public struct AgentSetup: Sendable {
             try setClaudeCodeRules(askBeforeLooking: true)
         default:
             for file in files(of: agent) where exists(file) {
-                try change(file, instruction:"Remove the entry \(serverName) from it yourself.", entry: "") { text in
+                try change(file, instruction: "Remove the entry \(serverName) from it yourself.", entry: "") { text in
                     agent == .codex
                         ? try TOMLTextEdit.removing(["mcp_servers", serverName], in: text)
                         : try JSONTextEdit.removing([agent.serversKey, serverName], in: text)

@@ -519,7 +519,7 @@ extension NexusEngine {
                 return nil
             }
 
-            let expanded = WorkspaceKeys.expanded(command, workspace: list.name, host: list.host, database: list.database.map(WorkspaceKeys.shellWord), ports: list.ports)
+            let expanded = WorkspaceKeys.expanded(command, workspace: list.name, host: list.host, database: list.database.map(ShellWord.quoted), ports: list.ports)
 
             return BackgroundProcess(owner: list.owner, command: expanded, log: list.log, worktree: list.worktree, definition: ServiceDefinition(
                 id: "\(list.owner)\n\(expanded)",

@@ -62,9 +62,13 @@ private actor FakeInbox: MailInbox {
     var summaries: [MailpitAPI.Summary]
     var queries: [String] = []
     var removed: [String] = []
+    var mostSearchesAtOnce = 0
+    private var searchesNow = 0
+    private let searchTime: Duration
 
-    init(_ summaries: [MailpitAPI.Summary]) {
+    init(_ summaries: [MailpitAPI.Summary], searchTime: Duration = .zero) {
         self.summaries = summaries
+        self.searchTime = searchTime
     }
 
     func add(_ summary: MailpitAPI.Summary) {
@@ -73,6 +77,10 @@ private actor FakeInbox: MailInbox {
 
     func search(_ query: String, limit: Int) async throws -> [MailpitAPI.Summary] {
         queries.append(query)
+        searchesNow += 1
+        mostSearchesAtOnce = max(mostSearchesAtOnce, searchesNow)
+        try await Task.sleep(for: searchTime)
+        searchesNow -= 1
 
         return summaries.filter { summary in
             query.split(separator: " ").allSatisfy { term in
@@ -139,7 +147,7 @@ struct MailReaderTests {
         let inbox = FakeInbox([])
 
         Task {
-            try await Task.sleep(for: .milliseconds(100))
+            try? await Task.sleep(for: .milliseconds(100))
             await inbox.add(Self.mail("late", to: "bob@example.com", tag: "shop.test", at: .now))
         }
 
@@ -160,6 +168,18 @@ struct MailReaderTests {
         let mails = try await MailReader(inbox: inbox).list(tags: ["shop.test", "fix.shop.test"], limit: 10)
 
         #expect(mails.map(\.id) == ["a", "c"])
+    }
+
+    @Test func aSiteWithManyWorkspacesSendsALimitedNumberOfSearchesAtOnce() async throws {
+        let now = Date.now
+        let tags = (0..<10).map { "fix\($0).shop.test" }
+        let inbox = FakeInbox(tags.enumerated().map { index, tag in Self.mail("\(index)", to: "x", tag: tag, at: now.addingTimeInterval(-Double(index))) }, searchTime: .milliseconds(20))
+        let mails = try await MailReader(inbox: inbox).list(tags: tags, limit: 20)
+
+        #expect(mails.map(\.id) == (0..<10).map(String.init))
+        #expect(await inbox.queries.count == 10)
+        #expect(await inbox.mostSearchesAtOnce <= MailReader.searchesAtOnce)
+        #expect(await inbox.mostSearchesAtOnce > 1)
     }
 
     @Test func clearRemovesOnlyTheMailOfTheSite() async throws {

@@ -32,6 +32,8 @@ final class AgentsModel {
     private(set) var restartNeeded: Set<AgentKind> = []
     @ObservationIgnored private var connectedAt: [AgentKind: Date] = [:]
     @ObservationIgnored private let setup: AgentSetup?
+    @ObservationIgnored private var terminationObserver: (any NSObjectProtocol)?
+    @ObservationIgnored private var settingsChanges = 0
 
     init(setup: AgentSetup?) {
         self.setup = setup
@@ -45,10 +47,16 @@ final class AgentsModel {
             return
         }
 
-        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+        terminationObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.updateRestarts()
             }
+        }
+    }
+
+    isolated deinit {
+        if let terminationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(terminationObserver)
         }
     }
 
@@ -86,8 +94,9 @@ final class AgentsModel {
             return
         }
 
+        let changes = settingsChanges
         let snapshot = await Task.detached { Self.read(setup) }.value
-        settings = snapshot.settings
+        keep(snapshot.settings, ifNoChangeSince: changes)
         onThisMac = snapshot.onThisMac
         states = snapshot.states
         failures = [:]
@@ -100,11 +109,14 @@ final class AgentsModel {
             return
         }
 
-        settings = AgentSettings.load()
+        let changes = settingsChanges
+        keep(await Task.detached { AgentSettings.load() }.value, ifNoChangeSince: changes)
 
-        if !settings.noticeShown {
-            await load()
+        guard !settings.noticeShown else {
+            return
         }
+
+        await load()
     }
 
     // The list fills itself once with the agents on this Mac. After that, only "Find agents" adds
@@ -277,6 +289,16 @@ final class AgentsModel {
         let states: [AgentKind: AgentState]
     }
 
+    // A change of the user while a read runs is newer than the read. So the read does not replace
+    // that change.
+    private func keep(_ read: AgentSettings, ifNoChangeSince changes: Int) {
+        guard changes == settingsChanges else {
+            return
+        }
+
+        settings = read
+    }
+
     private nonisolated static func read(_ setup: AgentSetup) -> Snapshot {
         Snapshot(
             settings: AgentSettings.load(),
@@ -300,6 +322,7 @@ final class AgentsModel {
         var fresh = setup == nil ? settings : AgentSettings.load()
         change(&fresh)
         settings = fresh
+        settingsChanges += 1
 
         guard setup != nil else {
             return

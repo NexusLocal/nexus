@@ -41,7 +41,7 @@ struct TestDatabasePlanTests {
         let check = try #require(TestDatabaseCheck.check(projectFolder: folder))
 
         let plan = try #require(TestDatabasePlan.make(for: .database("db_finly_testing"), check: check, projectFolder: folder))
-        let backup = try plan.apply(projectFolder: folder)
+        let backup = try plan.apply()
 
         #expect(plan.file == ".env.testing")
         #expect(plan.createsFile)
@@ -58,7 +58,7 @@ struct TestDatabasePlanTests {
         let check = try #require(TestDatabaseCheck.check(projectFolder: folder))
 
         let plan = try #require(TestDatabasePlan.make(for: .sqliteMemory, check: check, projectFolder: folder))
-        let backup = try plan.apply(projectFolder: folder)
+        let backup = try plan.apply()
 
         #expect(!plan.createsFile)
         #expect(backup == ".env.testing.backup")
@@ -73,7 +73,7 @@ struct TestDatabasePlanTests {
         try "old".write(to: folder.appending(path: ".env.testing.backup"), atomically: true, encoding: .utf8)
         let check = try #require(TestDatabaseCheck.check(projectFolder: folder))
 
-        let backup = try TestDatabasePlan.make(for: .database("other"), check: check, projectFolder: folder)?.apply(projectFolder: folder)
+        let backup = try TestDatabasePlan.make(for: .database("other"), check: check, projectFolder: folder)?.apply()
 
         #expect(backup == ".env.testing.backup-2")
         #expect(try read(".env.testing.backup", in: folder) == "old")
@@ -111,7 +111,7 @@ struct TestDatabasePlanTests {
         let plan = try #require(TestDatabasePlan.make(for: .database("db_finly_testing"), check: check, projectFolder: folder))
 
         #expect(plan.changesNothing)
-        #expect(try plan.apply(projectFolder: folder) == nil)
+        #expect(try plan.apply() == nil)
         #expect(!FileManager.default.fileExists(atPath: folder.appending(path: ".env.testing.backup").path(percentEncoded: false)))
     }
 

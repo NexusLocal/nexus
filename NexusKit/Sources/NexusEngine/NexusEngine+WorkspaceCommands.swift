@@ -22,7 +22,7 @@ extension NexusEngine {
         let state = await stateStore.current()
         let sites = resolvedSites(state).map(\.site).filter { ProjectFolder.workspaceKey(of: $0) == key }
         let host = workspace.hosts(of: sites, tld: state.tld).first ?? ""
-        let databaseWord = database.map(WorkspaceKeys.shellWord)
+        let databaseWord = database.map(ShellWord.quoted)
         let finished = workspace.finishedCommands
         let seeding = workspace.databaseKind == .empty && sites.contains(where: \.runsWorkspaceSeeders)
         let pending = Self.commands(of: sites, seeding: seeding).filter { !finished.contains($0) }
@@ -114,7 +114,7 @@ extension NexusEngine {
         // The log of the workspace goes away with the workspace. So the output goes to a log of the
         // main site.
         let host = workspace.hosts(of: sites, tld: state.tld).first ?? ""
-        let database = workspace.database.map(WorkspaceKeys.shellWord)
+        let database = workspace.database.map(ShellWord.quoted)
         let log = Self.removalLog(of: sites.first?.host ?? host)
         var warnings: [String] = []
 

@@ -52,8 +52,8 @@ struct SiteDatabasesSection: View {
             Text("Nexus finds these connections in the configuration of the application. \"Import dump…\" loads a dump file into that database. \"Open\" uses the app of Settings > Databases > Open with.\(tests != nil && !warnsAboutTests ? " \"tests\" is the database of the tests." : "")")
         }
         .sheet(isPresented: $choosesTestDatabase) {
-            if let tests {
-                TestDatabaseSheet(site: site, folder: projectFolder ?? site.projectFolder, check: tests, server: testServer) { action in
+            if let tests, let projectFolder {
+                TestDatabaseSheet(site: site, folder: projectFolder, check: tests, server: testServer) { action in
                     Task {
                         await model.apply(action, to: site)
                         await load()

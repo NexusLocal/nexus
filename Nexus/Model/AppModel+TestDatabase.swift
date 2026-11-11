@@ -14,13 +14,6 @@ enum TestDatabaseAction {
     case keep
 }
 
-extension SiteItem {
-    // A site on public/ has phpunit.xml and the env files one folder up, in the project folder.
-    var projectFolder: URL {
-        NexusCore.ProjectFolder.projectFolderURL(ofSiteFolder: URL(filePath: folder, directoryHint: .isDirectory))
-    }
-}
-
 // The help for tests that use the development database. The user is in charge. Nexus only
 // writes the env file of the tests, and makes a database when the user asks for it.
 extension AppModel {
@@ -55,7 +48,7 @@ extension AppModel {
             }
 
             do {
-                let backup = try plan.apply(projectFolder: site.projectFolder)
+                let backup = try plan.apply()
                 ActivityTracker.log.write("tests", "\(site.host): \(plan.file) has \(plan.changeText)\(backup.map { ", backup \($0)" } ?? "")")
                 setKeepsTestDatabase(false, of: site)
             } catch {

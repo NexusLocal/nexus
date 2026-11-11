@@ -178,7 +178,7 @@ private struct NewSiteForm: View {
                 ForEach(Array(stride(from: 0, to: SiteTemplate.allCases.count, by: 3)), id: \.self) { start in
                     GridRow {
                         ForEach(SiteTemplate.allCases[start..<min(start + 3, SiteTemplate.allCases.count)], id: \.self) { choice in
-                            TemplateCard(template: choice, selected: template == choice) {
+                            ChoiceCard(title: choice.displayName, detail: choice.summary, selected: template == choice) {
                                 template = choice
                             }
                         }
@@ -549,42 +549,6 @@ private struct NewSiteForm: View {
             framework: framework,
             packageManager: packageManager
         ))
-    }
-}
-
-private struct TemplateCard: View {
-    let template: SiteTemplate
-    let selected: Bool
-    let select: () -> Void
-
-    var body: some View {
-        Button(action: select) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : .secondary)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(template.displayName)
-                        .fontWeight(.semibold)
-                    Text(template.summary)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 0)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(selected ? Color.accentSoft : Color.clear, in: .rect(cornerRadius: 10))
-            .background(.fill.quaternary, in: .rect(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 1.5)
-            }
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
     }
 }
 

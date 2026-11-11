@@ -453,11 +453,4 @@ struct WorkspaceKeysTests {
 
         #expect(WorkspaceKeys.portNames(in: keys.map(\.value)) == ["scout", "vite"])
     }
-
-    @Test func aValueForTheShellGetsQuotesOnlyWhenItNeedsThem() {
-        #expect(WorkspaceKeys.shellWord("shop_fix") == "shop_fix")
-        #expect(WorkspaceKeys.shellWord("/Users/me/shop/database.sqlite") == "/Users/me/shop/database.sqlite")
-        #expect(WorkspaceKeys.shellWord("/Users/Jane Doe/db.sqlite") == "'/Users/Jane Doe/db.sqlite'")
-        #expect(WorkspaceKeys.shellWord("/Users/jane's/db.sqlite") == #"'/Users/jane'\''s/db.sqlite'"#)
-    }
 }

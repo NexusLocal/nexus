@@ -81,6 +81,7 @@ public struct MailReader: Sendable {
     public static let lookBack: TimeInterval = 60
     public static let defaultWait = 30
     public static let longestWait = 50
+    static let searchesAtOnce = 4
 
     let inbox: any MailInbox
 
@@ -154,24 +155,31 @@ public struct MailReader: Sendable {
         }
 
         // A site with workspaces has a tag for each workspace. wait asks again each half second.
-        // So the searches run at the same time.
+        // So the searches run at the same time, with a limit for a site with many workspaces.
         let inbox = inbox
-        var found: [String: MailpitAPI.Summary] = [:]
 
-        try await withThrowingTaskGroup(of: [MailpitAPI.Summary].self) { group in
-            for tag in tags {
+        let found = try await withThrowingTaskGroup(of: [MailpitAPI.Summary].self) { group in
+            var merged: [String: MailpitAPI.Summary] = [:]
+
+            for (index, tag) in tags.enumerated() {
+                if index >= Self.searchesAtOnce, let page = try await group.next() {
+                    page.forEach { summary in merged[summary.id] = summary }
+                }
+
                 let query = (terms + ["tag:\(Self.quoted(tag))"]).joined(separator: " ")
                 group.addTask { try await inbox.search(query, limit: limit) }
             }
 
-            for try await summaries in group {
-                for summary in summaries {
-                    found[summary.id] = summary
-                }
+            for try await page in group {
+                page.forEach { summary in merged[summary.id] = summary }
             }
+
+            return merged
         }
 
-        return Array(found.values.sorted { (Self.date($0.created) ?? .distantPast) > (Self.date($1.created) ?? .distantPast) }.prefix(limit))
+        let dated = found.values.map { summary in (date: Self.date(summary.created) ?? .distantPast, summary: summary) }
+
+        return dated.sorted { $0.date > $1.date }.prefix(limit).map(\.summary)
     }
 
     static func quoted(_ value: String) -> String {

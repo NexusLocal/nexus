@@ -39,7 +39,8 @@ public enum TerminalOutput {
         Array(lines(tailText(of: file, maximumBytes: maximumBytes)).suffix(count))
     }
 
-    // The read can start in the middle of a line. So that part line goes away.
+    // The read can start in the middle of a line. So that part line goes away. The read starts one
+    // byte early. So a line that starts exactly at the limit stays.
     public static func tailText(of file: URL, maximumBytes: Int) -> String {
         guard let handle = try? FileHandle(forReadingFrom: file) else {
             return ""
@@ -49,14 +50,18 @@ public enum TerminalOutput {
 
         let size = (try? handle.seekToEnd()) ?? 0
         let start = size > UInt64(maximumBytes) ? size - UInt64(maximumBytes) : 0
-        try? handle.seek(toOffset: start)
-        let text = String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
+        try? handle.seek(toOffset: start > 0 ? start - 1 : 0)
+        let data = (try? handle.readToEnd()) ?? Data()
 
-        guard start > 0, let newline = text.firstIndex(of: "\n") else {
-            return text
+        guard start > 0 else {
+            return String(decoding: data, as: UTF8.self)
         }
 
-        return String(text[text.index(after: newline)...])
+        guard let newline = data.firstIndex(of: UInt8(ascii: "\n")) else {
+            return String(decoding: data.dropFirst(), as: UTF8.self)
+        }
+
+        return String(decoding: data[data.index(after: newline)...], as: UTF8.self)
     }
 
     // The label of the spinner that runs now, for example "Setting up frontend dependencies with

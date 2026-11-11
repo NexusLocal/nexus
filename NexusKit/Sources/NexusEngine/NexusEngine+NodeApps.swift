@@ -29,7 +29,7 @@ extension NexusEngine {
 
         let folder = URL(filePath: list.folder, directoryHint: .isDirectory)
         let project = NodeProject.read(in: folder)
-        let custom = site.command.map { WorkspaceKeys.expanded($0, workspace: list.name, host: list.host, database: list.database.map(WorkspaceKeys.shellWord), ports: list.ports) }
+        let custom = site.command.map { WorkspaceKeys.expanded($0, workspace: list.name, host: list.host, database: list.database.map(ShellWord.quoted), ports: list.ports) }
 
         guard let launch = NodeAppLaunch.make(command: custom, project: project, port: port, hosts: hosts, tld: tld) else {
             plannedProcessProblems[list.owner, default: []].append("The Node.js app does not run, because package.json has no dev or start script. Set a command, for example: nexus site edit \(site.host) --command \"npm run dev\"")

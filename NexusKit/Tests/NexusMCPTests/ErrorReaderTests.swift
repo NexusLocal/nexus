@@ -114,4 +114,15 @@ struct ErrorReaderTests {
 
         #expect(ErrorReader.tail(of: log, bytes: 16) == "second\nthird\n")
     }
+
+    @Test func theTailKeepsALineThatStartsExactlyAtTheLimit() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "nexus-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let log = folder.appending(path: "big.log")
+        try "first\nsecond\nthird\n".write(to: log, atomically: true, encoding: .utf8)
+
+        #expect(ErrorReader.tail(of: log, bytes: 13) == "second\nthird\n")
+    }
 }

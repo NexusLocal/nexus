@@ -18,6 +18,7 @@ public struct TestDatabasePlan: Sendable, Equatable {
         public let value: String
     }
 
+    public let projectFolder: URL
     public let file: String
     public let createsFile: Bool
     public let changes: [Change]
@@ -74,7 +75,7 @@ public struct TestDatabasePlan: Sendable, Equatable {
             check.phpunitDatabaseValues[change.key] == nil && (files.current[change.key] ?? (change.key == "DB_URL" ? "" : nil)) != change.value
         }
 
-        return TestDatabasePlan(file: files.file, createsFile: !files.exists, changes: changes, backupFile: files.exists ? freeName(for: "\(files.file).backup", in: files.folder) : nil)
+        return TestDatabasePlan(projectFolder: files.folder, file: files.file, createsFile: !files.exists, changes: changes, backupFile: files.exists ? freeName(for: "\(files.file).backup", in: files.folder) : nil)
     }
 
     public static func phpunitConflicts(for target: Target, check: TestDatabaseCheck, projectFolder: URL) -> [String] {
@@ -119,7 +120,7 @@ public struct TestDatabasePlan: Sendable, Equatable {
     // replaces an older one. The backup holds the text of the file, also when the file is a link.
     // Returns the name of the backup.
     @discardableResult
-    public func apply(projectFolder: URL) throws -> String? {
+    public func apply() throws -> String? {
         guard !changesNothing else {
             return nil
         }

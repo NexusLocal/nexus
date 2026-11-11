@@ -10,11 +10,6 @@ public enum WorkspaceKeys {
         return Array(Set(names)).sorted()
     }
 
-    // A SQLite path can hold a space. The shell of a command would split that path.
-    public static func shellWord(_ text: String) -> String {
-        ShellWord.quoted(text)
-    }
-
     public static func expanded(_ keys: [WorkspaceEnvKey], workspace: String, host: String, database: String?, ports: [String: Int]) -> [String: String] {
         keys.reduce(into: [String: String]()) { result, entry in
             result[entry.key] = expanded(entry.value, workspace: workspace, host: host, database: database, ports: ports)

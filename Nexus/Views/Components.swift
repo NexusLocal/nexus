@@ -1,4 +1,5 @@
 import AppKit
+import NexusCore
 import SwiftUI
 
 // A box of rows with a line between them, for the screens that cannot use a grouped Form.
@@ -286,7 +287,7 @@ struct ChoiceCard: View {
             .background(.fill.quaternary, in: .rect(cornerRadius: 10))
             .overlay {
                 RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 1.5)
+                    .strokeBorder(selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.separator), lineWidth: selected ? 1.5 : 1)
             }
             .contentShape(.rect)
         }
@@ -468,19 +469,7 @@ nonisolated enum LogTail {
     }
 
     static func read(_ file: URL, count: Int) -> [String] {
-        guard let handle = try? FileHandle(forReadingFrom: file) else {
-            return []
-        }
-        defer { try? handle.close() }
-
-        let size = (try? handle.seekToEnd()) ?? 0
-        let start = size > 65_536 ? size - 65_536 : 0
-        try? handle.seek(toOffset: start)
-        let text = String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
-        let lines = text.split(separator: "\n").map(String.init)
-
-        // A read from the middle of the file starts in the middle of a line.
-        return Array((start > 0 ? lines.dropFirst() : lines[...]).suffix(count))
+        Array(TerminalOutput.tailText(of: file, maximumBytes: 65_536).split(separator: "\n").map(String.init).suffix(count))
     }
 
     // A log can be replaced or truncated. So the watch starts again on the new file. After a
