@@ -9,6 +9,9 @@ public enum ServiceID {
     public static let smtpPortKey = "smtp"
     public static let inboxPortKey = "inbox"
     public static let mailpitSMTPPortKey = "mailpit-smtp"
+    // The port of the web page of the dumps in the port registry of nexusd.
+    public static let dumpPagePortKey = "dump-page"
+    public static let dumpPageStandardPort = 8026
 
     public static func php(line: String) -> String {
         "php-\(line)"

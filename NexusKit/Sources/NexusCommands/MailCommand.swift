@@ -19,11 +19,7 @@ struct MailCommand: AsyncParsableCommand {
 
         func run() async throws {
             let api = try await inbox()
-            let process = Process()
-            process.executableURL = URL(filePath: "/usr/bin/open")
-            process.arguments = [api.inboxURL.absoluteString]
-            try process.run()
-            process.waitUntilExit()
+            try await openWithSystem(api.inboxURL.absoluteString)
             print("The inbox opens in the browser: \(api.inboxURL.absoluteString)")
         }
     }
@@ -111,7 +107,7 @@ struct MailCommand: AsyncParsableCommand {
             }
 
             try await api.remove(ids: found)
-            print(found.count == 1 ? "Nexus removed the mail \(found[0]) from the inbox." : "Nexus removed \(found.count) mails from the inbox.")
+            print(found.count == 1 ? "Nexus removed the mail \(found[0]) from the inbox." : "Nexus removed \(Count.text(found.count, "mail")) from the inbox.")
         }
     }
 
@@ -144,7 +140,7 @@ struct MailCommand: AsyncParsableCommand {
 
             let size = ByteCountFormatter.string(fromByteCount: Int64(status.waitingBytes), countStyle: .file)
             let one = status.waiting == 1
-            print("\(one ? "1 mail waits" : "\(status.waiting) mails wait") in the outbox (\(size)): \(status.outboxFolder)")
+            print("\(Count.text(status.waiting, "mail")) \(one ? "waits" : "wait") in the outbox (\(size)): \(status.outboxFolder)")
             let them = one ? "it" : "them"
 
             if status.running {
@@ -154,11 +150,11 @@ struct MailCommand: AsyncParsableCommand {
             }
 
             if status.removed > 0 {
-                print("The limits of the outbox removed \(count(status.removed, "mail")). See: nexus mail settings")
+                print("The limits of the outbox removed \(Count.text(status.removed, "mail")). See: nexus mail settings")
             }
 
             if status.refused > 0 {
-                print("Mailpit refused \(count(status.refused, "mail")). They are in the folder refused next to the outbox.")
+                print("Mailpit refused \(Count.text(status.refused, "mail")). They are in the folder refused next to the outbox.")
             }
         }
     }
@@ -262,8 +258,4 @@ private func shortTime(_ created: String) -> String {
     }
 
     return date.formatted(.dateTime.year().month(.twoDigits).day(.twoDigits).hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
-}
-
-private func count(_ number: Int, _ noun: String) -> String {
-    number == 1 ? "1 \(noun)" : "\(number) \(noun)s"
 }

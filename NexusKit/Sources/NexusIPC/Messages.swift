@@ -1026,11 +1026,15 @@ public struct TaskList: Codable, Sendable, Equatable {
     }
 }
 
-// What nexusd sends to the app without a request, after each change.
+// What nexusd sends to the app without a request, after each change. A new watcher gets dumpList
+// with all requests. After that dumpChanges brings only the changed request headers. dumpList comes
+// again after a change of the settings, the blocks, the receiver or the problem.
 public enum NexusEvent: Codable, Sendable, Equatable {
     case services(ServiceList)
     case sites(SiteList)
     case tasks(TaskList)
+    case dumpList(DumpList)
+    case dumpChanges(DumpChange)
 }
 
 public enum NexusRequest: Codable, Sendable, Equatable {
@@ -1161,6 +1165,34 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     // that run. The app gets the same lists as events.
     case serviceList
     case tasks
+    // The dump viewer. dumpList gives the request headers without their dumps. A place gives only
+    // the requests and the blocks of that site or workspace. nil gives all. DumpPlace() gives the
+    // requests without a site.
+    case dumpList(place: DumpPlace?)
+    // The dumps of one request with a number above afterNumber, in the order in which they
+    // arrived. It answers with caughtDumps. A dump with a lower seq that arrives later has a
+    // higher number. So it comes too.
+    case requestDumps(request: String, afterNumber: Int)
+    case clearCaughtDumps(place: DumpPlace?)
+    // number is the number of the dump in the store. A request without dumps goes from the list.
+    case removeCaughtDump(number: Int)
+    case removeDumpedRequest(id: String)
+    // The web page of the dumps opens the file of a dump in the code editor of Settings > General.
+    // nexusd opens only the file of a dump that it has, never a path of the request.
+    case openCaughtDumpFile(number: Int)
+    case setDumpSettings(DumpSettings)
+    // newDumps gives the dumps of a place that came after a cursor of the store, in one read.
+    // lastDumps gives the newest dumps of a place, at most limit, up to the cursor of a list. nil
+    // reads up to the newest dump. Both answer with dumpBatch. A cursor of another epoch gives no
+    // dumps and the current cursor. Before the load of the store both fail with
+    // DumpList.notLoadedText. dumpPlace gives the place of a host of a site, an alias or a host of a
+    // workspace, also as a URL.
+    case newDumps(place: DumpPlace?, after: DumpCursor)
+    case lastDumps(place: DumpPlace?, limit: Int, through: DumpCursor?)
+    case dumpPlace(host: String)
+    // The settings, the blocks of the place, receiving, problem and loaded without the requests.
+    // nil gives the blocks of all places.
+    case dumpState(place: DumpPlace?)
     // A request of a coding agent through nexus mcp. nexusd handles the request inside and names
     // the agent in activity.log.
     indirect case fromAgent(agent: String, request: NexusRequest)
@@ -1298,24 +1330,75 @@ public struct MailStatus: Codable, Sendable, Equatable {
 
 // What the Dumps screen and nexus dumps show. requests has the newest request first. The coding of
 // the messages drops fractions of a second. So the app keeps this order and does not sort by
-// started.
+// started. cursor comes from the same moment as requests. newDumps after this cursor gives each
+// dump that came after the list. loaded is false while nexusd did not load the dumps of its last
+// run yet. The list is then empty and has no cursor.
 public struct DumpList: Codable, Sendable, Equatable {
+    public static let notLoadedText = "nexusd loads the dumps of its last run. Try again in a moment."
+
     public let requests: [DumpedRequest]
     public let settings: DumpSettings
     public let blocked: [DumpBlock]
     public let receiving: Bool
     public let problem: String?
+    public let cursor: DumpCursor?
+    public let loaded: Bool
+    public let page: String?
 
-    public init(requests: [DumpedRequest], settings: DumpSettings, blocked: [DumpBlock] = [], receiving: Bool, problem: String? = nil) {
+    public init(requests: [DumpedRequest], settings: DumpSettings, blocked: [DumpBlock] = [], receiving: Bool, problem: String? = nil, cursor: DumpCursor? = nil, loaded: Bool = true, page: String? = nil) {
         self.requests = requests
         self.settings = settings
         self.blocked = blocked
         self.receiving = receiving
         self.problem = problem
+        self.cursor = cursor
+        self.loaded = loaded
+        self.page = page
+    }
+
+    // A list of an older nexusd has no cursor. That nexusd sent a list only after its load.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        requests = try container.decode([DumpedRequest].self, forKey: .requests)
+        settings = try container.decode(DumpSettings.self, forKey: .settings)
+        blocked = try container.decode([DumpBlock].self, forKey: .blocked)
+        receiving = try container.decode(Bool.self, forKey: .receiving)
+        problem = try container.decodeIfPresent(String.self, forKey: .problem)
+        cursor = try container.decodeIfPresent(DumpCursor.self, forKey: .cursor)
+        loaded = try container.decodeIfPresent(Bool.self, forKey: .loaded) ?? true
+        page = try container.decodeIfPresent(String.self, forKey: .page)
     }
 
     public var dumpCount: Int {
         requests.reduce(0) { $0 + $1.dumpCount }
+    }
+
+    public var state: DumpState {
+        DumpState(settings: settings, blocked: blocked, receiving: receiving, problem: problem, loaded: loaded, page: page)
+    }
+}
+
+// The parts of DumpList without the requests, for the banners of the Dumps screen. nexusd also
+// compares it: a change of it sends the whole list to the watchers again. page is the URL of the
+// web page of the dumps, nil while it does not run.
+public struct DumpState: Codable, Sendable, Equatable {
+    public static let pageMissingText = "The web page of the dumps does not run. The activity log of Nexus has the reason."
+
+    public let settings: DumpSettings
+    public let blocked: [DumpBlock]
+    public let receiving: Bool
+    public let problem: String?
+    public let loaded: Bool
+    public let page: String?
+
+    public init(settings: DumpSettings, blocked: [DumpBlock] = [], receiving: Bool, problem: String? = nil, loaded: Bool = true, page: String? = nil) {
+        self.settings = settings
+        self.blocked = blocked
+        self.receiving = receiving
+        self.problem = problem
+        self.loaded = loaded
+        self.page = page
     }
 }
 
@@ -1357,6 +1440,12 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case backup(BackupInfo)
     case serviceList(ServiceList)
     case tasks(TaskList)
+    case dumpList(DumpList)
+    case caughtDumps([CaughtDump])
+    case dumpBatch(DumpBatch)
+    // host is the first host of the site or the workspace. A block of the list names this host.
+    case dumpPlace(place: DumpPlace, host: String)
+    case dumpState(DumpState)
 }
 
 // What the Site screen of a WordPress site shows (Phase 4, 3b). configFile is nil without a
@@ -1465,7 +1554,7 @@ public struct WordPressNetwork: Codable, Sendable, Equatable {
 
     // The value of the row "Network" in the app and in nexus site wordpress.
     public var summary: String {
-        let count = sites == 1 ? "1 site" : "\(sites) sites"
+        let count = Count.text(sites, "site")
         let kind = subdomains ? "on subdomains" : "in subfolders"
 
         return example.map { "\(count) \(kind), for example \($0)" } ?? "\(count) \(kind)"

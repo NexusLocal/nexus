@@ -270,6 +270,8 @@ struct MainWindow: View {
         case .service(let kind):
             ServiceScreen(kind: kind)
                 .id(kind)
+        case .dumps:
+            DumpsScreen()
         case .packages:
             PackagesScreen()
         case .commandLine:

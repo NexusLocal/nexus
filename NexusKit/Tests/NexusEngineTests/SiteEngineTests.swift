@@ -23,11 +23,16 @@ extension NexusEngineTests {
         }
     }
 
-    func makeSiteEngine(root: URL, state: EngineState = EngineState(), runtimes: [(name: String, line: String)] = [], processSupervisor: ProcessSupervisor = ProcessSupervisor(), dumpLibrarySource: URL? = nil) throws -> NexusEngine {
+    // A page of the dumps takes a free port. So it never meets a Nexus that runs on this Mac.
+    func makeSiteEngine(root: URL, state: EngineState = EngineState(), runtimes: [(name: String, line: String)] = [], processSupervisor: ProcessSupervisor = ProcessSupervisor(), dumpLibrarySource: URL? = nil, servesDumpPage: Bool = false, activity: ActivityLog? = nil) throws -> NexusEngine {
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory), pharLinks: root)
         try paths.createFolders()
         var state = state
         state.ports[NexusEngine.dnsServiceID] = state.ports[NexusEngine.dnsServiceID] ?? freeUDPPort()
+
+        if servesDumpPage {
+            state.ports[ServiceID.dumpPagePortKey] = 0
+        }
         try JSONEncoder().encode(state).write(to: paths.config.appending(path: "state.json"))
 
         for (name, line) in runtimes {
@@ -49,7 +54,9 @@ extension NexusEngineTests {
                 hostsFile: root.appending(path: "etc/hosts", directoryHint: .notDirectory)
             ),
             workspaceFolderQuiet: .zero,
-            dumpLibrarySource: dumpLibrarySource
+            dumpLibrarySource: dumpLibrarySource,
+            servesDumpPage: servesDumpPage,
+            activity: activity
         )
     }
 

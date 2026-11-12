@@ -4,34 +4,6 @@ import NexusCore
 import NexusIPC
 import NexusMCP
 
-// The code editor of nexus edit, as the app chooses it in Settings > General. A chosen app that
-// is not installed anymore gives the first known editor, as in the app.
-enum EditorChoice: Equatable {
-    case none
-    case app(path: String)
-    case firstKnown
-
-    init(preference: String?, appExists: (String) -> Bool) {
-        guard let preference else {
-            self = .firstKnown
-            return
-        }
-
-        if preference.isEmpty {
-            self = .none
-            return
-        }
-
-        self = appExists(preference) ? .app(path: preference) : .firstKnown
-    }
-
-    static var current: EditorChoice {
-        let preference = UserDefaults.standard.persistentDomain(forName: NexusIdentifiers.app)?[CodeEditors.preferenceKey] as? String
-
-        return EditorChoice(preference: preference) { FileManager.default.fileExists(atPath: $0) }
-    }
-}
-
 struct OpenSite: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "open",
@@ -49,11 +21,7 @@ struct OpenSite: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
-        guard openWithSystem([url]) else {
-            FileHandle.standardError.write(Data("macOS did not open \(url).\n".utf8))
-            throw ExitCode.failure
-        }
-
+        try await openWithSystem(url)
         print("\(url) opens in the browser.")
     }
 }
@@ -70,23 +38,28 @@ struct EditSite: AsyncParsableCommand {
     func run() async throws {
         let folder = try await siteTarget(host: host, example: "nexus edit shop.test").projectFolder
 
-        switch EditorChoice.current {
-        case .none:
+        let choice = EditorChoice.current
+
+        guard choice != .none else {
             FileHandle.standardError.write(Data("Settings > General of Nexus has no code editor. Choose one there.\n".utf8))
             throw ExitCode.failure
-        case .app(let path):
-            guard openWithSystem(["-a", path, folder]) else {
-                FileHandle.standardError.write(Data("\(path) did not open \(folder).\n".utf8))
-                throw ExitCode.failure
-            }
-        case .firstKnown:
-            guard CodeEditors.bundleIdentifiers.contains(where: { openWithSystem(["-b", $0, folder]) }) else {
-                FileHandle.standardError.write(Data("Nexus found no code editor. Choose one in Settings > General of Nexus.\n".utf8))
-                throw ExitCode.failure
-            }
+        }
+
+        guard await choice.open(folder) else {
+            let problem = if case .app(let path) = choice { "\(path) did not open \(folder)." } else { "Nexus found no code editor. Choose one in Settings > General of Nexus." }
+            FileHandle.standardError.write(Data("\(problem)\n".utf8))
+            throw ExitCode.failure
         }
 
         print("\(folder) opens in the code editor.")
+    }
+}
+
+// Opens a URL with macOS, or ends the command with an error.
+func openWithSystem(_ url: String) async throws {
+    guard await SystemOpen.run([url]) else {
+        FileHandle.standardError.write(Data("macOS did not open \(url).\n".utf8))
+        throw ExitCode.failure
     }
 }
 
@@ -106,19 +79,4 @@ func siteTarget(host: String?, example: String) async throws -> SiteTarget {
         FileHandle.standardError.write(Data("\(ErrorText.plain(error))\n".utf8))
         throw ExitCode.failure
     }
-}
-
-private func openWithSystem(_ arguments: [String]) -> Bool {
-    let process = Process()
-    process.executableURL = URL(filePath: "/usr/bin/open")
-    process.arguments = arguments
-    process.standardOutput = FileHandle.nullDevice
-    process.standardError = FileHandle.nullDevice
-
-    guard (try? process.run()) != nil else {
-        return false
-    }
-
-    process.waitUntilExit()
-    return process.terminationStatus == 0
 }

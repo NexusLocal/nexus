@@ -302,7 +302,7 @@ extension NexusEngine {
             return [:]
         }
 
-        let (_, conflicts, sitesOfRecord, _) = workspaceSites(state)
+        let (_, conflicts, sitesOfRecord, _, _) = workspaceSites(state)
         var wanted = await workspaceServerProcesses(state)
 
         let hasMainSwitch = { (key: String) in sitesOfRecord[key]?.contains(where: \.runsMainProcesses) == true }

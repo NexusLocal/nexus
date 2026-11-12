@@ -214,12 +214,14 @@ extension NexusEngine {
     // whose host is taken is left out with a warning, because two server blocks with one name
     // make nginx use only one of them. Two sites of one project share a block. A workspace of a
     // proxy site is left out, because it would go to the server of the main checkout. A workspace
-    // of a WordPress site that is not Ready gets a notice page in nginx (noticeHosts).
-    func workspaceSites(_ state: EngineState, resolved: [Site]? = nil) -> (sites: [Site], conflicts: [Workspace: String], sitesOfRecord: [String: [Site]], noticeHosts: Set<String>) {
+    // of a WordPress site that is not Ready gets a notice page in nginx (noticeHosts). places holds
+    // the main site and the name of each workspace of sites, in the same order.
+    func workspaceSites(_ state: EngineState, resolved: [Site]? = nil) -> (sites: [Site], conflicts: [Workspace: String], sitesOfRecord: [String: [Site]], noticeHosts: Set<String>, places: [DumpPlace]) {
         let resolved = resolved ?? resolvedSites(state).map(\.site)
         let sitesOfRecord = Dictionary(grouping: resolved, by: ProjectFolder.workspaceKey(of:))
         var claimed = Set(resolved.flatMap(\.hosts))
         var sites: [Site] = []
+        var places: [DumpPlace] = []
         var conflicts: [Workspace: String] = [:]
         var noticeHosts: Set<String> = []
 
@@ -244,6 +246,7 @@ extension NexusEngine {
 
                 claimed.formUnion(site.hosts)
                 sites.append(site)
+                places.append(DumpPlace(site: sitesOfProject[0].host, workspace: workspace.name))
 
                 if isWordPress, workspace.state != .ready || workspace.configurationDigest == nil {
                     noticeHosts.formUnion(site.hosts)
@@ -251,7 +254,7 @@ extension NexusEngine {
             }
         }
 
-        return (sites, conflicts, sitesOfRecord, noticeHosts)
+        return (sites, conflicts, sitesOfRecord, noticeHosts, places)
     }
 
     // A workspace of a WordPress site runs PHP only when it is Ready (Phase 4, 3a and 3e). Before

@@ -36,6 +36,10 @@ enum DebugLaunch {
             model.agents.showsNoticeForCheck = true
         }
 
+        if let state = value(of: "--dumps") {
+            showDumps(state, in: model)
+        }
+
         if let version = value(of: "--version"), let service = model.service(version) {
             model.selectedVersion[service.kind] = service.id
         }
@@ -75,12 +79,23 @@ enum DebugLaunch {
         }
     }
 
+    // --dumps off|empty|filter|blocked|problem shows a state of "Dumps States" in the design. It
+    // needs --sample. The filter is the choice of the user, so it is not part of the list.
+    private static func showDumps(_ state: String, in model: AppModel) {
+        model.show(AppModel.sampleDumpList(state))
+
+        if state == "filter" {
+            model.filterDumps(by: DumpPlaceChoice(place: DumpPlace(site: "crm.test"), label: "crm.test"))
+        }
+    }
+
     private static func selection(_ screen: String) -> SidebarItem {
         let parts = screen.split(separator: ":", maxSplits: 1).map(String.init)
 
         switch (parts.first, parts.last) {
         case ("site", let host?): return .site(host)
         case ("service", let kind?): return ServiceKind(rawValue: kind).map(SidebarItem.service) ?? .overview
+        case ("dumps", _): return .dumps
         case ("packages", _): return .packages
         case ("command-line", _): return .commandLine
         default: return .overview

@@ -41,10 +41,6 @@ extension NexusEngineTests {
         try String(contentsOf: file, encoding: .utf8)
     }
 
-    private func exists(_ file: URL) -> Bool {
-        FileManager.default.fileExists(atPath: file.path(percentEncoded: false))
-    }
-
     @Test func theLibraryGoesToTheFolderThatItsHashFileNames() async throws {
         let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

@@ -76,7 +76,7 @@ public enum LogReader {
             lines.insert(shortened, at: 0)
         }
 
-        let note = lines.count < min(wantedLines, matching.count) ? "Only the last \(lines.count) lines fit in one result. Use contains to find a line." : nil
+        let note = lines.count < min(wantedLines, matching.count) ? "Only the last \(Count.text(lines.count, "line")) fit in one result. Use contains to find a line." : nil
         return LogLines(log: name, file: log.file, lines: lines, note: note)
     }
 

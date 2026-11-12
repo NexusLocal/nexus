@@ -238,17 +238,8 @@ extension AppModel {
         return ConfigFile(url: file, isYours: isYours)
     }
 
-    // A .ini or .cnf file often has no app. So a user without a code editor gets TextEdit.
     func open(_ file: ConfigFile) {
-        let textEdit = URL(filePath: "/System/Applications/TextEdit.app", directoryHint: .isDirectory)
-
-        Task {
-            do {
-                try await NSWorkspace.shared.open([file.url], withApplicationAt: editorApp?.location ?? textEdit, configuration: NSWorkspace.OpenConfiguration())
-            } catch {
-                failure = ActionFailure(title: "\(file.url.lastPathComponent) did not open", message: error.localizedDescription, place: .window)
-            }
-        }
+        openInEditor(file.url.path(percentEncoded: false))
     }
 
     // PostgreSQL and Redis keep their settings in another place, so they have no folder here.

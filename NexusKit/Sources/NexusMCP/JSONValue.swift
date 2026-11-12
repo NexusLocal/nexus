@@ -146,7 +146,7 @@ extension JSONValue: ExpressibleByStringLiteral, ExpressibleByBooleanLiteral, Ex
 extension JSONEncoder {
     // One line without escaped slashes. A URL in a result stays readable for the agent. A message
     // of stdio must not hold a line break.
-    static var mcp: JSONEncoder {
+    public static var mcp: JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         encoder.dateEncodingStrategy = .iso8601

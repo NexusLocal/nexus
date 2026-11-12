@@ -625,7 +625,7 @@ struct SiteScreen: View {
                 Text("Each new workspace gets the dump. Its links to \(EnglishList.joined(check.liveURLs)) go to the workspace instead.")
 
                 if check.uncertainLinks > 0 {
-                    Text("\(check.uncertainLinks) \(check.uncertainLinks == 1 ? "link changes" : "links change") after the load. So a new workspace needs more time.")
+                    Text("\(Count.text(check.uncertainLinks, "link")) \(check.uncertainLinks == 1 ? "changes" : "change") after the load. So a new workspace needs more time.")
                         .foregroundStyle(Color.orangeText)
                 }
             }

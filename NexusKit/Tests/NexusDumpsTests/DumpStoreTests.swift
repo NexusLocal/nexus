@@ -5,16 +5,16 @@ import Testing
 @testable import NexusDumps
 
 final class SitePlaces: Sendable {
-    private let places = Mutex<[String: DumpPlace]>([:])
+    private let locations = Mutex<[String: DumpLocation]>([:])
     private let calls = Mutex(0)
 
-    func set(_ host: String, _ place: DumpPlace) {
-        places.withLock { current in current[host] = place }
+    func set(_ host: String, _ place: DumpPlace, projectFolder: String? = nil) {
+        locations.withLock { current in current[host] = DumpLocation(place: place, host: host, projectFolder: projectFolder) }
     }
 
-    func place(of request: DumpedRequest) -> DumpPlace {
+    func location(of request: DumpedRequest) -> DumpLocation {
         calls.withLock { count in count += 1 }
-        return places.withLock { current in current[request.host ?? ""] ?? DumpPlace() }
+        return locations.withLock { current in current[request.host ?? ""] ?? DumpLocation() }
     }
 
     var callCount: Int {
@@ -42,7 +42,7 @@ final class DumpStoreTests {
     }
 
     private func store(places: SitePlaces? = nil) -> DumpStore {
-        let store = DumpStore(file: file) { request in places?.place(of: request) ?? DumpPlace() }
+        let store = DumpStore(file: file) { request in places?.location(of: request) ?? DumpLocation() }
         stores.append(store)
         return store
     }
@@ -168,16 +168,40 @@ final class DumpStoreTests {
         #expect(store.list().first?.dumpCount == 1)
     }
 
-    @Test func dumpsAfterASeqGivesOnlyTheNewerDumps() {
-        let store = store()
+    @Test func dumpsAfterANumberGivesOnlyTheNewerDumps() {
+        let store = loadedStore()
 
         for seq in 1...4 {
             store.add(dump("a1", seq: seq))
         }
 
-        #expect(store.dumps(request: "a1", after: 2).map(\.seq) == [3, 4])
-        #expect(store.dumps(request: "a1", after: 4).isEmpty)
+        #expect(store.dumps(request: "a1", afterNumber: 2).map(\.seq) == [3, 4])
+        #expect(store.dumps(request: "a1", afterNumber: 4).isEmpty)
         #expect(store.dumps(request: "a1").map(\.seq) == [1, 2, 3, 4])
+    }
+
+    @Test func firstNumberIsTheLowestNumberThatTheStoreKeepsOfTheRequest() throws {
+        let store = loadedStore()
+        store.add(dump("old", seq: 1))
+        store.add(dump("a1", seq: 2))
+        store.add(dump("a1", seq: 1))
+        let before = try #require(store.list().first { $0.id == "a1" })
+
+        for seq in 3...DumpStore.dumpLimit {
+            store.add(dump("a1", seq: seq))
+        }
+
+        let afterTheOldRequestWent = try #require(store.list().first)
+        store.add(dump("a1", seq: DumpStore.dumpLimit + 1))
+        let afterItsOwnDumpWent = try #require(store.list().first)
+
+        #expect(before.firstNumber == 2)
+        #expect(before.lastNumber == 3)
+        #expect(afterTheOldRequestWent.id == "a1")
+        #expect(afterTheOldRequestWent.firstNumber == 2)
+        #expect(afterItsOwnDumpWent.firstNumber == 3)
+        #expect(store.dumps(request: "a1").first?.number == 3)
+        #expect(reloaded().list().first?.firstNumber == 3)
     }
 
     @Test func theStoreKeepsTheNewest1000Dumps() {
@@ -328,9 +352,371 @@ final class DumpStoreTests {
         store.waitForWrites()
         #expect(removed == 8)
         #expect(store.list().isEmpty)
-        #expect(store.takeChanges() == DumpStoreChanges(cleared: true))
-        #expect(try fileSize() == 0)
+        #expect(store.takeChanges() == DumpChange(cleared: true))
+        let content = try String(contentsOf: file, encoding: .utf8)
+        #expect(content.hasPrefix("{\"epoch\":\""))
+        #expect(content.hasSuffix(",\"number\":8}\n"))
+        #expect(content.split(separator: "\n").count == 1)
         #expect(reloaded().list().isEmpty)
+    }
+
+    @Test func aReadAfterANumberGivesALowerSeqThatArrivesLater() throws {
+        let store = loadedStore()
+        store.add(dump("a1", seq: 1))
+        store.add(dump("a1", seq: 3))
+        let header = store.list().first
+        let read = store.dumps(request: "a1", afterNumber: 0)
+        store.add(dump("a1", seq: 2))
+
+        let later = try #require(store.list().first)
+        let new = store.dumps(request: "a1", afterNumber: header?.lastNumber ?? 0)
+        let loaded = reloaded()
+
+        #expect(read.map(\.seq) == [1, 3])
+        #expect(read.map(\.number) == [1, 2])
+        #expect(header?.lastNumber == 2)
+        #expect(header?.lastSeq == 3)
+        #expect(later.lastNumber == 3)
+        #expect(later.lastSeq == 3)
+        #expect(new.map(\.seq) == [2])
+        #expect(new.map(\.number) == [3])
+        #expect(loaded.dumps(request: "a1", afterNumber: 0).map(\.number) == [1, 2, 3])
+        #expect(loaded.list().first?.lastNumber == 3)
+    }
+
+    @Test func theFileHoldsTheNumberOfADumpOnceOnItsLine() throws {
+        let store = loadedStore()
+        store.add(dump("a1", seq: 1))
+        store.waitForWrites()
+
+        let line = try #require(String(contentsOf: file, encoding: .utf8).split(separator: "\n").last)
+
+        #expect(line.hasSuffix(",\"number\":1}"))
+        #expect(line.components(separatedBy: "\"number\"").count == 2)
+    }
+
+    @Test func firstSeqIsTheLowestSeqThatTheStoreKeeps() {
+        let store = store()
+        store.add(dump("a1", seq: 3))
+        store.add(dump("a1", seq: 1))
+        store.add(dump("a1", seq: 2))
+        let lowerSeqLater = store.list().first?.firstSeq
+
+        for seq in 4...(DumpStore.dumpLimit + 1) {
+            store.add(dump("a1", seq: seq))
+        }
+
+        let afterTheFirstArrivedWent = store.list().first?.firstSeq
+        store.add(dump("a1", seq: DumpStore.dumpLimit + 2))
+
+        #expect(lowerSeqLater == 1)
+        #expect(afterTheFirstArrivedWent == 1)
+        #expect(store.list().first?.firstSeq == 2)
+        #expect(store.dumps(request: "a1").map(\.seq).min() == 2)
+        #expect(reloaded().list().first?.firstSeq == 2)
+    }
+
+    @Test func locateGivesThePlaceItsFirstHostAndTheProjectFolderAndRelocateChangesThem() {
+        let places = SitePlaces()
+        places.set("shop.test", DumpPlace(site: "shop.test"), projectFolder: "/Users/tim/Sites/shop")
+        let store = store(places: places)
+        store.add(dump("a1", seq: 1))
+        let first = store.list().first?.location
+        _ = store.takeChanges()
+
+        places.set("shop.test", DumpPlace(site: "shop.test", workspace: "fix"), projectFolder: "/Users/tim/Sites/shop-fix")
+        store.relocate()
+
+        let moved = DumpLocation(place: DumpPlace(site: "shop.test", workspace: "fix"), host: "shop.test", projectFolder: "/Users/tim/Sites/shop-fix")
+        #expect(first == DumpLocation(place: DumpPlace(site: "shop.test"), host: "shop.test", projectFolder: "/Users/tim/Sites/shop"))
+        #expect(store.list().first?.location == moved)
+        #expect(store.takeChanges().changed.map(\.location) == [moved])
+        #expect(reloaded().list().first?.location == moved)
+    }
+
+    @Test func theChangesGiveTheListTheOrderOfTheStore() {
+        let places = SitePlaces()
+        places.set("blog.test", DumpPlace(site: "blog.test"))
+        let store = store(places: places)
+        var mirror: [DumpedRequest] = []
+        var rounds: [Bool] = []
+
+        func takeTheChanges() {
+            store.takeChanges().apply(to: &mirror)
+            rounds.append(mirror == store.list())
+        }
+
+        store.add(dump("a", seq: 1))
+        store.add(dump("b", seq: 1))
+        takeTheChanges()
+
+        store.add(dump("a", seq: 2))
+        store.add(end("b", status: 200))
+        store.add(dump("c", seq: 1, host: "blog.test"))
+        takeTheChanges()
+
+        store.clear(place: DumpPlace(site: "blog.test"))
+        store.add(dump("d", seq: 1))
+        takeTheChanges()
+
+        for seq in 1...DumpStore.dumpLimit {
+            store.add(dump("e", seq: seq))
+        }
+
+        store.add(dump("a", seq: 3))
+        takeTheChanges()
+
+        store.clear()
+        store.add(dump("f", seq: 1))
+        store.add(dump("g", seq: 1))
+        takeTheChanges()
+
+        #expect(rounds == [true, true, true, true, true])
+        #expect(mirror.map(\.id) == ["g", "f"])
+    }
+
+    @Test func applyRemovesBeforeItAddsAndPutsANewRequestAtTheTop() {
+        let old = DumpedRequest(id: "old", kind: .http, target: "/", started: started, dumpCount: 1)
+        let kept = DumpedRequest(id: "kept", kind: .http, target: "/", started: started, dumpCount: 1)
+        var ended = kept
+        ended.status = 200
+        let back = DumpedRequest(id: "old", kind: .http, target: "/", started: started, dumpCount: 1, lastSeq: 9)
+        var requests = [kept, old]
+
+        DumpChange(changed: [ended, back], removed: ["old", "unknown"]).apply(to: &requests)
+
+        #expect(requests == [back, ended])
+    }
+
+    @Test func lastSeqIsTheNewestSeqAlsoWhenTheOldDumpsGo() {
+        let store = store()
+
+        for seq in 1...(DumpStore.dumpLimit + 2) {
+            store.add(dump("a1", seq: seq))
+        }
+
+        store.add(end("a1", status: 200))
+
+        #expect(store.dumps(request: "a1").first?.seq == 3)
+        #expect(store.list().first?.lastSeq == 1002)
+        #expect(reloaded().list().first?.lastSeq == 1002)
+    }
+
+    private func loadedStore(places: SitePlaces? = nil) -> DumpStore {
+        let store = store(places: places)
+        store.load()
+        return store
+    }
+
+    private func cursor(of store: DumpStore) throws -> DumpCursor {
+        try #require(store.listAndCursor().cursor)
+    }
+
+    @Test func aStoreBeforeItsLoadHasNoCursorAndGivesNoDumps() throws {
+        let store = store()
+        store.add(dump("a1", seq: 1))
+        let anyCursor = DumpCursor(epoch: "old", number: 0)
+
+        #expect(!store.isLoaded)
+        #expect(store.listAndCursor().cursor == nil)
+        #expect(store.newDumps(place: nil, after: anyCursor) == nil)
+        #expect(store.lastDumps(place: nil, limit: 20) == nil)
+
+        store.load()
+
+        #expect(store.isLoaded)
+        #expect(store.newDumps(place: nil, after: try cursor(of: store)) != nil)
+    }
+
+    @Test func newDumpsGivesTheDumpsOfAPlaceAfterTheCursor() throws {
+        let places = SitePlaces()
+        places.set("shop.test", DumpPlace(site: "shop.test"))
+        places.set("blog.test", DumpPlace(site: "blog.test"))
+        let store = loadedStore(places: places)
+        store.add(dump("a1", seq: 1))
+        store.add(dump("b1", seq: 1, host: "blog.test"))
+        store.add(dump("a1", seq: 2))
+
+        let listed = store.listAndCursor()
+        let listCursor = try #require(listed.cursor)
+        store.add(dump("b1", seq: 2, host: "blog.test"))
+        store.add(dump("a2", seq: 1))
+        store.add(end("a2", status: 200))
+
+        let ofShop = try #require(store.newDumps(place: DumpPlace(site: "shop.test"), after: listCursor))
+        let ofAll = try #require(store.newDumps(place: nil, after: listCursor))
+        let fromTheStart = try #require(store.newDumps(place: DumpPlace(site: "shop.test"), after: DumpCursor(epoch: listCursor.epoch, number: 0)))
+
+        #expect(listCursor.number == 3)
+        #expect(listed.requests.map(\.lastSeq) == [1, 2])
+        #expect(ofShop.dumps.map(\.id) == ["a2-1"])
+        #expect(ofShop.requests.map(\.id) == ["a2"])
+        #expect(ofShop.requests.first?.status == 200)
+        #expect(ofShop.cursor == DumpCursor(epoch: listCursor.epoch, number: 5))
+        #expect(ofAll.dumps.map(\.id) == ["b1-2", "a2-1"])
+        #expect(ofAll.requests.map(\.id) == ["b1", "a2"])
+        #expect(fromTheStart.dumps.map(\.id) == ["a1-1", "a1-2", "a2-1"])
+        #expect(fromTheStart.requests.map(\.id) == ["a1", "a2"])
+        #expect(store.newDumps(place: nil, after: ofShop.cursor)?.dumps.isEmpty == true)
+    }
+
+    @Test func theNewestDumpsStopAtTheCursorOfTheListAndNewDumpsGivesTheRestOnce() throws {
+        let store = loadedStore()
+        store.add(dump("a1", seq: 2))
+        store.add(dump("b1", seq: 1))
+        let listed = store.listAndCursor()
+        let listCursor = try #require(listed.cursor)
+        store.add(dump("a1", seq: 1))
+        store.add(dump("a1", seq: 3))
+
+        let latest = try #require(store.lastDumps(place: nil, limit: 20, through: listCursor))
+        let new = try #require(store.newDumps(place: nil, after: listCursor))
+
+        #expect(latest.dumps.map(\.id) == ["a1-2", "b1-1"])
+        #expect(latest.requests.map(\.id) == ["a1", "b1"])
+        #expect(latest.requests.first?.lastSeq == 3)
+        #expect(latest.cursor.number == 4)
+        #expect(latest.olderCounts.isEmpty)
+        #expect(new.dumps.map(\.id) == ["a1-1", "a1-3"])
+        #expect(store.lastDumps(place: nil, limit: 1, through: listCursor)?.dumps.map(\.id) == ["b1-1"])
+        #expect(store.lastDumps(place: nil, limit: 1)?.dumps.map(\.id) == ["a1-3"])
+        #expect(store.lastDumps(place: nil, limit: 1)?.olderCounts == ["a1": 2])
+    }
+
+    @Test func lastDumpsGivesTheNewestDumpsOfAPlaceAndCountsTheOlderDumpsOfTheirRequests() throws {
+        let places = SitePlaces()
+        places.set("shop.test", DumpPlace(site: "shop.test"))
+        places.set("blog.test", DumpPlace(site: "blog.test"))
+        let store = loadedStore(places: places)
+
+        for seq in 1...5 {
+            store.add(dump("worker", seq: seq))
+        }
+
+        store.add(dump("page", seq: 1))
+        store.add(dump("blog", seq: 1, host: "blog.test"))
+        store.add(dump("worker", seq: 6))
+
+        let ofShop = try #require(store.lastDumps(place: DumpPlace(site: "shop.test"), limit: 3))
+        let ofAll = try #require(store.lastDumps(place: nil, limit: 2))
+        let everything = try #require(store.lastDumps(place: nil, limit: 100))
+
+        #expect(ofShop.dumps.map(\.id) == ["worker-5", "page-1", "worker-6"])
+        #expect(ofShop.requests.map(\.id) == ["worker", "page"])
+        #expect(ofShop.olderCounts == ["worker": 4])
+        #expect(ofAll.dumps.map(\.id) == ["blog-1", "worker-6"])
+        #expect(ofAll.olderCounts == ["worker": 5])
+        #expect(everything.dumps.count == 8)
+        #expect(everything.olderCounts.isEmpty)
+        #expect(store.lastDumps(place: nil, limit: 0)?.dumps.isEmpty == true)
+    }
+
+    @Test func aCursorOfAnotherEpochGivesNoDumpsAndTheCurrentCursor() throws {
+        let store = loadedStore()
+        store.add(dump("a1", seq: 1))
+        let current = try cursor(of: store)
+        let other = DumpCursor(epoch: "other", number: 0)
+
+        #expect(store.newDumps(place: nil, after: other) == DumpBatch(dumps: [], requests: [], cursor: current))
+        #expect(store.lastDumps(place: nil, limit: 20, through: other) == DumpBatch(dumps: [], requests: [], cursor: current))
+    }
+
+    @Test func aDumpLineHoldsItsNumberAsAnEncodeOfTheRecordDoes() throws {
+        let caught = CaughtDump(requestID: "a1", seq: 1, time: started, file: "/Users/tim/Sites/shop/index.php", line: 3, text: "\"x\"", treeJSON: #"{"kind":"string","value":"x"}"#)
+        var line = try #require(Record.openLine(dump: caught))
+
+        Record.close(&line, number: 42)
+
+        #expect(line == Record.line(dump: caught, number: 42))
+    }
+
+    @Test func aStartKeepsTheEpochAndGivesNumbersAboveAGap() throws {
+        let store = loadedStore()
+
+        for seq in 1...3 {
+            store.add(dump("a1", seq: seq))
+        }
+
+        let before = try cursor(of: store)
+        let loaded = reloaded()
+        let after = try cursor(of: loaded)
+        loaded.add(dump("a1", seq: 4))
+
+        #expect(after == DumpCursor(epoch: before.epoch, number: 3 + DumpStore.numberGap))
+        #expect(loaded.newDumps(place: nil, after: before)?.dumps.map(\.id) == ["a1-4"])
+        #expect(try cursor(of: loaded).number == 4 + DumpStore.numberGap)
+    }
+
+    @Test func aCrashThatLosesTheLastLineNeverGivesItsNumberAgain() throws {
+        let store = loadedStore()
+
+        for seq in 1...3 {
+            store.add(dump("a1", seq: seq))
+        }
+
+        let seen = try cursor(of: store)
+        store.waitForWrites()
+        let lines = try Data(contentsOf: file).split(separator: UInt8(ascii: "\n"))
+        try lines.dropLast().map { Data($0) + Data("\n".utf8) }.reduce(Data(), +).write(to: file)
+
+        let loaded = reloaded()
+        loaded.add(dump("a1", seq: 4))
+
+        #expect(loaded.dumps(request: "a1").map(\.seq) == [1, 2, 4])
+        #expect(loaded.newDumps(place: nil, after: seen)?.dumps.map(\.id) == ["a1-4"])
+        #expect(try cursor(of: loaded).number == 3 + DumpStore.numberGap)
+    }
+
+    @Test func aClearOfAllGivesANewEpochThatStaysAfterAStart() throws {
+        let store = loadedStore()
+        store.add(dump("a1", seq: 1))
+        let before = try cursor(of: store)
+
+        store.clear()
+
+        let cleared = try cursor(of: store)
+        let loaded = reloaded()
+
+        #expect(cleared.epoch != before.epoch)
+        #expect(store.newDumps(place: nil, after: before)?.cursor == cleared)
+        #expect(try cursor(of: loaded).epoch == cleared.epoch)
+    }
+
+    @Test func aClearOfAllThatRemovesNothingKeepsTheEpoch() throws {
+        let store = loadedStore()
+        let before = try cursor(of: store)
+
+        store.clear()
+
+        #expect(try cursor(of: store).epoch == before.epoch)
+    }
+
+    @Test func aStartWithoutTheFileGivesANewEpoch() throws {
+        let store = loadedStore()
+        store.add(dump("a1", seq: 1))
+        let first = try cursor(of: store)
+        let again = try cursor(of: reloaded())
+
+        try FileManager.default.removeItem(at: file)
+
+        #expect(again.epoch == first.epoch)
+        #expect(try cursor(of: reloaded()).epoch != first.epoch)
+    }
+
+    @Test func theNumbersStayAfterAClearOfAPlaceAndAStart() throws {
+        let places = SitePlaces()
+        places.set("blog.test", DumpPlace(site: "blog.test"))
+        let store = loadedStore(places: places)
+        store.add(dump("a1", seq: 1))
+        store.add(dump("b1", seq: 1, host: "blog.test"))
+        let beforeTheClear = try cursor(of: store)
+        store.clear(place: DumpPlace(site: "blog.test"))
+        store.add(dump("a1", seq: 2))
+
+        let loaded = reloaded()
+
+        #expect(loaded.newDumps(place: nil, after: beforeTheClear)?.dumps.map(\.id) == ["a1-2"])
+        #expect(try cursor(of: loaded).number == 3 + DumpStore.numberGap)
     }
 
     @Test func aClearThatRemovesNothingKeepsTheFile() throws {
@@ -468,6 +854,74 @@ final class DumpStoreTests {
         store.add(dump("a1", seq: 1))
         store.clear(place: DumpPlace())
 
-        #expect(store.takeChanges() == DumpStoreChanges(removed: ["a1"]))
+        #expect(store.takeChanges() == DumpChange(removed: ["a1"]))
+    }
+
+    @Test func aRemovedDumpLeavesItsRequestWithTheCountsOfTheOtherDumps() throws {
+        let store = loadedStore()
+        store.add(dump("a1", seq: 1, kind: .dd))
+        store.add(dump("a1", seq: 2))
+        store.add(dump("a1", seq: 3))
+        _ = store.takeChanges()
+
+        let removedFirst = store.remove(dump: 1)
+        let removedLast = store.remove(dump: 3)
+
+        let changes = store.takeChanges()
+        let request = try #require(store.list().first)
+        #expect(removedFirst)
+        #expect(removedLast)
+        #expect(store.dumps(request: "a1").map(\.seq) == [2])
+        #expect(request.dumpCount == 1)
+        #expect(request.firstSeq == 2)
+        #expect(request.firstNumber == 2)
+        #expect(request.lastNumber == 2)
+        #expect(!request.hasDD)
+        #expect(changes.changed.map(\.id) == ["a1"])
+        #expect(changes.removedDumps == [1, 3])
+        #expect(reloaded().dumps(request: "a1").map(\.seq) == [2])
+    }
+
+    @Test func theLastRemovedDumpOfARequestRemovesTheRequest() {
+        let store = loadedStore()
+        store.add(dump("a1", seq: 1))
+        store.add(dump("b1", seq: 1))
+        _ = store.takeChanges()
+
+        store.remove(dump: 1)
+
+        #expect(store.list().map(\.id) == ["b1"])
+        #expect(store.takeChanges() == DumpChange(removed: ["a1"], removedDumps: [1]))
+        #expect(reloaded().list().map(\.id) == ["b1"])
+    }
+
+    @Test func aRemovedRequestTakesAllItsDumpsAndKeepsTheOtherRequests() {
+        let store = loadedStore()
+        store.add(dump("a1", seq: 1))
+        store.add(dump("b1", seq: 1))
+        store.add(dump("a1", seq: 2))
+        _ = store.takeChanges()
+
+        let removed = store.remove(request: "a1")
+
+        #expect(removed == 2)
+        #expect(store.list().map(\.id) == ["b1"])
+        #expect(store.dumps(request: "a1").isEmpty)
+        #expect(store.takeChanges() == DumpChange(removed: ["a1"]))
+        #expect(reloaded().list().map(\.id) == ["b1"])
+    }
+
+    @Test func aRemoveOfAnUnknownDumpOrRequestChangesNothing() {
+        let store = loadedStore()
+        store.add(dump("a1", seq: 1))
+        _ = store.takeChanges()
+
+        let removedDump = store.remove(dump: 42)
+        let removedDumps = store.remove(request: "x1")
+
+        #expect(!removedDump)
+        #expect(removedDumps == nil)
+        #expect(store.list().map(\.id) == ["a1"])
+        #expect(store.takeChanges().isEmpty)
     }
 }

@@ -701,6 +701,190 @@ struct NotificationsBlockedNote: View {
     }
 }
 
+extension Date {
+    // The time of a row in a list, such as a mail or a request with dumps: the time today, then
+    // "Yesterday", then the day.
+    var listTime: String {
+        if Calendar.current.isDateInToday(self) {
+            return formatted(date: .omitted, time: .shortened)
+        }
+
+        if Calendar.current.isDateInYesterday(self) {
+            return "Yesterday"
+        }
+
+        return formatted(.dateTime.day().month(.abbreviated))
+    }
+}
+
+extension Array where Element: Identifiable {
+    // The item above or below the item with this id, for the arrow keys of a list. Without that
+    // item it gives the first item. At the end of the list it gives nil.
+    func id(movingBy offset: Int, from id: Element.ID?) -> Element.ID? {
+        guard let index = firstIndex(where: { $0.id == id }) else {
+            return first?.id
+        }
+
+        return indices.contains(index + offset) ? self[index + offset].id : nil
+    }
+}
+
+// The Delete key of a Mac gives U+007F. KeyEquivalent.delete is U+0008.
+private let backspaceKey = KeyEquivalent("\u{7F}")
+
+// A list on the left and the open item on the right, as in Mail. The list takes the focus with a
+// click on a row. The arrow keys then open the item above or below, and the Delete key removes the
+// open item when the screen gives remove. The focus is on the rows and not on the scroll view,
+// because a focused scroll view uses the arrow keys to scroll.
+struct ListDetailView<Item: Identifiable, Row: View, Detail: View>: View {
+    let items: [Item]
+    let openID: Item.ID?
+    let listWidth: CGFloat
+    let open: (Item.ID) -> Void
+    let remove: (() -> Void)?
+    let row: (Item, Bool) -> Row
+    let detail: Detail
+    @FocusState private var listHasFocus: Bool
+
+    init(items: [Item], openID: Item.ID?, listWidth: CGFloat, open: @escaping (Item.ID) -> Void, remove: (() -> Void)? = nil, @ViewBuilder row: @escaping (Item, Bool) -> Row, @ViewBuilder detail: () -> Detail) {
+        self.items = items
+        self.openID = openID
+        self.listWidth = listWidth
+        self.open = open
+        self.remove = remove
+        self.row = row
+        self.detail = detail()
+    }
+
+    private var keys: Set<KeyEquivalent> {
+        remove == nil ? [.upArrow, .downArrow] : [.upArrow, .downArrow, .delete, .deleteForward, backspaceKey]
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ScrollViewReader { reader in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(items) { item in
+                            row(item, item.id == openID)
+                                .id(item.id)
+                                .onTapGesture {
+                                    listHasFocus = true
+                                    open(item.id)
+                                }
+
+                            Divider()
+                        }
+                    }
+                    .focusable(interactions: .edit)
+                    .focused($listHasFocus)
+                    .focusEffectDisabled()
+                    .onKeyPress(keys: keys) { press in
+                        handle(press.key)
+                        return .handled
+                    }
+                }
+                .onChange(of: openID) { _, id in
+                    if let id {
+                        reader.scrollTo(id)
+                    }
+                }
+            }
+            .frame(width: listWidth)
+
+            Divider()
+
+            detail
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func handle(_ key: KeyEquivalent) {
+        switch key {
+        case .upArrow, .downArrow:
+            if let id = items.id(movingBy: key == .upArrow ? -1 : 1, from: openID) {
+                open(id)
+            }
+        default:
+            remove?()
+        }
+    }
+}
+
+// A key and its value in the head of an open item, such as the From line of a mail. A value with a
+// link opens it in the browser.
+struct HeaderLine: View {
+    let key: String
+    let value: String
+    var keyWidth: CGFloat = 40
+    var truncation: Text.TruncationMode?
+    var link: URL?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(key)
+                .foregroundStyle(.secondary)
+                .frame(width: keyWidth, alignment: .leading)
+
+            if let link {
+                Link(destination: link) {
+                    valueText
+                }
+                .foregroundStyle(Color.accentText)
+                .pointerStyle(.link)
+                .help("Open \(value) in the browser")
+            } else {
+                valueText
+                    .textSelection(.enabled)
+            }
+        }
+        .font(.callout)
+    }
+
+    private var valueText: some View {
+        Text(value)
+            .lineLimit(truncation == nil ? nil : 1)
+            .truncationMode(truncation ?? .tail)
+    }
+}
+
+// A small tag in a list: the host of a site or a workspace, or a mark such as dd(). A workspace
+// gets the branch icon. A mail or a request without a site gets "No site".
+struct SiteTag: View {
+    enum Tint {
+        case accent
+        case warning
+    }
+
+    let text: String?
+    var isWorkspace = false
+    var tint = Tint.accent
+    var monospaced = false
+
+    var body: some View {
+        if let text {
+            HStack(spacing: 3) {
+                if isWorkspace {
+                    Image(systemName: "arrow.triangle.branch")
+                        .imageScale(.small)
+                }
+
+                Text(text)
+            }
+            .font(.caption2.weight(monospaced ? .semibold : .medium))
+            .monospaced(monospaced)
+            .foregroundStyle(tint == .accent ? Color.accentText : Color.orangeText)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(tint == .accent ? Color.accentSoft : Color.warningBackground, in: .rect(cornerRadius: 4))
+        } else {
+            Text("No site")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+}
+
 func copyToPasteboard(_ text: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)

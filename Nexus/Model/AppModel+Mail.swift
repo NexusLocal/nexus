@@ -119,20 +119,6 @@ extension AppModel {
         }
     }
 
-    // The arrow keys of the mail list open the mail above or below the open mail.
-    func showMail(movingBy offset: Int) {
-        guard let index = mails.firstIndex(where: { $0.id == openMailID }) else {
-            mails.first.map { showMail($0.id) }
-            return
-        }
-
-        guard mails.indices.contains(index + offset) else {
-            return
-        }
-
-        showMail(mails[index + offset].id)
-    }
-
     func removeOpenMail() {
         if let openMailID {
             removeMail(openMailID)

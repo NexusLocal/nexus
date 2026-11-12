@@ -1,3 +1,4 @@
+import NexusCore
 import SwiftUI
 
 struct PackagesScreen: View {
@@ -89,7 +90,7 @@ struct PackagesScreen: View {
     private var subtitle: String {
         let installed = model.packages.filter(\.isInstalled).count
         let checked = model.packagesChecked.isEmpty ? "not checked yet" : "checked \(model.packagesChecked)"
-        let updates = model.updateCount == 1 ? "1 update" : "\(model.updateCount) updates"
+        let updates = Count.text(model.updateCount, "update")
         return "\(installed) installed · \(updates) · \(checked)"
     }
 

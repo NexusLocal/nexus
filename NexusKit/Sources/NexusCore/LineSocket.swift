@@ -1,14 +1,14 @@
 import Darwin
 import Foundation
-import NexusCore
 
 // A TCP socket that reads and writes lines that end in CRLF. A bare LF also ends a line. The
 // timeout ends a read or a write that waits too long, so a client that stops cannot keep a thread.
-final class LineSocket {
+// The SMTP server and the web page of the dumps use it.
+package final class LineSocket {
     let descriptor: Int32
     private var buffer = Data()
 
-    init(descriptor: Int32, timeout: TimeInterval) {
+    package init(descriptor: Int32, timeout: TimeInterval) {
         self.descriptor = descriptor
 
         var interval = timeval(tv_sec: Int(timeout), tv_usec: 0)
@@ -19,7 +19,7 @@ final class LineSocket {
     }
 
     // A line without its end, or nil when the other side closed the connection.
-    func readLine(maxLength: Int = 1 << 20) throws -> Data? {
+    package func readLine(maxLength: Int = 1 << 20) throws -> Data? {
         while true {
             if let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
                 var line = buffer[buffer.startIndex..<newline]
@@ -36,26 +36,31 @@ final class LineSocket {
                 throw SocketError.lineTooLong
             }
 
-            var chunk = [UInt8](repeating: 0, count: 65_536)
-            let count = Darwin.read(descriptor, &chunk, chunk.count)
-
-            guard count >= 0 else {
-                throw SocketError.system("read", errno)
-            }
-
-            guard count > 0 else {
+            guard try fill() else {
                 return nil
             }
-
-            buffer.append(contentsOf: chunk[0..<count])
         }
     }
 
-    func writeLine(_ text: String) throws {
+    // Exactly count bytes, also the bytes that readLine read ahead. nil when the other side closed
+    // the connection first.
+    package func read(count: Int) throws -> Data? {
+        while buffer.count < count {
+            guard try fill() else {
+                return nil
+            }
+        }
+
+        let data = Data(buffer.prefix(count))
+        buffer = Data(buffer.dropFirst(count))
+        return data
+    }
+
+    package func writeLine(_ text: String) throws {
         try write(Data("\(text)\r\n".utf8))
     }
 
-    func write(_ data: Data) throws {
+    package func write(_ data: Data) throws {
         var offset = 0
 
         while offset < data.count {
@@ -71,11 +76,33 @@ final class LineSocket {
         }
     }
 
-    func close() {
+    package func close() {
         Darwin.close(descriptor)
     }
 
-    static func connect(port: Int, timeout: TimeInterval) throws -> LineSocket {
+    // Ends a read or a write that another thread waits for. The descriptor stays open until close.
+    package func shutdown() {
+        _ = Darwin.shutdown(descriptor, SHUT_RDWR)
+    }
+
+    // Returns false when the other side closed the connection.
+    private func fill() throws -> Bool {
+        var chunk = [UInt8](repeating: 0, count: 65_536)
+        let count = Darwin.read(descriptor, &chunk, chunk.count)
+
+        guard count >= 0 else {
+            throw SocketError.system("read", errno)
+        }
+
+        guard count > 0 else {
+            return false
+        }
+
+        buffer.append(contentsOf: chunk[0..<count])
+        return true
+    }
+
+    package static func connect(port: Int, timeout: TimeInterval) throws -> LineSocket {
         let descriptor = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
 
         guard descriptor >= 0 else {
@@ -105,27 +132,5 @@ final class LineSocket {
         address.sin_port = in_port_t(UInt16(port)).bigEndian
         address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
         return address
-    }
-}
-
-// SMTP lines end in CRLF. A mail from sendmail can use LF only, as PHP mail() writes it.
-enum MailLines {
-    static func lines(of data: Data) -> [Data] {
-        var lines = data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false).map { line in
-            line.last == UInt8(ascii: "\r") ? Data(line.dropLast()) : Data(line)
-        }
-
-        if lines.last?.isEmpty == true {
-            lines.removeLast()
-        }
-
-        return lines
-    }
-
-    static func crlf(_ data: Data) -> Data {
-        lines(of: data).reduce(into: Data()) { result, line in
-            result.append(line)
-            result.append(contentsOf: [13, 10])
-        }
     }
 }

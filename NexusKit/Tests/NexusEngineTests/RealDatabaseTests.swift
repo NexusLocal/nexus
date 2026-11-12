@@ -128,7 +128,7 @@ extension NexusEngineTests {
 
             let source = DatabaseServer(host: "127.0.0.1", port: port, account: .newInstance)
             let listed = await engine.handle(.sourceDatabases(source: source, instance: id))
-            let tasks = TaskRecorder()
+            let tasks = EventRecorder { $0.tasks }
             tasks.record(await engine.events())
 
             func copying(_ copy: String) -> (TaskList) -> Bool {

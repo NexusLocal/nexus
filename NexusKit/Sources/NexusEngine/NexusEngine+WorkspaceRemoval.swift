@@ -375,7 +375,7 @@ extension NexusEngine {
             try FileManager.default.removeItem(atPath: dump.path)
         }
 
-        return all.isEmpty ? "The trash is empty." : "Nexus removed \(Self.count(all.count, "dump")) from the trash."
+        return all.isEmpty ? "The trash is empty." : "Nexus removed \(Count.text(all.count, "dump")) from the trash."
     }
 
     func setWorkspaceSettings(_ settings: WorkspaceSettings) async throws -> String {

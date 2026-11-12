@@ -175,18 +175,8 @@ extension NexusEngine {
         outbox.resetRemovedCount()
         servicesChanged()
 
-        let parts = [waiting > 0 ? Self.count(waiting, "waiting mail") : nil, refused > 0 ? Self.count(refused, "refused mail") : nil].compactMap { $0 }
+        let parts = [waiting > 0 ? Count.text(waiting, "waiting mail") : nil, refused > 0 ? Count.text(refused, "refused mail") : nil].compactMap { $0 }
         return parts.isEmpty ? "The outbox is empty." : "Nexus removed \(EnglishList.joined(parts))."
-    }
-
-    // The receiver turns the folder of a PHP script into the host of its site or workspace.
-    func updateMailFolders() async {
-        let state = await stateStore.current()
-        let sites = resolvedSites(state).map(\.site)
-        let all = sites + workspaceSites(state, resolved: sites).sites
-        let folders = Dictionary(all.map { (RealPath.of($0.folder), $0.host) }) { first, _ in first }
-
-        mailRouter.setSiteFolders(folders)
     }
 
     // The receiver starts with the package. A port in use does not stop the install.
@@ -298,11 +288,11 @@ extension NexusEngine {
 
     private func waitingMailDelivered(_ result: MailRouter.DeliveryResult) {
         if result.delivered > 0 {
-            activity?.write("mail", "Mailpit got \(Self.count(result.delivered, "waiting mail"))")
+            activity?.write("mail", "Mailpit got \(Count.text(result.delivered, "waiting mail"))")
         }
 
         if result.refused > 0 {
-            activity?.write("mail", "Mailpit refused \(Self.count(result.refused, "waiting mail")). See \(mailRouter.outbox.refusedFolder.path(percentEncoded: false))")
+            activity?.write("mail", "Mailpit refused \(Count.text(result.refused, "waiting mail")). See \(mailRouter.outbox.refusedFolder.path(percentEncoded: false))")
         }
 
         servicesChanged()

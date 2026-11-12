@@ -164,7 +164,7 @@ struct ImportDatabaseSheet: View {
 
         switch existing {
         case .replaceTables:
-            return dumpInfo?.tables.map { "Replace \(Self.count($0.count, "table"))" } ?? "Replace tables"
+            return dumpInfo?.tables.map { "Replace \(Count.text($0.count, "table"))" } ?? "Replace tables"
         case .replaceDatabase:
             return "Replace database"
         case nil:
@@ -656,10 +656,6 @@ struct ImportDatabaseSheet: View {
         return String(cleaned).split(separator: "_", omittingEmptySubsequences: true).joined(separator: "_")
     }
 
-    static func count(_ number: Int, _ word: String) -> String {
-        number == 1 ? "1 \(word)" : "\(number) \(word)s"
-    }
-
     private static let sampleSources = [
         DatabaseSize(name: "foo_platform", bytes: 2_800_000_000),
         DatabaseSize(name: "shop", bytes: 48_000_000),
@@ -717,12 +713,12 @@ private struct DumpSummary: View {
                     Text("Choose what happens to \(name), or type another name for a new database.")
                         .foregroundStyle(Color.orangeText)
                 case .replaceTables:
-                    line("tablecells", info?.tables == nil ? "Each table of the dump replaces the table with the same name." : "\(ImportDatabaseSheet.count(tables.count, "table")) get the data of the dump: \(examples).")
+                    line("tablecells", info?.tables == nil ? "Each table of the dump replaces the table with the same name." : "\(Count.text(tables.count, "table")) get the data of the dump: \(examples).")
                     line("checkmark", stayText)
                     copyLine
                 case .replaceDatabase:
                     line("exclamationmark.triangle", deleteText, color: .orangeText)
-                    line("tablecells", info?.tables == nil ? "Then \(name) gets the tables of the dump." : "Then \(name) gets the \(ImportDatabaseSheet.count(tables.count, "table")) of the dump.")
+                    line("tablecells", info?.tables == nil ? "Then \(name) gets the tables of the dump." : "Then \(name) gets the \(Count.text(tables.count, "table")) of the dump.")
                     copyLine
                 }
             }

@@ -1058,7 +1058,7 @@ extension NexusEngine {
         let warnings = try await changeWeb { $0.parked.append(parked) }
         await watchParkedFolders()
         let hosts = parked.sites(tld: state.tld).map(\.host)
-        return (["\(folder.path(percentEncoded: false)) is parked. Its \(hosts.count) sites: \(hosts.joined(separator: ", ")). A new folder in it becomes a site too."] + warnings).joined(separator: "\n")
+        return (["\(folder.path(percentEncoded: false)) is parked. Its \(Count.text(hosts.count, "site")): \(hosts.joined(separator: ", ")). A new folder in it becomes a site too."] + warnings).joined(separator: "\n")
     }
 
     func unpark(folder path: String) async throws -> String {

@@ -106,11 +106,9 @@ extension NexusEngineTests {
         _ = await engine.handle(.install(name: "php", line: "8.5"))
         _ = await engine.handle(.setCustomSettings(php: "8.5", lines: ["memory_limit = 512M"]))
 
-        var events = await engine.events().makeAsyncIterator()
-        guard case .services(let list) = await events.next() else {
-            Issue.record("no service list")
-            return
-        }
+        let services = EventRecorder { $0.services }
+        services.record(await engine.events())
+        let list = try #require(await services.next())
         let php = try #require(list.services.first { $0.id == "php-8.5" })
         let dns = try #require(list.services.first { $0.id == NexusEngine.dnsServiceID })
 
@@ -190,19 +188,16 @@ extension NexusEngineTests {
         let engine = try makePHPEngine(root: root, package: try makeFakeCheckingPHP(in: root))
         _ = await engine.handle(.install(name: "php", line: "8.5"))
         let runtime = try #require(await engine.runtime(named: "php", line: "8.5"))
-        var events = await engine.events().makeAsyncIterator()
-        _ = await events.next()
-        _ = await events.next()
+        let services = EventRecorder { $0.services }
+        services.record(await engine.events())
+        let first = await services.next()
 
         try Data().write(to: runtime.folder.appending(path: "lib/php/extensions/no-debug-non-zts-20250925/pcov.so"))
         _ = await engine.handle(.extensions(php: "8.5"))
-        let update = await events.next()
+        let update = await services.next()
 
-        guard case .services(let list) = update else {
-            Issue.record("no service list: \(String(describing: update))")
-            return
-        }
-        #expect(list.services.first { $0.id == "php-8.5" }?.toggles?.map(\.name) == ["pcov", "xdebug"])
+        #expect(first?.services.first { $0.id == "php-8.5" }?.toggles?.map(\.name) == ["xdebug"])
+        #expect(update?.services.first { $0.id == "php-8.5" }?.toggles?.map(\.name) == ["pcov", "xdebug"])
     }
 
     @Test func anExtensionThatLoadsForAnotherOneStaysOnWhenTheOtherOneTurnsOff() async throws {

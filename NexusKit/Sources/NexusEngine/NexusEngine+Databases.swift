@@ -258,8 +258,8 @@ extension NexusEngine {
             return try await copier.copy(database, as: name, create: create, progress: progress)
         }
 
-        let tables = Self.count(copied.tables, "table")
-        let views = Self.count(copied.views, "view")
+        let tables = Count.text(copied.tables, "table")
+        let views = Count.text(copied.views, "view")
         let contents = copied.views > 0 ? "\(tables) and \(views)" : tables
 
         return """

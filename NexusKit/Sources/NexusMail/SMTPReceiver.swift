@@ -1,106 +1,41 @@
-import Darwin
-import Dispatch
 import Foundation
 import NexusCore
-import Synchronization
 
-// The SMTP server of nexusd on 127.0.0.1. Each connection runs on its own thread with blocking
-// reads, because a local server has few connections. deliver decides for each mail. The client
-// gets "250" only after deliver accepts the mail, so a mail is never lost after that answer.
+// The SMTP server of nexusd on 127.0.0.1. deliver decides for each mail. The client gets "250"
+// only after deliver accepts the mail, so a mail is never lost after that answer.
 public final class SMTPReceiver: Sendable {
     public static let standardMaxSize = 50 * 1024 * 1024
 
-    private struct Listening: @unchecked Sendable {
-        let descriptor: Int32
-        let source: any DispatchSourceRead
-        let closed: DispatchSemaphore
-    }
-
-    private let requestedPort: Int
-    private let maxSize: Int
-    private let idleTimeout: TimeInterval
-    private let deliver: @Sendable (MailMessage) -> MailAcceptance
-    private let listening = Mutex<Listening?>(nil)
-    private let boundPort = Mutex(0)
+    private let listener: LoopbackListener
 
     // Port 0 takes a free port, for the tests.
     public init(port: Int, maxSize: Int = standardMaxSize, idleTimeout: TimeInterval = 300, deliver: @escaping @Sendable (MailMessage) -> MailAcceptance) {
-        requestedPort = port
-        self.maxSize = maxSize
-        self.idleTimeout = idleTimeout
-        self.deliver = deliver
+        let connection = SMTPConnection(maxSize: maxSize, deliver: deliver)
+        listener = LoopbackListener(port: port, label: "nl.roodfruit.nexus.smtp", idleTimeout: idleTimeout) { socket in
+            connection.serve(socket)
+        }
     }
 
     public var port: Int {
-        boundPort.withLock { $0 }
+        listener.port
     }
 
     public func start() throws {
-        let descriptor = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
-
-        guard descriptor >= 0 else {
-            throw SocketError.system("socket", errno)
-        }
-
-        var on: Int32 = 1
-        setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
-        var address = LineSocket.loopback(port: requestedPort)
-
-        let bound = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-
-        guard bound == 0, listen(descriptor, 64) == 0 else {
-            let code = errno
-            close(descriptor)
-            throw SocketError.system("bind", code)
-        }
-
-        boundPort.withLock { $0 = Self.localPort(of: descriptor) }
-
-        let source = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: DispatchQueue(label: "nl.roodfruit.nexus.smtp"))
-        source.setEventHandler { [weak self] in
-            self?.acceptConnection(on: descriptor)
-        }
-        let closed = DispatchSemaphore(value: 0)
-        source.setCancelHandler {
-            close(descriptor)
-            closed.signal()
-        }
-        listening.withLock { $0 = Listening(descriptor: descriptor, source: source, closed: closed) }
-        source.resume()
+        try listener.start()
     }
 
     // The port is free when stop returns. So a removal or a port change can use it at once.
     public func stop() {
-        let current = listening.withLock { listening in
-            defer { listening = nil }
-            return listening
-        }
-
-        guard let current else {
-            return
-        }
-
-        current.source.cancel()
-        current.closed.wait()
+        listener.stop()
     }
+}
 
-    private func acceptConnection(on descriptor: Int32) {
-        let client = accept(descriptor, nil, nil)
+// One SMTP connection, on the thread of the listener.
+private struct SMTPConnection: Sendable {
+    let maxSize: Int
+    let deliver: @Sendable (MailMessage) -> MailAcceptance
 
-        guard client >= 0 else {
-            return
-        }
-
-        Thread.detachNewThread { [self] in
-            serve(LineSocket(descriptor: client, timeout: idleTimeout))
-        }
-    }
-
-    private func serve(_ socket: LineSocket) {
+    func serve(_ socket: LineSocket) {
         defer { socket.close() }
         var session = SMTPSession(maxSize: maxSize)
 
@@ -156,18 +91,5 @@ public final class SMTPReceiver: Sendable {
         }
 
         throw SocketError.system("read", ECONNRESET)
-    }
-
-    private static func localPort(of descriptor: Int32) -> Int {
-        var address = sockaddr_in()
-        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-
-        _ = withUnsafeMutablePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                getsockname(descriptor, $0, &length)
-            }
-        }
-
-        return Int(UInt16(bigEndian: address.sin_port))
     }
 }

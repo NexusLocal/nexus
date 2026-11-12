@@ -401,7 +401,7 @@ private struct WorkspacesSettings: View {
     private var trashSummary: String {
         let size = ByteCountFormatter.string(fromByteCount: dumps.reduce(0) { $0 + $1.bytes }, countStyle: .file)
 
-        return "\(dumps.count) \(dumps.count == 1 ? "dump" : "dumps") · \(size)"
+        return "\(Count.text(dumps.count, "dump")) · \(size)"
     }
 
     private func setting<Value>(_ path: WritableKeyPath<WorkspaceSettings, Value>) -> Binding<Value> {
@@ -446,7 +446,7 @@ private struct WorkspacesSettings: View {
             Section {
                 Picker("Keep database dumps for", selection: setting(\.dumpDays)) {
                     ForEach(Array(Set(Self.dayChoices + [settings.dumpDays])).sorted(), id: \.self) { days in
-                        Text(days == 1 ? "1 day" : "\(days) days").tag(days)
+                        Text(Count.text(days, "day")).tag(days)
                     }
                 }
 

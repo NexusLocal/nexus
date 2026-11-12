@@ -30,8 +30,179 @@ extension AppModel {
         model.mailStatus = MailStatus(installed: true, running: true, receiving: true, smtpPort: 1025, inboxPort: 8025, waiting: 0, waitingBytes: 0, removed: 0, refused: 0, outboxFolder: "~/Library/Application Support/Nexus/mail/outbox", settings: MailSettings())
         model.openMailID = sampleMails.first?.id
         model.openMail = sampleMail(sampleMails[0].id)
+        model.show(sampleDumpList())
         return model
     }
+
+    // The list of nexusd for the Dumps screen of the design. A state of "Dumps States" changes it:
+    // off, empty, blocked or problem. The app gets it as it gets the first event of nexusd.
+    static func sampleDumpList(_ state: String? = nil) -> DumpList {
+        let settings = DumpSettings(catchDumps: state != "off", pageMode: .automatic, commands: true)
+        let blocked = state == "blocked" ? sampleDumpBlocks : []
+        let problem = state == "problem" ? "Nexus catches no dumps, because it cannot copy the PHP library of the dump viewer from the app. The activity log has the reason." : nil
+
+        return DumpList(requests: state == "empty" ? [] : sampleDumpRequests, settings: settings, blocked: blocked, receiving: true, problem: problem)
+    }
+
+    private static let sampleDumpBlocks = [
+        DumpBlock(host: "crm.test", reason: .varDumperFormat, file: home("~/Development/crm/.env"), place: DumpPlace(site: "crm.test")),
+        DumpBlock(host: "blog.test", reason: .userIni, file: home("~/Development/blog/.user.ini"), place: DumpPlace(site: "blog.test")),
+    ]
+
+    private static func today(_ hour: Int, _ minute: Int, _ second: Int) -> Date {
+        Calendar.current.date(bySettingHour: hour, minute: minute, second: second, of: .now) ?? .now
+    }
+
+    private static func home(_ path: String) -> String {
+        (path as NSString).expandingTildeInPath
+    }
+
+    // The requests of the Dumps screen in the design, newest first.
+    private static let sampleDumpRequests = [
+        DumpedRequest(id: "sample-checkout", kind: .http, method: "GET", target: "/checkout", url: "https://shop.test/checkout", host: "shop.test", root: home("~/Development/shop/public"), site: "shop.test", started: today(14, 32, 8), status: 200, duration: 0.184, dumpCount: 3, lastSeq: 3, firstSeq: 1, placeHost: "shop.test", projectFolder: home("~/Development/shop"), lastNumber: 3, firstNumber: 1),
+        DumpedRequest(id: "sample-livewire", kind: .http, method: "POST", target: "/livewire/update", url: "https://shop.test/livewire/update", host: "shop.test", root: home("~/Development/shop/public"), site: "shop.test", started: today(14, 31, 40), status: 200, duration: 0.092, dumpCount: 1, lastSeq: 1, firstSeq: 1, placeHost: "shop.test", projectFolder: home("~/Development/shop"), lastNumber: 1, firstNumber: 1),
+        DumpedRequest(id: "sample-orders-api", kind: .http, method: "GET", target: "/api/orders", url: "https://fix.shop.test/api/orders", host: "fix.shop.test", root: home("~/Development/shop-fix/public"), site: "shop.test", workspace: "fix", started: today(14, 29, 12), status: 200, duration: 0.061, dumpCount: 2, lastSeq: 2, firstSeq: 1, placeHost: "fix.shop.test", projectFolder: home("~/Development/shop-fix"), lastNumber: 2, firstNumber: 1),
+        DumpedRequest(id: "sample-order", kind: .http, method: "GET", target: "/orders/1042", url: "https://shop.test/orders/1042", host: "shop.test", root: home("~/Development/shop/public"), site: "shop.test", started: today(14, 18, 3), status: 500, duration: 0.047, dumpCount: 1, hasDD: true, lastSeq: 1, firstSeq: 1, placeHost: "shop.test", projectFolder: home("~/Development/shop"), lastNumber: 1, firstNumber: 1),
+        DumpedRequest(id: "sample-import", kind: .command, target: "artisan import:products", root: home("~/Development/shop"), site: "shop.test", started: today(13, 58, 21), exitCode: 0, duration: 3.2, dumpCount: 4, lastSeq: 4, firstSeq: 1, placeHost: "shop.test", projectFolder: home("~/Development/shop"), lastNumber: 4, firstNumber: 1),
+        DumpedRequest(id: "sample-hello", kind: .http, method: "GET", target: "/hello-world/", url: "https://blog.test/hello-world/", host: "blog.test", root: home("~/Development/blog"), site: "blog.test", started: today(13, 40, 55), status: 200, duration: 0.23, dumpCount: 1, lastSeq: 1, firstSeq: 1, placeHost: "blog.test", projectFolder: home("~/Development/blog"), lastNumber: 1, firstNumber: 1),
+    ]
+
+    // The dumps as nexusd gives them, with the tree as JSON text.
+    static func sampleDumps(of requestID: String) -> [CaughtDump] {
+        guard let request = sampleDumpRequests.first(where: { $0.id == requestID }), let folder = request.projectFolder else {
+            return []
+        }
+
+        return (sampleDumpContents[requestID] ?? []).enumerated().map { index, content in
+            let tree = (try? JSONEncoder().encode(content.tree)).map { String(decoding: $0, as: UTF8.self) }
+            return CaughtDump(requestID: requestID, seq: index + 1, time: request.started.addingTimeInterval(0.02 * Double(index + 1)), kind: content.kind, file: "\(folder)/\(content.file)", line: content.line, text: content.text, treeJSON: tree, number: index + 1)
+        }
+    }
+
+    private static func property(_ key: String, _ kind: DumpNode.Kind, _ value: String, _ access: DumpNode.Access = .public) -> DumpNode {
+        DumpNode(kind: kind, key: key, access: access, value: value)
+    }
+
+    private static func item(_ key: String, _ kind: DumpNode.Kind, _ value: String) -> DumpNode {
+        DumpNode(kind: kind, key: key, value: value)
+    }
+
+    private static func cartItem(_ index: Int, name: String, price: String) -> DumpNode {
+        DumpNode(kind: .object, key: String(index), index: true, className: "App\\Models\\CartItem", ref: 1291 + index, count: 3, children: [
+            property("id", .int, String(index + 1)),
+            property("name", .string, name),
+            property("price", .string, price),
+        ])
+    }
+
+    private static let sampleCart = DumpNode(kind: .object, className: "App\\Models\\Cart", ref: 1287, count: 3, children: [
+        property("id", .int, "42"),
+        property("total", .string, "129.95"),
+        DumpNode(kind: .object, key: "items", access: .public, className: "Illuminate\\Support\\Collection", ref: 1290, count: 2, children: [
+            DumpNode(kind: .array, key: "items", access: .protected, count: 3, children: [
+                cartItem(0, name: "Coffee beans", price: "14.95"),
+                cartItem(1, name: "Espresso machine", price: "99.00"),
+                cartItem(2, name: "Milk jug", price: "16.00"),
+            ]),
+            property("escapeWhenCastingToString", .bool, "false", .protected),
+        ]),
+    ])
+
+    private static let sampleOrder = DumpNode(kind: .object, className: "App\\Models\\Order", ref: 2210, count: 5, children: [
+        property("id", .int, "1042"),
+        property("status", .string, "paid"),
+        DumpNode(kind: .object, key: "customer", access: .public, className: "App\\Models\\User", ref: 2215, count: 2, children: [
+            property("name", .string, "Anna de Vries"),
+            property("email", .string, "anna@example.com"),
+        ]),
+        DumpNode(kind: .string, key: "note", access: .public, value: "Leave the parcel at the back door. Ring the bell two times and wait, because the door", cut: 412, length: 498),
+        property("shippedAt", .null, "null"),
+    ])
+
+    private static let sampleDumpContents: [String: [(file: String, line: Int, kind: CaughtDump.Kind, text: String, tree: DumpNode)]] = [
+        "sample-checkout": [
+            ("app/Http/Controllers/CheckoutController.php", 42, .dump, """
+                App\\Models\\Cart {#1287
+                  +id: 42
+                  +total: "129.95"
+                  +items: Illuminate\\Support\\Collection {#1290
+                    #items: array:3 [
+                      0 => App\\Models\\CartItem {#1291
+                        +id: 1
+                        +name: "Coffee beans"
+                        +price: "14.95"
+                      }
+                      1 => App\\Models\\CartItem {#1292
+                        +id: 2
+                        +name: "Espresso machine"
+                        +price: "99.00"
+                      }
+                      2 => App\\Models\\CartItem {#1293
+                        +id: 3
+                        +name: "Milk jug"
+                        +price: "16.00"
+                      }
+                    ]
+                    #escapeWhenCastingToString: false
+                  }
+                }
+                """, sampleCart),
+            ("app/Http/Controllers/CheckoutController.php", 57, .dump, "\"EUR\"", DumpNode(kind: .string, value: "EUR")),
+            ("app/Services/PriceCalculator.php", 88, .dump, "array:2 [\n  \"shipping\" => \"pickup\"\n  \"coupon\" => null\n]", DumpNode(kind: .array, count: 2, children: [
+                item("shipping", .string, "pickup"),
+                item("coupon", .null, "null"),
+            ])),
+        ],
+        "sample-livewire": [
+            ("app/Livewire/CartCounter.php", 31, .dump, "array:2 [\n  \"count\" => 3\n  \"open\" => true\n]", DumpNode(kind: .array, count: 2, children: [
+                item("count", .int, "3"),
+                item("open", .bool, "true"),
+            ])),
+        ],
+        "sample-orders-api": [
+            ("app/Http/Controllers/Api/OrderController.php", 24, .dump, "18", DumpNode(kind: .int, value: "18")),
+            ("app/Http/Controllers/Api/OrderController.php", 29, .dump, "array:1 [\n  0 => App\\Models\\Order {#2210\n    +id: 1042\n    +status: \"paid\"\n  }\n]", DumpNode(kind: .array, count: 1, children: [
+                DumpNode(kind: .object, key: "0", index: true, className: "App\\Models\\Order", ref: 2210, count: 2, children: [
+                    property("id", .int, "1042"),
+                    property("status", .string, "paid"),
+                ]),
+            ])),
+        ],
+        "sample-order": [
+            ("app/Http/Controllers/OrderController.php", 51, .dd, """
+                App\\Models\\Order {#2210
+                  +id: 1042
+                  +status: "paid"
+                  +customer: App\\Models\\User {#2215
+                    +name: "Anna de Vries"
+                    +email: "anna@example.com"
+                  }
+                  +note: "Leave the parcel at the back door. Ring the bell two times and wait, because the door"…412
+                  +shippedAt: null
+                }
+                """, sampleOrder),
+        ],
+        "sample-import": [
+            ("app/Console/Commands/ImportProducts.php", 40, .dump, "\"storage/app/products.csv\"", DumpNode(kind: .string, value: "storage/app/products.csv")),
+            ("app/Console/Commands/ImportProducts.php", 52, .dump, "248", DumpNode(kind: .int, value: "248")),
+            ("app/Console/Commands/ImportProducts.php", 66, .dump, "array:3 [\n  \"sku\" => \"COF-250\"\n  \"name\" => \"Coffee beans\"\n  \"price\" => 14.95\n]", DumpNode(kind: .array, count: 3, children: [
+                item("sku", .string, "COF-250"),
+                item("name", .string, "Coffee beans"),
+                item("price", .float, "14.95"),
+            ])),
+            ("app/Console/Commands/ImportProducts.php", 74, .dump, "array:2 [\n  \"created\" => 236\n  \"updated\" => 12\n]", DumpNode(kind: .array, count: 2, children: [
+                item("created", .int, "236"),
+                item("updated", .int, "12"),
+            ])),
+        ],
+        "sample-hello": [
+            ("wp-content/themes/blog/functions.php", 12, .dump, "WP_Post {#812\n  +ID: 1\n  +post_title: \"Hello world!\"\n  +post_status: \"publish\"\n}", DumpNode(kind: .object, className: "WP_Post", ref: 812, count: 3, children: [
+                property("ID", .int, "1"),
+                property("post_title", .string, "Hello world!"),
+                property("post_status", .string, "publish"),
+            ])),
+        ],
+    ]
 
     private static let sampleMails: [MailpitAPI.Summary] = [
         ("Shop <noreply@shop.test>", "Thank you for your order", "We received order #1042. We send it today.", "shop.test", "09:41"),

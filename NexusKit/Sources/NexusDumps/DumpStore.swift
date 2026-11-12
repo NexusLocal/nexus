@@ -2,43 +2,6 @@ import Foundation
 import NexusCore
 import Synchronization
 
-// The site or the workspace of a request. Part 7 finds it from the host and the root. A filter
-// with a place gives only the requests with the same site and the same workspace.
-public struct DumpPlace: Sendable, Equatable {
-    public var site: String?
-    public var workspace: String?
-
-    public init(site: String? = nil, workspace: String? = nil) {
-        self.site = site
-        self.workspace = workspace
-    }
-}
-
-extension DumpedRequest {
-    var place: DumpPlace {
-        DumpPlace(site: site, workspace: workspace)
-    }
-}
-
-// What changed since the last call of takeChanges. cleared means that the store removed all
-// requests before the other changes. removed holds each removed id. The app ignores an id that it
-// does not have.
-public struct DumpStoreChanges: Sendable, Equatable {
-    public var changed: [DumpedRequest]
-    public var removed: [String]
-    public var cleared: Bool
-
-    public init(changed: [DumpedRequest] = [], removed: [String] = [], cleared: Bool = false) {
-        self.changed = changed
-        self.removed = removed
-        self.cleared = cleared
-    }
-
-    public var isEmpty: Bool {
-        changed.isEmpty && removed.isEmpty && !cleared
-    }
-}
-
 // The caught dumps in memory and in logs/dumps.jsonl. The list holds only the request headers. The
 // dumps of a request are flat records next to it. So a change of the list never copies them. A
 // request shows in the list from its first dump on and goes with its last dump.
@@ -57,12 +20,12 @@ public final class DumpStore: Sendable {
     static let waitingLimit = 100
 
     let writer: DumpFile
-    private let locate: @Sendable (DumpedRequest) -> DumpPlace
+    private let locate: @Sendable (DumpedRequest) -> DumpLocation
     private let state = Mutex(StoreState())
 
     // locate runs outside the lock of the store. So it can read other state of nexusd. It runs
     // only for a new request and in relocate.
-    public init(file: URL, locate: @escaping @Sendable (DumpedRequest) -> DumpPlace = { _ in DumpPlace() }) {
+    public init(file: URL, locate: @escaping @Sendable (DumpedRequest) -> DumpLocation = { _ in DumpLocation() }) {
         writer = DumpFile(url: file)
         self.locate = locate
     }
@@ -71,8 +34,13 @@ public final class DumpStore: Sendable {
         writer.url
     }
 
+    // The gap after the highest number in the file at a start. A crash can lose the last lines of
+    // the file. A client can have seen their numbers. So the store never gives these numbers again.
+    public static let numberGap = 1000
+
     // A line that does not decode is skipped. An example is the cut last line after a crash. The
-    // file then gets only the kept records. So the next line does not join the cut one.
+    // file then gets only the kept records. So the next line does not join the cut one. A file
+    // without an epoch gets a new epoch, for example a new store.
     public func load() {
         writer.waitForWrites()
 
@@ -94,6 +62,14 @@ public final class DumpStore: Sendable {
             damaged = true
         }
 
+        if loaded.epoch.isEmpty {
+            loaded.epoch = StoreState.newEpoch()
+            damaged = true
+        } else {
+            loaded.lastNumber += Self.numberGap
+        }
+
+        loaded.isLoaded = true
         loaded.fileBytes = data.count
         loaded.forgetChanges()
 
@@ -127,21 +103,113 @@ public final class DumpStore: Sendable {
 
     // The newest request first, as DumpList has them. nil gives the requests of every place.
     public func list(place: DumpPlace? = nil) -> [DumpedRequest] {
+        listAndCursor(place: place).requests
+    }
+
+    // The list and the cursor of the same moment. newDumps after this cursor gives each dump that
+    // came after the list. The cursor is nil until load() ran.
+    public func listAndCursor(place: DumpPlace? = nil) -> (requests: [DumpedRequest], cursor: DumpCursor?) {
         state.withLock { state in
-            state.order.reversed()
+            let requests = state.order.reversed()
                 .compactMap { id in state.requests[id] }
-                .filter { request in StoreState.request(request, isIn: place) }
+                .filter { request in place.includes(request.place) }
+
+            return (requests, state.cursor)
         }
     }
 
-    // The dumps of one request in the order in which they arrived. A watcher gives the last seq
-    // that it has and gets only the newer dumps.
-    public func dumps(request: String, after seq: Int = 0) -> [CaughtDump] {
+    // A watcher can connect before nexusd loaded the file. Its list is then empty, but not because
+    // the store has no dumps.
+    public var isLoaded: Bool {
+        state.withLock { state in state.isLoaded }
+    }
+
+    // The dumps of one request with a number above afterNumber, in the order in which they arrived.
+    // A dump with a lower seq that arrives later has a higher number. So it comes too. 0 gives all
+    // dumps of the request.
+    public func dumps(request: String, afterNumber: Int = 0) -> [CaughtDump] {
         state.withLock { state in
             state.dumps
-                .filter { kept in kept.dump.requestID == request }
-                .filter { kept in kept.dump.seq > seq }
+                .filter { kept in kept.dump.requestID == request && kept.number > afterNumber }
                 .map(\.dump)
+        }
+    }
+
+    public func dump(number: Int) -> CaughtDump? {
+        state.withLock { state in
+            state.dumps.first { kept in kept.number == number }?.dump
+        }
+    }
+
+    // The newest dumps of a place, at most limit, up to the cursor of a list, in the order in which
+    // they arrived. nil reads up to the newest dump. newDumps after the same cursor gives the rest.
+    // So no dump comes twice. The shown dumps of a request are its newest. So each dump of such a
+    // request with a lower number is an older dump that the batch leaves out. olderCounts counts
+    // them. A cursor of another epoch gives no dumps and the current cursor. nil means that the
+    // store is not loaded yet.
+    public func lastDumps(place: DumpPlace?, limit: Int, through cursor: DumpCursor? = nil) -> DumpBatch? {
+        state.withLock { state in
+            guard let current = state.cursor else {
+                return nil
+            }
+
+            let through = cursor ?? current
+
+            guard through.epoch == current.epoch else {
+                return state.batch(of: [])
+            }
+
+            // The dumps are in the order of their numbers. So the dumps above the cursor are at the
+            // end, and the walk back stops at the limit.
+            let end = state.dumps.lastIndex { kept in kept.number <= through.number }.map { index in index + 1 } ?? 0
+            var shown: [KeptDump] = []
+
+            for kept in state.dumps[..<end].reversed() {
+                guard shown.count < limit else {
+                    break
+                }
+
+                if state.requests[kept.dump.requestID].map({ request in place.includes(request.place) }) == true {
+                    shown.append(kept)
+                }
+            }
+
+            var firstShown: [String: Int] = [:]
+
+            for kept in shown {
+                firstShown[kept.dump.requestID] = kept.number
+            }
+
+            var olderCounts: [String: Int] = [:]
+
+            for kept in state.dumps[..<end] where kept.number < firstShown[kept.dump.requestID] ?? Int.min {
+                olderCounts[kept.dump.requestID, default: 0] += 1
+            }
+
+            return state.batch(of: shown.reversed(), olderCounts: olderCounts)
+        }
+    }
+
+    // The dumps of a place that came after the cursor. The dumps are in the order of their numbers.
+    // So the walk starts at the end and stops at the first dump of the cursor or before it. A cursor
+    // of another epoch gives no dumps and the current cursor. The client then starts again with
+    // the newest requests. nil means that the store is not loaded yet.
+    public func newDumps(place: DumpPlace?, after cursor: DumpCursor) -> DumpBatch? {
+        state.withLock { state in
+            guard let current = state.cursor else {
+                return nil
+            }
+
+            guard cursor.epoch == current.epoch else {
+                return state.batch(of: [])
+            }
+
+            let first = state.dumps.lastIndex { kept in kept.number <= cursor.number }.map { index in index + 1 } ?? 0
+            let new = state.dumps[first...].filter { kept in
+                state.requests[kept.dump.requestID].map { request in place.includes(request.place) } ?? false
+            }
+
+            return state.batch(of: new)
         }
     }
 
@@ -159,20 +227,49 @@ public final class DumpStore: Sendable {
         }
     }
 
-    // Part 7 calls this when a site or a workspace changes. Each request gets the place that
+    // Removes the dump with this number of the store. A request without dumps goes from the list.
+    // Returns false when the store has no such dump.
+    @discardableResult
+    public func remove(dump number: Int) -> Bool {
+        state.withLock { state in
+            guard state.removeDump(number: number) else {
+                return false
+            }
+
+            rewrite(&state)
+            return true
+        }
+    }
+
+    // Removes one request with all its dumps. Returns the number of removed dumps, or nil when the
+    // list has no such request.
+    @discardableResult
+    public func remove(request id: String) -> Int? {
+        state.withLock { state in
+            guard state.requests[id] != nil else {
+                return nil
+            }
+
+            let removedDumps = state.removeRequestsWithTheirDumps([id])
+            rewrite(&state)
+            return removedDumps
+        }
+    }
+
+    // nexusd calls this when a site or a workspace changes. Each request gets the location that
     // locate gives now.
     public func relocate() {
         let headers = state.withLock { state in state.allHeaders }
-        let places = headers.map { header in (id: header.id, place: locate(header)) }
+        let locations = headers.map { header in (id: header.id, location: locate(header)) }
 
         state.withLock { state in
-            let lines = places.compactMap { moved in state.move(moved.id, to: moved.place) }
+            let lines = locations.compactMap { moved in state.move(moved.id, to: moved.location) }
             write(lines, into: &state)
         }
     }
 
-    // Part 7 groups the changes and sends them to the app.
-    public func takeChanges() -> DumpStoreChanges {
+    // nexusd groups the changes and sends them to the app.
+    public func takeChanges() -> DumpChange {
         state.withLock { state in
             state.takeChanges()
         }
@@ -183,18 +280,22 @@ public final class DumpStore: Sendable {
         writer.waitForWrites()
     }
 
+    // The JSON of the dump is the large part of its line. So it is made outside the lock. Inside
+    // the lock the line gets its number.
     private func add(_ dump: CaughtDump, of request: DumpEnvelope) {
-        guard let line = Record.line(dump: dump) else {
+        guard var line = Record.openLine(dump: dump) else {
             return
         }
 
-        let kept = KeptDump(dump: dump, bytes: line.count)
-
         change(request) { state, newHeader in
-            switch state.join(kept, newHeader: newHeader) {
-            case .refused: []
-            case .joined: [line]
-            case .shown(let headerLine): [headerLine, line]
+            var numbered = dump
+            numbered.number = state.lastNumber + 1
+            Record.close(&line, number: numbered.number)
+
+            switch state.join(KeptDump(dump: numbered, bytes: line.count), newHeader: newHeader) {
+            case .refused: return []
+            case .joined: return [line]
+            case .shown(let headerLine): return [headerLine, line]
             }
         }
     }
@@ -222,9 +323,7 @@ public final class DumpStore: Sendable {
             }
 
             var placed = request.header
-            let place = locate(placed)
-            placed.site = place.site
-            placed.workspace = place.workspace
+            placed.location = locate(placed)
             newHeader = placed
         }
     }
@@ -251,7 +350,7 @@ public final class DumpStore: Sendable {
     }
 
     private func rewrite(_ state: inout StoreState) {
-        writer.rewrite(DumpSnapshot(order: state.order, requests: state.requests, dumps: state.dumps, bytes: state.keptBytes))
+        writer.rewrite(DumpSnapshot(order: state.order, requests: state.requests, dumps: state.dumps, epoch: state.epoch, lastNumber: state.lastNumber, bytes: state.keptBytes))
         state.fileBytes = state.keptBytes
     }
 }
@@ -268,6 +367,9 @@ final class DumpFile: Sendable {
     let queue = DispatchQueue(label: "nl.roodfruit.nexus.dumps.file")
     private let openFile = OpenFile()
     private let failed = Atomic(false)
+    // The rewrites in the queue. A later rewrite holds each change of an earlier one. So only the
+    // last rewrite of a quick series, for example a held Delete key, writes the file.
+    private let queuedRewrites = Atomic(0)
 
     init(url: URL) {
         self.url = url
@@ -290,7 +392,13 @@ final class DumpFile: Sendable {
 
     // The snapshot is encoded here, outside the lock of the store.
     func rewrite(_ snapshot: DumpSnapshot) {
+        queuedRewrites.add(1, ordering: .relaxed)
+
         queue.async { [self] in
+            guard queuedRewrites.subtract(1, ordering: .relaxed).newValue == 0 else {
+                return
+            }
+
             let data = snapshot.encoded()
 
             try? openFile.handle?.close()
@@ -324,17 +432,21 @@ final class DumpFile: Sendable {
     }
 }
 
-// The kept records at the time of a rewrite. The headers come first in the order of the list. A
-// load then gives the requests the same order, also when the limits removed the first dump of a
+// The kept records at the time of a rewrite. The first line holds the epoch and the newest number.
+// So both stay after a clear and a start. The headers come next in the order of the list. A load
+// then gives the requests the same order, also when the limits removed the first dump of a
 // request. The dumps follow in the order in which they arrived.
 struct DumpSnapshot: Sendable {
     let order: [String]
     let requests: [String: DumpedRequest]
     let dumps: [KeptDump]
+    let epoch: String
+    let lastNumber: Int
     let bytes: Int
 
     func encoded() -> Data {
         var data = Data(capacity: bytes)
+        data.append(Record.line(Record(number: lastNumber, epoch: epoch)) ?? Data())
 
         for id in order {
             if let header = requests[id] {
@@ -343,17 +455,38 @@ struct DumpSnapshot: Sendable {
         }
 
         for kept in dumps {
-            data.append(Record.line(dump: kept.dump) ?? Data())
+            data.append(Record.line(dump: kept.dump, number: kept.number) ?? Data())
         }
 
         return data
     }
 }
 
-// A line of logs/dumps.jsonl holds a request header or a dump.
+// A line of logs/dumps.jsonl holds a request header, a dump with its number, or the epoch with the
+// newest number. A dump line of an older build has no number. Its number is then the number before
+// it plus 1.
 struct Record: Codable {
     var request: DumpedRequest?
     var dump: CaughtDump?
+    var number: Int?
+    var epoch: String?
+
+    // The keys of a line are sorted. So these two parts give the same line as line(dump:number:).
+    static func openLine(dump: CaughtDump) -> Data? {
+        guard let json = try? DumpCoding.encoder.encode(unnumbered(dump)) else {
+            return nil
+        }
+
+        var line = Data(capacity: json.count + 40)
+        line.append(contentsOf: #"{"dump":"#.utf8)
+        line.append(json)
+        return line
+    }
+
+    static func close(_ line: inout Data, number: Int) {
+        line.append(contentsOf: #","number":\#(number)}"#.utf8)
+        line.append(UInt8(ascii: "\n"))
+    }
 
     // The store counts the dumps of a request itself. So a header in the file has no counts. Its
     // line then keeps its size when a dump arrives.
@@ -361,14 +494,25 @@ struct Record: Codable {
         var uncounted = header
         uncounted.dumpCount = 0
         uncounted.hasDD = false
+        uncounted.lastSeq = 0
+        uncounted.firstSeq = 0
+        uncounted.lastNumber = 0
+        uncounted.firstNumber = 0
         return line(Record(request: uncounted)) ?? Data()
     }
 
-    static func line(dump: CaughtDump) -> Data? {
-        line(Record(dump: dump))
+    static func line(dump: CaughtDump, number: Int? = nil) -> Data? {
+        line(Record(dump: unnumbered(dump), number: number))
     }
 
-    private static func line(_ record: Record) -> Data? {
+    // The number of a dump is on its line, next to the dump. So it is in the file once.
+    private static func unnumbered(_ dump: CaughtDump) -> CaughtDump {
+        var plain = dump
+        plain.number = 0
+        return plain
+    }
+
+    static func line(_ record: Record) -> Data? {
         guard var data = try? DumpCoding.encoder.encode(record) else {
             return nil
         }
@@ -378,10 +522,15 @@ struct Record: Codable {
     }
 }
 
+// The dump has its number.
 struct KeptDump: Sendable {
     let dump: CaughtDump
     // The bytes of its line in the file. The limit of 10 MB counts these.
     let bytes: Int
+
+    var number: Int {
+        dump.number
+    }
 }
 
 struct StoreState {
@@ -415,8 +564,12 @@ struct StoreState {
     // The bytes of the header line of each request of the list.
     var headerBytes: [String: Int] = [:]
     var fileBytes = 0
+    var lastNumber = 0
+    var epoch = ""
+    var isLoaded = false
     var changed: [String] = []
     var removed: [String] = []
+    var removedDumps: [Int] = []
     var cleared = false
 
     // The bytes that a rewrite writes.
@@ -434,6 +587,14 @@ struct StoreState {
 
     var allHeaders: [DumpedRequest] {
         order.compactMap { id in requests[id] } + waiting
+    }
+
+    var cursor: DumpCursor? {
+        isLoaded ? DumpCursor(epoch: epoch, number: lastNumber) : nil
+    }
+
+    static func newEpoch() -> String {
+        String(UUID().uuidString.prefix(8)).lowercased()
     }
 
     func knows(_ id: String) -> Bool {
@@ -463,6 +624,7 @@ struct StoreState {
             headerLine = show(header)
         }
 
+        lastNumber = max(lastNumber, kept.number)
         keep(kept)
         removeOldDumps()
 
@@ -485,11 +647,10 @@ struct StoreState {
         return update(header)
     }
 
-    // Returns the header line for the file when the place of a request of the list changed.
-    mutating func move(_ id: String, to place: DumpPlace) -> Data? {
+    // Returns the header line for the file when the location of a request of the list changed.
+    mutating func move(_ id: String, to location: DumpLocation) -> Data? {
         if let index = waiting.firstIndex(where: { header in header.id == id }) {
-            waiting[index].site = place.site
-            waiting[index].workspace = place.workspace
+            waiting[index].location = location
             return nil
         }
 
@@ -497,12 +658,11 @@ struct StoreState {
             return nil
         }
 
-        if header.place == place {
+        if header.location == location {
             return nil
         }
 
-        header.site = place.site
-        header.workspace = place.workspace
+        header.location = location
         return update(header)
     }
 
@@ -514,8 +674,18 @@ struct StoreState {
             replayHeader(header)
         }
 
-        if let dump = record.dump {
+        if var dump = record.dump {
+            dump.number = record.number ?? lastNumber + 1
             _ = join(KeptDump(dump: dump, bytes: lineBytes), newHeader: nil)
+            return
+        }
+
+        if let epoch = record.epoch {
+            self.epoch = epoch
+        }
+
+        if let number = record.number {
+            lastNumber = max(lastNumber, number)
         }
     }
 
@@ -526,47 +696,86 @@ struct StoreState {
         return !empty.isEmpty
     }
 
-    // Returns the number of removed dumps.
+    // Returns the number of removed dumps. A clear of all that removes a dump gives a new epoch.
+    // So a client with a cursor of before the clear starts again with the newest requests. Only
+    // such a clear writes the file again with the new epoch.
     mutating func remove(place: DumpPlace?) -> Int {
         guard let place else {
             let removedDumps = dumps.count
-            let bytes = fileBytes
-            self = StoreState()
-            fileBytes = bytes
-            cleared = true
+            var empty = StoreState()
+            empty.fileBytes = fileBytes
+            empty.lastNumber = lastNumber
+            empty.isLoaded = isLoaded
+            empty.epoch = removedDumps > 0 ? Self.newEpoch() : epoch
+            empty.cleared = true
+            self = empty
             return removedDumps
         }
 
-        let ids = order.filter { id in requests[id]?.place == place }
-        let removedIDs = Set(ids)
+        waiting.removeAll { header in header.place == place }
+        return removeRequestsWithTheirDumps(order.filter { id in requests[id]?.place == place })
+    }
+
+    // Returns the number of removed dumps. An id that is not in the list removes nothing.
+    mutating func removeRequestsWithTheirDumps(_ ids: [String]) -> Int {
+        let listed = ids.filter { id in requests[id] != nil }
+
+        if listed.isEmpty {
+            return 0
+        }
+
+        let removedIDs = Set(listed)
         let before = dumps.count
 
         dumps.removeAll { kept in removedIDs.contains(kept.dump.requestID) }
         dumpKeys = Set(dumps.map { kept in DumpKey(kept.dump) })
         dumpBytes = dumps.reduce(0) { total, kept in total + kept.bytes }
-        waiting.removeAll { header in header.place == place }
-        removeRequests(ids)
+        removeRequests(listed)
         return before - dumps.count
     }
 
-    mutating func takeChanges() -> DumpStoreChanges {
+    // The request gets the counts of the dumps that stay. The app removes the dump with its id
+    // from the dumps that it shows.
+    mutating func removeDump(number: Int) -> Bool {
+        guard let index = dumps.firstIndex(where: { kept in kept.number == number }) else {
+            return false
+        }
+
+        let kept = dumps.remove(at: index)
+        dumpBytes -= kept.bytes
+        removedDumps.append(kept.number)
+        forget([kept])
+        return true
+    }
+
+    // Each header comes once, in the order of the first dump of its request in the batch.
+    func batch(of kept: some Sequence<KeptDump>, olderCounts: [String: Int] = [:]) -> DumpBatch {
+        var dumps: [CaughtDump] = []
+        var headers: [DumpedRequest] = []
+        var seen: Set<String> = []
+
+        for dump in kept.map(\.dump) {
+            dumps.append(dump)
+
+            if seen.insert(dump.requestID).inserted, let header = requests[dump.requestID] {
+                headers.append(header)
+            }
+        }
+
+        return DumpBatch(dumps: dumps, requests: headers, cursor: DumpCursor(epoch: epoch, number: lastNumber), olderCounts: olderCounts)
+    }
+
+    mutating func takeChanges() -> DumpChange {
         defer { forgetChanges() }
 
-        return DumpStoreChanges(changed: changed.compactMap { id in requests[id] }, removed: removed, cleared: cleared)
+        return DumpChange(changed: changed.compactMap { id in requests[id] }, removed: removed, cleared: cleared, removedDumps: removedDumps)
     }
 
     mutating func forgetChanges() {
         changed = []
         removed = []
+        removedDumps = []
         cleared = false
-    }
-
-    static func request(_ request: DumpedRequest, isIn place: DumpPlace?) -> Bool {
-        guard let place else {
-            return true
-        }
-
-        return request.place == place
     }
 
     // A header from the file or from an end event. The store counts the dumps itself. A request
@@ -580,6 +789,10 @@ struct StoreState {
         var updated = header
         updated.dumpCount = current.dumpCount
         updated.hasDD = current.hasDD
+        updated.lastSeq = current.lastSeq
+        updated.firstSeq = current.firstSeq
+        updated.lastNumber = current.lastNumber
+        updated.firstNumber = current.firstNumber
         requests[header.id] = updated
         markChanged(header.id)
         return headerLine(of: updated)
@@ -598,12 +811,16 @@ struct StoreState {
         var shown = header
         shown.dumpCount = 0
         shown.hasDD = false
+        shown.lastSeq = 0
+        shown.firstSeq = 0
+        shown.lastNumber = 0
+        shown.firstNumber = 0
         requests[shown.id] = shown
         order.append(shown.id)
 
-        // The request is back after a removal in the same group of changes.
-        removed.removeAll { id in id == shown.id }
-
+        // A request that comes back after a removal in the same group of changes stays in removed.
+        // DumpChange.apply removes it first and then puts it at the top, as the order of the store
+        // has it.
         return headerLine(of: shown)
     }
 
@@ -619,6 +836,15 @@ struct StoreState {
         dumps.append(kept)
         dumpKeys.insert(DumpKey(kept.dump))
         dumpBytes += kept.bytes
+
+        guard let current = requests[requestID] else {
+            return
+        }
+
+        requests[requestID]?.lastSeq = max(current.lastSeq, kept.dump.seq)
+        requests[requestID]?.firstSeq = current.dumpCount == 0 ? kept.dump.seq : min(current.firstSeq, kept.dump.seq)
+        requests[requestID]?.lastNumber = kept.number
+        requests[requestID]?.firstNumber = current.dumpCount == 0 ? kept.number : current.firstNumber
         requests[requestID]?.dumpCount += 1
 
         if kept.dump.kind == .dd {
@@ -663,33 +889,62 @@ struct StoreState {
             return
         }
 
-        var emptied: [String] = []
-        var lostDD: Set<String> = []
+        let old = Array(dumps.prefix(count))
+        dumps.removeFirst(count)
+        dumpBytes = bytes
+        forget(old)
+    }
 
-        for kept in dumps.prefix(count) {
+    // The dumps are out of dumps already. Their requests get the counts of the dumps that stay. A
+    // request without dumps goes from the list.
+    private mutating func forget(_ removed: [KeptDump]) {
+        var emptied: [String] = []
+        var touched: Set<String> = []
+
+        for kept in removed {
             let requestID = kept.dump.requestID
 
             dumpKeys.remove(DumpKey(kept.dump))
             requests[requestID]?.dumpCount -= 1
             markChanged(requestID)
-
-            if kept.dump.kind == .dd {
-                lostDD.insert(requestID)
-            }
+            touched.insert(requestID)
 
             if requests[requestID]?.dumpCount == 0 {
                 emptied.append(requestID)
             }
         }
 
-        dumps.removeFirst(count)
-        dumpBytes = bytes
+        recount(touched)
+        removeRequests(emptied)
+    }
 
-        for requestID in lostDD {
-            requests[requestID]?.hasDD = dumps.contains { kept in kept.dump.requestID == requestID && kept.dump.kind == .dd }
+    // A dump with a lower seq can arrive after a higher one. So firstSeq is the lowest seq of the
+    // dumps that stay. The dumps are in the order of their numbers. So the first kept dump of a
+    // request has its lowest number and the last kept dump its highest. One walk over the kept
+    // dumps finds them for each touched request. lastSeq stays, as DumpedRequest says.
+    private mutating func recount(_ touched: Set<String>) {
+        var lowestSeq: [String: Int] = [:]
+        var lowestNumber: [String: Int] = [:]
+        var highestNumber: [String: Int] = [:]
+        var withDD: Set<String> = []
+
+        for kept in dumps where touched.contains(kept.dump.requestID) {
+            let requestID = kept.dump.requestID
+            lowestSeq[requestID] = min(lowestSeq[requestID] ?? kept.dump.seq, kept.dump.seq)
+            lowestNumber[requestID] = lowestNumber[requestID] ?? kept.number
+            highestNumber[requestID] = kept.number
+
+            if kept.dump.kind == .dd {
+                withDD.insert(requestID)
+            }
         }
 
-        removeRequests(emptied)
+        for requestID in touched where requests[requestID]?.dumpCount ?? 0 > 0 {
+            requests[requestID]?.firstSeq = lowestSeq[requestID] ?? 0
+            requests[requestID]?.firstNumber = lowestNumber[requestID] ?? 0
+            requests[requestID]?.lastNumber = highestNumber[requestID] ?? 0
+            requests[requestID]?.hasDD = withDD.contains(requestID)
+        }
     }
 
     private mutating func removeRequests(_ ids: [String]) {

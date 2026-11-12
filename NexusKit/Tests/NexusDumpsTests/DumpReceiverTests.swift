@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import NexusCore
+import NexusTestSupport
 import Synchronization
 import Testing
 @testable import NexusDumps
@@ -91,38 +92,15 @@ final class DumpReceiverTests {
     }
 
     private func connect() throws -> Int32 {
-        let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-        var address = DumpReceiver.address(of: socket.path(percentEncoded: false))
-
-        let result = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
-                Darwin.connect(descriptor, socketAddress, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-
-        try #require(result == 0)
-        return descriptor
+        try DumpSocketClient.connect(to: socket)
     }
 
     private func write(_ text: String, to descriptor: Int32) throws {
-        let data = Data(text.utf8)
-        var offset = 0
-
-        while offset < data.count {
-            let written = data.withUnsafeBytes { bytes in
-                Darwin.write(descriptor, bytes.baseAddress! + offset, data.count - offset)
-            }
-
-            try #require(written > 0)
-            offset += written
-        }
+        try DumpSocketClient.write(text, to: descriptor)
     }
 
     private func send(_ text: String) throws {
-        let descriptor = try connect()
-        defer { close(descriptor) }
-
-        try write(text, to: descriptor)
+        try DumpSocketClient.send(text, to: socket)
     }
 
     private func eventually(_ condition: () -> Bool) async -> Bool {

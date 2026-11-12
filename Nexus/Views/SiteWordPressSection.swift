@@ -306,7 +306,7 @@ struct SiteWordPressSection: View {
 
     private func doneText(_ info: WordPressSiteInfo, _ urlChange: WordPressURLChange) -> String {
         let until = Self.day.string(from: urlChange.expires)
-        let places = urlChange.replacements == 1 ? "1 place" : "\(urlChange.replacements.formatted()) places"
+        let places = Count.text(urlChange.replacements, "place")
         let plan = urlChange.plan
 
         return "Nexus replaced \(EnglishList.joined(plan.oldURLs)) with \(plan.to) in \(places). The dump of the old database stays in the trash until \(until). \"Undo…\" puts it back."

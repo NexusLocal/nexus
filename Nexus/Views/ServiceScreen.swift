@@ -85,7 +85,7 @@ struct ServiceScreen: View {
             return "Sends every .\(model.settings.tld) name to this Mac"
         }
 
-        let count = versions.count == 1 ? "1 version" : "\(versions.count) versions"
+        let count = Count.text(versions.count, "version")
 
         if let problem = model.problemVersion(of: kind) {
             return "\(count) · \(problem.name) cannot start"

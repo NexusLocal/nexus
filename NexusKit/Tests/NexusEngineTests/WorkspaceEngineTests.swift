@@ -104,16 +104,16 @@ extension NexusEngineTests {
         try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
         try await settle(engine)
 
-        let exists = { (path: String) in FileManager.default.fileExists(atPath: worktree.appending(path: path).path(percentEncoded: false)) }
+        let inWorktree = { (path: String) in exists(worktree.appending(path: path)) }
         let warnings = await workspaces(engine).first?.warnings
 
         #expect(try String(contentsOf: worktree.appending(path: "vendor/autoload.php"), encoding: .utf8) == "<?php")
-        #expect(exists("node_modules/a/index.js"))
-        #expect(exists("public/build/app.js"))
-        #expect(exists("storage/app/uploads/a.txt"))
-        #expect(!exists("public/hot"))
-        #expect(!exists("bootstrap/cache/packages.php"))
-        #expect(!exists(".env"))
+        #expect(inWorktree("node_modules/a/index.js"))
+        #expect(inWorktree("public/build/app.js"))
+        #expect(inWorktree("storage/app/uploads/a.txt"))
+        #expect(!inWorktree("public/hot"))
+        #expect(!inWorktree("bootstrap/cache/packages.php"))
+        #expect(!inWorktree(".env"))
         #expect(try await gitOutput("status", "--porcelain", in: worktree).isEmpty)
         #expect(warnings == [])
     }
@@ -1820,20 +1820,6 @@ extension NexusEngineTests {
             .filter { $0.state.isActive && !$0.displayName.hasSuffix("of a workspace") }
             .map(\.displayName)
             .sorted()
-    }
-
-    private func eventually(_ condition: () async throws -> Bool) async rethrows -> Bool {
-        let deadline = ContinuousClock.now + .seconds(10)
-
-        while ContinuousClock.now < deadline {
-            if try await condition() {
-                return true
-            }
-
-            try? await Task.sleep(for: .milliseconds(25))
-        }
-
-        return false
     }
 
     private func text(of file: URL) -> String? {

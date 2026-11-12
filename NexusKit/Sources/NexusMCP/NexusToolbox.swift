@@ -367,7 +367,7 @@ public struct NexusToolbox: MCPHandler {
 
         let filter = [to.map { "to \($0)" }, subject.map { "with \"\($0)\" in the subject" }].compactMap { $0 }.joined(separator: " ")
         let what = filter.isEmpty ? "a mail of \(scope.label)" : "a mail \(filter)"
-        return try .value(NoMail(found: false, message: "No mail yet. Nexus waited \(seconds == 1 ? "1 second" : "\(seconds) seconds") for \(what). Call wait_for_mail again. When the mail does not come, call last_errors: the site can have failed to send it."))
+        return try .value(NoMail(found: false, message: "No mail yet. Nexus waited \(Count.text(seconds, "second")) for \(what). Call wait_for_mail again. When the mail does not come, call last_errors: the site can have failed to send it."))
     }
 
     private func clearMail(_ arguments: CallArguments, agent: String) async throws -> MCPToolResult {
@@ -378,7 +378,7 @@ public struct NexusToolbox: MCPHandler {
         let message: String = if let id {
             "Nexus removed the mail \(id) from the inbox."
         } else if let count {
-            "Nexus removed \(count == 1 ? "1 mail" : "\(count) mails") of \(scope.label) from the inbox."
+            "Nexus removed \(Count.text(count, "mail")) of \(scope.label) from the inbox."
         } else {
             "The inbox is empty."
         }

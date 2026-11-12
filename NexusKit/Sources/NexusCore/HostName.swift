@@ -30,6 +30,12 @@ public enum HostName {
     // read the HTTPS traffic of Safari and Chrome for that name.
     public static let privateSuffixes: Set<String> = devTLDs.union(["local", "example", "invalid", "home.arpa"])
 
+    // The host that a user means with Shop.test, https://shop.test/ or shop.test:443. A text that
+    // is not a URL, for example *.shop.test, stays as it is in small letters.
+    public static func plain(_ text: String) -> String {
+        URLParts(text)?.host ?? text.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
     public static func validatedTLD(_ tld: String) throws -> String {
         let tld = tld.lowercased()
 

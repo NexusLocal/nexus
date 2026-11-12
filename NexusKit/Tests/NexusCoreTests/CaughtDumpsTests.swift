@@ -126,6 +126,21 @@ struct CaughtDumpsTests {
         #expect(try roundTrip(withTree) == withTree)
     }
 
+    @Test func aDumpWithNoDefaultValueKeepsEachField() throws {
+        let caught = CaughtDump(requestID: "65f1c2a9e3b1", seq: 2, time: Self.started, kind: .dd, file: "/Users/x/Sites/shop/app/Cart.php", line: 12, label: "cart", text: "1", treeJSON: Self.cartTree, truncated: true, number: 41)
+
+        #expect(try roundTrip(caught) == caught)
+    }
+
+    @Test func aDumpWithoutANumberHasNoNumberInItsJSONAndDecodesAs0() throws {
+        let caught = dump(seq: 1)
+
+        let json = String(decoding: try JSONEncoder().encode(caught), as: UTF8.self)
+
+        #expect(!json.contains("number"))
+        #expect(try roundTrip(caught).number == 0)
+    }
+
     @Test func aDumpIsNamedAfterItsRequestAndItsNumber() throws {
         let caught = dump(seq: 3)
 
@@ -154,6 +169,89 @@ struct CaughtDumpsTests {
 
         #expect(request.root == nil)
         #expect(request.target == "php artisan migrate")
+        #expect(request.lastSeq == 0)
+    }
+
+    @Test func aRequestWithNoDefaultValueKeepsEachField() throws {
+        let request = DumpedRequest(
+            id: "65f1c2a9e3b1",
+            kind: .command,
+            method: "GET",
+            target: "php artisan migrate",
+            url: "https://fix.shop.test/checkout",
+            host: "fix.shop.test",
+            root: "/Users/x/Sites/shop-fix/public",
+            site: "shop.test",
+            workspace: "fix",
+            started: Self.started,
+            status: 500,
+            exitCode: 1,
+            duration: 2.5,
+            dumpCount: 4,
+            hasDD: true,
+            lastSeq: 7,
+            firstSeq: 3,
+            placeHost: "fix.shop.test",
+            projectFolder: "/Users/x/Sites/shop-fix",
+            lastNumber: 12,
+            firstNumber: 9
+        )
+
+        #expect(try roundTrip(request) == request)
+    }
+
+    @Test func aRequestWithoutNumbersHasNoNumberKeysAndDecodesThemAs0() throws {
+        let request = DumpedRequest(id: "a1", kind: .http, method: "GET", target: "/", started: Self.started, dumpCount: 1, lastSeq: 1)
+
+        let json = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+        let decoded = try roundTrip(request)
+
+        #expect(!json.contains("Number"))
+        #expect(decoded.lastNumber == 0)
+        #expect(decoded.firstNumber == 0)
+    }
+
+    @Test func aRequestOfAnOlderNexusdHasNoFirstSeqAndNoLocation() throws {
+        let json = #"{"id":"a1b2c3","kind":"command","target":"php artisan migrate","site":"shop.test","started":0,"dumpCount":1,"hasDD":false,"lastSeq":4}"#
+
+        let request = try JSONDecoder().decode(DumpedRequest.self, from: Data(json.utf8))
+
+        #expect(request.firstSeq == 0)
+        #expect(request.location == DumpLocation(place: DumpPlace(site: "shop.test")))
+    }
+
+    @Test func aRequestTakesALocation() {
+        var request = DumpedRequest(id: "a1", kind: .http, target: "/", site: "blog.test", started: Self.started)
+        let location = DumpLocation(place: DumpPlace(site: "shop.test", workspace: "fix"), host: "fix.shop.test", projectFolder: "/Users/x/Sites/shop-fix")
+
+        request.location = location
+
+        #expect(request.place == DumpPlace(site: "shop.test", workspace: "fix"))
+        #expect(request.placeHost == "fix.shop.test")
+        #expect(request.projectFolder == "/Users/x/Sites/shop-fix")
+        #expect(request.location == location)
+    }
+
+    @Test func aRequestGivesItsStatusAndItsDurationAsText() {
+        let page = DumpedRequest(id: "p1", kind: .http, method: "GET", target: "/", started: Self.started, status: 200, duration: 0.184)
+        let command = DumpedRequest(id: "c1", kind: .command, target: "php artisan migrate", started: Self.started, exitCode: 1, duration: 65.2)
+        let running = DumpedRequest(id: "r1", kind: .http, method: "GET", target: "/", started: Self.started)
+
+        #expect(page.statusText == "200")
+        #expect(page.durationText == "184 ms")
+        #expect(command.statusText == "exit 1")
+        #expect(command.durationText == "1 min 5 s")
+        #expect(running.statusText == nil)
+        #expect(running.durationText == nil)
+    }
+
+    @Test(arguments: [(0.0004, "0 ms"), (0.5, "500 ms"), (0.9994, "999 ms"), (0.9996, "1.0 s"), (1.3, "1.3 s"), (59.94, "59.9 s"), (59.97, "1 min 0 s"), (75.4, "1 min 15 s"), (3600, "60 min 0 s")])
+    func aDurationIsShort(seconds: Double, text: String) {
+        #expect(DumpedRequest.durationText(seconds, locale: Locale(identifier: "en_US_POSIX")) == text)
+    }
+
+    @Test func aDurationUsesTheDecimalSignOfTheLanguage() {
+        #expect(DumpedRequest.durationText(1.3, locale: Locale(identifier: "nl_NL")) == "1,3 s")
     }
 
     @Test func aCommandShowsCLIAsItsMethod() {
@@ -169,7 +267,14 @@ struct CaughtDumpsTests {
         let block = try JSONDecoder().decode(DumpBlock.self, from: Data(#"{"host":"crm.test","reason":"var_dumper_format","file":"/Users/x/Sites/crm/.env"}"#.utf8))
 
         #expect(block == DumpBlock(host: "crm.test", reason: .varDumperFormat, file: "/Users/x/Sites/crm/.env"))
+        #expect(block.place == nil)
         #expect(try roundTrip(DumpBlock(host: "blog.test", reason: .userIni)) == DumpBlock(host: "blog.test", reason: .userIni))
+    }
+
+    @Test func aBlockKeepsItsPlace() throws {
+        let block = DumpBlock(host: "fix.shop.test", reason: .userIni, file: "/Users/x/Sites/shop-fix/public/.user.ini", place: DumpPlace(site: "shop.test", workspace: "fix"))
+
+        #expect(try roundTrip(block) == block)
     }
 
     @Test func aNodeOfANewerPHPSideStillDecodes() throws {

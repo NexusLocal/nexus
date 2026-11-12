@@ -190,7 +190,7 @@ public final class DumpReceiver: Sendable {
         return .system(call, code)
     }
 
-    static func address(of path: String) -> sockaddr_un {
+    package static func address(of path: String) -> sockaddr_un {
         var address = sockaddr_un()
         address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
         address.sun_family = sa_family_t(AF_UNIX)

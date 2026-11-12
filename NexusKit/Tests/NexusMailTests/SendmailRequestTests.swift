@@ -1,4 +1,5 @@
 import Foundation
+import NexusCore
 import Testing
 @testable import NexusMail
 
@@ -60,14 +61,18 @@ struct SendmailRequestTests {
 }
 
 struct MailTagTests {
+    private func entry(_ site: String, workspace: String? = nil, host: String) -> SiteMap.Entry {
+        SiteMap.Entry(place: DumpPlace(site: site, workspace: workspace), host: host)
+    }
+
     private func router() -> MailRouter {
-        let router = MailRouter(outbox: MailOutbox(folder: URL(filePath: "/nonexistent/outbox", directoryHint: .isDirectory)))
-        router.setSiteFolders([
-            "/Sites/shop": "shop.test",
-            "/Sites/shop/.claude/worktrees/fix": "fix.shop.test",
-            "/Sites/shop2": "shop2.test",
-        ])
-        return router
+        let sites = SharedSiteMap(SiteMap(folders: [
+            "/Sites/shop": entry("shop.test", host: "shop.test"),
+            "/Sites/shop/.claude/worktrees/fix": entry("shop.test", workspace: "fix", host: "fix.shop.test"),
+            "/Sites/shop2": entry("shop2.test", host: "shop2.test"),
+        ]))
+
+        return MailRouter(outbox: MailOutbox(folder: URL(filePath: "/nonexistent/outbox", directoryHint: .isDirectory)), sites: sites)
     }
 
     @Test func theFolderOfAScriptGivesTheHostOfTheSiteThatHoldsIt() {

@@ -1134,6 +1134,22 @@ function varDumperFormatBlocks(WebServer $server): void
     check(is_file("{$folder}/dumps/blocked-127.0.0.1"), 'PHP keeps a stamp for the host.');
 }
 
+function emptyVarDumperFormatBlocks(WebServer $server): void
+{
+    [, $daemon] = scenario(stub: $server->stub);
+
+    $response = $server->get('/index.php?format=', ['Accept' => 'text/html'], $daemon);
+    $daemon->close();
+
+    contains($response['body'], 'SYMFONY-DEFAULT:{"order":7}', 'setHandler() of VarDumper ignores Nexus also for an empty value');
+
+    $blocked = $daemon->ofType('blocked');
+
+    same(1, count($daemon->events()), 'Only the block event');
+    same('var_dumper_format', $blocked[0]['reason'] ?? null, 'The reason of the block');
+    same('', $blocked[0]['detail'] ?? null, 'The empty value of VAR_DUMPER_FORMAT');
+}
+
 function handlerThatCallsNexusAgain(WebServer $server): void
 {
     [, $daemon] = scenario(stub: $server->stub);
@@ -1220,6 +1236,7 @@ $webTests = [
         'a handler of the site that replaces itself' => handlerThatReplacesItself(...),
         'a direct VarDumper::dump() after the first dump' => directVarDumperCall(...),
         'the VAR_DUMPER_FORMAT block event' => varDumperFormatBlocks(...),
+        'an empty VAR_DUMPER_FORMAT blocks too' => emptyVarDumperFormatBlocks(...),
         'a handler of the site that calls Nexus again' => handlerThatCallsNexusAgain(...),
     ],
 ];

@@ -125,6 +125,12 @@ public enum PHPConfig {
         return value.isEmpty ? nil : value
     }
 
+    // A .user.ini wins over the pool of PHP-FPM. Each value of the key replaces the stub of Nexus,
+    // also an empty value. So Nexus then catches no dumps of the site.
+    public static func setsPrependFile(userIni: String) -> Bool {
+        userIni.split(whereSeparator: \.isNewline).contains { line in iniValue(of: "auto_prepend_file", in: line) != nil }
+    }
+
     // PHP reads the value without its quotes. A value without quotes ends at a comment. A word such
     // as off gives an empty value.
     private static func iniValue(of key: String, in line: Substring) -> String? {

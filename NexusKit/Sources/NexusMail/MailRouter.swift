@@ -20,12 +20,13 @@ public final class MailRouter: Sendable {
     public let outbox: MailOutbox
     private let inboxPort = Mutex<Int?>(nil)
     private let limits = Mutex(MailOutbox.Limits.standard)
-    private let hostsByFolder = Mutex<[String: String]>([:])
+    private let sites: SharedSiteMap
     private let turn = Mutex(DeliveryTurn())
     private let timeout: TimeInterval
 
-    public init(outbox: MailOutbox, timeout: TimeInterval = 30) {
+    public init(outbox: MailOutbox, sites: SharedSiteMap = SharedSiteMap(), timeout: TimeInterval = 30) {
         self.outbox = outbox
+        self.sites = sites
         self.timeout = timeout
     }
 
@@ -46,25 +47,15 @@ public final class MailRouter: Sendable {
         limits.withLock { $0 }
     }
 
-    // The real folder of each site and each workspace, with its host.
-    public func setSiteFolders(_ folders: [String: String]) {
-        hostsByFolder.withLock { $0 = folders }
-    }
-
     // PHP gives no host to a sendmail, so nexus sendmail logs in with the folder of the script or
-    // of the worker. The longest folder of a site or a workspace that holds it gives the host. A
-    // folder outside every site gives no tag. Each other user name is the tag itself.
+    // of the worker. The longest project folder of a site or a workspace that holds it gives the
+    // host. A folder outside every site gives no tag. Each other user name is the tag itself.
     public func tag(for user: String?) -> String? {
         guard let user, user.hasPrefix("/") else {
             return user
         }
 
-        let folders = hostsByFolder.withLock { $0 }
-
-        return folders
-            .filter { folder, _ in user == folder || user.hasPrefix(folder.hasSuffix("/") ? folder : "\(folder)/") }
-            .max { $0.key.count < $1.key.count }?
-            .value
+        return sites.current.entry(holding: user)?.host
     }
 
     private func tagged(_ message: MailMessage) -> MailMessage {

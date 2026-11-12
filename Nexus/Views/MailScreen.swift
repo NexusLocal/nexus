@@ -56,7 +56,7 @@ struct MailScreen: View {
             return "\(name) · stopped"
         }
 
-        return "\(name) · \(model.mailCount == 1 ? "1 mail" : "\(model.mailCount) mails") in the inbox"
+        return "\(name) · \(Count.text(model.mailCount, "mail")) in the inbox"
     }
 }
 
@@ -125,7 +125,7 @@ private struct MailNotices: View {
                 }
 
                 if waiting > 0, !service.isRunning {
-                    WarningBanner(title: "\(Self.mails(waiting)) wait for the mail service", message: "Mailpit is stopped. nexusd keeps each new mail in the outbox. The inbox gets them at the next start.") {
+                    WarningBanner(title: "\(Count.text(waiting, "mail")) wait for the mail service", message: "Mailpit is stopped. nexusd keeps each new mail in the outbox. The inbox gets them at the next start.") {
                         Button("Remove…") {
                             confirmsRemoval = true
                         }
@@ -138,7 +138,7 @@ private struct MailNotices: View {
                 }
 
                 if removed > 0 {
-                    WarningBanner(title: "Nexus removed \(Self.mails(removed)) from the outbox", message: "The outbox was full. So the oldest mails went. Change the limits in Settings > Mail.") {
+                    WarningBanner(title: "Nexus removed \(Count.text(removed, "mail")) from the outbox", message: "The outbox was full. So the oldest mails went. Change the limits in Settings > Mail.") {
                         Button("Mail settings…") {
                             UserDefaults.standard.set("mail", forKey: SettingsWindow.tabKey)
                             openSettings()
@@ -151,7 +151,7 @@ private struct MailNotices: View {
                 }
 
                 if refused > 0 {
-                    WarningBanner(title: "Mailpit refused \(Self.mails(refused))", message: "Nexus keeps them with the reason in the folder refused, next to the outbox.") {
+                    WarningBanner(title: "Mailpit refused \(Count.text(refused, "mail"))", message: "Nexus keeps them with the reason in the folder refused, next to the outbox.") {
                         Button("Show in Finder") {
                             NSWorkspace.shared.open(NexusPaths.standard.mail.appending(path: "refused", directoryHint: .isDirectory))
                         }
@@ -161,17 +161,13 @@ private struct MailNotices: View {
             .padding(.horizontal, 20)
             .padding(.top, 12)
             .confirmationDialog("Remove the waiting mails?", isPresented: $confirmsRemoval) {
-                Button("Remove \(Self.mails(waiting))", role: .destructive) {
+                Button("Remove \(Count.text(waiting, "mail"))", role: .destructive) {
                     model.clearOutbox()
                 }
             } message: {
                 Text("The inbox does not get these mails. The mails that Mailpit refused go too.")
             }
         }
-    }
-
-    static func mails(_ count: Int) -> String {
-        count == 1 ? "1 mail" : "\(count) mails"
     }
 }
 
@@ -245,62 +241,20 @@ private struct MailFilter: View {
     }
 }
 
-// The list takes the focus with a click on a mail. The arrow keys then open the mail above or
-// below, and the Delete key removes the open mail, as in Mail. The focus is on the rows and not
-// on the scroll view, because a focused scroll view uses the arrow keys to scroll.
+// The Delete key removes the open mail, as in Mail.
 private struct MailBrowser: View {
-    // The Delete key of a Mac gives U+007F. KeyEquivalent.delete is U+0008.
-    private static let backspace = KeyEquivalent("\u{7F}")
-
     @Environment(AppModel.self) private var model
-    @FocusState private var listHasFocus: Bool
 
     var body: some View {
-        HStack(spacing: 0) {
-            ScrollViewReader { reader in
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(model.mails) { mail in
-                            MailRow(mail: mail, selected: mail.id == model.openMailID)
-                                .id(mail.id)
-                                .onTapGesture {
-                                    listHasFocus = true
-                                    model.showMail(mail.id)
-                                }
-                                .contextMenu {
-                                    Button("Remove", systemImage: "trash") {
-                                        model.removeMail(mail.id)
-                                    }
-                                }
-
-                            Divider()
-                        }
-                    }
-                    .focusable(interactions: .edit)
-                    .focused($listHasFocus)
-                    .focusEffectDisabled()
-                    .onKeyPress(keys: [.upArrow, .downArrow, .delete, .deleteForward, Self.backspace]) { press in
-                        switch press.key {
-                        case .upArrow: model.showMail(movingBy: -1)
-                        case .downArrow: model.showMail(movingBy: 1)
-                        default: model.removeOpenMail()
-                        }
-
-                        return .handled
+        ListDetailView(items: model.mails, openID: model.openMailID, listWidth: 320, open: { model.showMail($0) }, remove: { model.removeOpenMail() }) { mail, selected in
+            MailRow(mail: mail, selected: selected)
+                .contextMenu {
+                    Button("Remove", systemImage: "trash") {
+                        model.removeMail(mail.id)
                     }
                 }
-                .onChange(of: model.openMailID) { _, id in
-                    if let id {
-                        reader.scrollTo(id)
-                    }
-                }
-            }
-            .frame(width: 320)
-
-            Divider()
-
+        } detail: {
             MailDetail()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
@@ -331,14 +285,7 @@ private struct MailRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 8)
-
-                if let tag = mail.tags.first {
-                    MailTag(tag: tag)
-                } else {
-                    Text("No site")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
+                MailTag(tag: mail.tags.first)
             }
         }
         .padding(.horizontal, 12)
@@ -348,29 +295,22 @@ private struct MailRow: View {
     }
 }
 
-// The tag is the host of a site or a workspace. A workspace gets the branch icon.
+// The tag of Mailpit is the host of a site or a workspace. Mailpit does not say which, so the
+// sites of the app tell.
 struct MailTag: View {
     @Environment(AppModel.self) private var model
-    let tag: String
+    let tag: String?
 
     private var isWorkspace: Bool {
-        model.allSites.flatMap(\.workspaces).contains { $0.hosts?.contains(tag) == true }
+        guard let tag else {
+            return false
+        }
+
+        return model.allSites.flatMap(\.workspaces).contains { $0.hosts?.contains(tag) == true }
     }
 
     var body: some View {
-        HStack(spacing: 3) {
-            if isWorkspace {
-                Image(systemName: "arrow.triangle.branch")
-                    .imageScale(.small)
-            }
-
-            Text(tag)
-        }
-        .font(.caption2.weight(.medium))
-        .foregroundStyle(Color.accentText)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 1)
-        .background(Color.accentSoft, in: .rect(cornerRadius: 4))
+        SiteTag(text: tag, isWorkspace: isWorkspace)
     }
 }
 
@@ -407,14 +347,14 @@ private struct MailDetail: View {
                         .help("Remove this mail from the inbox.")
                     }
 
-                    MailHeaderLine(key: "From", value: mail.from)
-                    MailHeaderLine(key: "To", value: mail.to.joined(separator: ", "))
+                    HeaderLine(key: "From", value: mail.from)
+                    HeaderLine(key: "To", value: mail.to.joined(separator: ", "))
 
                     if !mail.cc.isEmpty {
-                        MailHeaderLine(key: "Cc", value: mail.cc.joined(separator: ", "))
+                        HeaderLine(key: "Cc", value: mail.cc.joined(separator: ", "))
                     }
 
-                    MailHeaderLine(key: "Date", value: MailText.date(mail.date))
+                    HeaderLine(key: "Date", value: MailText.date(mail.date))
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -471,7 +411,7 @@ private struct MailDetail: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(mail.headers.keys.sorted(), id: \.self) { key in
                         ForEach(Array((mail.headers[key] ?? []).enumerated()), id: \.offset) { _, value in
-                            MailHeaderLine(key: key, value: value, keyWidth: 170)
+                            HeaderLine(key: key, value: value, keyWidth: 170)
                         }
                     }
                 }
@@ -497,23 +437,6 @@ private struct MailDetail: View {
                 }
             }
         }
-    }
-}
-
-private struct MailHeaderLine: View {
-    let key: String
-    let value: String
-    var keyWidth: CGFloat = 40
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(key)
-                .foregroundStyle(.secondary)
-                .frame(width: keyWidth, alignment: .leading)
-            Text(value)
-                .textSelection(.enabled)
-        }
-        .font(.callout)
     }
 }
 
@@ -569,7 +492,7 @@ private struct MailNotInstalled: View {
             Label("The mail service is not installed", systemImage: "envelope")
         } description: {
             Text(waiting > 0
-                ? "Install the mail service to read \(MailNotices.mails(waiting)). The mails wait in the outbox for \(days) days."
+                ? "Install the mail service to read \(Count.text(waiting, "mail")). The mails wait in the outbox for \(days) days."
                 : "Install Mailpit to catch the mail of each site. No mail leaves the Mac.")
         } actions: {
             if let package = model.mailPackage {
@@ -605,19 +528,7 @@ enum MailText {
     }
 
     static func time(_ text: String) -> String {
-        guard let date = parsed(text) else {
-            return ""
-        }
-
-        if Calendar.current.isDateInToday(date) {
-            return date.formatted(date: .omitted, time: .shortened)
-        }
-
-        if Calendar.current.isDateInYesterday(date) {
-            return "Yesterday"
-        }
-
-        return date.formatted(.dateTime.day().month(.abbreviated))
+        parsed(text)?.listTime ?? ""
     }
 
     static func date(_ text: String) -> String {

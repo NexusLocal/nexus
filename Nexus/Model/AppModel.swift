@@ -11,6 +11,7 @@ enum SidebarItem: Hashable {
     case overview
     case site(String)
     case service(ServiceKind)
+    case dumps
     case packages
     case commandLine
 }
@@ -287,6 +288,25 @@ final class AppModel {
     var openMail: MailpitAPI.Message?
     var mailProblem: String?
     @ObservationIgnored var newestNotifiedMail: String?
+    // The dump viewer (part 8). The requests of nexusd keep its order. The state is nil until the
+    // first list of nexusd. A change shows its new settings while nexusd works on it. The values of
+    // the filter are stored, so a draw does not filter and count again. The app loads the dumps of
+    // the open request only while the Dumps screen shows.
+    var dumpRequests: [DumpedRequest] = []
+    var dumpState: DumpState?
+    var pendingDumpSettings: DumpSettings?
+    var dumpFilter: DumpPlaceChoice?
+    var visibleDumpRequests: [DumpedRequest] = []
+    var visibleDumpCount = 0
+    var dumpPlaceChoices: [DumpPlaceChoice] = []
+    var openDumpRequestID: String?
+    var openDumpRequest: DumpedRequest?
+    var openDumps: [ShownDump] = []
+    var openDumpsProblem: String?
+    var loadingDumps = false
+    @ObservationIgnored var requestedLastNumber: Int?
+    @ObservationIgnored var dumpLoadGeneration = 0
+    @ObservationIgnored var showsDumps = false
     // The coding agents and their entry of Nexus. They need no nexusd.
     var agents = AgentsModel(setup: nil)
     // The project folders whose tests keep the development database after "Keep it as it is".
@@ -325,6 +345,11 @@ final class AppModel {
         model.mailStatus = nil
         model.openMailID = nil
         model.openMail = nil
+        model.dumpRequests = []
+        model.dumpState = nil
+        model.visibleDumpRequests = []
+        model.visibleDumpCount = 0
+        model.dumpPlaceChoices = []
         model.agents = AgentsModel(setup: .standard)
         model.findApps()
 
@@ -404,7 +429,7 @@ final class AppModel {
         let problems = services.filter { $0.problem != nil }.count
         let summary = "\(running) of \(services.count) services running"
 
-        return problems == 0 ? summary : "\(summary) · \(problems) problem\(problems == 1 ? "" : "s")"
+        return problems == 0 ? summary : "\(summary) · \(Count.text(problems, "problem"))"
     }
 
     var updateCount: Int {
@@ -911,6 +936,10 @@ final class AppModel {
         case .event(.tasks(let list)):
             show(list)
             restartOldNexusd()
+        case .event(.dumpList(let list)):
+            show(list)
+        case .event(.dumpChanges(let change)):
+            show(change)
         case .unreachable(let reason):
             sitesSinceConnection = false
             nexusdProblem = .unreachable(reason)

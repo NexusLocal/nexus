@@ -143,7 +143,7 @@ extension NexusEngine {
             state.wordPressURLChanges[target.site.host] = change
         }
 
-        var lines = ["Nexus replaced \(EnglishList.joined(plan.oldURLs)) with \(plan.to) in \(Self.count(replacements, "place")). The trash keeps the old database as \(dump.lastPathComponent)."]
+        var lines = ["Nexus replaced \(EnglishList.joined(plan.oldURLs)) with \(plan.to) in \(Count.text(replacements, "place")). The trash keeps the old database as \(dump.lastPathComponent)."]
 
         // The files are read again now, because a user can change them during a long change.
         do {

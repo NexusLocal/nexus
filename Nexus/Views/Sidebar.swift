@@ -96,6 +96,9 @@ struct Sidebar: View {
             }
 
             Section("Tools", isExpanded: $toolsExpanded) {
+                Label("Dumps", systemImage: "ladybug")
+                    .tag(SidebarItem.dumps)
+
                 HStack {
                     Label("Packages", systemImage: "shippingbox")
                     Spacer()

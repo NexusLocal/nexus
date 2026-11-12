@@ -443,6 +443,15 @@ struct WebConfigTests {
         #expect(PHPConfig.userPrepend(phpIni: "auto_append_file = /end.php\nauto_prepend_file_x = /x.php\n", customLines: []) == nil)
     }
 
+    @Test func aUserIniWithAnyPrependFileReplacesTheStub() {
+        #expect(PHPConfig.setsPrependFile(userIni: "auto_prepend_file = '/Sites/blog/wordfence-waf.php'\n"))
+        #expect(PHPConfig.setsPrependFile(userIni: "memory_limit = 1G\r\nauto_prepend_file =\r\n"))
+        #expect(PHPConfig.setsPrependFile(userIni: "auto_prepend_file = none\n"))
+        #expect(!PHPConfig.setsPrependFile(userIni: "; auto_prepend_file = /Sites/blog/wordfence-waf.php\nmemory_limit = 1G\n"))
+        #expect(!PHPConfig.setsPrependFile(userIni: "auto_append_file = /end.php\n"))
+        #expect(!PHPConfig.setsPrependFile(userIni: ""))
+    }
+
     @Test func aModuleThatAnotherModuleNeedsLoadsFirst() {
         let apache = ApacheConfig.dependencies.loadOrder(["heartbeat", "rewrite"], available: ["heartbeat", "watchdog", "rewrite"])
         let nginx = NginxConfig.dependencies.loadOrder(["ngx_stream_js_module", "ngx_http_js_module"], available: ["ngx_stream_js_module", "ngx_stream_module", "ngx_http_js_module"])

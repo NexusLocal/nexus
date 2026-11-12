@@ -73,7 +73,7 @@ let package = Package(
         .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusMail", "NexusTestSupport"]),
         .testTarget(name: "NexusDNSTests", dependencies: ["NexusDNS", "NexusTestSupport"]),
         .testTarget(name: "NexusMailTests", dependencies: ["NexusMail"]),
-        .testTarget(name: "NexusDumpsTests", dependencies: ["NexusDumps", "NexusCore"]),
+        .testTarget(name: "NexusDumpsTests", dependencies: ["NexusDumps", "NexusCore", "NexusTestSupport"]),
         .testTarget(name: "NexusConfigTests", dependencies: ["NexusConfig"]),
         .testTarget(name: "NexusLaravelTests", dependencies: ["NexusLaravel", "NexusCore"]),
         .testTarget(name: "NexusWorkspacesTests", dependencies: ["NexusWorkspaces", "NexusCore", "NexusSupervisor"]),
@@ -92,6 +92,6 @@ let package = Package(
             .product(name: "X509", package: "swift-certificates"),
             .product(name: "Crypto", package: "swift-crypto"),
         ]),
-        .target(name: "NexusTestSupport", dependencies: ["NexusTLS", "NexusIPC", "NexusDNS"], path: "Tests/NexusTestSupport"),
+        .target(name: "NexusTestSupport", dependencies: ["NexusTLS", "NexusIPC", "NexusDNS", "NexusDumps", "NexusCore"], path: "Tests/NexusTestSupport"),
     ]
 )

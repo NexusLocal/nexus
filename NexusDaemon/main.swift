@@ -40,6 +40,7 @@ let engine = NexusEngine(
     helper: HelperClient(),
     certificateAuthority: CertificateAuthority(paths: paths),
     dumpLibrarySource: contents?.appending(path: "Resources/php/dumps", directoryHint: .isDirectory),
+    servesDumpPage: true,
     activity: activity,
     unregister: BackgroundServices.unregisterAll,
     applyCrashReports: { isOn in CrashReports.apply(process: "nexusd", isOn: isOn) }

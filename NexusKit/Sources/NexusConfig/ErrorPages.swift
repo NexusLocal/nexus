@@ -1,4 +1,5 @@
 import Foundation
+import NexusCore
 
 // The pages that nginx and Apache show when a site cannot answer. nginx reads a $ in a text as a
 // variable, and Apache reads %{ as an expression. A text of a server ends at a double quote. So the
@@ -37,7 +38,7 @@ public enum ErrorPages {
         let names = Set(hosts.filter { !$0.hasPrefix("*.") }).sorted()
         let list = names.isEmpty
             ? "<p>Nexus has no sites yet. Add one in Nexus, or run <code>nexus site add &lt;folder&gt;</code> in a terminal.</p>"
-            : "<p>These are the sites of Nexus:</p>\n<ul>\n" + names.map { "<li><a href='https://\(escaped($0))\(port)/'>\(escaped($0))</a></li>" }.joined(separator: "\n") + "\n</ul>"
+            : "<p>These are the sites of Nexus:</p>\n<ul>\n" + names.map { "<li><a href='https://\(HTMLText.escaped($0))\(port)/'>\(HTMLText.escaped($0))</a></li>" }.joined(separator: "\n") + "\n</ul>"
 
         return """
         <!doctype html>
@@ -58,13 +59,5 @@ public enum ErrorPages {
         </html>
 
         """
-    }
-
-    private static func escaped(_ text: String) -> String {
-        text.replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-            .replacingOccurrences(of: "'", with: "&#39;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
     }
 }

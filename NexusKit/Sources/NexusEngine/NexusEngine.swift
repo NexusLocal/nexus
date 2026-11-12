@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import NexusCore
 import NexusDNS
+import NexusDumps
 import NexusIPC
 import NexusMail
 import NexusRuntime
@@ -222,6 +223,29 @@ public actor NexusEngine {
     var dumpLibraryFailed = false
     // The PHP versions whose configuration nexusd wrote during its start. nil after the start.
     var phpLinesWrittenAtStart: Set<String>?
+    // The sites and the workspaces by host and by folder. The mail receiver and the dump store read
+    // the map on their own threads. A burst of changes of the sites builds it once more after the
+    // build that runs.
+    let siteMap: SharedSiteMap
+    private var siteMapMayHaveChanged = false
+    private var siteMapBuild: Task<Void, Never>?
+    // The receiver and the store of the caught dumps, and the problem of the last start of the
+    // receiver. The reader threads of the receiver raise dumpSignal. The ticker then sends the
+    // changes of the store.
+    var dumpReceiver: DumpReceiver?
+    var dumpReceiverProblem: String?
+    let dumpStore: DumpStore
+    let dumpSignal = DumpChangeSignal()
+    var dumpTicker: Task<Void, Never>?
+    // The blocked events of PHP by host, reason and kind of request, and the parts of the last dump
+    // list that all watchers got.
+    var dumpEventBlocks: [EventDumpBlockKey: EventDumpBlock] = [:]
+    var publishedDumpHead: DumpState?
+    // The web page of the dumps and the problem of its last start. nexusd serves it. A test asks
+    // for it, so the other tests do not take its port.
+    let servesDumpPage: Bool
+    var dumpPageServer: DumpPageServer?
+    var dumpPageProblem: String?
     // The setup of a workspace waits until vendor and node_modules have no change for this time.
     let workspaceFolderQuiet: Duration
 
@@ -237,18 +261,23 @@ public actor NexusEngine {
         helperRetryDelay: Duration = .seconds(5),
         workspaceFolderQuiet: Duration = .seconds(6),
         dumpLibrarySource: URL? = nil,
+        servesDumpPage: Bool = false,
         activity: ActivityLog? = nil,
         unregister: @escaping @Sendable () -> Void = {},
         applyCrashReports: @escaping @Sendable (Bool) -> Void = { _ in }
     ) {
         self.paths = paths
+        self.servesDumpPage = servesDumpPage
         self.applyCrashReports = applyCrashReports
         self.activity = activity
         self.supervisor = supervisor
         self.processSupervisor = processSupervisor
         self.installer = RuntimeInstaller(paths: paths, downloader: downloader)
         self.catalog = ServiceCatalog(paths: paths)
-        self.mailRouter = MailRouter(outbox: MailOutbox(folder: paths.mailOutbox))
+        let siteMap = SharedSiteMap()
+        self.siteMap = siteMap
+        self.mailRouter = MailRouter(outbox: MailOutbox(folder: paths.mailOutbox), sites: siteMap)
+        self.dumpStore = DumpStore(file: paths.dumpLog) { request in siteMap.current.location(of: request) }
         self.stateStore = EngineStateStore(paths: paths)
         self.manifestSource = manifestSource
         self.helper = helper
@@ -272,7 +301,7 @@ public actor NexusEngine {
         defer {
             openRequests -= 1
 
-            if !request.onlyReads {
+            if request.mayChangeSites {
                 sitesChanged()
             }
         }
@@ -459,6 +488,29 @@ public actor NexusEngine {
                 return .serviceList(try await serviceList())
             case .tasks:
                 return .tasks(taskList())
+            case .dumpList(let place):
+                return .dumpList(await dumpList(place: place))
+            case .requestDumps(let request, let afterNumber):
+                return .caughtDumps(dumpStore.dumps(request: request, afterNumber: afterNumber))
+            case .clearCaughtDumps(let place):
+                return clearCaughtDumps(place: place)
+            case .removeCaughtDump(let number):
+                return removeCaughtDump(number: number)
+            case .removeDumpedRequest(let id):
+                return removeDumpedRequest(id: id)
+            case .openCaughtDumpFile(let number):
+                return await openCaughtDumpFile(number: number)
+            case .setDumpSettings(let settings):
+                return .done(message: try await serialWeb { try await self.setDumpSettings(settings) })
+            case .newDumps(let place, let after):
+                return dumpStore.newDumps(place: place, after: after).map(NexusResponse.dumpBatch) ?? .failure(message: DumpList.notLoadedText)
+            case .lastDumps(let place, let limit, let through):
+                return dumpStore.lastDumps(place: place, limit: limit, through: through).map(NexusResponse.dumpBatch) ?? .failure(message: DumpList.notLoadedText)
+            case .dumpPlace(let host):
+                return dumpPlace(host: host)
+            case .dumpState(let place):
+                await startDumpPage(portWait: .zero)
+                return .dumpState(dumpState(place: place, settings: await stateStore.current().dumpSettings))
             case .fromAgent:
                 return .unreadableRequest
             }
@@ -503,11 +555,11 @@ public actor NexusEngine {
         _ = try? await startDNS()
         applyMailSettings(await stateStore.current().mailSettings)
         try? await startMailReceiver()
+        await startDumpReceiver()
         phpLinesWrittenAtStart = []
         _ = try? await serialWeb { await self.watchParkedFolders() }
         _ = try? await serialWeb { try await self.applyWeb(.automatic) }
         _ = try? await serialWeb { await self.prepareDumpLibrary() }
-        await updateMailFolders()
 
         let state = await stateStore.current()
         for id in state.enabledServices.subtracting(state.stoppedByStopAll).sorted() {
@@ -515,6 +567,8 @@ public actor NexusEngine {
         }
 
         sitesChanged()
+        // A watcher from before the start has the list without the receiver and the library.
+        await publishDumpList()
     }
 
     public func shutdown() async {
@@ -527,6 +581,7 @@ public actor NexusEngine {
         await supervisor.stopAll()
         stopDNS()
         stopMailReceiver()
+        stopDumpReceiver()
         mailRetry?.cancel()
 
         for watcher in watchers.values {
@@ -925,10 +980,10 @@ public actor NexusEngine {
         try await stateStore.update { $0.stoppedByStopAll.formUnion(stopped) }
 
         guard failures.isEmpty else {
-            throw RuntimeError.unsupported("Nexus stopped \(Self.count(stopped.count, "service")). These did not stop:\n\(failures.joined(separator: "\n"))")
+            throw RuntimeError.unsupported("Nexus stopped \(Count.text(stopped.count, "service")). These did not stop:\n\(failures.joined(separator: "\n"))")
         }
 
-        return "Nexus stopped \(Self.count(stopped.count, "service")). Start the stopped services again with: nexus start --stopped"
+        return "Nexus stopped \(Count.text(stopped.count, "service")). Start the stopped services again with: nexus start --stopped"
     }
 
     // A remembered service that runs again, for example DNS after a new start of nexusd, needs
@@ -953,14 +1008,10 @@ public actor NexusEngine {
 
         guard failures.isEmpty else {
             let started = waiting.count - failures.count
-            throw RuntimeError.unsupported("Nexus started \(Self.count(started, "service")). These did not start:\n\(failures.joined(separator: "\n"))")
+            throw RuntimeError.unsupported("Nexus started \(Count.text(started, "service")). These did not start:\n\(failures.joined(separator: "\n"))")
         }
 
-        return "Nexus started \(Self.count(waiting.count, "service"))."
-    }
-
-    static func count(_ number: Int, _ noun: String) -> String {
-        number == 1 ? "1 \(noun)" : "\(number) \(noun)s"
+        return "Nexus started \(Count.text(waiting.count, "service"))."
     }
 
     private func setPort(_ id: String, _ port: Int) async throws -> String {
@@ -1216,8 +1267,12 @@ public actor NexusEngine {
 
 // The events that nexusd sends to the app without a request.
 extension NexusEngine {
+    static let publishInterval: Duration = .milliseconds(250)
+
     // The stream starts with the current services and sites. A new watcher makes every watcher
-    // get the lists again. That does no harm.
+    // get these lists again. That does no harm. Only the new watcher gets the dump list, because
+    // the others have it already. The watcher is in the list before the read of the settings. So a
+    // new setting in that time reaches it too.
     public func events() async -> AsyncStream<NexusEvent> {
         await observeSupervisor()
         checkForUpdate()
@@ -1229,6 +1284,18 @@ extension NexusEngine {
             Task { await self?.removeWatcher(id) }
         }
 
+        let dumpHead = dumpState(place: nil, settings: await stateStore.current().dumpSettings)
+        continuation.yield(.dumpList(dumpHead.list(of: dumpStore.listAndCursor())))
+
+        // The other watchers can have an older list. Then the next dump list goes to all watchers.
+        if watchers.count == 1 {
+            publishedDumpHead = dumpHead
+        }
+
+        if dumpHead != publishedDumpHead {
+            publishedDumpHead = nil
+        }
+
         // A new watcher gets the task list only while a task runs. An app that connects again
         // forgets its old tasks itself.
         publishedServices = nil
@@ -1237,6 +1304,18 @@ extension NexusEngine {
         sitesChanged()
         publishTasks()
         return stream
+    }
+
+    func publish(_ event: NexusEvent) {
+        for watcher in watchers.values {
+            watcher.yield(event)
+        }
+
+        sendToDumpPages(event)
+    }
+
+    var hasWatchers: Bool {
+        !watchers.isEmpty
     }
 
     // A task shows at once when it starts and when it ends. While tasks run, a ticker sends
@@ -1251,7 +1330,7 @@ extension NexusEngine {
 
         tasksTicker = Task {
             while self.hasRunningTasks() {
-                try? await Task.sleep(for: .milliseconds(250))
+                try? await Task.sleep(for: Self.publishInterval)
                 self.publishTasks()
             }
         }
@@ -1284,9 +1363,7 @@ extension NexusEngine {
         }
 
         publishedTasks = list
-        for watcher in watchers.values {
-            watcher.yield(.tasks(list))
-        }
+        publish(.tasks(list))
     }
 
     func taskList() -> TaskList {
@@ -1334,11 +1411,58 @@ extension NexusEngine {
         Task { await workspaceSitesChanged() }
     }
 
-    // A new workspace comes here without sitesChanged. Its folder gets its host for the mail too.
+    // A new workspace comes here without sitesChanged. Its folder gets its host for the mail and
+    // its place for the caught dumps too.
     func publishSites() {
         sitesMayHaveChanged = true
         servicesChanged()
-        Task { await updateMailFolders() }
+        updateSiteMap()
+    }
+
+    // A change during a build makes the loop run once more. So a burst of changes resolves the
+    // sites few times.
+    private func updateSiteMap() {
+        siteMapMayHaveChanged = true
+
+        guard siteMapBuild == nil else {
+            return
+        }
+
+        siteMapBuild = Task {
+            while self.siteMapMayHaveChanged {
+                self.siteMapMayHaveChanged = false
+                await self.applySiteMap()
+            }
+
+            self.siteMapBuild = nil
+        }
+    }
+
+    // The blocks of the dump viewer can change with the sites.
+    private func applySiteMap() async {
+        guard siteMap.set(buildSiteMap(await stateStore.current())) else {
+            return
+        }
+
+        dumpStore.relocate()
+        dumpsChanged()
+        await publishDumpList()
+    }
+
+    func buildSiteMap(_ state: EngineState) -> SiteMap {
+        let sites = resolvedSites(state).map(\.site)
+        let workspaces = workspaceSites(state, resolved: sites)
+        var map = SiteMap()
+
+        for site in sites {
+            map.add(site, place: DumpPlace(site: site.host))
+        }
+
+        for (site, place) in zip(workspaces.sites, workspaces.places) {
+            map.add(site, place: place)
+        }
+
+        return map
     }
 
     private func logStateChanges(in list: ServiceList) {
@@ -1366,10 +1490,7 @@ extension NexusEngine {
             if let list = try? await serviceList(), list != publishedServices {
                 publishedServices = list
                 logStateChanges(in: list)
-
-                for watcher in watchers.values {
-                    watcher.yield(.services(list))
-                }
+                publish(.services(list))
             }
 
             if sitesMayHaveChanged {
@@ -1378,9 +1499,7 @@ extension NexusEngine {
 
                 if sites != publishedSites {
                     publishedSites = sites
-                    for watcher in watchers.values {
-                        watcher.yield(.sites(sites))
-                    }
+                    publish(.sites(sites))
                 }
             }
         } while publishAgain
@@ -1389,12 +1508,13 @@ extension NexusEngine {
     }
 }
 
+// The site list goes to the watchers again after each request that can change a site.
 private extension NexusRequest {
-    var onlyReads: Bool {
+    var mayChangeSites: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .siteDatabases, .databaseConnections, .serverDatabases, .createDatabase, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines, .serviceList, .tasks: true
-        case .fromAgent(_, let inner): inner.onlyReads
-        default: false
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .siteDatabases, .databaseConnections, .serverDatabases, .createDatabase, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines, .serviceList, .tasks, .dumpList, .clearCaughtDumps, .removeCaughtDump, .removeDumpedRequest, .openCaughtDumpFile, .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps: false
+        case .fromAgent(_, let inner): inner.mayChangeSites
+        default: true
         }
     }
 }
@@ -1767,6 +1887,7 @@ extension NexusEngine {
         await supervisor.stopAll()
         stopDNS()
         stopMailReceiver()
+        stopDumpReceiver()
         mailRetry?.cancel()
 
         let unregister = unregister

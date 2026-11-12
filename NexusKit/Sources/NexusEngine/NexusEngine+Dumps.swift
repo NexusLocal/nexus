@@ -41,29 +41,43 @@ extension NexusEngine {
     }
 
     // A new setting reaches each PHP version at once. PHP-FPM reloads when its pool or its stub
-    // changed. A background process starts again when its environment changed. Part 7 calls this
-    // inside serialWeb, as each other request that changes the PHP configuration.
+    // changed. A background process starts again when its environment changed. The request runs
+    // this inside serialWeb, as each other request that changes the PHP configuration. The watchers
+    // then get the dump list with the new settings.
     func setDumpSettings(_ settings: DumpSettings) async throws -> String {
         try await stateStore.update { $0.dumpSettings = settings }
 
         let problems = await rewritePHPConfigs().map { "PHP \($0.line) keeps the old settings of the dump viewer. \(ErrorText.plain($0.error))" }
         _ = syncBackgroundProcesses()
+        await publishDumpList()
 
         return (["The settings of the dump viewer are changed."] + problems + [dumpLibraryProblem(settings)].compactMap { $0 }).joined(separator: "\n")
     }
 
-    // nil while "Catch dumps" is off or the library is installed. The dump list of part 7 can show
-    // this text too.
+    // The dump list shows this text too. So it only reads and never copies the library. Before the
+    // first copy nexusd knows of no problem.
     func dumpLibraryProblem(_ settings: DumpSettings) -> String? {
         guard settings.catchDumps else {
             return nil
         }
 
-        guard dumpLibrary() == nil else {
+        guard dumpLibraryIsMissing else {
             return nil
         }
 
         return "Nexus catches no dumps, because it cannot copy the PHP library of the dump viewer from the app. The activity log has the reason."
+    }
+
+    private var dumpLibraryIsMissing: Bool {
+        if dumpLibraryFailed {
+            return true
+        }
+
+        guard let installedDumpLibrary else {
+            return false
+        }
+
+        return !Self.hasDumpLibrary(in: installedDumpLibrary)
     }
 
     // A copy that someone removed or changed comes back.

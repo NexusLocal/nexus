@@ -64,16 +64,44 @@ extension NexusEngineTests {
         return services.first { $0.id == id }
     }
 
-    private func eventually(_ condition: () -> Bool) async -> Bool {
-        for _ in 0..<100 {
-            if condition() {
-                return true
-            }
+    @Test func aSendmailFromTheProjectFolderOfASiteOnPublicGetsTheTagOfTheSite() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = root.appending(path: "shop", directoryHint: .isDirectory)
+        let publicFolder = project.appending(path: "public", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: publicFolder, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: project.appending(path: "composer.json"))
+        var state = EngineState()
+        state.sites = [Site(host: "shop.test", folder: publicFolder, php: "8.5")]
+        let engine = try makeSiteEngine(root: root, state: state)
+        let router = await engine.mailRouter
 
-            try? await Task.sleep(for: .milliseconds(50))
-        }
+        await engine.publishSites()
+        let tagged = await eventually { router.tag(for: RealPath.of(project)) == "shop.test" }
 
-        return condition()
+        #expect(tagged)
+        #expect(router.tag(for: "\(RealPath.of(publicFolder))/index.php") == "shop.test")
+        #expect(router.tag(for: RealPath.of(root)) == nil)
+    }
+
+    @Test func aSendmailFromTheFolderOfASiteGetsThatSiteAndNotTheSiteOnItsPublicFolder() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = root.appending(path: "p", directoryHint: .isDirectory)
+        let publicFolder = project.appending(path: "public", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: publicFolder, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: project.appending(path: "composer.json"))
+        var state = EngineState()
+        state.sites = [Site(host: "a.test", folder: publicFolder, php: "8.5"), Site(host: "b.test", folder: project, php: "8.5")]
+        let engine = try makeSiteEngine(root: root, state: state)
+        let router = await engine.mailRouter
+
+        await engine.publishSites()
+        let tagged = await eventually { router.tag(for: RealPath.of(project)) != nil }
+
+        #expect(tagged)
+        #expect(router.tag(for: RealPath.of(project)) == "b.test")
+        #expect(router.tag(for: "\(RealPath.of(publicFolder))/index.php") == "a.test")
     }
 
     @Test func theMailServiceShowsTheSMTPPortAndTheInbox() {

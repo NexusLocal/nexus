@@ -104,6 +104,13 @@ extension CommandSection {
             CommandItem(command: "nexus site mail shop.test", help: "Shows where a site sends its mail. --send-to-nexus sends the mail of a Laravel site to the inbox. --restore puts the old mail settings back. --turn-off-plugins turns off the mail plugins of a WordPress site."),
             CommandItem(command: "nexus sendmail -S 127.0.0.1:1025 -t", help: "Gives the mail on the input to the mail service. PHP runs it for mail()."),
         ]),
+        CommandSection(title: "Dumps", commands: [
+            CommandItem(command: "nexus dumps", help: "Shows the 20 newest dump() and dd() values under the line of their request, the newest last. --limit changes the number. --json prints one JSON line for each dump."),
+            CommandItem(command: "nexus dumps --site shop.test --follow", help: "Shows the dumps of one site or workspace. With --follow it stays open and shows each new dump."),
+            CommandItem(command: "nexus dumps --clear", help: "Removes all dumps. With --site, only the dumps of that site or workspace."),
+            CommandItem(command: "nexus dumps open", help: "Opens the web page of the dumps in the browser."),
+            CommandItem(command: "nexus dumps settings --page never", help: "Keeps each dump() out of the web page. automatic shows it only in a normal page, and always also in an API answer. Without options the command shows the settings."),
+        ]),
         CommandSection(title: "Coding agents", commands: [
             CommandItem(command: "nexus mcp", help: "The MCP server of Nexus. A coding agent such as Claude Code, Codex or Cursor starts it. Settings > Agents connects the agents."),
             CommandItem(command: "nexus mcp status", help: "Shows which coding agents are on this Mac and which ones use Nexus."),

@@ -39,6 +39,104 @@ func shortTemporaryRoot() -> URL {
     URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
 }
 
+func eventually(_ condition: () async throws -> Bool) async rethrows -> Bool {
+    let deadline = ContinuousClock.now + .seconds(10)
+
+    while ContinuousClock.now < deadline {
+        if try await condition() {
+            return true
+        }
+
+        try? await Task.sleep(for: .milliseconds(25))
+    }
+
+    return false
+}
+
+func exists(_ file: URL) -> Bool {
+    FileManager.default.fileExists(atPath: file.path(percentEncoded: false))
+}
+
+extension NexusEvent {
+    var services: ServiceList? {
+        guard case .services(let list) = self else {
+            return nil
+        }
+
+        return list
+    }
+
+    var tasks: TaskList? {
+        guard case .tasks(let list) = self else {
+            return nil
+        }
+
+        return list
+    }
+
+    var dumpList: DumpList? {
+        guard case .dumpList(let list) = self else {
+            return nil
+        }
+
+        return list
+    }
+
+    var dumpChanges: DumpChange? {
+        guard case .dumpChanges(let change) = self else {
+            return nil
+        }
+
+        return change
+    }
+}
+
+final class EventRecorder<Value: Sendable>: Sendable {
+    private let values = Mutex<[Value]>([])
+    private let pick: @Sendable (NexusEvent) -> Value?
+
+    init(_ pick: @escaping @Sendable (NexusEvent) -> Value?) {
+        self.pick = pick
+    }
+
+    func record(_ events: AsyncStream<NexusEvent>) {
+        Task {
+            for await event in events {
+                if let value = pick(event) {
+                    values.withLock { $0.append(value) }
+                }
+            }
+        }
+    }
+
+    var all: [Value] {
+        values.withLock { $0 }
+    }
+
+    func next(where condition: (Value) -> Bool = { _ in true }) async -> Value? {
+        let deadline = ContinuousClock.now + .seconds(5)
+
+        while ContinuousClock.now < deadline {
+            let match = values.withLock { values -> Value? in
+                guard let index = values.firstIndex(where: condition) else {
+                    return nil
+                }
+
+                defer { values.removeFirst(index + 1) }
+                return values[index]
+            }
+
+            if let match {
+                return match
+            }
+
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+
+        return nil
+    }
+}
+
 @Suite(.serialized)
 struct NexusEngineTests {
     private let workspace = FileManager.default.temporaryDirectory
@@ -571,47 +669,10 @@ struct NexusEngineTests {
     }
 }
 
-// Keeps each service list that the engine sends. next(where:) waits up to 5 seconds and drops
-// the lists before the match, as an iterator does.
-private final class EventRecorder: Sendable {
-    private let lists = Mutex<[ServiceList]>([])
-
-    func record(_ events: AsyncStream<NexusEvent>) {
-        Task {
-            for await case .services(let list) in events {
-                lists.withLock { $0.append(list) }
-            }
-        }
-    }
-
-    func next(where condition: (ServiceList) -> Bool) async -> ServiceList? {
-        let deadline = ContinuousClock.now + .seconds(5)
-
-        while ContinuousClock.now < deadline {
-            let match = lists.withLock { lists -> ServiceList? in
-                guard let index = lists.firstIndex(where: condition) else {
-                    return nil
-                }
-
-                defer { lists.removeFirst(index + 1) }
-                return lists[index]
-            }
-
-            if let match {
-                return match
-            }
-
-            try? await Task.sleep(for: .milliseconds(25))
-        }
-
-        return nil
-    }
-}
-
 // The events for the app, restart, and "Stop all services" with "Start stopped services" (D63).
 extension NexusEngineTests {
-    private func recordEvents(of engine: NexusEngine) async -> EventRecorder {
-        let recorder = EventRecorder()
+    private func recordEvents(of engine: NexusEngine) async -> EventRecorder<ServiceList> {
+        let recorder = EventRecorder { $0.services }
         recorder.record(await engine.events())
         return recorder
     }
@@ -863,7 +924,7 @@ extension NexusEngineTests {
         let engine = try makeEngine(package: try makeFakeRedis(), port: freePort(), downloader: HalfDownloader())
 
         try await whileRunning(engine) {
-            let tasks = TaskRecorder()
+            let tasks = EventRecorder { $0.tasks }
             tasks.record(await engine.events())
             let install = Task { await engine.handle(.install(name: "redis", line: "1.0")) }
 
@@ -921,7 +982,7 @@ extension NexusEngineTests {
         let engine = try makeEngine(package: try makeFakeRedis(), port: freePort(), downloader: HalfDownloader())
 
         try await whileRunning(engine) {
-            let tasks = TaskRecorder()
+            let tasks = EventRecorder { $0.tasks }
             tasks.record(await engine.events())
             let first = Task { await engine.handle(.install(name: "redis", line: "1.0")) }
             let running = try #require(await tasks.next { !$0.tasks.isEmpty }?.tasks.first)
@@ -988,8 +1049,8 @@ extension NexusEngineTests {
         let restarts = Mutex<[String]>([])
 
         try await whileRunning(engine) {
-            let tasks = TaskRecorder()
-            let services = EventRecorder()
+            let tasks = EventRecorder { $0.tasks }
+            let services = EventRecorder { $0.services }
             tasks.record(await engine.events())
             services.record(await engine.events())
             let install = Task { await engine.handle(.install(name: "redis", line: "1.0")) }
@@ -1045,41 +1106,6 @@ extension NexusEngineTests {
 private extension NexusEngine {
     func startCopy(into target: String) {
         copyTargets.insert(target)
-    }
-}
-
-final class TaskRecorder: Sendable {
-    private let lists = Mutex<[TaskList]>([])
-
-    func record(_ events: AsyncStream<NexusEvent>) {
-        Task {
-            for await case .tasks(let list) in events {
-                lists.withLock { $0.append(list) }
-            }
-        }
-    }
-
-    func next(where condition: (TaskList) -> Bool) async -> TaskList? {
-        let deadline = ContinuousClock.now + .seconds(5)
-
-        while ContinuousClock.now < deadline {
-            let match = lists.withLock { lists -> TaskList? in
-                guard let index = lists.firstIndex(where: condition) else {
-                    return nil
-                }
-
-                defer { lists.removeFirst(index + 1) }
-                return lists[index]
-            }
-
-            if let match {
-                return match
-            }
-
-            try? await Task.sleep(for: .milliseconds(25))
-        }
-
-        return nil
     }
 }
 

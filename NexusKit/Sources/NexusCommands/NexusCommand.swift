@@ -87,7 +87,7 @@ struct NexusCommand: AsyncParsableCommand {
             Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Installed.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
             SiteCommand.self, WorkspaceCommand.self, OpenSite.self, EditSite.self, Errors.self, New.self, Import.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
-            Database.self, PHP.self, Composer.self, Node.self, NPM.self, WP.self, MailCommand.self, Sendmail.self, MCPCommand.self,
+            Database.self, PHP.self, Composer.self, Node.self, NPM.self, WP.self, MailCommand.self, Sendmail.self, DumpsCommand.self, MCPCommand.self,
         ]
     )
 }
@@ -567,7 +567,7 @@ struct WorkspaceCommand: AsyncParsableCommand {
                 }
 
                 guard waited < timeout else {
-                    FileHandle.standardError.write(Data("The workspace was not ready after \(timeout) seconds.\n".utf8))
+                    FileHandle.standardError.write(Data("The workspace was not ready after \(Count.text(timeout, "second")).\n".utf8))
                     throw ExitCode.failure
                 }
 
@@ -1588,28 +1588,17 @@ struct Database: AsyncParsableCommand {
 
             let apps = (app.map { [$0] } ?? DatabaseApp.allCases).filter { $0.opens(found.kind) }
 
-            for candidate in apps where open(url, with: candidate) {
+            for candidate in apps {
+                guard await SystemOpen.run(["-b", candidate.bundleIdentifier, url.absoluteString]) else {
+                    continue
+                }
+
                 print("\(candidate.name) opens \(instance)\(database.map { " with the database \($0)" } ?? "").")
                 return
             }
 
             FileHandle.standardError.write(Data("No app opened the instance. Install \(apps.map(\.name).joined(separator: " or ")), or connect to \(url.absoluteString)\n".utf8))
             throw ExitCode.failure
-        }
-
-        private func open(_ url: URL, with app: DatabaseApp) -> Bool {
-            let process = Process()
-            process.executableURL = URL(filePath: "/usr/bin/open")
-            process.arguments = ["-b", app.bundleIdentifier, url.absoluteString]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-
-            guard (try? process.run()) != nil else {
-                return false
-            }
-
-            process.waitUntilExit()
-            return process.terminationStatus == 0
         }
     }
 }
