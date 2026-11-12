@@ -7,9 +7,8 @@ needs research and a plan before the work starts.
 
 In this order:
 
-1. **A viewer for dumps.** Nexus catches `dump()`, `dd()` and similar calls of each site and
-   workspace, without a change in your code. The app shows them for each request. A later part
-   adds the database queries, the log lines and the queue jobs of each request.
+1. **More for the dump viewer:** the database queries, the log lines and the queue jobs of each
+   request.
 2. **Notifications that open the right place.** A click on a notification opens the screen that
    the notification is about. A new mail opens the Mail screen with the site of that mail and the
    mail itself. A workspace that is ready opens its site. A service that stopped or failed opens
@@ -46,6 +45,8 @@ In this order:
 
 ## Done recently
 
+- **0.4.0:** a viewer for `dump()` and `dd()` of each site, workspace and command, in the app, in
+  the browser and with `nexus dumps`.
 - **0.3.0:** an MCP server for coding agents such as Claude Code, Codex and Cursor, with Settings >
   Agents, and help for a separate database for the tests of a Laravel site.
 - **0.2.6:** automatic updates that ask for a restart, so an update does not wait until you quit
