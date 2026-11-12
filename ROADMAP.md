@@ -10,18 +10,23 @@ In this order:
 1. **A viewer for dumps.** Nexus catches `dump()`, `dd()` and similar calls of each site and
    workspace, without a change in your code. The app shows them for each request. A later part
    adds the database queries, the log lines and the queue jobs of each request.
-2. **Xdebug only for debug requests.** A request with the Xdebug cookie goes to a PHP process with
+2. **Notifications that open the right place.** A click on a notification opens the screen that
+   the notification is about. A new mail opens the Mail screen with the site of that mail and the
+   mail itself. A workspace that is ready opens its site. A service that stopped or failed opens
+   that service. An import opens its database.
+3. **Xdebug only for debug requests.** A request with the Xdebug cookie goes to a PHP process with
    Xdebug. All other requests stay fast. One command can also run with Xdebug.
-3. **More for workspaces:**
+4. **More for workspaces:**
    - a dev server that starts when you open the site and stops when nobody uses it;
    - stop idle workspaces, if you want: their database server and workers stop until the next
      request;
-   - a list of old workspaces, with a button to remove them.
-4. **Help for a project that you add.** Nexus offers to point its database, its Redis and its
+   - a list of old workspaces, with a button to remove them;
+   - a button on the Site screen that removes one workspace, next to "Open".
+5. **Help for a project that you add.** Nexus offers to point its database, its Redis and its
    `APP_URL` to Nexus, with a backup of the old values.
-5. **Your own nginx and Apache lines** for each site, as `nexus ini` gives for PHP. Also a
+6. **Your own nginx and Apache lines** for each site, as `nexus ini` gives for PHP. Also a
    `redis.conf` that you can edit, as `my.cnf` is for MySQL.
-6. **Share a site through a tunnel.** A local site gets a public link, for example for a client or
+7. **Share a site through a tunnel.** A local site gets a public link, for example for a client or
    for a webhook.
 
 ## Packages
