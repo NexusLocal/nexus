@@ -34,6 +34,9 @@ if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
     exit 1
 fi
 
+# The About window shows the licenses of the shipped packages. Their versions must be current.
+"$ROOT/Config/credits.sh" --check
+
 mkdir -p "$WORK/release" "$WORK/image/.background"
 
 xcodebuild archive \
