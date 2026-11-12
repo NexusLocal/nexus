@@ -214,6 +214,7 @@
 				000000000000000000000108 /* Embed Command Line Tool */,
 				00000000000000000000010C /* Write the launchd jobs */,
 				00000000000000000000010D /* Copy the PHP files of Nexus */,
+				00000000000000000000010E /* Copy the third-party notices */,
 				00000000000000000000010B /* Use the Nexus texts in Sparkle */,
 			);
 			buildRules = (
@@ -436,6 +437,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/Config/php-files.sh\"\n";
+		};
+		00000000000000000000010E /* Copy the third-party notices */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/THIRD-PARTY-NOTICES.md",
+			);
+			name = "Copy the third-party notices";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ThirdPartyNotices.md",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "cp \"$SCRIPT_INPUT_FILE_0\" \"$SCRIPT_OUTPUT_FILE_0\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

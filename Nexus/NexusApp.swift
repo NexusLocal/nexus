@@ -1,4 +1,5 @@
 import AppKit
+import NexusCore
 import NexusCrashReports
 import SwiftUI
 
@@ -24,7 +25,7 @@ struct NexusApp: App {
     @AppStorage(AppPreference.showInDock) private var showInDock = true
 
     var body: some Scene {
-        Window("Nexus", id: MainWindow.id) {
+        Window(NexusVariant.current.name, id: MainWindow.id) {
             MainWindow()
                 .environment(model)
                 .environment(background)
@@ -37,6 +38,10 @@ struct NexusApp: App {
                     .environment(model)
             }
 
+            CommandGroup(replacing: .appInfo) {
+                AboutMenuItem()
+            }
+
             CommandGroup(after: .appInfo) {
                 Button("Check for updates…") {
                     updater.check()
@@ -45,7 +50,7 @@ struct NexusApp: App {
             }
         }
 
-        Window("Welcome to Nexus", id: FirstRunWindow.id) {
+        Window("Welcome to \(NexusVariant.current.name)", id: FirstRunWindow.id) {
             FirstRunWindow()
                 .environment(model)
                 .environment(background)
@@ -54,6 +59,14 @@ struct NexusApp: App {
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
         .defaultLaunchBehavior(.suppressed)
+
+        Window("About \(NexusVariant.current.name)", id: AboutWindow.id) {
+            AboutWindow()
+        }
+        .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
+        .defaultLaunchBehavior(.suppressed)
+        .commandsRemoved()
 
         Settings {
             SettingsWindow()

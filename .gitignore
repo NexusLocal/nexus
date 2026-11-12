@@ -6,3 +6,4 @@ DerivedData/
 .swiftpm/
 Config/Signing.local.xcconfig
 docs/
+CLAUDE.local.md

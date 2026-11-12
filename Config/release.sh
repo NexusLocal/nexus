@@ -35,7 +35,8 @@ if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
 fi
 
 # The About window shows the licenses of the shipped packages. Their versions must be current.
-"$ROOT/Config/credits.sh" --check
+"$ROOT/Config/notices.sh"
+swift test --package-path "$ROOT/NexusKit"
 
 mkdir -p "$WORK/release" "$WORK/image/.background"
 
