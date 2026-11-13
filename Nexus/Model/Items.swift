@@ -345,6 +345,18 @@ struct PackageItem: Identifiable {
 
         return false
     }
+
+    var newVersion: String? {
+        if case .update(let version) = state {
+            return version
+        }
+
+        return nil
+    }
+
+    var hasUpdate: Bool {
+        newVersion != nil
+    }
 }
 
 // A task of nexusd that the Overview and the menu bar panel show. An activity of the sample data

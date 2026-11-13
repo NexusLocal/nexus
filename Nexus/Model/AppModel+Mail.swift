@@ -173,8 +173,18 @@ extension AppModel {
         }
     }
 
-    func openInMailpit() {
-        if let inboxPort, let url = URL(string: "http://127.0.0.1:\(inboxPort)/") {
+    // With a tag, Mailpit opens its search for the mails of one site.
+    func openInMailpit(tag: String? = nil) {
+        guard let inboxPort, var components = URLComponents(string: "http://127.0.0.1:\(inboxPort)/") else {
+            return
+        }
+
+        if let tag {
+            components.path = "/search"
+            components.queryItems = [URLQueryItem(name: "q", value: MailpitAPI.term("tag", tag))]
+        }
+
+        if let url = components.url {
             NSWorkspace.shared.open(url)
         }
     }
@@ -216,11 +226,13 @@ extension AppModel {
     }
 
     func sendMailToNexus(_ site: SiteItem) async -> Bool {
-        guard isLive else {
-            return true
-        }
+        await sendMailToNexus(site, failure: "\(site.host) does not send its mail to Nexus")
+    }
 
-        return await perform(.sendMailToNexus(host: site.host), failure: "\(site.host) does not send its mail to Nexus", place: .window) != nil
+    // The same change as "Send mail to Nexus…" for a site that sends to the inbox of Nexus already.
+    // Only its user name and its password change.
+    func addMailTag(_ site: SiteItem) async -> Bool {
+        await sendMailToNexus(site, failure: "Nexus did not add the tag \(site.host) to the .env")
     }
 
     func restoreMailSettings(_ site: SiteItem) async -> Bool {
@@ -229,6 +241,14 @@ extension AppModel {
         }
 
         return await perform(.restoreMailSettings(host: site.host), failure: "\(site.host) does not use its old mail settings", place: .window) != nil
+    }
+
+    private func sendMailToNexus(_ site: SiteItem, failure: String) async -> Bool {
+        guard isLive else {
+            return true
+        }
+
+        return await perform(.sendMailToNexus(host: site.host), failure: failure, place: .window) != nil
     }
 
     private static func sampleMailChanges(user: String) -> [EnvKeyChange] {

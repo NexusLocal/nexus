@@ -76,7 +76,7 @@ struct MainWindow: View {
             Text(ErrorDetails.split(failure.message).text)
         }
         .errorDetailsSheet(model: model, place: .window)
-        .agentAlert(model.agents, place: .window)
+        .agentAlert(model.agents)
         .alert(groupNamingTitle, isPresented: showsGroupNaming, presenting: model.groupNaming) { naming in
             TextField("Name", text: $groupName)
             Button(namingButton(naming)) {
@@ -270,12 +270,14 @@ struct MainWindow: View {
         case .service(let kind):
             ServiceScreen(kind: kind)
                 .id(kind)
+        case .agents:
+            AgentsScreen()
+        case .commandLine:
+            CommandLineScreen()
         case .dumps:
             DumpsScreen()
         case .packages:
             PackagesScreen()
-        case .commandLine:
-            CommandLineScreen()
         case .overview, nil:
             OverviewScreen()
         }

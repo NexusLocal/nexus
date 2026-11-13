@@ -44,7 +44,7 @@ extension NexusEngine {
         runningBuild: String? = nil,
         restart: @escaping @Sendable (String) async -> Void
     ) {
-        updateCheck = UpdateCheck(app: app, running: runningBuild ?? NexusVersion.build(), restart: restart)
+        updateCheck = UpdateCheck(app: app, running: runningBuild ?? NexusVersion.identity(), restart: restart)
         updateWatch?.cancel()
         updateWatch = Task { [weak self] in
             while !Task.isCancelled {
@@ -62,7 +62,7 @@ extension NexusEngine {
             return
         }
 
-        let onDisk = NexusVersion.buildOnDisk(ofAppAt: check.app).flatMap { $0 == check.running ? nil : $0 }
+        let onDisk = NexusVersion.identityOnDisk(ofAppAt: check.app).flatMap { $0 == check.running ? nil : $0 }
 
         if updateBuild != onDisk {
             updateBuild = onDisk

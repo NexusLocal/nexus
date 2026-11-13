@@ -90,11 +90,7 @@ extension NexusEngine {
         try FileManager.default.createDirectory(at: paths.run, withIntermediateDirectories: true)
 
         if tools.kind.usesMySQLProtocol {
-            let myCnf = paths.databaseConfig(tools.kind, line: line)
-            if !FileManager.default.fileExists(atPath: myCnf.path(percentEncoded: false)) {
-                try FileManager.default.createDirectory(at: myCnf.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try Data(DatabaseConfig.initialMyCnf.utf8).write(to: myCnf)
-            }
+            try UserConfigFile.writeIfMissing(DatabaseConfig.initialMyCnf, to: paths.databaseConfig(tools.kind, line: line))
         }
 
         let data = catalog.dataFolder(for: tools.runtime)

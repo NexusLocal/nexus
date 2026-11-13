@@ -2,10 +2,11 @@ import Foundation
 import NexusCore
 
 // The agent reads these texts to choose a tool. So they must be exact. The level of a tool is the
-// lowest access level that offers it.
+// lowest access level that offers it. The summary is for people, on the Agents screen of the app.
 public struct NexusToolSpec: Sendable {
     public let name: String
     public let title: String
+    public let summary: String
     public let level: AgentLevel
     public let description: String
     public let properties: [String: JSONValue]
@@ -41,6 +42,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "site_info",
             title: "Site info",
+            summary: "The URL, folder, PHP version, databases, mail and workspaces of a site.",
             level: .read,
             description: "The URL, folder, type and PHP version of a site, its database connections with the password, its test database, where its mail goes and its workspaces. Call this before you guess a URL, a port or a password.",
             properties: ["site": site],
@@ -49,6 +51,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "list_sites",
             title: "List sites",
+            summary: "All sites and workspaces with their URL, folder and PHP version.",
             level: .read,
             description: "All sites and workspaces of Nexus with their URL, folder, type and PHP version.",
             properties: [:],
@@ -57,6 +60,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "status",
             title: "Nexus status",
+            summary: "The services with their version, state and port, and each problem.",
             level: .read,
             description: "If Nexus runs, its services with their version, state and port, the tasks that run now and any problems.",
             properties: [:],
@@ -65,6 +69,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "list_packages",
             title: "List packages",
+            summary: "The installed and the available versions of PHP, Node.js and the services.",
             level: .read,
             description: "The installed and the available versions of PHP, Node.js and the services.",
             properties: [:],
@@ -73,6 +78,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "php_extensions",
             title: "PHP extensions",
+            summary: "The PHP extensions that a site needs, and if its PHP version has each one.",
             level: .read,
             description: "The PHP extensions that the site requires (ext-* in composer.json and composer.lock) and if its PHP version has each one on.",
             properties: ["site": site],
@@ -81,6 +87,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "last_errors",
             title: "Last errors",
+            summary: "The newest errors of a site: the Laravel log, PHP errors and failed requests.",
             level: .read,
             description: "The newest errors of a site, newest first: the Laravel log (error and worse, with the stack trace), the PHP errors of the site and the requests that failed with status 500 or higher. Call this first when a page or a command fails.",
             properties: [
@@ -92,6 +99,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "read_log",
             title: "Read a log",
+            summary: "The last lines of a log of a site, a service or Nexus.",
             level: .read,
             description: "The last lines of one log of Nexus: the access log of a site, PHP-FPM, nginx, Apache, a service, a Node.js app or Nexus itself. Without `log`, it lists the logs.",
             properties: [
@@ -104,6 +112,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "list_mail",
             title: "List mail",
+            summary: "The newest mails of a site in the inbox of Nexus.",
             level: .read,
             description: "The newest mails of the site in the Nexus inbox: id, time, from, to and subject. Mail never leaves this Mac.",
             properties: [
@@ -115,6 +124,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "read_mail",
             title: "Read a mail",
+            summary: "One mail with its text, links, codes and attachments.",
             level: .read,
             description: "One mail: the headers, the text, each link with its link text, the codes (for example a login code) and the attachments. Use the id `latest` for the newest mail.",
             properties: [
@@ -126,6 +136,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "wait_for_mail",
             title: "Wait for a mail",
+            summary: "Waits for a mail to an address or with a subject.",
             level: .read,
             description: "Waits for a mail that matches `to` or `subject` and gives it as read_mail does. A mail counts from 60 seconds before the call. So call this after the action that sends the mail. It waits 30 seconds by default and 50 seconds at most. When no mail comes, call it again.",
             properties: [
@@ -140,6 +151,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "start_service",
             title: "Start a service",
+            summary: "Starts or restarts a service, for example MySQL 8.4.",
             level: .change,
             description: "Starts a service, for example MySQL 8.4. With `restart: true` it restarts a service that runs.",
             properties: [
@@ -151,6 +163,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "install_package",
             title: "Install a package",
+            summary: "Installs a version of PHP, Node.js or a service.",
             level: .change,
             description: "Installs a version of PHP, Node.js or a service, for example PHP 8.4 or Redis 7.4. This can take a minute.",
             properties: [
@@ -162,6 +175,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "set_php_extension",
             title: "Turn a PHP extension on or off",
+            summary: "Changes one extension for one PHP version.",
             level: .change,
             description: "Turns a PHP extension on or off for one PHP version. PHP of that version restarts.",
             properties: [
@@ -175,6 +189,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "create_database",
             title: "Make a database",
+            summary: "Makes an empty database, for example for the tests.",
             level: .change,
             description: "Makes an empty database on the database server of the site, for example a database for the tests.",
             properties: [
@@ -186,6 +201,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "create_workspace",
             title: "Make a workspace",
+            summary: "Makes a git worktree and a workspace with its own URL and database.",
             level: .change,
             description: "Makes a git worktree for a branch and a workspace for it with its own URL and database. A worktree from `git worktree add` gets a workspace by itself, so use this only when you need a new branch. Waits up to 50 seconds until the workspace is ready.",
             properties: [
@@ -198,6 +214,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "add_site",
             title: "Add a site",
+            summary: "Serves a project folder as a site of Nexus.",
             level: .change,
             description: "Serves a project folder as a Nexus site at https://<name>.\(NexusVariant.current.tld).",
             properties: [
@@ -210,6 +227,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "remove_workspace",
             title: "Remove a workspace",
+            summary: "Removes a workspace and its git worktree. Its database stays in the trash.",
             level: .remove,
             description: "Removes a workspace and its git worktree. Git refuses when the worktree has changes that are not committed. Nexus keeps a dump of its database in the trash for 7 days.",
             properties: [
@@ -221,6 +239,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "remove_site",
             title: "Remove a site",
+            summary: "Nexus stops serving the site. Its folder and databases stay.",
             level: .remove,
             description: "Nexus stops serving the site. Its folder and its databases stay.",
             properties: [
@@ -231,6 +250,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "stop_service",
             title: "Stop a service",
+            summary: "Stops a service. The sites that use it get errors.",
             level: .remove,
             description: "Stops a service. Each site that uses it gets errors until it starts again.",
             properties: [
@@ -241,6 +261,7 @@ public enum NexusTools {
         NexusToolSpec(
             name: "clear_mail",
             title: "Remove mail",
+            summary: "Removes the mails of a site, or one mail.",
             level: .remove,
             description: "Removes the mails of the site from the Nexus inbox, or one mail with `id`.",
             properties: [

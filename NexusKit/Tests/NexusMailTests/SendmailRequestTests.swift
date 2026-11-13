@@ -107,4 +107,26 @@ struct MailHTMLTests {
         #expect(MailHTML.withDefaultFont("<p>Hi</p>") == "\(style)<p>Hi</p>")
         #expect(MailHTML.withDefaultFont("<header>Top</header>") == "\(style)<header>Top</header>")
     }
+
+    @Test func aDarkMailGetsInvertedColorsAfterTheDefaultFont() {
+        let html = "<html><head></head><body><p>Hi</p></body></html>"
+
+        #expect(MailHTML.forDisplay(html, dark: true) == "<html><head>\(style)\(MailHTML.darkStyle)</head><body><p>Hi</p></body></html>")
+        #expect(MailHTML.forDisplay(html, dark: false) == MailHTML.withDefaultFont(html))
+    }
+
+    @Test func aMailWithItsOwnDarkColorsKeepsThem() {
+        let mails = [
+            "<html><head><style>@media (prefers-color-scheme: dark){body{background:#000}}</style></head><body></body></html>",
+            "<html><head><meta name=\"color-scheme\" content=\"light dark\"></head><body></body></html>",
+            "<html><head><meta content=\"light dark\" name=\"color-scheme\"></head><body></body></html>",
+            "<html><head><style>:root{color-scheme:light dark}</style></head><body></body></html>",
+        ]
+
+        for mail in mails {
+            #expect(MailHTML.forDisplay(mail, dark: true) == MailHTML.withDefaultFont(mail))
+        }
+
+        #expect(!MailHTML.hasDarkColors("<html><head><meta name=\"color-scheme\" content=\"light\"></head><body>dark</body></html>"))
+    }
 }

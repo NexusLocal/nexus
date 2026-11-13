@@ -468,6 +468,7 @@ extension NexusEngineTests {
         #expect(try String(contentsOf: env, encoding: .utf8) == old)
         #expect(NexusEngine.permissions(of: env.path(percentEncoded: false)) == 0o640)
         #expect(again == .failure(message: "The .env of shop.test has no old mail settings from before Nexus."))
+        #expect(await engine.stateStore.current().declinedMailTags == ["shop.test"])
     }
 
     @Test func theChangesOfSendMailToNexusFollowTheLinesOfTheEnvAndANewKeyComesLast() {

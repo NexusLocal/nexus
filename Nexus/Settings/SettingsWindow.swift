@@ -4,52 +4,61 @@ import NexusIPC
 import SwiftUI
 import UniformTypeIdentifiers
 
+// Other places open a tab with its raw value, for example "mail". A stored value that is no tab,
+// for example of the old Agents tab, gives General.
+enum SettingsTab: String {
+    case general
+    case sites
+    case workspaces
+    case databases
+    case mail
+    case network
+    case certificates
+    case updates
+    case advanced
+}
+
 struct SettingsWindow: View {
     static let tabKey = "settingsTab"
 
     @Environment(AppModel.self) private var model
-    @AppStorage(tabKey) private var tab = "general"
+    @AppStorage(tabKey) private var tab = SettingsTab.general
 
     var body: some View {
         TabView(selection: $tab) {
-            Tab("General", systemImage: "gearshape", value: "general") {
+            Tab("General", systemImage: "gearshape", value: SettingsTab.general) {
                 GeneralSettings()
             }
 
-            Tab("Sites", systemImage: "globe", value: "sites") {
+            Tab("Sites", systemImage: "globe", value: SettingsTab.sites) {
                 SitesSettings()
             }
 
-            Tab("Workspaces", systemImage: "arrow.triangle.branch", value: "workspaces") {
+            Tab("Workspaces", systemImage: "arrow.triangle.branch", value: SettingsTab.workspaces) {
                 WorkspacesSettings()
             }
 
-            Tab("Databases", systemImage: "cylinder.split.1x2", value: "databases") {
+            Tab("Databases", systemImage: "cylinder.split.1x2", value: SettingsTab.databases) {
                 DatabasesSettings()
             }
 
-            Tab("Mail", systemImage: "envelope", value: "mail") {
+            Tab("Mail", systemImage: "envelope", value: SettingsTab.mail) {
                 MailSettingsTab()
             }
 
-            // SF Symbols has no robot as in the design.
-            Tab("Agents", systemImage: "sparkles", value: "agents") {
-                AgentsSettingsTab()
-            }
-
-            Tab("Network", systemImage: "network", value: "network") {
+            Tab("Network", systemImage: "network", value: SettingsTab.network) {
                 NetworkSettings()
             }
 
-            Tab("Certificates", systemImage: "checkmark.shield", value: "certificates") {
+            Tab("Certificates", systemImage: "checkmark.shield", value: SettingsTab.certificates) {
                 CertificatesSettings()
             }
 
-            Tab("Updates", systemImage: "arrow.triangle.2.circlepath", value: "updates") {
+            Tab("Updates", systemImage: "arrow.triangle.2.circlepath", value: SettingsTab.updates) {
                 UpdatesSettings()
             }
 
-            Tab("Advanced", systemImage: "wrench.and.screwdriver", value: "advanced") {
+            Tab("Advanced", systemImage: "wrench.and.screwdriver", value: SettingsTab.advanced) {
                 AdvancedSettings()
             }
         }
@@ -150,45 +159,6 @@ private struct GeneralSettings: View {
             }
 
             Section {
-                Toggle("Add Nexus to PATH", isOn: Binding(get: { model.pathSetting != .off }, set: { model.setAddToPath($0) }))
-            } header: {
-                Text("Shell")
-            } footer: {
-                VStack(alignment: .leading, spacing: 4) {
-                    if !model.otherShellCommands.isEmpty {
-                        WarningBanner(title: model.shellWarningTitle) {
-                            ForEach(model.otherShellCommands, id: \.self) { other in
-                                Text(other.description)
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .textSelection(.enabled)
-                            }
-
-                            ForEach(model.shellWarningReasons, id: \.self) { reason in
-                                Text(reason)
-                            }
-                        } actions: {
-                            Button("Check again") {
-                                model.checkShellCommands(again: true)
-                            }
-                        }
-                        .padding(.bottom, 4)
-                    }
-
-                    Text("Nexus adds one line at the end of ~/.zshrc. php, composer, node, npm and wp in your terminal then use the versions of the site in the current folder. Turn it off to remove the line.")
-
-                    if model.pathSetting == .notLast {
-                        Text("Another line comes after the line of Nexus in ~/.zshrc. That line can put another PHP first on the PATH. Turn the setting off and on to move the line of Nexus to the end.")
-                            .foregroundStyle(Color.orangeText)
-                    }
-
-                    if let problem = model.pathSettingProblem {
-                        Text(problem)
-                            .foregroundStyle(Color.orangeText)
-                    }
-                }
-            }
-
-            Section {
                 Toggle("When a service stops or fails", isOn: $notifyServiceStops)
                 Toggle("When a workspace is ready", isOn: $notifyWorkspaceReady)
                 Toggle("When an import is done", isOn: $notifyImportDone)
@@ -208,7 +178,6 @@ private struct GeneralSettings: View {
         }
         .onAppear {
             background.refresh()
-            model.readPathSetting()
 
             if model.isLive {
                 model.findApps()
@@ -831,9 +800,6 @@ private struct CertificatesSettings: View {
 }
 
 private struct UpdatesSettings: View {
-    @Environment(AppModel.self) private var model
-    @AppStorage(AppPreference.checkPackageUpdates) private var checkPackageUpdates = true
-    @AppStorage(AppPreference.installPackageUpdates) private var installPackageUpdates = true
     @Environment(AppUpdater.self) private var updater
 
     private var version: String {
@@ -863,31 +829,12 @@ private struct UpdatesSettings: View {
             } header: {
                 Text(verbatim: NexusVariant.current.name)
             } footer: {
-                Text(verbatim: "Nexus checks for updates every hour. With automatic install, Nexus downloads an update by itself and then asks you to restart. \(NexusVariant.current.name) \(version) comes from \(AppUpdater.repository).")
-            }
-
-            Section {
-                Toggle("Check for package updates automatically", isOn: $checkPackageUpdates)
-                Toggle("Install package updates automatically", isOn: $installPackageUpdates)
-            } header: {
-                Text("Packages")
-            } footer: {
-                Text("Nexus checks at launch and once a day. An update of a package keeps its data. Nexus restarts the service after the update.")
+                Text(verbatim: "Nexus checks for updates every hour. With automatic install, Nexus downloads an update by itself and then asks you to restart. \(NexusVariant.current.name) \(version) comes from \(AppUpdater.repository). The updates of the packages are on the Packages screen.")
             }
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
         .fixedSize(horizontal: false, vertical: true)
-        .onChange(of: checkPackageUpdates) {
-            if checkPackageUpdates {
-                Task { await model.checkPackages() }
-            }
-        }
-        .onChange(of: installPackageUpdates) {
-            if installPackageUpdates {
-                model.installUpdates()
-            }
-        }
     }
 }
 

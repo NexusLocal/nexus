@@ -11,9 +11,10 @@ enum SidebarItem: Hashable {
     case overview
     case site(String)
     case service(ServiceKind)
+    case agents
+    case commandLine
     case dumps
     case packages
-    case commandLine
 }
 
 enum SheetKind: Identifiable {
@@ -106,6 +107,7 @@ enum AppPreference {
     static let postgresqlApp = "postgresqlApp"
     static let firstRunDone = "firstRunDone"
     static let keptTestDatabases = "keptTestDatabases"
+    static let mailAppearance = "mailAppearance"
 
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
@@ -183,6 +185,7 @@ final class AppModel {
         didSet {
             if selection != oldValue {
                 ActivityTracker.log.write("screen", selection.map { "\($0)" } ?? "none")
+                showsPackageCheck = false
             }
         }
     }
@@ -214,7 +217,9 @@ final class AppModel {
         }
     }
     @ObservationIgnored private var pendingStarts: Set<String> = []
-    @ObservationIgnored private var versionCheck = NexusdVersionCheck(appBuild: NexusVersion.build(), lastRestartBuild: UserDefaults.standard.string(forKey: AppPreference.nexusdRestartBuild))
+    // Read once at the launch. A later read could see the nexusd file of a newer build.
+    private static let appIdentity = NexusVersion.identity()
+    @ObservationIgnored private var versionCheck = NexusdVersionCheck(appBuild: appIdentity, lastRestartBuild: UserDefaults.standard.string(forKey: AppPreference.nexusdRestartBuild))
     // Grows after each change to a WordPress site. The Mail section then checks the site again.
     var wordPressChanges = 0
     // The message whose details a window shows (owner, 2026-11-07).
@@ -254,6 +259,10 @@ final class AppModel {
     var packagesProblem: String?
     var installedProblem: String?
     var checkingPackages = false
+    // A check that the user starts with a click shows its result until "OK" or until another screen
+    // shows. The updates of the last check stay as they were, also while they install.
+    var showsPackageCheck = false
+    var checkedUpdates: [PackageItem] = []
     @ObservationIgnored var lastPackageCheck: Date?
     // The packages that wait for the start of their download. The imports that run, by
     // instance and name. The import sheet shows the end of the import that it started.
@@ -433,7 +442,7 @@ final class AppModel {
     }
 
     var updateCount: Int {
-        packages.filter { if case .update = $0.state { true } else { false } }.count
+        packages.filter(\.hasUpdate).count
     }
 
     var installedPHPVersions: [String] {
@@ -961,7 +970,7 @@ final class AppModel {
             return
         }
 
-        UserDefaults.standard.set(NexusVersion.build(), forKey: AppPreference.nexusdRestartBuild)
+        UserDefaults.standard.set(Self.appIdentity, forKey: AppPreference.nexusdRestartBuild)
         restartNexusd(from: .window)
     }
 

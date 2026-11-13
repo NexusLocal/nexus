@@ -269,6 +269,18 @@ extension NexusEngineTests {
         #expect(catalog.portRequirements(for: runtime("mariadb", "11.4")) == [PortRequirement(key: "mariadb-11.4", standard: 3306)])
     }
 
+    @Test func redisReadsTheConfigFileOfTheUserBeforeTheCommandLine() {
+        let paths = NexusPaths(root: URL(filePath: "/Nexus", directoryHint: .isDirectory))
+        let runtime = InstalledRuntime(name: "redis", line: "8", version: "8.2.3", revision: 1, sha256: "", installedAt: .now,
+                                       folder: URL(filePath: "/Nexus/runtimes/redis/8", directoryHint: .isDirectory))
+
+        let definition = ServiceCatalog(paths: paths).definition(for: runtime, ports: ["redis-8": 16379])
+
+        #expect(definition?.arguments.prefix(3) == ["/Nexus/config/redis/8/redis.conf", "--port", "16379"])
+        #expect(ServiceID.redisLine(of: "redis-8") == "8")
+        #expect(ServiceID.redisLine(of: "mysql-8.4") == nil)
+    }
+
     @Test func aDumpWatcherCountsTheBytesAndNamesTheTablesAlsoAcrossParts() {
         let progress = TaskProgress()
         let watcher = DumpWatcher(progress: progress, namesTables: true)

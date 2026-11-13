@@ -2,12 +2,36 @@ import NexusCore
 import NexusIPC
 import SwiftUI
 
+// How the Mail screen shows the HTML of a mail. Auto follows the appearance of the Mac.
+enum MailAppearance: String, CaseIterable {
+    case light
+    case dark
+    case auto
+
+    var title: String {
+        switch self {
+        case .light: "Light"
+        case .dark: "Dark"
+        case .auto: "Auto"
+        }
+    }
+
+    func isDark(in colorScheme: ColorScheme) -> Bool {
+        switch self {
+        case .light: false
+        case .dark: true
+        case .auto: colorScheme == .dark
+        }
+    }
+}
+
 // Settings > Mail (Phase 3, 3b and 3d). nexusd keeps the limits of the outbox and the size of the
-// inbox. The notification for each new mail is a setting of the app. Each limit has a range and no
-// limit can be off, so the outbox and the inbox cannot fill the disk.
+// inbox. The notification for each new mail and the appearance of mails are settings of the app.
+// Each limit has a range and no limit can be off, so the outbox and the inbox cannot fill the disk.
 struct MailSettingsTab: View {
     @Environment(AppModel.self) private var model
     @AppStorage(AppPreference.notifyNewMail) private var notifyNewMail = false
+    @AppStorage(AppPreference.mailAppearance) private var mailAppearance = MailAppearance.auto
     @State private var settings = MailSettings()
 
     private func setting<Value>(_ path: WritableKeyPath<MailSettings, Value>) -> Binding<Value> {
@@ -71,11 +95,19 @@ struct MailSettingsTab: View {
 
                 Toggle("Send a notification for each new mail", isOn: $notifyNewMail)
                     .toggleStyle(.switch)
+
+                Picker("Appearance of mails inside Nexus", selection: $mailAppearance) {
+                    ForEach(MailAppearance.allCases, id: \.self) { appearance in
+                        Text(appearance.title)
+                            .tag(appearance)
+                    }
+                }
             } header: {
                 Text("Inbox")
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Mailpit removes the oldest mails above this number, from 100 to 50000. A change starts Mailpit again.")
+                    Text("Light and Dark set the background and the text colors of each mail inside Nexus. Auto follows Light or Dark in System Settings > Appearance. Mailpit in the browser does not change.")
 
                     if notifyNewMail {
                         NotificationsBlockedNote()

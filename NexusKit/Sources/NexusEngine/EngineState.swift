@@ -54,6 +54,9 @@ public struct EngineState: Codable, Sendable, Equatable {
     public var dumpSettings = DumpSettings()
     // The last change of the URLs of each WordPress site, by its host (Phase 4, 3d).
     public var wordPressURLChanges: [String: WordPressURLChange] = [:]
+    // The hosts that went back to their old mail settings. Nexus does not add the tag to their
+    // .env by itself again, until "Send mail to Nexus" (owner, 2026-11-12).
+    public var declinedMailTags: Set<String> = []
 
     public init() {}
 
@@ -94,6 +97,7 @@ public struct EngineState: Codable, Sendable, Equatable {
         mailSettings = (try? container.decodeIfPresent(MailSettings.self, forKey: .mailSettings)) ?? defaults.mailSettings
         dumpSettings = (try? container.decodeIfPresent(DumpSettings.self, forKey: .dumpSettings)) ?? defaults.dumpSettings
         wordPressURLChanges = (try? container.decodeIfPresent([String: WordPressURLChange].self, forKey: .wordPressURLChanges)) ?? defaults.wordPressURLChanges
+        declinedMailTags = try container.decodeIfPresent(Set<String>.self, forKey: .declinedMailTags) ?? defaults.declinedMailTags
     }
 }
 

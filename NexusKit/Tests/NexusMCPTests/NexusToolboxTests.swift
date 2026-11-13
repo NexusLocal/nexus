@@ -47,12 +47,19 @@ struct NexusToolboxTests {
         #expect(tools.allSatisfy { $0.readOnly == (NexusTools.spec($0.name)?.level == .read) })
     }
 
+    @Test func eachToolHasAShortSummaryForTheAgentsScreen() {
+        for tool in NexusTools.all {
+            #expect(!tool.summary.isEmpty, "\(tool.name) has no summary")
+            #expect(tool.summary.count <= 90, "The summary of \(tool.name) needs more than one line")
+        }
+    }
+
     @Test func aToolAboveTheLevelGetsTheRefusal() async {
         let nexus = FakeNexus()
         let result = await toolbox(nexus, level: .read).call("start_service", arguments: ["service": "mysql-8.4"], agent: "claude-code")
 
         #expect(result.isError)
-        #expect(result.text == "Nexus lets agents only look. The user can change this in Nexus > Settings > Agents.")
+        #expect(result.text == "Nexus lets agents only look. The user can change this on the Agents screen of Nexus.")
         #expect(await nexus.requests.isEmpty)
     }
 

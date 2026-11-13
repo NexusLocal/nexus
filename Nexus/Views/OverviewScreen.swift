@@ -108,7 +108,6 @@ struct OverviewScreen: View {
 // good.
 private struct AgentsNotice: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         HStack(spacing: 12) {
@@ -129,9 +128,7 @@ private struct AgentsNotice: View {
 
             Button("Set up…") {
                 model.agents.hideNotice()
-                UserDefaults.standard.set("agents", forKey: SettingsWindow.tabKey)
-                NSApplication.shared.activate()
-                openSettings()
+                model.selection = .agents
             }
 
             Button {

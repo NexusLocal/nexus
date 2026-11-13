@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import NexusConfig
 import NexusCore
 import NexusDNS
 import NexusDumps
@@ -87,7 +88,7 @@ public actor NexusEngine {
     private var observesSupervisor = false
     let activity: ActivityLog?
     private var loggedStates: [String: String] = [:]
-    private let build = NexusVersion.build()
+    private let build = NexusVersion.identity()
     // The last start of each service that failed on a port in use (D31).
     var portConflicts: [String: PortConflict] = [:]
     // The extensions and modules of each runtime, with the modification dates of their folders.
@@ -796,9 +797,15 @@ public actor NexusEngine {
         processesWaitForAService = false
     }
 
+    // Each start of a service comes here, also the start that empties a Redis index of a
+    // workspace. So redis.conf is there before redis-server reads it.
     func startService(_ id: String) async throws -> String {
         guard let definition = try await serviceDefinition(id) else {
             throw SupervisorError.unknownService(id)
+        }
+
+        if let line = ServiceID.redisLine(of: id) {
+            try UserConfigFile.writeIfMissing(RedisConfig.initial, to: paths.redisConfig(line: line))
         }
 
         do {

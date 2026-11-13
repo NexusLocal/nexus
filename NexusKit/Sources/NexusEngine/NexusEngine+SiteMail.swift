@@ -47,14 +47,18 @@ extension NexusEngine {
             let route = LaravelMail.route(configuration, nexusPort: port)
             let keys = LaravelMail.nexusKeys(configuration, user: site.host, nexusPort: port)
             let warning = route.warning ?? (route == .nexus ? LaravelMail.encryptionWarning(configuration) : nil)
+            let sendsToNexus = route == .nexus && warning == nil
+            let canSendToNexus = !keys.keys.isEmpty && keys.problems.isEmpty
 
             return SiteMail(
-                sendsToNexus: route == .nexus && warning == nil,
+                sendsToNexus: sendsToNexus,
                 warning: warning,
-                canSendToNexus: !keys.keys.isEmpty && keys.problems.isEmpty,
+                canSendToNexus: canSendToNexus,
                 destination: route.destination,
                 changes: Self.mailChanges(keys.keys, in: text),
-                canRestore: canRestore
+                canRestore: canRestore,
+                missesTag: sendsToNexus && canSendToNexus && LaravelMail.changesUserName(keys.keys, in: configuration),
+                tagDeclined: state.declinedMailTags.contains(site.host)
             )
         } catch {
             return SiteMail(sendsToNexus: false, problem: ErrorText.plain(error), canRestore: canRestore)
@@ -80,6 +84,7 @@ extension NexusEngine {
 
         let file = try envFile(in: folder, of: host)
         try Self.write(EnvRewrite.applyKeepingOldValues(to: try Self.envText(of: file), keys: nexus.keys), to: file)
+        try await stateStore.update { $0.declinedMailTags.remove(host) }
 
         let changed = EnglishList.joined(nexus.keys.keys.sorted())
         return "\(host) sends its mail to the mail service of Nexus now. Nexus changed \(changed) in its .env. The old values stay there as comment lines. A queue worker reads the new values after a restart."
@@ -97,6 +102,7 @@ extension NexusEngine {
         }
 
         try Self.write(restore.text, to: file)
+        try await stateStore.update { $0.declinedMailTags.insert(host) }
 
         let restored = restore.restored.isEmpty ? [] : ["Nexus put back the old values of \(EnglishList.joined(restore.restored)) in its .env."]
         let removed = restore.removed.isEmpty ? [] : ["Nexus removed \(EnglishList.joined(restore.removed)) from its .env."]

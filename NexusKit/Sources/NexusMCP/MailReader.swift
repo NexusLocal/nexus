@@ -110,7 +110,7 @@ public struct MailReader: Sendable {
     // asks Mailpit every half second. The newest match wins. A second reset in the same minute
     // then gives the new link and not the old one. nil means no mail came in time.
     public func wait(to: String?, subject: String?, tags: [String]?, since: Date, seconds: Int, poll: Duration = .milliseconds(500)) async throws -> AgentMail? {
-        let terms = [to.map { "to:\(Self.quoted($0))" }, subject.map { "subject:\(Self.quoted($0))" }].compactMap { $0 }
+        let terms = [to.map { MailpitAPI.term("to", $0) }, subject.map { MailpitAPI.term("subject", $0) }].compactMap { $0 }
         let scope = to == nil ? tags : nil
         let deadline = ContinuousClock.now + .seconds(seconds)
 
@@ -166,7 +166,7 @@ public struct MailReader: Sendable {
                     page.forEach { summary in merged[summary.id] = summary }
                 }
 
-                let query = (terms + ["tag:\(Self.quoted(tag))"]).joined(separator: " ")
+                let query = (terms + [MailpitAPI.term("tag", tag)]).joined(separator: " ")
                 group.addTask { try await inbox.search(query, limit: limit) }
             }
 
@@ -180,10 +180,6 @@ public struct MailReader: Sendable {
         let dated = found.values.map { summary in (date: Self.date(summary.created) ?? .distantPast, summary: summary) }
 
         return dated.sorted { $0.date > $1.date }.prefix(limit).map(\.summary)
-    }
-
-    static func quoted(_ value: String) -> String {
-        "\"\(value.replacing("\"", with: ""))\""
     }
 
     // Mailpit gives the time with fractions of a second and a time zone.

@@ -1224,8 +1224,13 @@ public struct SiteMail: Codable, Sendable, Equatable {
     public let canRestore: Bool
     // The active plugins of a WordPress site that send the mail themselves (Phase 4, 3h).
     public let mailPlugins: [WordPressMailPlugin]
+    // The site sends to the inbox of Nexus with another SMTP user name, so its mails get no tag.
+    // The app then adds the tag without a question (owner, 2026-11-12), but not after "Use the old
+    // mail settings" (tagDeclined).
+    public let missesTag: Bool
+    public let tagDeclined: Bool
 
-    public init(sendsToNexus: Bool, warning: String? = nil, canSendToNexus: Bool = false, problem: String? = nil, destination: String? = nil, changes: [EnvKeyChange] = [], canRestore: Bool = false, mailPlugins: [WordPressMailPlugin] = []) {
+    public init(sendsToNexus: Bool, warning: String? = nil, canSendToNexus: Bool = false, problem: String? = nil, destination: String? = nil, changes: [EnvKeyChange] = [], canRestore: Bool = false, mailPlugins: [WordPressMailPlugin] = [], missesTag: Bool = false, tagDeclined: Bool = false) {
         self.sendsToNexus = sendsToNexus
         self.warning = warning
         self.canSendToNexus = canSendToNexus
@@ -1234,6 +1239,8 @@ public struct SiteMail: Codable, Sendable, Equatable {
         self.changes = changes
         self.canRestore = canRestore
         self.mailPlugins = mailPlugins
+        self.missesTag = missesTag
+        self.tagDeclined = tagDeclined
     }
 
     // A nexusd of an older build sends no changes and no canRestore until it restarts.
@@ -1247,6 +1254,8 @@ public struct SiteMail: Codable, Sendable, Equatable {
         changes = try container.decodeIfPresent([EnvKeyChange].self, forKey: .changes) ?? []
         canRestore = try container.decodeIfPresent(Bool.self, forKey: .canRestore) ?? false
         mailPlugins = try container.decodeIfPresent([WordPressMailPlugin].self, forKey: .mailPlugins) ?? []
+        missesTag = try container.decodeIfPresent(Bool.self, forKey: .missesTag) ?? false
+        tagDeclined = try container.decodeIfPresent(Bool.self, forKey: .tagDeclined) ?? false
     }
 }
 

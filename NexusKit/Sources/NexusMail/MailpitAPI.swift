@@ -194,7 +194,13 @@ public struct MailpitAPI: Sendable {
     // A search gives the number of its matches in messages_count, and the list of all mails gives
     // it in total.
     public func page(tag: String? = nil, limit: Int = 50) async throws -> Page {
-        try await page(query: tag.map { "tag:\"\($0)\"" }, limit: limit)
+        try await page(query: tag.map { Self.term("tag", $0) }, limit: limit)
+    }
+
+    // One term of a search, for example tag:"shop.test". A quote in the value would end the term
+    // early, so it goes out.
+    public static func term(_ key: String, _ value: String) -> String {
+        "\(key):\"\(value.replacing("\"", with: ""))\""
     }
 
     // A search of Mailpit, for example to:"ann@example.com" subject:"Reset". The terms must all

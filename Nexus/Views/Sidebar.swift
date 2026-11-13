@@ -96,6 +96,12 @@ struct Sidebar: View {
             }
 
             Section("Tools", isExpanded: $toolsExpanded) {
+                Label("Agents", systemImage: "sparkles")
+                    .tag(SidebarItem.agents)
+
+                Label("Command line", systemImage: "apple.terminal")
+                    .tag(SidebarItem.commandLine)
+
                 Label("Dumps", systemImage: "ladybug")
                     .tag(SidebarItem.dumps)
 
@@ -114,9 +120,6 @@ struct Sidebar: View {
                     }
                 }
                 .tag(SidebarItem.packages)
-
-                Label("Command line", systemImage: "apple.terminal")
-                    .tag(SidebarItem.commandLine)
             }
         }
         .listStyle(.sidebar)

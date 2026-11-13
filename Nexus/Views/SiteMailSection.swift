@@ -3,14 +3,21 @@ import NexusIPC
 import SwiftUI
 
 // Where the main checkout of a site sends its mail (Phase 3, 3c). Nexus changes the .env of a main
-// checkout only after "Send mail to Nexus…" or "Use the old mail settings…" (D44). Both ask
-// first. A workspace always sends to Nexus.
+// checkout after "Send mail to Nexus…" or "Use the old mail settings…" (D44). Both ask first. One
+// change needs no question (owner, 2026-11-12): a site that sends to the inbox of Nexus with
+// another SMTP user name gets the tag by itself. A workspace always sends to Nexus.
 struct SiteMailSection: View {
+    private enum TagResult: Equatable {
+        case added([EnvKeyChange])
+        case failed
+    }
+
     @Environment(AppModel.self) private var model
     let site: SiteItem
     @State private var mail: SiteMail?
     @State private var checked = false
     @State private var changing = false
+    @State private var tagResult: TagResult?
     @State private var asksToSend = false
     @State private var asksToRestore = false
     @State private var asksToTurnOff = false
@@ -50,7 +57,7 @@ struct SiteMailSection: View {
                         .foregroundStyle(mail?.warning == nil ? Color.secondary : Color.orangeText)
                         .fixedSize()
 
-                    if mail?.canSendToNexus == true {
+                    if let mail, mail.canSendToNexus, !addsTagItself || tagFailed {
                         Button("Send mail to Nexus…") {
                             asksToSend = true
                         }
@@ -84,12 +91,20 @@ struct SiteMailSection: View {
                 Button("Show mails") {
                     model.showMails(of: site.host)
                 }
+                Button("Open in Mailpit") {
+                    model.openInMailpit(tag: site.host)
+                }
+                .disabled(model.mailService?.isRunning != true)
             }
         } footer: {
             if let warning = mail?.warning {
                 MessageText(warning, title: "The mail of \(site.host)")
             } else if let problem = mail?.problem {
                 MessageText("Nexus cannot read the mail settings of this site. \(problem)", title: "Nexus cannot read the mail settings of \(site.host)")
+            } else if case .added(let changes) = tagResult {
+                Text("Nexus added the tag \(site.host) to the .env. It changed \(EnglishList.joined(changes.map(\.key))). The old values stay as comment lines. Each mail of this site now gets the tag \(site.host) in the inbox.")
+            } else if mail?.missesTag == true, !addsTagItself || tagFailed {
+                Text("The .env has another SMTP user name. So the mails of this site get no tag. \"Show mails\" then does not find them. \"Send mail to Nexus…\" adds the tag \(site.host).")
             } else {
                 Text(footer)
             }
@@ -131,7 +146,7 @@ struct SiteMailSection: View {
         }
 
         if mail.sendsToNexus {
-            return "The inbox of Nexus (Mailpit)"
+            return mail.missesTag ? "The inbox of Nexus, without the tag of this site" : "The inbox of Nexus (Mailpit)"
         }
 
         if let destination = mail.destination {
@@ -152,16 +167,46 @@ struct SiteMailSection: View {
         return "Each mail of this site gets the tag \(site.host) in the inbox.\(oldSettings) A workspace of this site always sends its mail to Nexus, with the host of the workspace as its tag."
     }
 
+    private var addsTagItself: Bool {
+        mail?.missesTag == true && mail?.tagDeclined != true
+    }
+
+    // After a failed automatic tag, the user adds the tag with "Send mail to Nexus…".
+    private var tagFailed: Bool {
+        tagResult == .failed
+    }
+
     private func load() async {
         mail = await model.siteMail(of: site)
         checked = true
+        await addMissingTag()
     }
 
+    // After a failed try, "Send mail to Nexus…" shows instead, so the user sees the reason again.
+    private func addMissingTag() async {
+        guard let mail, addsTagItself, !changing, tagResult == nil else {
+            return
+        }
+
+        changing = true
+
+        if await model.addMailTag(site) {
+            tagResult = .added(mail.changes)
+            self.mail = await model.siteMail(of: site)
+        } else {
+            tagResult = .failed
+        }
+
+        changing = false
+    }
+
+    // A failed change keeps the result of the tag. So "Send mail to Nexus…" stays for another try.
     private func change(_ action: @escaping () async -> Bool) {
         changing = true
 
         Task {
             if await action() {
+                tagResult = nil
                 await load()
             }
 

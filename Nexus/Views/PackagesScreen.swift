@@ -9,6 +9,8 @@ struct PackagesScreen: View {
     }
 
     @Environment(AppModel.self) private var model
+    @AppStorage(AppPreference.checkPackageUpdates) private var checkPackageUpdates = true
+    @AppStorage(AppPreference.installPackageUpdates) private var installPackageUpdates = true
     @State private var filter = Filter.all
 
     private var sections: [(title: String, packages: [PackageItem])] {
@@ -16,7 +18,7 @@ struct PackagesScreen: View {
             switch filter {
             case .all: true
             case .installed: package.isInstalled
-            case .updates: if case .update = package.state { true } else { false }
+            case .updates: package.hasUpdate
             }
         }
 
@@ -27,15 +29,23 @@ struct PackagesScreen: View {
 
     var body: some View {
         Form {
-            if model.packagesProblem != nil || model.installedProblem != nil {
-                Section {
-                    if let reason = model.packagesProblem {
-                        MessageText("Nexus cannot check for updates. \(reason)")
-                    }
+            PackageCheckSection {
+                filter = .updates
+                model.showsPackageCheck = false
+            }
 
-                    if let problem = model.installedProblemText {
-                        MessageText(problem)
-                    }
+            Section {
+                Toggle("Check for package updates automatically", isOn: $checkPackageUpdates)
+                Toggle("Install package updates automatically", isOn: $installPackageUpdates)
+            } header: {
+                Text("Automatic updates")
+            } footer: {
+                Text("Nexus checks at launch and once a day. An update of a package keeps its data. Nexus restarts the service after the update.")
+            }
+
+            if let problem = model.installedProblemText {
+                Section {
+                    MessageText(problem)
                 }
             }
 
@@ -48,7 +58,18 @@ struct PackagesScreen: View {
             }
         }
         .formStyle(.grouped)
+        .toggleStyle(.switch)
         .screenTitle("Packages", subtitle: subtitle)
+        .onChange(of: checkPackageUpdates) {
+            if checkPackageUpdates {
+                Task { await model.checkPackages() }
+            }
+        }
+        .onChange(of: installPackageUpdates) {
+            if installPackageUpdates {
+                model.installUpdates()
+            }
+        }
         // Without the automatic check, the first visit reads the manifest. Without it the screen
         // cannot show what Nexus can install.
         .task {
@@ -69,9 +90,18 @@ struct PackagesScreen: View {
 
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    Task { await model.checkPackages() }
+                    model.checkPackagesOnClick()
                 } label: {
-                    Label("Check for updates", systemImage: "arrow.triangle.2.circlepath")
+                    if model.checkingPackages {
+                        Label {
+                            Text("Checking…")
+                        } icon: {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    } else {
+                        Label("Check for updates", systemImage: "arrow.triangle.2.circlepath")
+                    }
                 }
                 .labelStyle(.titleAndIcon)
                 .disabled(model.checkingPackages)
@@ -138,7 +168,7 @@ private struct PackageRow: View {
         if let end = package.securityEnd {
             Text(package.securityEnded ? "No security fixes since \(end)." : "Security fixes end on \(end).")
                 .foregroundStyle(Color.orangeText)
-        } else if case .update(let version) = package.state {
+        } else if let version = package.newVersion {
             Text(version == package.version ? "A new build of \(version) is available." : "\(version) is available.")
                 .foregroundStyle(.secondary)
         }

@@ -51,6 +51,20 @@ struct LaravelMailTests {
         #expect(LaravelMail.route(configuration(settings), nexusPort: 11025) == .local("the SMTP server on port 1025"))
     }
 
+    @Test func onlyAChangeOfTheUserNameAddsTheTag() {
+        var settings = postmark
+        settings["mail.mailers.smtp.host"] = key(.text("127.0.0.1"), "MAIL_HOST")
+        settings["mail.mailers.smtp.port"] = key(.number(1025), "MAIL_PORT")
+        let other = LaravelMail.nexusKeys(configuration(settings), user: "shop.test", nexusPort: 1025).keys
+
+        settings["mail.mailers.smtp.username"] = key(.text("shop.test"), "MAIL_USERNAME")
+        let tagged = LaravelMail.nexusKeys(configuration(settings), user: "shop.test", nexusPort: 1025).keys
+
+        #expect(LaravelMail.changesUserName(other, in: configuration(settings)))
+        #expect(tagged == ["MAIL_PASSWORD": ""])
+        #expect(!LaravelMail.changesUserName(tagged, in: configuration(settings)))
+    }
+
     @Test(arguments: [
         ("sendmail", MailRoute.real("the sendmail of macOS")),
         ("log", MailRoute.local("log")),

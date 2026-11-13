@@ -112,7 +112,7 @@ extension CommandSection {
             CommandItem(command: "nexus dumps settings --page never", help: "Keeps each dump() out of the web page. automatic shows it only in a normal page, and always also in an API answer. Without options the command shows the settings."),
         ]),
         CommandSection(title: "Coding agents", commands: [
-            CommandItem(command: "nexus mcp", help: "The MCP server of Nexus. A coding agent such as Claude Code, Codex or Cursor starts it. Settings > Agents connects the agents."),
+            CommandItem(command: "nexus mcp", help: "The MCP server of Nexus. A coding agent such as Claude Code, Codex or Cursor starts it. The Agents screen of the app connects the agents."),
             CommandItem(command: "nexus mcp status", help: "Shows which coding agents are on this Mac and which ones use Nexus."),
             CommandItem(command: "nexus mcp install --agent claude-code", help: "Connects coding agents to Nexus. Without --agent, each agent on this Mac."),
             CommandItem(command: "nexus mcp uninstall --agent codex", help: "Removes the entry of Nexus from the settings of a coding agent."),

@@ -95,9 +95,10 @@ enum DebugLaunch {
         switch (parts.first, parts.last) {
         case ("site", let host?): return .site(host)
         case ("service", let kind?): return ServiceKind(rawValue: kind).map(SidebarItem.service) ?? .overview
+        case ("agents", _): return .agents
+        case ("command-line", _): return .commandLine
         case ("dumps", _): return .dumps
         case ("packages", _): return .packages
-        case ("command-line", _): return .commandLine
         default: return .overview
         }
     }

@@ -79,8 +79,9 @@ private struct MailToolbar: ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             MoreMenu {
                 Button("Check for updates", systemImage: "arrow.triangle.2.circlepath") {
-                    Task { await model.checkPackages() }
+                    model.checkPackagesOnClick()
                 }
+                .disabled(model.checkingPackages)
 
                 if let package = model.package(of: service) {
                     Divider()
@@ -140,7 +141,7 @@ private struct MailNotices: View {
                 if removed > 0 {
                     WarningBanner(title: "Nexus removed \(Count.text(removed, "mail")) from the outbox", message: "The outbox was full. So the oldest mails went. Change the limits in Settings > Mail.") {
                         Button("Mail settings…") {
-                            UserDefaults.standard.set("mail", forKey: SettingsWindow.tabKey)
+                            UserDefaults.standard.set(SettingsTab.mail.rawValue, forKey: SettingsWindow.tabKey)
                             openSettings()
                         }
 
@@ -178,6 +179,7 @@ private struct MailForm: View {
 
     var body: some View {
         Form {
+            PackageCheckSection(service: service)
             StateSection(service: $service)
 
             Section {
@@ -441,9 +443,12 @@ private struct MailDetail: View {
 }
 
 // The HTML of a mail runs without JavaScript and without a store of its own. A click on a link
-// opens the browser, as a mail app does.
+// opens the browser, as a mail app does. The appearance of the web view follows the setting
+// "Appearance of mails inside Nexus". So a mail with its own dark colors uses them.
 private struct MailHTMLView: NSViewRepresentable {
     let html: String
+    @AppStorage(AppPreference.mailAppearance) private var appearance = MailAppearance.auto
+    @Environment(\.colorScheme) private var colorScheme
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -459,16 +464,21 @@ private struct MailHTMLView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
-        guard context.coordinator.shown != html else {
+        let dark = appearance.isDark(in: colorScheme)
+
+        guard context.coordinator.shown != html || context.coordinator.shownDark != dark else {
             return
         }
 
         context.coordinator.shown = html
-        view.loadHTMLString(MailHTML.withDefaultFont(html), baseURL: nil)
+        context.coordinator.shownDark = dark
+        view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        view.loadHTMLString(MailHTML.forDisplay(html, dark: dark), baseURL: nil)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var shown: String?
+        var shownDark: Bool?
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
             guard navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url else {

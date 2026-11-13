@@ -3,7 +3,6 @@ import SwiftUI
 
 struct CommandLineScreen: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.openSettings) private var openSettings
     @State private var search = ""
 
     // Without the PATH setting, a user can still run the nexus command in the app by its path.
@@ -25,37 +24,49 @@ struct CommandLineScreen: View {
         }
     }
 
-    // The note and the warning are in the form. Outside the form, their text sets a minimum height
-    // that makes the window content taller than the window. A form row on macOS cannot get the
-    // orange background. So the warning is the footer of a section without rows.
     var body: some View {
         Form {
-            if model.otherShellCommands.isEmpty {
-                Section {
-                    HStack(spacing: 10) {
-                        Image(systemName: "info.circle")
-                            .foregroundStyle(Color.accentText)
-
-                        if model.pathSetting == .off {
-                            Text("Turn on \"Add Nexus to PATH\" in Settings > General to use nexus in your terminal. nexus --help shows the same list.")
-                                .fixedSize(horizontal: false, vertical: true)
-                            Spacer()
-                            Button("Copy path") {
-                                copyToPasteboard(ShellWord.quoted(Self.commandPath))
+            Section {
+                Toggle("Add Nexus to PATH", isOn: Binding(get: { model.pathSetting != .off }, set: { model.setAddToPath($0) }))
+                    .toggleStyle(.switch)
+            } header: {
+                Text("Setup")
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    if !model.otherShellCommands.isEmpty {
+                        WarningBanner(title: model.shellWarningTitle) {
+                            ForEach(model.otherShellCommands, id: \.self) { other in
+                                Text(other.description)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .textSelection(.enabled)
                             }
-                            .help("Copies the path of the nexus command in the app: \(Self.commandPath)")
-                            openSettingsButton
-                        } else {
-                            Text("nexus --help shows the same list.")
-                            Spacer()
+
+                            ForEach(model.shellWarningReasons, id: \.self) { reason in
+                                Text(reason)
+                            }
+                        } actions: {
+                            Button("Check again") {
+                                model.checkShellCommands(again: true)
+                            }
                         }
+                        .padding(.bottom, 4)
                     }
-                }
-            } else {
-                Section {
-                } footer: {
-                    WarningBanner(title: model.shellWarningTitle, message: "Settings > General shows why. nexus --help shows the same list.") {
-                        openSettingsButton
+
+                    Text("Nexus adds one line at the end of ~/.zshrc. nexus, php, composer, node, npm and wp in your terminal then use the versions of the site in the current folder. Turn it off to remove the line. nexus --help shows the same list as this screen.")
+
+                    if model.pathSetting == .off {
+                        Text("Without it, run the nexus command by its path in the app: \(Self.commandPath)")
+                            .textSelection(.enabled)
+                    }
+
+                    if model.pathSetting == .notLast {
+                        Text("Another line comes after the line of Nexus in ~/.zshrc. That line can put another PHP first on the PATH. Turn the setting off and on to move the line of Nexus to the end.")
+                            .foregroundStyle(Color.orangeText)
+                    }
+
+                    if let problem = model.pathSettingProblem {
+                        Text(problem)
+                            .foregroundStyle(Color.orangeText)
                     }
                 }
             }
@@ -89,13 +100,4 @@ struct CommandLineScreen: View {
             model.readPathSetting()
         }
     }
-
-    private var openSettingsButton: some View {
-        Button("Open settings") {
-            UserDefaults.standard.set("general", forKey: SettingsWindow.tabKey)
-            NSApplication.shared.activate()
-            openSettings()
-        }
-    }
-
 }

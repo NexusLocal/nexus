@@ -8,7 +8,7 @@ struct MCPCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "mcp",
         abstract: "Connects coding agents such as Claude Code, Codex and Cursor to Nexus.",
-        discussion: "An agent starts nexus mcp itself. It then sees the sites, the logs and the mail of Nexus. Nexus > Settings > Agents decides what agents can do.",
+        discussion: "An agent starts nexus mcp itself. It then sees the sites, the logs and the mail of Nexus. The Agents screen of Nexus decides what agents can do.",
         subcommands: [Serve.self, Status.self, Install.self, Uninstall.self],
         defaultSubcommand: Serve.self
     )

@@ -104,6 +104,7 @@ public struct ServiceCatalog: Sendable {
                 displayName: "Redis \(runtime.version)",
                 executable: runtime.folder.appending(path: "bin/redis-server"),
                 arguments: [
+                    paths.redisConfig(line: runtime.line).path(percentEncoded: false),
                     "--port", String(requiredPorts[0]),
                     "--bind", "127.0.0.1",
                     "--dir", data.path(percentEncoded: false),

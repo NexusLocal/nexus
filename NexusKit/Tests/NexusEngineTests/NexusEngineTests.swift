@@ -160,7 +160,7 @@ struct NexusEngineTests {
         let source = workspace.appending(path: "source/redis-\(version)/bin", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
         let server = source.appending(path: "redis-server")
-        try Data("#!/bin/sh\nexec /usr/bin/nc -lk 127.0.0.1 \"$2\"\n".utf8).write(to: server)
+        try Data("#!/bin/sh\nexec /usr/bin/nc -lk 127.0.0.1 \"$3\"\n".utf8).write(to: server)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: server.path(percentEncoded: false))
 
         let archive = workspace.appending(path: "redis-\(version).tar.xz")
@@ -1015,10 +1015,22 @@ extension NexusEngineTests {
 extension NexusEngineTests {
     private func makeApp(build: String) throws -> URL {
         let app = workspace.appending(path: "Nexus.app", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: app.appending(path: "Contents"), withIntermediateDirectories: true)
+        let daemon = app.appending(path: "Contents/MacOS/nexusd")
+        try FileManager.default.createDirectory(at: daemon.deletingLastPathComponent(), withIntermediateDirectories: true)
         try PropertyListSerialization.data(fromPropertyList: ["CFBundleVersion": build], format: .xml, options: 0)
             .write(to: app.appending(path: "Contents/Info.plist"))
+        try Data().write(to: daemon)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_800_000_000)], ofItemAtPath: daemon.path(percentEncoded: false))
         return app
+    }
+
+    // A Debug build adds the time of the nexusd file of makeApp to the build.
+    private func identity(_ build: String) -> String {
+        #if DEBUG
+        "\(build)+1800000000"
+        #else
+        build
+        #endif
     }
 
     @Test func nexusdStopsWhenTheAppOnDiskGetsANewBuild() async throws {
@@ -1027,14 +1039,14 @@ extension NexusEngineTests {
         let restarts = Mutex<[String]>([])
 
         try await whileRunning(engine) {
-            await engine.restartAfterUpdates(of: app, every: .milliseconds(20), runningBuild: "5") { build in
+            await engine.restartAfterUpdates(of: app, every: .milliseconds(20), runningBuild: identity("5")) { build in
                 restarts.withLock { $0.append(build) }
             }
             try await Task.sleep(for: .milliseconds(150))
             let beforeTheUpdate = restarts.withLock { $0 }
 
             _ = try makeApp(build: "6")
-            let afterTheUpdate = await waitFor { restarts.withLock { $0 } == ["6"] }
+            let afterTheUpdate = await waitFor { restarts.withLock { $0 } == [identity("6")] }
             let request = await engine.handle(.status)
 
             #expect(beforeTheUpdate.isEmpty)
@@ -1056,16 +1068,16 @@ extension NexusEngineTests {
             let install = Task { await engine.handle(.install(name: "redis", line: "1.0")) }
             let running = try #require(await tasks.next { !$0.tasks.isEmpty }?.tasks.first)
 
-            await engine.restartAfterUpdates(of: app, every: .milliseconds(20), runningBuild: "4") { build in
+            await engine.restartAfterUpdates(of: app, every: .milliseconds(20), runningBuild: identity("4")) { build in
                 restarts.withLock { $0.append(build) }
             }
-            let waiting = await services.next { $0.updateBuild == "5" }
+            let waiting = await services.next { $0.updateBuild == identity("5") }
             try await Task.sleep(for: .milliseconds(150))
             let whileTheTaskRuns = restarts.withLock { $0 }
 
             _ = await engine.handle(.stopTask(id: running.id))
             _ = await install.value
-            let afterTheTask = await waitFor { restarts.withLock { $0 } == ["5"] }
+            let afterTheTask = await waitFor { restarts.withLock { $0 } == [identity("5")] }
 
             #expect(waiting != nil)
             #expect(whileTheTaskRuns.isEmpty)
@@ -1079,12 +1091,12 @@ extension NexusEngineTests {
         let restarts = Mutex<[String]>([])
 
         try await whileRunning(engine) {
-            await engine.restartAfterUpdates(of: app, every: .seconds(60), runningBuild: "5") { build in
+            await engine.restartAfterUpdates(of: app, every: .seconds(60), runningBuild: identity("5")) { build in
                 restarts.withLock { $0.append(build) }
             }
             _ = await engine.events()
 
-            #expect(await waitFor { restarts.withLock { $0 } == ["6"] })
+            #expect(await waitFor { restarts.withLock { $0 } == [identity("6")] })
         }
     }
 

@@ -20,13 +20,13 @@ public enum AgentLevel: String, Codable, Sendable, CaseIterable, Comparable {
 
     public var refusal: String {
         switch self {
-        case .read: "Nexus lets agents only look. The user can change this in Nexus > Settings > Agents."
-        case .change: "Nexus lets agents look and set up, but not remove. The user can change this in Nexus > Settings > Agents."
+        case .read: "Nexus lets agents only look. The user can change this on the Agents screen of Nexus."
+        case .change: "Nexus lets agents look and set up, but not remove. The user can change this on the Agents screen of Nexus."
         case .remove: ""
         }
     }
 
-    // What the level lets agents do, for Settings > Agents.
+    // What the level lets agents do, for the Agents screen.
     public var summary: String {
         [abilities, limits].filter { !$0.isEmpty }.joined(separator: " ")
     }

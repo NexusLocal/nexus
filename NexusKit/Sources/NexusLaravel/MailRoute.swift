@@ -132,6 +132,13 @@ public enum LaravelMail {
         return major < 9
     }
 
+    // True when the keys of nexusKeys change the user name, which is the tag of each mail. A key
+    // set that changes only the password gives no tag.
+    public static func changesUserName(_ keys: [String: String], in configuration: LaravelConfiguration) -> Bool {
+        let userKeys = configuration.settings["\(smtpMailer).username"]?.keys ?? []
+        return keys.keys.contains(where: userKeys.contains)
+    }
+
     // The keys that send the mail of the application to the receiver of nexusd, with the user as the
     // tag of each mail. Only a value that must change gets a key, so the .env gets no line that it
     // does not need. A setting that config/mail.php fixes cannot change. When such a setting sends

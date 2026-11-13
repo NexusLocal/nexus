@@ -21,6 +21,10 @@ public enum ServiceID {
         "redis-\(line)"
     }
 
+    public static func redisLine(of id: String) -> String? {
+        id.hasPrefix("redis-") ? String(id.dropFirst("redis-".count)) : nil
+    }
+
     public static func of(package: String, line: String) -> String? {
         switch package {
         case "nginx": nginx

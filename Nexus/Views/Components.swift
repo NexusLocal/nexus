@@ -217,18 +217,21 @@ struct PortRow: View {
     }
 }
 
-// A problem that the user must know about, in the orange box of the design ("Problem" on the
-// Overview).
-struct WarningBanner<Details: View, Actions: View>: View {
+// A box with an icon, a title, details and buttons. A warning is orange. The result of an action,
+// for example of "Check for updates", has its own icon and background.
+struct NoticeBanner<Details: View, Actions: View>: View {
+    let systemImage: String
+    let color: Color
+    let background: AnyShapeStyle
     let title: String
     @ViewBuilder let details: Details
     @ViewBuilder let actions: Actions
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle")
+            Image(systemName: systemImage)
                 .font(.title3)
-                .foregroundStyle(Color.statusOrange)
+                .foregroundStyle(color)
 
             // The fonts are explicit, because a Section footer gives its content a smaller font.
             VStack(alignment: .leading, spacing: 2) {
@@ -246,7 +249,19 @@ struct WarningBanner<Details: View, Actions: View>: View {
             actions
         }
         .padding(12)
-        .background(Color.warningBackground, in: .rect(cornerRadius: 10))
+        .background(background, in: .rect(cornerRadius: 10))
+    }
+}
+
+// A problem that the user must know about, in the orange box of the design ("Problem" on the
+// Overview).
+struct WarningBanner<Details: View, Actions: View>: View {
+    let title: String
+    @ViewBuilder let details: Details
+    @ViewBuilder let actions: Actions
+
+    var body: some View {
+        NoticeBanner(systemImage: "exclamationmark.triangle", color: .statusOrange, background: AnyShapeStyle(Color.warningBackground), title: title, details: { details }, actions: { actions })
     }
 }
 

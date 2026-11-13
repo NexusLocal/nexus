@@ -9,7 +9,7 @@ extension AppModel {
     static let securityNoteMonths = 6
 
     // The update check runs at launch, once a day and on a click. Without the automatic check
-    // in Settings > Updates, it runs only on a click and when the Packages screen opens for the
+    // on the Packages screen, it runs only on a click and when the Packages screen opens for the
     // first time.
     func watchPackageUpdates() {
         Task { [weak self] in
@@ -46,18 +46,27 @@ extension AppModel {
         }
 
         await loadInstalledRuntimes()
+        checkedUpdates = packages.filter(\.hasUpdate)
 
         if AppPreference.isOn(AppPreference.installPackageUpdates) {
             installUpdates()
         }
     }
 
+    // A click during an automatic check shows the result of that check.
+    func checkPackagesOnClick() {
+        guard isLive else {
+            return
+        }
+
+        showsPackageCheck = true
+        Task { await checkPackages() }
+    }
+
     // An update of a running service starts it again (part 6f).
     func installUpdates() {
-        for package in packages {
-            if case .update = package.state {
-                install(package)
-            }
+        for package in packages where package.hasUpdate {
+            install(package)
         }
     }
 
@@ -200,14 +209,9 @@ extension AppModel {
     }
 
     func availableUpdate(of service: ServiceVersion) -> String? {
-        guard case .update(let version) = package(of: service)?.state else {
-            return service.update
-        }
-
-        return version
+        package(of: service)?.newVersion ?? service.update
     }
 
-    // Redis has no file, because Nexus sets all of its settings on the command line.
     func configFile(of service: ServiceVersion) -> ConfigFile? {
         let paths = NexusPaths.standard
         let file: URL
@@ -227,7 +231,9 @@ extension AppModel {
             file = kind == .postgresql
                 ? paths.dataFolder(service: kind.rawValue, line: service.line).appending(path: "postgresql.conf", directoryHint: .notDirectory)
                 : paths.databaseConfig(kind, line: service.line)
-        case .redis, .mail, .dns:
+        case .redis:
+            file = paths.redisConfig(line: service.line)
+        case .mail, .dns:
             return nil
         }
 

@@ -122,6 +122,10 @@ public struct NexusPaths: Sendable, Equatable {
         config.appending(path: "\(kind.rawValue)/\(line)/my.cnf", directoryHint: .notDirectory)
     }
 
+    public func redisConfig(line: String) -> URL {
+        config.appending(path: "redis/\(line)/redis.conf", directoryHint: .notDirectory)
+    }
+
     // PostgreSQL gets only a folder and names its socket after the port.
     public func databaseSocket(_ kind: DatabaseKind, line: String, port: Int) -> URL {
         let name = kind.usesMySQLProtocol ? "\(kind.rawValue)-\(line).sock" : ".s.PGSQL.\(port)"

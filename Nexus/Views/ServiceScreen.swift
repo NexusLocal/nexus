@@ -174,8 +174,9 @@ private struct ServiceToolbar: ToolbarContent {
 
                 if service.kind != .dns {
                     Button("Check for updates", systemImage: "arrow.triangle.2.circlepath") {
-                        Task { await model.checkPackages() }
+                        model.checkPackagesOnClick()
                     }
+                    .disabled(model.checkingPackages)
                 }
 
                 if let folder = model.configFolder(of: service) {
@@ -231,6 +232,7 @@ private struct ServiceForm: View {
 
     var body: some View {
         Form {
+            PackageCheckSection(service: service)
             StateSection(service: $service)
 
             switch service.kind {
@@ -358,6 +360,8 @@ struct StateSection: View {
                 Text(note)
             } else if service.kind == .mail {
                 Text("Each site sends its mail here. No mail leaves the Mac. mail() of PHP goes through nexus sendmail. An app with SMTP uses 127.0.0.1 and the SMTP port.")
+            } else if service.kind == .redis {
+                Text("redis.conf is yours. Nexus sets the port, the address 127.0.0.1, the data folder and the number of databases on the command line. These settings win over redis.conf. Restart Redis after a change.")
             }
         }
     }

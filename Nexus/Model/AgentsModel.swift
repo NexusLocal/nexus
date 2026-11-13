@@ -5,18 +5,17 @@ import Observation
 
 // A failed change to the files of an agent. The alert offers the text that the user can paste
 // into the file or run in Terminal. The first run closes before its changes end. So the main
-// window shows their alerts.
+// window shows all alerts.
 struct AgentAlert: Identifiable {
     let id = UUID()
     let title: String
     let message: String
     let copyText: String
-    let place: ActionPlace
 }
 
-// The coding agents of Settings > Agents, the first run and the notice on the Overview. Only
+// The coding agents of the Agents screen, the first run and the notice on the Overview. Only
 // AgentSetup changes the files of the agents. Without a setup, the model holds the sample data of
-// the design "Settings Agents" and changes no file.
+// the design "Agents" and changes no file.
 @Observable
 final class AgentsModel {
     private(set) var settings = AgentSettings()
@@ -73,11 +72,6 @@ final class AgentsModel {
         AgentKind.allCases.filter(onThisMac.contains)
     }
 
-    var addable: (onThisMac: [AgentKind], notFound: [AgentKind]) {
-        let missing = AgentKind.allCases.filter { !rows.contains($0) }
-        return (missing.filter(onThisMac.contains), missing.filter { !onThisMac.contains($0) })
-    }
-
     var otherEntry: String {
         setup?.entryText(for: nil) ?? "{\n  \"mcpServers\": {\n    \"nexus\": {\n      \"command\": \"~/Library/Application Support/Nexus/bin/nexus\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}"
     }
@@ -125,14 +119,14 @@ final class AgentsModel {
         await load()
 
         if !settings.searched {
-            listFoundAgents(place: .settings)
+            listFoundAgents()
         }
     }
 
     // A found agent stays off until the user turns it on.
     func findAgents() async {
         await load()
-        listFoundAgents(place: .settings)
+        listFoundAgents()
     }
 
     func status(of agent: AgentKind) -> (text: String, warns: Bool, help: String?) {
@@ -172,8 +166,9 @@ final class AgentsModel {
         agent.entryIsCommand ? "Copy command" : "Copy entry"
     }
 
-    func setConnected(_ agent: AgentKind, _ on: Bool, place: ActionPlace = .settings) {
-        change(agent, to: on, place: place) { setup, settings in
+    // The first run has no rows. So a failure there shows in an alert and not in the row.
+    func setConnected(_ agent: AgentKind, _ on: Bool, inList: Bool = true) {
+        change(agent, to: on, inList: inList) { setup, settings in
             if on {
                 try await setup.connect(agent, askBeforeLooking: settings.askBeforeLooking)
             } else {
@@ -182,9 +177,9 @@ final class AgentsModel {
         }
     }
 
-    // Nexus adds the entry of an agent that the user chooses from "Add agent…" and turns it on.
+    // "Add" on the row of an agent that is not in the list adds its entry and turns it on.
     func add(_ agent: AgentKind) {
-        update(place: .settings) { settings in
+        update { settings in
             settings.list([agent])
         }
 
@@ -195,7 +190,7 @@ final class AgentsModel {
     // a row in the list. A file that Nexus cannot read can hold the entry too.
     func remove(_ agent: AgentKind) {
         let removeRow = { [self] in
-            update(place: .settings) { settings in
+            update { settings in
                 settings.listed.removeAll { $0 == agent.rawValue }
             }
 
@@ -207,7 +202,7 @@ final class AgentsModel {
             return
         }
 
-        change(agent, to: false, place: .settings) { setup, _ in
+        change(agent, to: false, inList: true) { setup, _ in
             try await setup.disconnect(agent)
         } done: {
             removeRow()
@@ -217,13 +212,13 @@ final class AgentsModel {
     // A change of the level needs no change in the files of the agents. The MCP server reads it at
     // each call.
     func setLevel(_ level: AgentLevel) {
-        update(place: .settings) { settings in
+        update { settings in
             settings.level = level
         }
     }
 
     func setAskBeforeLooking(_ ask: Bool) {
-        update(place: .settings) { settings in
+        update { settings in
             settings.askBeforeLooking = ask
         }
 
@@ -235,7 +230,7 @@ final class AgentsModel {
             do {
                 try await setup.applyLooking(askBeforeLooking: ask)
             } catch {
-                show(error, title: "Nexus did not change the questions of the agents", place: .settings)
+                show(error, title: "Nexus did not change the questions of the agents")
             }
 
             await load()
@@ -243,20 +238,20 @@ final class AgentsModel {
     }
 
     // The first run connects the agents that the user selected. The others stay in the list, off.
-    // A Mac without agents skips the step. Its list then still fills itself once in the settings.
-    // The notice on the Overview is for users who never saw the first run.
+    // A Mac without agents skips the step. Its list then still fills itself once on the Agents
+    // screen. The notice on the Overview is for users who never saw the first run.
     func finishFirstRun(connecting selected: Set<AgentKind>, level: AgentLevel) {
-        update(place: .window) { settings in
+        update { settings in
             settings.level = level
             settings.noticeShown = true
         }
 
         if !found.isEmpty {
-            listFoundAgents(place: .window)
+            listFoundAgents()
         }
 
         for agent in found where selected.contains(agent) && states[agent] != .connected {
-            setConnected(agent, true, place: .window)
+            setConnected(agent, true, inList: false)
         }
     }
 
@@ -276,7 +271,7 @@ final class AgentsModel {
     }
 
     func hideNotice() {
-        update(place: .window) { settings in
+        update { settings in
             settings.noticeShown = true
         }
     }
@@ -307,10 +302,10 @@ final class AgentsModel {
         )
     }
 
-    private func listFoundAgents(place: ActionPlace) {
+    private func listFoundAgents() {
         let found = found
 
-        update(place: place) { settings in
+        update { settings in
             settings.list(found)
             settings.searched = true
         }
@@ -318,7 +313,7 @@ final class AgentsModel {
 
     // The command nexus mcp install can change agents.json while the app shows it. So each change
     // starts from the file and not from the settings in memory.
-    private func update(place: ActionPlace, _ change: (inout AgentSettings) -> Void) {
+    private func update(_ change: (inout AgentSettings) -> Void) {
         var fresh = setup == nil ? settings : AgentSettings.load()
         change(&fresh)
         settings = fresh
@@ -331,11 +326,11 @@ final class AgentsModel {
         do {
             try fresh.save()
         } catch {
-            show(error, title: "Nexus did not save the settings of the agents", place: place)
+            show(error, title: "Nexus did not save the settings of the agents")
         }
     }
 
-    private func change(_ agent: AgentKind, to on: Bool, place: ActionPlace, _ work: @escaping @Sendable (AgentSetup, AgentSettings) async throws -> Void, done: (() -> Void)? = nil) {
+    private func change(_ agent: AgentKind, to on: Bool, inList: Bool, _ work: @escaping @Sendable (AgentSetup, AgentSettings) async throws -> Void, done: (() -> Void)? = nil) {
         guard let setup else {
             states[agent] = on ? .connected : .notConnected
             done?()
@@ -375,11 +370,11 @@ final class AgentsModel {
             }
 
             // Claude Code can get its entry and then fail on its allow rules. Its row then shows it
-            // as connected, and only the alert offers the rules. The main window has no rows.
-            if on, place == .settings, state != .connected, let setupError = failure as? AgentSetupError, !setupError.entry.isEmpty {
+            // as connected, and only the alert offers the rules.
+            if on, inList, state != .connected, let setupError = failure as? AgentSetupError, !setupError.entry.isEmpty {
                 failures[agent] = setupError
             } else {
-                show(failure, title: on ? "Nexus did not connect \(agent.name)" : "Nexus did not remove its entry from \(agent.name)", place: place)
+                show(failure, title: on ? "Nexus did not connect \(agent.name)" : "Nexus did not remove its entry from \(agent.name)")
             }
         }
     }
@@ -406,8 +401,8 @@ final class AgentsModel {
         })
     }
 
-    private func show(_ error: any Error, title: String, place: ActionPlace) {
+    private func show(_ error: any Error, title: String) {
         let setupError = error as? AgentSetupError
-        alerts.append(AgentAlert(title: title, message: setupError?.description ?? ErrorText.plain(error), copyText: setupError?.entry ?? "", place: place))
+        alerts.append(AgentAlert(title: title, message: setupError?.description ?? ErrorText.plain(error), copyText: setupError?.entry ?? ""))
     }
 }
