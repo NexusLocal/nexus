@@ -2,33 +2,30 @@ import AppKit
 import NexusCore
 import NexusIPC
 
-// A dump of the open request as the screen shows it. The tree decodes outside the main thread,
-// because one request can hold up to 10 MB of dumps. A dump without a tree shows its text. source
-// is the file from the project folder of the request, with the line.
+// An entry of the open request as the screen shows it: a dump, a query, a log line or a job row.
+// The tree decodes outside the main thread, because one request can hold up to 10 MB of dumps. An
+// entry without a tree shows its text. source is the file from the project folder of the request,
+// with the line. entry keeps the other values without the JSON of the tree. So the marks of the
+// queries come from the same code as in nexusd.
+@dynamicMemberLookup
 nonisolated struct ShownDump: Identifiable, Sendable {
-    let id: String
-    let seq: Int
-    let number: Int
-    let kind: CaughtDump.Kind
-    let file: String?
-    let line: Int?
+    let entry: CaughtDump
     let source: String?
-    let label: String?
-    let text: String
-    let truncated: Bool
     let tree: DumpNode?
 
+    var id: String {
+        entry.id
+    }
+
+    subscript<Value>(dynamicMember key: KeyPath<CaughtDump, Value>) -> Value {
+        entry[keyPath: key]
+    }
+
     init(_ dump: CaughtDump, projectFolder: String?) {
-        id = dump.id
-        seq = dump.seq
-        number = dump.number
-        kind = dump.kind
-        file = dump.file
-        line = dump.line
+        var entry = dump
+        entry.treeJSON = nil
+        self.entry = entry
         source = dump.file.map { Self.shortPath(of: $0, in: projectFolder) + (dump.line.map { ":\($0)" } ?? "") }
-        label = dump.label
-        text = dump.text
-        truncated = dump.truncated
         tree = dump.decodedTree()
     }
 
@@ -39,6 +36,29 @@ nonisolated struct ShownDump: Identifiable, Sendable {
         }
 
         return String(file.dropFirst(projectFolder.count + 1))
+    }
+}
+
+// The entries of the open request for the tabs: the entries of each tab, and the rows of the
+// Queries tab with the marks of the queries. They change only with the entries. So a draw of a tab
+// does not sort or mark the entries again.
+struct OpenEntries {
+    private(set) var byTab: [DumpEntryTab: [ShownDump]] = [:]
+    private(set) var queryMarks = QueryMarks([CaughtDump]())
+    private(set) var queryRows: [QueryRow<ShownDump>] = []
+
+    init() {}
+
+    init(_ entries: [ShownDump]) {
+        byTab = Dictionary(grouping: entries) { shown in DumpEntryTab(shown.kind) }
+
+        let queries = byTab[.queries] ?? []
+        queryMarks = QueryMarks(queries.map(\.entry))
+        queryRows = QueryRow.rows(of: queries, marks: queryMarks) { shown in shown.entry }
+    }
+
+    func entries(of tab: DumpEntryTab) -> [ShownDump] {
+        byTab[tab] ?? []
     }
 }
 
@@ -71,15 +91,42 @@ extension AppModel {
         shownDumpSettings?.catchDumps != false
     }
 
-    // A block of an older nexusd has no place. It shows only without a filter.
+    var catchesAnything: Bool {
+        shownDumpSettings?.catchesAnything != false
+    }
+
+    // A block of an older nexusd has no place. It shows only without a filter. A block shows only
+    // while Nexus catches a kind that it stops.
     var visibleDumpBlocks: [DumpBlock] {
-        let blocks = dumpState?.blocked ?? []
+        let settings = shownDumpSettings ?? DumpSettings()
+        let blocks = (dumpState?.blocked ?? []).filter { block in block.isShown(for: settings) }
 
         guard let dumpFilter else {
             return blocks
         }
 
         return blocks.filter { $0.place == dumpFilter.place }
+    }
+
+    // The job of a worker that ran the job of a row of the Jobs tab, with its last try.
+    func dumpedJob(ref: String?) -> DumpedRequest? {
+        ref.flatMap { ref in dumpJobsByUUID[ref] }
+    }
+
+    // A link to another request of the list, for example from a job row to its job. A filter that
+    // hides that request goes, so the list can show it.
+    func showDumpRequest(_ id: String) {
+        if !visibleDumpRequests.contains(where: { request in request.id == id }) {
+            filterDumps(by: nil)
+        }
+
+        openDumpRequest(id)
+    }
+
+    // The views read openEntries. So each change of the open entries goes through here.
+    private func setOpenDumps(_ entries: [ShownDump]) {
+        openDumps = entries
+        openEntries = OpenEntries(entries)
     }
 
     func show(_ list: DumpList) {
@@ -114,7 +161,7 @@ extension AppModel {
             return
         }
 
-        openDumps.removeAll(where: shouldGo)
+        setOpenDumps(openDumps.filter { shown in !shouldGo(shown) })
     }
 
     func show(_ state: DumpState) {
@@ -125,6 +172,7 @@ extension AppModel {
         visibleDumpRequests = dumpRequests.filter { (dumpFilter?.place).includes($0.place) }
         visibleDumpCount = visibleDumpRequests.reduce(0) { $0 + $1.dumpCount }
         dumpPlaceChoices = placeChoices()
+        indexDumpRequests()
         updateOpenDumpRequest()
 
         guard showsDumps else {
@@ -141,13 +189,36 @@ extension AppModel {
             return
         }
 
-        guard let open = dumpRequests.first(where: { $0.id == id }) else {
+        guard let open = dumpRequestsByID[id] else {
             closeDumpRequest()
             return
         }
 
         if open != openDumpRequest {
             openDumpRequest = open
+        }
+    }
+
+    // The list has the newest first. So a job that a worker tried again keeps its last try.
+    private func indexDumpRequests() {
+        var byID: [String: DumpedRequest] = [:]
+        var jobs: [String: DumpedRequest] = [:]
+
+        for request in dumpRequests {
+            byID[request.id] = byID[request.id] ?? request
+
+            if request.kind == .job, let uuid = request.job?.uuid, jobs[uuid] == nil {
+                jobs[uuid] = request
+            }
+        }
+
+        // Each write wakes the views of the links. So only a real change writes.
+        if byID != dumpRequestsByID {
+            dumpRequestsByID = byID
+        }
+
+        if jobs != dumpJobsByUUID {
+            dumpJobsByUUID = jobs
         }
     }
 
@@ -224,7 +295,7 @@ extension AppModel {
 
         closeDumpRequest()
         openDumpRequestID = id
-        openDumpRequest = dumpRequests.first { $0.id == id }
+        openDumpRequest = dumpRequestsByID[id]
         loadOpenDumps()
     }
 
@@ -240,7 +311,7 @@ extension AppModel {
         dumpLoadGeneration += 1
         loadingDumps = false
         requestedLastNumber = nil
-        openDumps = []
+        setOpenDumps([])
         openDumpsProblem = nil
     }
 
@@ -257,7 +328,7 @@ extension AppModel {
             return
         }
 
-        removeDumps(before: request.firstNumber)
+        removeGoneDumps(of: request)
 
         guard !loadingDumps else {
             return
@@ -307,7 +378,7 @@ extension AppModel {
             return false
         }
 
-        return request.dumpCount > openDumps.count
+        return request.entryCount > openDumps.count
     }
 
     private func dumpsAnswer(of request: DumpedRequest, afterNumber: Int) async -> RequestOutcome? {
@@ -338,18 +409,32 @@ extension AppModel {
             openDumpsProblem = message
         case .shown(let shown)?:
             let known = Set(openDumps.map(\.id))
-            openDumps += shown.filter { !known.contains($0.id) }
+            let new = shown.filter { !known.contains($0.id) }
+
+            if !new.isEmpty {
+                setOpenDumps(openDumps + new)
+            }
+
             openDumpsProblem = nil
-            removeDumps(before: openDumpRequest?.firstNumber ?? 0)
+
+            if let openDumpRequest {
+                removeGoneDumps(of: openDumpRequest)
+            }
         case nil:
             break
         }
     }
 
-    // The limits of nexusd remove the oldest dumps. firstNumber is the lowest store number that
-    // nexusd keeps of the request.
-    private func removeDumps(before firstNumber: Int) {
-        removeOpenDumps { $0.number < firstNumber }
+    // The limits of nexusd remove the oldest entries. firstNumber is the lowest store number that
+    // nexusd keeps of the request. A job of a worker stays in the list without entries. Its
+    // numbers are then 0.
+    private func removeGoneDumps(of request: DumpedRequest) {
+        guard request.entryCount > 0 else {
+            removeOpenDumps { _ in true }
+            return
+        }
+
+        removeOpenDumps { $0.number < request.firstNumber }
     }
 
     // The switch shows the new setting while nexusd works. nexusd then sends the list with the new
@@ -380,7 +465,7 @@ extension AppModel {
         }
     }
 
-    // The filter decides which dumps go: all, or the dumps of one site or workspace.
+    // The filter decides which requests go: all, or the requests of one site or workspace.
     func clearDumps() {
         guard isLive else {
             dumpRequests.removeAll { (dumpFilter?.place).includes($0.place) }
@@ -388,7 +473,7 @@ extension AppModel {
             return
         }
 
-        send(.clearCaughtDumps(place: dumpFilter?.place), failure: "Nexus did not remove the dumps", place: .window)
+        send(.clearCaughtDumps(place: dumpFilter?.place), failure: "Nexus did not remove the requests", place: .window)
     }
 
     // One dump or one request goes without a question. nexusd then sends the change to each window
@@ -417,9 +502,9 @@ extension AppModel {
             return DumpChange(removedDumps: [shown.number])
         }
 
-        request.dumpCount -= 1
+        request.count(shown.entry, by: -1)
 
-        guard request.dumpCount > 0 else {
+        guard request.staysInList else {
             return DumpChange(removed: [request.id], removedDumps: [shown.number])
         }
 

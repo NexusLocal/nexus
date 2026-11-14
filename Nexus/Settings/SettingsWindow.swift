@@ -170,7 +170,7 @@ private struct GeneralSettings: View {
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
-        .fixedSize(horizontal: false, vertical: true)
+        .settingsTabHeight()
         .onChange(of: notifyServiceStops || notifyImportDone || notifyWorkspaceReady) {
             if notifyServiceStops || notifyImportDone || notifyWorkspaceReady {
                 Task { await model.requestNotificationPermission() }
@@ -326,7 +326,7 @@ private struct SitesSettings: View {
             }
         }
         .formStyle(.grouped)
-        .fixedSize(horizontal: false, vertical: true)
+        .settingsTabHeight()
     }
 
     // A new WordPress site gets its own webserver and PHP version (owner, 2026-11-06). A PHP version
@@ -488,7 +488,7 @@ private struct WorkspacesSettings: View {
             }
         }
         .formStyle(.grouped)
-        .fixedSize(horizontal: false, vertical: true)
+        .settingsTabHeight()
         .task {
             await load()
         }
@@ -592,7 +592,7 @@ private struct DatabasesSettings: View {
             }
         }
         .formStyle(.grouped)
-        .fixedSize(horizontal: false, vertical: true)
+        .settingsTabHeight()
         // The fields keep a refused account, so the user can correct it.
         .onChange(of: account) {
             editedUser = nil
@@ -702,7 +702,7 @@ private struct NetworkSettings: View {
             }
         }
         .formStyle(.grouped)
-        .fixedSize(horizontal: false, vertical: true)
+        .settingsTabHeight()
         .alert("Change the domain to .\(newTLD ?? "")?", isPresented: Binding(get: { newTLD != nil }, set: { if !$0 { newTLD = nil } }), presenting: newTLD) { tld in
             Button("Change") {
                 model.changeTLD(to: tld)
@@ -792,7 +792,7 @@ private struct CertificatesSettings: View {
             }
         }
         .formStyle(.grouped)
-        .fixedSize(horizontal: false, vertical: true)
+        .settingsTabHeight()
         .task {
             await model.loadRootCertificate()
         }
@@ -834,7 +834,7 @@ private struct UpdatesSettings: View {
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
-        .fixedSize(horizontal: false, vertical: true)
+        .settingsTabHeight()
     }
 }
 
@@ -894,7 +894,7 @@ private struct AdvancedSettings: View {
             }
         }
         .formStyle(.grouped)
-        .fixedSize(horizontal: false, vertical: true)
+        .settingsTabHeight()
         .onAppear {
             background.refresh()
         }
@@ -924,6 +924,37 @@ private struct AdvancedSettings: View {
             }
         }
         .labeledContentStyle(.rowValue)
+    }
+}
+
+// A tab is as tall as its content, up to the height of the Workspaces tab (610 on 2026-11-13). A
+// longer tab scrolls inside that height. An example is Network with many ports. A small screen
+// gets a lower limit. The title bar and the tab bar need about 100 points of the screen.
+private struct SettingsTabLayout: Layout {
+    static let maximumHeight: CGFloat = 610
+    static let windowBars: CGFloat = 100
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let content = subviews.first else {
+            return .zero
+        }
+
+        let ideal = content.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        let screenLimit = (NSScreen.main?.visibleFrame.height).map { height in height - Self.windowBars } ?? Self.maximumHeight
+
+        return CGSize(width: proposal.width ?? ideal.width, height: min(ideal.height, Self.maximumHeight, screenLimit))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+    }
+}
+
+extension View {
+    func settingsTabHeight() -> some View {
+        SettingsTabLayout {
+            self
+        }
     }
 }
 

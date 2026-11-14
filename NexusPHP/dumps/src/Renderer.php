@@ -64,4 +64,24 @@ final class Renderer
             'truncated' => $textDumper->isTruncated(),
         ];
     }
+
+    // The context of a log line needs only the tree. Its text is the message.
+    public function tree(mixed $value): ?string
+    {
+        $treeDumper = new TreeDumper(self::TREE_BYTES);
+        $treeDumper->dump($this->cloneVar($value));
+
+        return $treeDumper->json();
+    }
+
+    // The text of a query or a log line has the same limit as the text of a dump.
+    /** @return array{0: string, 1: bool} */
+    public static function cut(string $text): array
+    {
+        if (\strlen($text) <= self::TEXT_BYTES) {
+            return [$text, false];
+        }
+
+        return [\mb_strcut($text, 0, self::TEXT_BYTES, 'UTF-8'), true];
+    }
 }

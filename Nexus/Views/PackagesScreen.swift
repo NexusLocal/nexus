@@ -92,16 +92,7 @@ struct PackagesScreen: View {
                 Button {
                     model.checkPackagesOnClick()
                 } label: {
-                    if model.checkingPackages {
-                        Label {
-                            Text("Checking…")
-                        } icon: {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
-                    } else {
-                        Label("Check for updates", systemImage: "arrow.triangle.2.circlepath")
-                    }
+                    BusyLabel(title: "Check for updates", busyTitle: "Checking…", systemImage: "arrow.triangle.2.circlepath", busy: model.checkingPackages)
                 }
                 .labelStyle(.titleAndIcon)
                 .disabled(model.checkingPackages)

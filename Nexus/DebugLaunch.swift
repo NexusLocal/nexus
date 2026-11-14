@@ -15,9 +15,14 @@ enum DebugLaunch {
         ["--sample", "--screen", "--sheet", "--settings", "--appearance", "--version", "--alert", "--agents-notice"].contains(where: CommandLine.arguments.contains)
     }
 
+    // --background keeps the app behind the other apps, for a check while the user works on this
+    // Mac.
     static func apply(to model: AppModel, openSettings: () -> Void) {
         HangWatchdog.shared.start()
-        NSApplication.shared.activate()
+
+        if !CommandLine.arguments.contains("--background") {
+            NSApplication.shared.activate()
+        }
 
         if let tab = value(of: "--settings") {
             UserDefaults.standard.set(tab, forKey: SettingsWindow.tabKey)
@@ -79,14 +84,27 @@ enum DebugLaunch {
         }
     }
 
-    // --dumps off|empty|filter|blocked|problem shows a state of "Dumps States" in the design. It
-    // needs --sample. The filter is the choice of the user, so it is not part of the list.
+    // --dumps off|empty|filter|blocked|problem shows a state of "Dumps States" in the design. jobs
+    // adds the job entries of "Dumps Jobs". It needs --sample. The filter is the choice of the
+    // user, so it is not part of the list.
+    // --dump-request sample-order --dump-tab logs opens a request at a tab. --dump-groups-open
+    // opens each group of the Queries tab.
     private static func showDumps(_ state: String, in model: AppModel) {
         model.show(AppModel.sampleDumpList(state))
 
         if state == "filter" {
             model.filterDumps(by: DumpPlaceChoice(place: DumpPlace(site: "crm.test"), label: "crm.test"))
         }
+
+        if let tab = value(of: "--dump-tab").flatMap(DumpEntryTab.init(rawValue:)) {
+            model.chosenDumpTab = tab
+        }
+
+        if let id = value(of: "--dump-request") {
+            model.openDumpRequest(id)
+        }
+
+        OpenQueries.debugOpensGroups = CommandLine.arguments.contains("--dump-groups-open")
     }
 
     private static func selection(_ screen: String) -> SidebarItem {

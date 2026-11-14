@@ -1,4 +1,5 @@
 import AppKit
+import NexusCore
 import NexusMCP
 import SwiftUI
 
@@ -16,9 +17,25 @@ struct AgentLevelPicker: View {
     }
 }
 
-// The design is "Agents" in nexus.pen, with "Agents · List states" and "Agents · Levels".
+extension AgentSearchResult {
+    var done: DoneMessage {
+        switch self {
+        case .found(let agents) where agents.count == 1:
+            DoneMessage(title: "Nexus found 1 new agent", message: "\(agents[0].name) is in the list now. It stays off until you turn it on.")
+        case .found(let agents):
+            DoneMessage(title: "Nexus found \(agents.count) new agents", message: "\(EnglishList.joined(agents.map(\.name))) are in the list now. They stay off until you turn them on.")
+        case .nothingNew(let time):
+            DoneMessage(title: "No new agents", message: "Nexus looked again at \(time.clockTime). The list already has all agents on this Mac.")
+        }
+    }
+}
+
+// The design is "Agents" in nexus.pen, with "Agents · List states" and "Agents · Levels". The
+// result of "Find agents" stays until OK or until another screen shows.
 struct AgentsScreen: View {
     @Environment(AppModel.self) private var model
+    @State private var searching = false
+    @State private var searchDone: DoneMessage?
 
     private var agents: AgentsModel {
         model.agents
@@ -26,6 +43,12 @@ struct AgentsScreen: View {
 
     var body: some View {
         Form {
+            if let searchDone {
+                DoneSection(done: searchDone) {
+                    self.searchDone = nil
+                }
+            }
+
             Section {
                 ForEach(AgentKind.allCases) { agent in
                     if agents.rows.contains(agent) {
@@ -80,11 +103,18 @@ struct AgentsScreen: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    Task { await agents.findAgents() }
+                    searching = true
+                    searchDone = nil
+
+                    Task {
+                        searchDone = await agents.findAgents()?.done
+                        searching = false
+                    }
                 } label: {
-                    Label("Find agents", systemImage: "magnifyingglass")
+                    BusyLabel(title: "Find agents", busyTitle: "Looking…", systemImage: "magnifyingglass", busy: searching)
                 }
                 .labelStyle(.titleAndIcon)
+                .disabled(searching)
             }
         }
         .task {

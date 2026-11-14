@@ -38,7 +38,7 @@ extension AppModel {
         case .answer(.available(let packages)):
             manifestPackages = packages
             packagesProblem = nil
-            packagesChecked = Date.now.formatted(date: .omitted, time: .shortened)
+            packagesChecked = Date.now.clockTime
         case .failure(let message):
             packagesProblem = message
         default:

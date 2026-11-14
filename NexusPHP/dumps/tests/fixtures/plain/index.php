@@ -21,8 +21,12 @@ $nexusClasses = array_values(array_filter(
     static fn (string $class): bool => str_starts_with($class, 'Nexus\\'),
 ));
 
+$errorHandler = set_error_handler(static fn (): bool => false);
+restore_error_handler();
+
 echo 'STATE:', json_encode([
     'nexusClasses' => $nexusClasses,
     'dump' => function_exists('dump'),
     'askedClasses' => $GLOBALS['askedClasses'] ?? [],
+    'errorHandler' => $errorHandler !== null,
 ]), "\n";

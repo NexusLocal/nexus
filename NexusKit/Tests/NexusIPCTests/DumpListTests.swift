@@ -82,6 +82,7 @@ struct DumpListTests {
             .dumpState(place: nil),
             .dumpState(place: DumpPlace(site: "shop.test", workspace: "fix")),
             .requestDumps(request: "65f1c2a9e3b1", afterNumber: 12),
+            .requestEntries(request: "65f1c2a9e3b1", afterNumber: 12, kinds: [.query, .log]),
             .fromAgent(agent: "Claude Code", request: .dumpList(place: DumpPlace(site: "shop.test"))),
         ]
 
@@ -95,6 +96,7 @@ struct DumpListTests {
         #expect(NexusRequest.dumpPlace(host: "shop.test").onlyReads)
         #expect(NexusRequest.dumpState(place: nil).onlyReads)
         #expect(NexusRequest.requestDumps(request: "65f1c2a9e3b1", afterNumber: 0).onlyReads)
+        #expect(NexusRequest.requestEntries(request: "65f1c2a9e3b1", afterNumber: 0, kinds: [.query]).onlyReads)
         #expect(!NexusRequest.clearCaughtDumps(place: nil).onlyReads)
         #expect(!NexusRequest.removeCaughtDump(number: 12).onlyReads)
         #expect(!NexusRequest.removeDumpedRequest(id: "65f1c2a9e3b1").onlyReads)

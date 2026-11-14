@@ -87,8 +87,9 @@ public enum PHPConfig {
         """
     }
 
-    // The stub holds the settings of the dump viewer and one require of the library.
-    public static func dumpStub(pageMode: DumpPageMode, socket: URL, folder: URL, library: URL, userPrepend: String?) throws -> String {
+    // The stub holds the settings of the dump viewer and one require of the library. The four
+    // switches say which kinds PHP sends. An older stub has no switches. PHP then sends only dumps.
+    public static func dumpStub(settings: DumpSettings, socket: URL, folder: URL, library: URL, userPrepend: String?) throws -> String {
         let prepend = try userPrepend.map(phpString) ?? "null"
 
         return """
@@ -102,7 +103,11 @@ public enum PHPConfig {
                 'version' => \(dumpStubVersion),
                 'socket' => \(try phpString(socket)),
                 'folder' => \(try phpString(folder)),
-                'page' => \(try phpString(pageMode.rawValue)),
+                'page' => \(try phpString(settings.pageMode.rawValue)),
+                'dumps' => \(phpBool(settings.catchDumps)),
+                'queries' => \(phpBool(settings.catchQueries)),
+                'logs' => \(phpBool(settings.catchLogs)),
+                'jobs' => \(phpBool(settings.catchJobs)),
                 'userPrepend' => \(prepend),
             ];
 
@@ -165,6 +170,10 @@ public enum PHPConfig {
         }
 
         return PHPString.quoted(text)
+    }
+
+    private static func phpBool(_ value: Bool) -> String {
+        value ? "true" : "false"
     }
 
     // The extensions that load in a valid order. They come from the toggles and the .so files.

@@ -286,6 +286,225 @@ struct CaughtDumpsTests {
         #expect(child.displayKey == "case")
     }
 
+    @Test func anEntryOfEachKindKeepsItsNewFields() throws {
+        let query = CaughtDump(requestID: "a1", seq: 4, time: Self.started, kind: .query, file: "/Users/x/Sites/shop/app/Cart.php", line: 38, label: "mysql", text: "select 1", milliseconds: 0.84, pattern: "select ?", number: 7)
+        let log = CaughtDump(requestID: "a1", seq: 5, time: Self.started, kind: .log, label: "error", text: "No invoice.", treeJSON: #"{"kind":"array","count":0}"#, detail: "stack")
+        let job = CaughtDump(requestID: "a1", seq: 6, time: Self.started, kind: .job, label: "queued", text: "App\\Jobs\\SendOrderMail", detail: "redis · default", ref: "9f1c0f6e")
+
+        for entry in [query, log, job] {
+            #expect(try roundTrip(entry) == entry)
+        }
+
+        let json = String(decoding: try JSONEncoder().encode(query), as: UTF8.self)
+        #expect(json.contains(#""ms":0.84"#))
+        #expect(!json.contains("milliseconds"))
+    }
+
+    @Test func aDumpOfAnOlderNexusdHasNoNewFields() throws {
+        let json = #"{"requestID":"a1","seq":1,"time":0,"kind":"dd","text":"1","truncated":false}"#
+
+        let caught = try JSONDecoder().decode(CaughtDump.self, from: Data(json.utf8))
+
+        #expect(caught.kind == .dd)
+        #expect(caught.milliseconds == nil)
+        #expect(caught.pattern == nil)
+        #expect(caught.detail == nil)
+        #expect(caught.ref == nil)
+    }
+
+    @Test func aRefCanComeAsANumber() throws {
+        let json = #"{"requestID":"a1","seq":1,"time":0,"kind":"job","label":"scheduled","text":"woocommerce_cleanup","ref":4711,"truncated":false}"#
+
+        #expect(try JSONDecoder().decode(CaughtDump.self, from: Data(json.utf8)).ref == "4711")
+    }
+
+    @Test(arguments: [
+        (CaughtDump.Kind.log, "error", nil, true),
+        (.log, "CRITICAL", nil, true),
+        (.log, "alert", nil, true),
+        (.log, "emergency", "stack", true),
+        (.log, "warning", "PHP warning", false),
+        (.log, "error", "PHP error", true),
+        (.log, "critical", "PHP fatal error", true),
+        (.log, "notice", "PHP fatal error", true),
+        (.log, "info", "stack", false),
+        (.log, "deprecated", "PHP deprecated", false),
+        (.query, "error", nil, false),
+    ] as [(CaughtDump.Kind, String, String?, Bool)])
+    func anErrorIsALogLineOfAnErrorLevelOrAPHPError(kind: CaughtDump.Kind, label: String, detail: String?, isError: Bool) {
+        let entry = CaughtDump(requestID: "a1", seq: 1, time: Self.started, kind: kind, label: label, text: "x", detail: detail)
+
+        #expect(entry.isError == isError)
+    }
+
+    @Test func onlyDumpAndDDAreDumps() {
+        #expect(CaughtDump.Kind.dump.isDump)
+        #expect(CaughtDump.Kind.dd.isDump)
+        #expect(!CaughtDump.Kind.query.isDump)
+        #expect(!CaughtDump.Kind.log.isDump)
+        #expect(!CaughtDump.Kind.job.isDump)
+    }
+
+    @Test func aRequestKeepsItsCountsItsMarksAndItsJob() throws {
+        let job = JobRun(system: .action, name: "woocommerce_cleanup_sessions", uuid: "4711", attempt: 1, outcome: .released)
+        let request = DumpedRequest(id: "j1", kind: .job, target: "woocommerce_cleanup_sessions", started: Self.started, dumpCount: 1, queryCount: 12, queryMilliseconds: 48.5, logCount: 3, jobCount: 2, marks: [.slow, .nPlusOne], droppedQueries: 704, job: job)
+
+        let json = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+
+        #expect(try roundTrip(request) == request)
+        #expect(json.contains(#""marks":["n_plus_one","slow"]"#))
+        #expect(request.entryCount == 18)
+        #expect(request.displayMethod == "ACTION")
+        #expect(request.statusText == "released")
+    }
+
+    @Test func aRequestWithOnlyDumpsHasNoKeysOfTheOtherKinds() throws {
+        let request = DumpedRequest(id: "a1", kind: .http, method: "GET", target: "/", started: Self.started, dumpCount: 2, lastSeq: 2)
+
+        let json = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+
+        for key in ["queryCount", "queryMilliseconds", "logCount", "errorCount", "jobCount", "marks", "droppedQueries", "job"] {
+            #expect(!json.contains("\"\(key)\""))
+        }
+
+        #expect(try roundTrip(request) == request)
+    }
+
+    @Test(arguments: [
+        (JobRun.System.laravel, "JOB"),
+        (.cron, "CRON"),
+        (.action, "ACTION"),
+    ])
+    func aJobShowsItsSystemAsItsMethod(system: JobRun.System, method: String) {
+        let request = DumpedRequest(id: "j1", kind: .job, target: "send", started: Self.started, job: JobRun(system: system, name: "send"))
+
+        #expect(request.displayMethod == method)
+    }
+
+    @Test func theTitleIsTheNameOfAJobTheURLOfAPageOrTheCommand() {
+        let job = DumpedRequest(id: "j1", kind: .job, target: "App\\Jobs\\SendOrderMail", url: "https://shop.test/x", started: Self.started, job: JobRun(system: .laravel, name: "App\\Jobs\\SendOrderMail"))
+        let page = DumpedRequest(id: "p1", kind: .http, method: "GET", target: "/checkout", url: "https://shop.test/checkout", started: Self.started)
+        let command = DumpedRequest(id: "c1", kind: .command, target: "php artisan migrate", started: Self.started)
+
+        #expect(job.title == "App\\Jobs\\SendOrderMail")
+        #expect(page.title == "https://shop.test/checkout")
+        #expect(command.title == "php artisan migrate")
+    }
+
+    @Test(arguments: [
+        (JobRun.Outcome.failed, 3, 3, "try 3 of 3"),
+        (.failed, 2, nil, "try 2"),
+        (.failed, nil, nil, "failed"),
+        (.done, 1, 3, "done"),
+        (.released, 1, 3, "released"),
+    ] as [(JobRun.Outcome, Int?, Int?, String)])
+    func aFailedJobGivesItsTryAsItsStatus(outcome: JobRun.Outcome, attempt: Int?, maxTries: Int?, status: String) {
+        let job = JobRun(system: .laravel, name: "send", attempt: attempt, maxTries: maxTries, outcome: outcome)
+        let request = DumpedRequest(id: "j1", kind: .job, target: "send", started: Self.started, job: job)
+
+        #expect(request.statusText == status)
+    }
+
+    @Test func aJobWithoutItsTryHasNoTryText() {
+        #expect(JobRun(system: .cron, name: "wp_version_check").tryText == nil)
+        #expect(JobRun(system: .laravel, name: "send", attempt: 1, maxTries: 3).tryText == "try 1 of 3")
+        #expect(JobRun(system: .laravel, name: "send").outcomeText == nil)
+    }
+
+    @Test func aRequestStaysInTheListWithAnEntryOrAsAJobThatEnded() {
+        let page = DumpedRequest(id: "p1", kind: .http, target: "/", started: Self.started, status: 200, duration: 0.2)
+        let pageWithALogLine = DumpedRequest(id: "p2", kind: .http, target: "/", started: Self.started, logCount: 1)
+        let running = DumpedRequest(id: "j1", kind: .job, target: "send", started: Self.started, job: JobRun(system: .laravel, name: "send"))
+        let ended = DumpedRequest(id: "j2", kind: .job, target: "send", started: Self.started, job: JobRun(system: .laravel, name: "send", outcome: .done))
+        let endedWithoutOutcome = DumpedRequest(id: "j3", kind: .job, target: "send", started: Self.started, duration: 0.1, job: JobRun(system: .cron, name: "send"))
+
+        #expect(!page.staysInList)
+        #expect(pageWithALogLine.staysInList)
+        #expect(!running.staysInList)
+        #expect(ended.staysInList)
+        #expect(endedWithoutOutcome.staysInList)
+    }
+
+    @Test func anEntryCountsInTheCountOfItsKind() {
+        var request = DumpedRequest(id: "a1", kind: .http, target: "/", started: Self.started)
+        let kinds: [CaughtDump.Kind] = [.dump, .dd, .query, .query, .log, .job]
+
+        for kind in kinds {
+            request.count(CaughtDump(requestID: "a1", seq: 1, time: Self.started, kind: kind, text: "x"), by: 1)
+        }
+
+        let added = request
+        request.count(CaughtDump(requestID: "a1", seq: 1, time: Self.started, kind: .query, text: "x"), by: -1)
+
+        #expect(added.dumpCount == 2)
+        #expect(added.queryCount == 2)
+        #expect(added.logCount == 1)
+        #expect(added.jobCount == 1)
+        #expect(added.entryCount(of: [.dump, .dd]) == 2)
+        #expect(added.entryCount(of: [.query, .job]) == 3)
+        #expect(request.queryCount == 1)
+    }
+
+    @Test func aBlockNamesTheKindsThatItStopsWithOneTitleAndMessage() {
+        let env = DumpBlock(host: "shop.test", reason: .varDumperFormat, file: "/w/shop/.env")
+        let environment = DumpBlock(host: "shop.test", reason: .varDumperFormat)
+        let userIni = DumpBlock(host: "blog.test", reason: .userIni, file: "/w/blog/public/.user.ini")
+        let config = DumpBlock(host: "blog.test", reason: .savequeries)
+
+        #expect(DumpBlock.Reason.varDumperFormat.stoppedKinds == [.dump, .dd])
+        #expect(DumpBlock.Reason.savequeries.stoppedKinds == [.query])
+        #expect(DumpBlock.Reason.userIni.stoppedKinds == [.dump, .dd, .query, .log, .job])
+        #expect(env.title == "Nexus cannot catch the dumps of shop.test")
+        #expect(env.message == "The .env of shop.test sets VAR_DUMPER_FORMAT. Remove this key to see its dumps here.")
+        #expect(environment.message == "The environment of PHP for shop.test sets VAR_DUMPER_FORMAT. Remove this key to see its dumps here.")
+        #expect(userIni.title == "Nexus cannot catch anything from blog.test")
+        #expect(userIni.message == "The .user.ini of blog.test sets its own prepend file. PHP then runs that file and not the file of Nexus.")
+        #expect(config.title == "Nexus cannot catch the queries of blog.test")
+        #expect(config.message == "The wp-config.php for blog.test sets SAVEQUERIES to false. Remove this line to see its queries here.")
+    }
+
+    @Test func aRequestOfAnOlderNexusdHasNoCountsOfTheOtherKinds() throws {
+        let json = #"{"id":"a1b2c3","kind":"http","method":"GET","target":"/","started":0,"dumpCount":2,"hasDD":false}"#
+
+        let request = try JSONDecoder().decode(DumpedRequest.self, from: Data(json.utf8))
+
+        #expect(request.queryCount == 0)
+        #expect(request.queryMilliseconds == 0)
+        #expect(request.logCount == 0)
+        #expect(request.jobCount == 0)
+        #expect(request.marks.isEmpty)
+        #expect(request.droppedQueries == 0)
+        #expect(request.job == nil)
+        #expect(request.entryCount == 2)
+    }
+
+    @Test func aJobOfActionSchedulerCanHaveANumberAsItsID() throws {
+        let json = #"{"system":"action","name":"woocommerce_cleanup_sessions","uuid":4711,"attempt":1,"maxTries":null}"#
+
+        let job = try JSONDecoder().decode(JobRun.self, from: Data(json.utf8))
+
+        #expect(job == JobRun(system: .action, name: "woocommerce_cleanup_sessions", uuid: "4711", attempt: 1))
+    }
+
+    @Test func aJobKeepsItsWorkerAndItsRequestAndHasNoKeysForThemWhenItHasNone() throws {
+        let linked = JobRun(system: .laravel, name: "App\\Jobs\\SendOrderMail", uuid: "9f1c0f6e", command: "php artisan queue:work", queuedBy: "a1")
+        let plain = JobRun(system: .laravel, name: "App\\Jobs\\SendOrderMail", uuid: "9f1c0f6e")
+
+        let decoded = try JSONDecoder().decode(JobRun.self, from: JSONEncoder().encode(linked))
+        let plainJSON = String(decoding: try JSONEncoder().encode(plain), as: UTF8.self)
+
+        #expect(decoded == linked)
+        #expect(!plainJSON.contains("command"))
+        #expect(!plainJSON.contains("queuedBy"))
+    }
+
+    @Test func aBlockForSaveQueriesHasTheRawValueOfTheWire() throws {
+        let block = try JSONDecoder().decode(DumpBlock.self, from: Data(#"{"host":"blog.test","reason":"savequeries","file":"/Users/x/Sites/blog/wp-config.php"}"#.utf8))
+
+        #expect(block.reason == .savequeries)
+        #expect(block.file == "/Users/x/Sites/blog/wp-config.php")
+    }
+
     @Test func aDumpTakesItsIDFromTheRequestAndTheNumber() throws {
         let json = #"{"requestID":"65f1c2a9e3b1","seq":4,"time":"2026-11-11T10:00:00Z","kind":"dump","text":"1","truncated":false}"#
         let decoder = JSONDecoder()

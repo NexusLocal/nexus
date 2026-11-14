@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Nexus\Dumps\Tests;
 
+use Nexus\Dumps\Batch;
 use Nexus\Dumps\Catcher;
 use Nexus\Dumps\PageMode;
 use Nexus\Dumps\Renderer;
+use Nexus\Dumps\Request;
 use Nexus\Dumps\Source;
 use Nexus\Dumps\Transport;
 use Nexus\Dumps\VarDumper\Caster\ScalarStub;
@@ -618,6 +620,19 @@ function sourceOfDump(): void
     ]), 'Nexus reads each compiled view once');
 }
 
+function sourceOfAnEntry(): void
+{
+    $library = Context::$library.'/src/Catcher.php';
+    $site = ['file' => '/app/Http/Controllers/CartController.php', 'line' => 12];
+    $here = ['file' => __FILE__, 'line' => __LINE__ + 3];
+    $short = static fn (int $count, ?int $siteAt = null): array => array_replace(array_fill(0, $count, ['file' => $library, 'line' => 1]), $siteAt === null ? [] : [$siteAt => $site]);
+
+    same($here, Source::inSite($short(Source::FRAMES)), 'A short trace without the site falls back to the whole trace');
+    same(['file' => null, 'line' => null], Source::inSite($short(5)), 'A whole trace without the site has no source');
+    same($site, Source::inSite($short(Source::FRAMES, 10)), 'A short trace with the site needs no whole trace');
+    same(['file' => __FILE__, 'line' => __LINE__], Source::inSite($short(Source::FRAMES, Source::FRAMES - 1)), 'The last frame of a short trace is not final');
+}
+
 function treeOfAnArray(): void
 {
     $value = ['name' => 'Nexus', 'ports' => [80, 443], 'on' => true, 'none' => null, 'pi' => 3.14, 'whole' => 2.0];
@@ -955,7 +970,7 @@ function plainSiteWithoutADump(WebServer $server): void
     $daemon->close();
 
     same(200, $response['status'], 'The status of a page');
-    same(['nexusClasses' => [], 'dump' => true, 'askedClasses' => []], state($response['body']), 'A page without a dump loads no class of Nexus');
+    same(['nexusClasses' => [], 'dump' => true, 'askedClasses' => [], 'errorHandler' => false], state($response['body']), 'A page without a dump loads no class of Nexus');
     same(0, $daemon->connectionCount, 'A page without a dump does not connect');
 }
 
@@ -1163,6 +1178,687 @@ function handlerThatCallsNexusAgain(WebServer $server): void
     same(2, count($daemon->ofType('dump')), 'Nexus sends each dump once');
 }
 
+const ALL_SWITCHES = ['queries' => true, 'logs' => true, 'jobs' => true];
+
+// A child PHP prints no error message. So the output stays clean for withoutPhpMessages().
+const QUIET = ['-d', 'display_errors=0', '-d', 'log_errors=0'];
+
+/** @return list<array<string, mixed>> Each entry with the id of its request. */
+function entriesOf(FakeNexusd $daemon, ?string $kind = null): array
+{
+    $entries = [];
+
+    foreach ($daemon->ofType('entries') as $event) {
+        foreach ($event['entries'] as $entry) {
+            if ($kind === null || $entry['kind'] === $kind) {
+                $entries[] = $entry + ['request' => $event['request']['id']];
+            }
+        }
+    }
+
+    return $entries;
+}
+
+// An entry without the keys that change on each run.
+function stable(array $entry): array
+{
+    check(is_float($entry['time']) || is_int($entry['time']), 'An entry has a time.');
+    unset($entry['time'], $entry['request']);
+
+    return $entry;
+}
+
+// The type of each line and the id of its request, in the order of the wire.
+/** @return list<string> */
+function wireOrder(FakeNexusd $daemon, array $names): array
+{
+    return array_map(static function (array $event) use ($names): string {
+        $count = isset($event['entries']) ? '('.count($event['entries']).')' : '';
+        $outcome = isset($event['outcome']) ? ":{$event['outcome']}" : '';
+
+        return "{$event['type']}{$count}{$outcome} ".($names[$event['request']['id']] ?? $event['request']['id']);
+    }, $daemon->events());
+}
+
+/** @return array<string, array<string, mixed>> The request object of each job by the name of the job. */
+/** @return array<string, string> The name of each request: the name of its job, "command" or "page". */
+function requestNames(FakeNexusd $daemon): array
+{
+    $names = [];
+
+    foreach ($daemon->events() as $event) {
+        $request = $event['request'];
+        $names[$request['id']] = match ($request['kind']) {
+            'job' => $request['job']['name'],
+            'command' => 'command',
+            default => 'page',
+        };
+    }
+
+    return $names;
+}
+
+/** @return array<string, mixed> The request object of the command. */
+function commandRequest(FakeNexusd $daemon): array
+{
+    foreach ($daemon->events() as $event) {
+        if ($event['request']['kind'] === 'command') {
+            return $event['request'];
+        }
+    }
+
+    throw new Failure('No event of the command.');
+}
+
+function jobRequests(FakeNexusd $daemon): array
+{
+    $requests = [];
+
+    foreach ($daemon->events() as $event) {
+        if ($event['request']['kind'] === 'job') {
+            $requests[$event['request']['job']['name']] = $event['request'];
+        }
+    }
+
+    return $requests;
+}
+
+function sqlWithBindings(): void
+{
+    same("select * from `users` where `id` = 7 and `name` = 'O''Hara'", \Nexus\Dumps\Sql::withBindings('select * from `users` where `id` = ? and `name` = ?', [7, "O'Hara"]), 'Values in the place of each ?');
+    same("select '?' as `mark`, `data` ?? 'key' from `t` where `a` = 1", \Nexus\Dumps\Sql::withBindings("select '?' as `mark`, `data` ?? 'key' from `t` where `a` = ?", [1]), 'A ? in a string literal and a ?? stay');
+    same("select 'it''s ?' from `t` where `b` = 2", \Nexus\Dumps\Sql::withBindings("select 'it''s ?' from `t` where `b` = ?", [2]), 'A doubled quote stays in its literal');
+    same('insert into `t` values (null, 1, 0, 2.5, ?)', \Nexus\Dumps\Sql::withBindings('insert into `t` values (?, ?, ?, ?, ?)', [null, true, false, 2.5]), 'Each kind of value, and a ? without a value');
+    same("select x'00ff' , '2026-11-13 10:30:00'", \Nexus\Dumps\Sql::withBindings('select ? , ?', ["\x00\xff", new \DateTimeImmutable('2026-11-13 10:30:00')]), 'A binary value and a date');
+}
+
+function entryLinesFit(): void
+{
+    $entryLines = new \ReflectionMethod(Catcher::class, 'entryLines');
+    $request = ['id' => 'a1b2c3d4e5f6', 'kind' => 'command', 'started' => 1.0];
+    $small = ['seq' => 1, 'time' => 1.0, 'kind' => 'log', 'text' => 'small', 'truncated' => false];
+    $tree = ['seq' => 2, 'time' => 1.0, 'kind' => 'log', 'text' => str_repeat('t', 400_000), 'tree' => str_repeat('"', 300_000), 'truncated' => false];
+    $text = ['seq' => 3, 'time' => 1.0, 'kind' => 'log', 'text' => str_repeat("line\n", 260_000), 'truncated' => false];
+
+    $lines = $entryLines->invoke(null, $request, [$small, $tree, $text]);
+    $entries = [];
+
+    foreach ($lines as $line) {
+        check(strlen($line) <= Catcher::MAX_LINE_BYTES, 'Each line fits in 1 MB.');
+
+        $event = json_decode($line, true, 512, JSON_THROW_ON_ERROR);
+
+        same('entries', $event['type'], 'The type of the line');
+        same($request, $event['request'], 'Each line carries the request');
+        array_push($entries, ...$event['entries']);
+    }
+
+    same([1, 2, 3], array_column($entries, 'seq'), 'Each entry goes out');
+    same($small, $entries[0], 'A small entry stays as it is');
+    check(!isset($entries[1]['tree']), 'An entry that is too long goes without its tree.');
+    same(400_000, strlen($entries[1]['text']), 'The text stays when the entry fits without its tree');
+    same(true, $entries[2]['truncated'], 'A text that cannot fit is cut');
+    check(str_ends_with($entries[2]['text'], 'line'), 'The shorter text ends with a whole line.');
+}
+
+function switchesOffInACommand(): void
+{
+    $folder = Context::caseFolder();
+    $stub = writeStub("{$folder}/stub.php", settings($folder, ['dumps' => false, 'userPrepend' => Context::$fixtures.'/cli/user-prepend.php']));
+    $result = runCli($stub, [Context::$fixtures.'/cli/check.php']);
+
+    contains($result['stdout'], 'CHECK:{"dump":false,"userPrepend":"global"}', 'With dumps off Nexus defines no dump()');
+}
+
+function errorHandler(): void
+{
+    [, $daemon, $stub] = scenario(['logs' => true, 'userPrepend' => Context::$fixtures.'/cli/error-prepend.php']);
+    $script = realpath(Context::$fixtures.'/cli/errors.php');
+    $result = runCli($stub, [...QUIET, $script], $daemon);
+    $daemon->close();
+
+    $state = state($result['stdout']);
+    $logs = array_map(stable(...), entriesOf($daemon, 'log'));
+
+    same('A user warning.', $state['last'], 'PHP handles the error as before');
+    same(['A user warning.', 'A silenced warning.', 'A notice that error_reporting() leaves out.', 'An old function.', 'Undefined array key "missing"'], $state['previousHandler'], 'The previous handler gets each error');
+    same([
+        ['seq' => 1, 'kind' => 'log', 'file' => $script, 'line' => lineOf($script, "trigger_error('A user warning.'"), 'label' => 'warning', 'text' => 'A user warning.', 'detail' => 'PHP warning', 'truncated' => false],
+        ['seq' => 2, 'kind' => 'log', 'file' => $script, 'line' => lineOf($script, "trigger_error('An old function.'"), 'label' => 'deprecated', 'text' => 'An old function.', 'detail' => 'PHP deprecated', 'truncated' => false],
+        ['seq' => 3, 'kind' => 'log', 'file' => $script, 'line' => lineOf($script, "\$value = \$list['missing'];"), 'label' => 'warning', 'text' => 'Undefined array key "missing"', 'detail' => 'PHP warning', 'truncated' => false],
+    ], $logs, 'The log lines of the errors, without the silenced error and the left-out notice');
+    same(['entries(3) ', 'end '], array_map(static fn (string $line): string => preg_replace('/ \w+$/', ' ', $line), wireOrder($daemon, [])), 'One line of entries before the end');
+}
+
+function fatalError(): void
+{
+    [, $daemon, $stub] = scenario(['logs' => true]);
+    $script = realpath(Context::$fixtures.'/cli/fatal.php');
+    $result = runCli($stub, [...QUIET, $script], $daemon);
+    $daemon->close();
+
+    same(255, $result['exit'], 'The exit code of a fatal error');
+
+    $logs = entriesOf($daemon, 'log');
+
+    same(1, count($logs), 'The fatal error is one log line');
+    same(['error', 'PHP fatal error', $script, lineOf($script, 'nexus_function_that_does_not_exist();')], [$logs[0]['label'], $logs[0]['detail'], $logs[0]['file'], $logs[0]['line']], 'The level, the detail and the source of the fatal error');
+    contains($logs[0]['text'], 'Call to undefined function nexus_function_that_does_not_exist()', 'The message of the fatal error');
+    same(['entries', 'end'], array_column($daemon->events(), 'type'), 'The fatal error comes before the end event');
+    same(255, $daemon->ofType('end')[0]['exit'], 'The exit code in the end event');
+}
+
+function batchesByCount(): void
+{
+    [, $daemon, $stub] = scenario(['logs' => true]);
+    runCli($stub, [...QUIET, Context::$fixtures.'/cli/batches.php', 'count'], $daemon);
+    $daemon->close();
+
+    same([50, 50, 20], array_map(static fn (array $event): int => count($event['entries']), $daemon->ofType('entries')), 'A long process sends when 50 entries wait');
+    same(range(1, 120), array_column(entriesOf($daemon), 'seq'), 'The seq of each entry');
+}
+
+function batchesByTime(): void
+{
+    [, $daemon, $stub] = scenario(['logs' => true]);
+    runCli($stub, [...QUIET, Context::$fixtures.'/cli/batches.php', 'time'], $daemon);
+    $daemon->close();
+
+    same([['First.', 'Second.'], ['Third.']], array_map(static fn (array $event): array => array_column($event['entries'], 'text'), $daemon->ofType('entries')), 'A long process sends when 1 second passed since its last send');
+}
+
+function batchesBySize(): void
+{
+    [, $daemon, $stub] = scenario(['logs' => true]);
+    runCli($stub, [...QUIET, Context::$fixtures.'/cli/batches.php', 'size'], $daemon);
+    $daemon->close();
+
+    foreach ($daemon->lines as $line) {
+        check(strlen($line) <= Catcher::MAX_LINE_BYTES, 'A line of '.strlen($line).' bytes is above 1 MB.');
+    }
+
+    $entries = entriesOf($daemon);
+
+    check(count($daemon->ofType('entries')) >= 4, 'The entries of one send go out in more lines.');
+    same(range(1, 60), array_column($entries, 'seq'), 'Each large entry goes out');
+    same([60_000], array_values(array_unique(array_map(static fn (array $entry): int => strlen($entry['text']), $entries))), 'Each text stays whole');
+}
+
+function plainSiteWithSwitchesOff(WebServer $server): void
+{
+    [$folder, $daemon] = scenario(['dumps' => false, 'queries' => false, 'logs' => false, 'jobs' => false], stub: $server->stub);
+    $off = state($server->get('/index.php?action=none', ['Accept' => 'text/html'], $daemon)['body']);
+
+    writeStub($server->stub, settings($folder, ALL_SWITCHES));
+    $quiet = state($server->get('/index.php?action=none', ['Accept' => 'text/html'], $daemon)['body']);
+    $daemon->close();
+
+    same(['nexusClasses' => [], 'dump' => false, 'askedClasses' => [], 'errorHandler' => false], $off, 'With all switches off Nexus adds nothing');
+    same(['nexusClasses' => [], 'dump' => true, 'askedClasses' => [], 'errorHandler' => true], $quiet, 'A page without an event loads no class of Nexus');
+    same(0, $daemon->connectionCount, 'Pages without an event do not connect');
+}
+
+function laravelSwitchesOff(WebServer $server): void
+{
+    [, $daemon] = scenario(stub: $server->stub);
+    $response = $server->get('/index.php?action=queries', ['Accept' => 'text/html'], $daemon);
+    $daemon->close();
+
+    $state = state($response['body']);
+
+    same([[], ['FakeComposerLoader::load', 'copy-loader.php'], true], [$state['nexusClasses'], $state['loaders'], $state['booted']], 'An old stub adds no hook to Laravel');
+    same(0, $daemon->connectionCount, 'An old stub sends no query');
+}
+
+function laravelHookWithoutEvents(WebServer $server): void
+{
+    [, $daemon] = scenario(ALL_SWITCHES, stub: $server->stub);
+    $response = $server->get('/index.php?action=none', ['Accept' => 'text/html'], $daemon);
+    $daemon->close();
+
+    $state = state($response['body']);
+
+    same(true, $state['booted'], 'Laravel boots its providers');
+    same(['FakeComposerLoader::load', 'copy-loader.php'], $state['loaders'], 'The hook removes itself after BootProviders');
+    same([], $state['nexusClasses'], 'A Laravel request without an event loads no class of Nexus');
+    same(0, $daemon->connectionCount, 'A Laravel request without an event does not connect');
+}
+
+function laravelQueries(WebServer $server): void
+{
+    [, $daemon] = scenario(['queries' => true], stub: $server->stub);
+    $response = $server->get('/index.php?action=queries', ['Accept' => 'text/html'], $daemon);
+    $daemon->close();
+
+    $actions = realpath(Context::$fixtures.'/laravel/app/Actions.php');
+    $queries = array_map(stable(...), entriesOf($daemon, 'query'));
+
+    same(200, $response['status'], 'The status of the page');
+    same([
+        ['seq' => 1, 'kind' => 'query', 'file' => $actions, 'line' => lineOf($actions, "\$db['mysql']->select("), 'label' => 'mysql', 'text' => 'select * from `carts` where `user_id` = "7" and `name` = "O\'Hara"', 'pattern' => 'select * from `carts` where `user_id` = ? and `name` = ?', 'ms' => 0.42, 'truncated' => false],
+        ['seq' => 2, 'kind' => 'query', 'file' => $actions, 'line' => lineOf($actions, "\$db['legacy']->select("), 'label' => 'legacy', 'text' => "select * from `orders` where `note` = '?' and `id` = 1042 and `paid` = 1", 'pattern' => "select * from `orders` where `note` = '?' and `id` = ? and `paid` = ?", 'ms' => 0.42, 'truncated' => false],
+        ['seq' => 3, 'kind' => 'query', 'file' => '/app/resources/views/cart.blade.php', 'label' => 'mysql', 'text' => 'select count(*) from `cart_items`', 'pattern' => 'select count(*) from `cart_items`', 'ms' => 0.42, 'truncated' => false],
+    ], $queries, 'The queries with toRawSql(), with the own walk of Nexus and from a compiled view');
+
+    $ends = $daemon->ofType('end');
+
+    same(1, count($ends), 'One end event');
+    same(200, $ends[0]['status'], 'The status in the end event');
+    same($daemon->ofType('entries')[0]['request'], $ends[0]['request'], 'The entries and the end carry the same request');
+    check(!isset($ends[0]['droppedQueries']), 'A request with few queries drops none.');
+}
+
+function laravelQueryLimit(WebServer $server): void
+{
+    [, $daemon] = scenario(['queries' => true], stub: $server->stub);
+    $server->get('/index.php?action=many', ['Accept' => 'text/html'], $daemon);
+    $daemon->close();
+
+    $queries = entriesOf($daemon, 'query');
+
+    same(range(1, Batch::MAX_QUERIES), array_column($queries, 'seq'), 'A request keeps its first 500 queries');
+    same('select * from `items` where `id` = "500"', $queries[499]['text'], 'The last kept query');
+    same(20, $daemon->ofType('end')[0]['droppedQueries'] ?? null, 'The end event counts the other queries');
+
+    foreach ($daemon->ofType('entries') as $event) {
+        check(count($event['entries']) <= Batch::SEND_COUNT, 'A line holds at most 50 entries.');
+    }
+}
+
+function laravelLogs(WebServer $server): void
+{
+    [, $daemon] = scenario(['logs' => true], stub: $server->stub);
+    $server->get('/index.php?action=logs', ['Accept' => 'text/html'], $daemon);
+    $daemon->close();
+
+    $actions = realpath(Context::$fixtures.'/laravel/app/Actions.php');
+    $logs = array_map(stable(...), entriesOf($daemon, 'log'));
+
+    same(2, count($logs), 'The log lines of the page');
+    same(['seq' => 1, 'kind' => 'log', 'file' => $actions, 'line' => lineOf($actions, "\$log->error('Order 1042"), 'label' => 'error', 'text' => 'Order 1042 has no invoice.', 'detail' => 'stack', 'truncated' => false], array_diff_key($logs[0], ['tree' => true]), 'A log line of the default channel');
+    same(['key' => 'order', 'kind' => 'int', 'value' => '1042'], child(json_decode($logs[0]['tree'], true, 512, JSON_THROW_ON_ERROR), 'order'), 'The context is a tree');
+    same(['seq' => 2, 'kind' => 'log', 'file' => $actions, 'line' => lineOf($actions, "->warning('Low stock.')"), 'label' => 'warning', 'text' => 'Low stock.', 'detail' => 'single', 'truncated' => false], $logs[1], 'A log line of another channel without a context has no tree');
+}
+
+function laravelLogThatLogs(WebServer $server): void
+{
+    [, $daemon] = scenario(['logs' => true], stub: $server->stub);
+    $response = $server->get('/index.php?action=loop', ['Accept' => 'text/html'], $daemon);
+    $daemon->close();
+
+    same(200, $response['status'], 'The page ends');
+    same(['error: outer', 'warning: inside'], state($response['body'])['written'], 'The logger of the site writes both lines');
+    same(['outer'], array_column(entriesOf($daemon, 'log'), 'text'), 'Nexus ignores the log line that its own tree caused');
+}
+
+function laravelFatalError(WebServer $server): void
+{
+    [, $daemon] = scenario(['logs' => true], stub: $server->stub);
+    $response = $server->get('/index.php?action=fatal', ['Accept' => 'text/html'], $daemon);
+    $daemon->close();
+
+    $logs = entriesOf($daemon, 'log');
+
+    same(500, $response['status'], 'The status of a fatal error');
+    same(1, count($logs), 'Only the report of Laravel is a log line');
+    same(['error', 'stack'], [$logs[0]['label'], $logs[0]['detail']], 'The log line of Laravel');
+    contains($logs[0]['text'], 'Call to undefined function', 'The message of the fatal error');
+    same(['entries', 'end'], array_column($daemon->events(), 'type'), 'The log line comes before the end event');
+    same(500, $daemon->ofType('end')[0]['status'], 'The status in the end event');
+}
+
+function laravelJobRows(WebServer $server): void
+{
+    [, $daemon] = scenario(['jobs' => true, 'queries' => true], stub: $server->stub);
+    $server->get('/index.php?action=jobs', ['Accept' => 'text/html'], $daemon);
+    $daemon->close();
+
+    $actions = realpath(Context::$fixtures.'/laravel/app/Actions.php');
+    $entries = array_map(stable(...), entriesOf($daemon));
+
+    same(4, count($entries), 'A queued row, the query of the sync job, a sync row and a failed sync row');
+    same(['seq' => 1, 'kind' => 'job', 'file' => $actions, 'line' => lineOf($actions, '$queue->pushToRedis('), 'label' => 'queued', 'text' => 'App\Jobs\SendOrderMail', 'detail' => 'redis · default', 'ref' => 'uuid-queued', 'truncated' => false], $entries[0], 'A queued job');
+    same([2, 'query', 'select * from `totals`'], [$entries[1]['seq'], $entries[1]['kind'], $entries[1]['text']], 'A query of a sync job belongs to the request');
+    check(is_float($entries[2]['ms']) || is_int($entries[2]['ms']), 'A sync row has its time.');
+    unset($entries[2]['ms']);
+    same(['seq' => 3, 'kind' => 'job', 'file' => $actions, 'line' => lineOf($actions, '$queue->pushToSync('), 'label' => 'sync', 'text' => 'App\Jobs\Recalculate', 'detail' => 'sync · default', 'truncated' => false], $entries[2], 'A sync job');
+    unset($entries[3]['ms']);
+    same(['seq' => 4, 'kind' => 'job', 'file' => $actions, 'line' => lineOf($actions, "new SyncJob('App\\Jobs\\Refund'"), 'label' => 'failed', 'text' => 'App\Jobs\Refund', 'detail' => 'sync · default', 'truncated' => false], $entries[3], 'A sync job that threw');
+    same([], jobRequests($daemon), 'A web request makes no job request');
+}
+
+function laravelWorker(): void
+{
+    [, $daemon, $stub] = scenario(ALL_SWITCHES);
+    $site = realpath(Context::$fixtures.'/laravel');
+    $result = runCli($stub, ["{$site}/artisan", 'queue:work'], $daemon, [], $site);
+    $daemon->close();
+
+    same(0, $result['exit'], 'The worker ends');
+    contains($result['stdout'], '"mail" => 1042', 'The terminal shows the dump of the job');
+
+    $jobs = jobRequests($daemon);
+    $worker = commandRequest($daemon);
+    $names = requestNames($daemon);
+
+    same([
+        'dump App\Jobs\SendOrderMail',
+        'entries(2) App\Jobs\SendOrderMail',
+        'end:done App\Jobs\SendOrderMail',
+        'entries(1) App\Jobs\ChargeCard',
+        'end:failed App\Jobs\ChargeCard',
+        'entries(1) App\Jobs\SyncStock',
+        'end:released App\Jobs\SyncStock',
+        'entries(1) command',
+        'end command',
+    ], wireOrder($daemon, $names), 'Each job is a request of its own, and the poll query of the worker is left out');
+
+    $mail = $jobs['App\Jobs\SendOrderMail'];
+
+    same('job', $mail['kind'], 'The kind of a job request');
+    same(['system' => 'laravel', 'name' => 'App\Jobs\SendOrderMail', 'queue' => 'default', 'connection' => 'redis', 'uuid' => 'uuid-mail', 'attempt' => 1, 'maxTries' => 3], $mail['job'], 'The job object');
+    same([$worker['command'], $worker['cwd'], $worker['root'], $worker['pid']], [$mail['command'], $mail['cwd'], $mail['root'], $mail['pid']], 'A job keeps the command, the folders and the pid of the worker');
+    check($mail['started'] >= $worker['started'], 'A job starts after its worker.');
+
+    $entries = entriesOf($daemon);
+    $byRequest = static fn (string $name): array => array_values(array_map(
+        static fn (array $entry): string => "{$entry['seq']} {$entry['kind']} {$entry['text']}",
+        array_filter($entries, static fn (array $entry): bool => $names[$entry['request']] === $name),
+    ));
+
+    same(['1 log The worker stops.'], $byRequest('command'), 'The worker keeps its log lines outside a job');
+    same(['1 query select * from `orders` where `id` = "1042"', '2 log The mail is sent.'], $byRequest('App\Jobs\SendOrderMail'), 'The entries of a job belong to the job');
+    same(3, $daemon->ofType('dump')[0]['dump']['seq'], 'A dump of a job counts with the entries of the job');
+    same(['1 log The card is declined.'], $byRequest('App\Jobs\ChargeCard'), 'The report of a failed job belongs to the job');
+    same(['1 log The stock service is down.'], $byRequest('App\Jobs\SyncStock'), 'The report of a released job belongs to the job');
+
+    foreach ($daemon->ofType('end') as $end) {
+        same([null, null], [$end['status'], $end['exit']], 'A command and a job have no status and no exit code');
+        check(is_float($end['duration']) || is_int($end['duration']), 'Each end has a duration.');
+    }
+}
+
+function laravelWorkerOnce(): void
+{
+    [, $daemon, $stub] = scenario(ALL_SWITCHES);
+    $site = realpath(Context::$fixtures.'/laravel');
+    runCli($stub, ["{$site}/artisan", 'queue:work', '--once'], $daemon, [], $site);
+    $daemon->close();
+
+    same([
+        'entries(1) App\Jobs\SyncStock',
+        'end:released App\Jobs\SyncStock',
+    ], wireOrder($daemon, requestNames($daemon)), 'A job that is open at the end of the process ends');
+}
+
+function laravelJobsWithoutEntries(): void
+{
+    [, $daemon, $stub] = scenario(['jobs' => true]);
+    $site = realpath(Context::$fixtures.'/laravel');
+    runCli($stub, ["{$site}/artisan", 'queue:work'], $daemon, [], $site);
+    $daemon->close();
+
+    same([
+        'dump App\Jobs\SendOrderMail',
+        'end:done App\Jobs\SendOrderMail',
+        'end:failed App\Jobs\ChargeCard',
+        'end:released App\Jobs\SyncStock',
+    ], wireOrder($daemon, requestNames($daemon)), 'A job without entries sends its end');
+}
+
+function laravelCommandThatRunsAJob(): void
+{
+    [, $daemon, $stub] = scenario(ALL_SWITCHES);
+    $site = realpath(Context::$fixtures.'/laravel');
+    runCli($stub, ["{$site}/artisan", 'orders:import'], $daemon, [], $site);
+    $daemon->close();
+
+    $names = requestNames($daemon);
+
+    same([
+        'entries(1) command',
+        'dump App\Jobs\SendOrderMail',
+        'entries(2) App\Jobs\SendOrderMail',
+        'end:done App\Jobs\SendOrderMail',
+        'entries(1) command',
+        'end command',
+    ], wireOrder($daemon, $names), 'A command sends its own lines and the job');
+    same([
+        'command: select * from `imports` where `id` = "1"',
+        'App\Jobs\SendOrderMail: select * from `orders` where `id` = "1042"',
+        'App\Jobs\SendOrderMail: The mail is sent.',
+        'command: The import is done.',
+    ], array_map(static fn (array $entry): string => "{$names[$entry['request']]}: {$entry['text']}", entriesOf($daemon)), 'After its first job a command leaves out its queries outside a job');
+}
+
+function laravelTestRunsSendNothing(): void
+{
+    [, $daemon, $stub] = scenario(ALL_SWITCHES);
+    $site = realpath(Context::$fixtures.'/laravel');
+
+    runCli($stub, ["{$site}/artisan", 'test'], $daemon, [], $site);
+    runCli($stub, ["{$site}/artisan", 'queue:work'], $daemon, ['APP_ENV' => 'testing'], $site);
+    $daemon->close();
+
+    same(0, $daemon->connectionCount, 'A test run sends no query, log line or job');
+}
+
+function wordPressSwitchesOff(WebServer $server): void
+{
+    [, $daemon] = scenario(stub: $server->stub);
+    $state = state($server->get('/index.php?action=queries', ['Accept' => 'text/html'], $daemon)['body']);
+    $daemon->close();
+
+    same(['nexusClasses' => [], 'saveQueries' => null, 'hooked' => false, 'queryFilter' => false, 'queries' => 0, 'scheduled' => []], $state, 'An old stub adds no hook to WordPress');
+    same(0, $daemon->connectionCount, 'An old stub sends nothing');
+}
+
+function wordPressQueries(WebServer $server): void
+{
+    [, $daemon] = scenario(['queries' => true], stub: $server->stub);
+    $state = state($server->get('/index.php?action=queries', ['Accept' => 'text/html'], $daemon)['body']);
+    $daemon->close();
+
+    $shop = realpath(Context::$fixtures.'/wordpress/wp-content/plugins/shop/shop.php');
+
+    same([true, true, 1], [$state['saveQueries'], $state['hooked'], $state['queries']], 'Nexus defines SAVEQUERIES and wpdb keeps only the last query');
+    same(false, $state['queryFilter'], 'The filter "query" removes itself after the first query');
+    same([
+        ['seq' => 1, 'kind' => 'query', 'file' => $shop, 'line' => lineOf($shop, "\$wpdb->get_results(\"SELECT * FROM wp_posts"), 'label' => 'wpdb', 'text' => "SELECT * FROM wp_posts WHERE post_status = 'publish'", 'ms' => 2.1, 'truncated' => false],
+        ['seq' => 2, 'kind' => 'query', 'file' => $shop, 'line' => lineOf($shop, "\$wpdb->get_results('SELECT * FROM wp_users')"), 'label' => 'wpdb', 'text' => 'SELECT * FROM wp_users', 'ms' => 2.1, 'truncated' => false],
+    ], array_map(stable(...), entriesOf($daemon, 'query')), 'The queries of WordPress with the first frame in a plugin');
+}
+
+function wordPressSiteSaveQueries(WebServer $server): void
+{
+    [, $daemon] = scenario(['queries' => true], stub: $server->stub);
+    $state = state($server->get('/index.php?action=queries&savequeries=1', ['Accept' => 'text/html'], $daemon)['body']);
+    $daemon->close();
+
+    same([true, 2], [$state['saveQueries'], $state['queries']], 'A site that defines SAVEQUERIES keeps all its queries');
+    same(2, count(entriesOf($daemon, 'query')), 'Nexus sends both queries');
+}
+
+function wpCronFromACrontab(): void
+{
+    [, $daemon, $stub] = scenario(['jobs' => true, 'queries' => true]);
+    $script = realpath(Context::$fixtures.'/wordpress/wp-cron.php');
+    $result = runCli($stub, [$script], $daemon, [], Context::caseFolder());
+    $daemon->close();
+
+    contains($result['stdout'], 'CRON END', 'wp-cron.php runs to its end');
+    same([
+        'entries(1) shop_cleanup',
+        'end:done shop_cleanup',
+        'entries(4) action_scheduler_run_queue',
+        'entries(2) shop_send_mail',
+        'end:done shop_send_mail',
+        'entries(1) shop_fail',
+        'end:failed shop_fail',
+        'end:done action_scheduler_run_queue',
+    ], wireOrder($daemon, requestNames($daemon)), 'wp-cron.php in a command gets the same job requests');
+    contains(jobRequests($daemon)['shop_cleanup']['command'], 'wp-cron.php', 'A job keeps the command');
+}
+
+function longCommandLine(): void
+{
+    [, $daemon, $stub] = scenario(['logs' => true]);
+    runCli($stub, [...QUIET, Context::$fixtures.'/cli/batches.php', 'count', str_repeat('a', 300_000)], $daemon);
+    $daemon->close();
+
+    $command = commandRequest($daemon)['command'];
+
+    same(Request::TEXT_BYTES + strlen(Request::CUT_MARKER), strlen($command), 'The request keeps the start of a long command');
+    check(str_ends_with($command, Request::CUT_MARKER), 'A cut command ends with the marker.');
+    same(120, count(entriesOf($daemon)), 'Each entry goes out');
+    same(['entries', 'entries', 'entries', 'end'], array_column($daemon->events(), 'type'), 'The end comes after the entries');
+
+    $url = Request::describe(['HTTP_HOST' => 'shop.test', 'REQUEST_URI' => '/?q='.str_repeat('b', 2_000_000)], false)['url'];
+
+    same(Request::TEXT_BYTES + strlen(Request::CUT_MARKER), strlen($url), 'The request keeps the start of a long URL');
+}
+
+function wordPressErrors(WebServer $server): void
+{
+    [, $daemon] = scenario(['logs' => true], stub: $server->stub);
+    $state = state($server->get('/index.php?action=wrong', ['Accept' => 'text/html'], $daemon)['body']);
+    $daemon->close();
+
+    $shop = realpath(Context::$fixtures.'/wordpress/wp-content/plugins/shop/shop.php');
+
+    same([null, false], [$state['saveQueries'], $state['hooked']], 'The log switch adds no query hook');
+    same([
+        ['seq' => 1, 'kind' => 'log', 'file' => $shop, 'line' => lineOf($shop, '_doing_it_wrong('), 'label' => 'notice', 'text' => 'Function shop_page was called incorrectly. Use shop_render instead.', 'detail' => 'PHP notice', 'truncated' => false],
+    ], array_map(stable(...), entriesOf($daemon)), 'A notice of WordPress comes from the plugin that called it, and a silenced warning is left out');
+}
+
+function wordPressScheduled(WebServer $server): void
+{
+    [, $daemon] = scenario(['jobs' => true], stub: $server->stub);
+    $state = state($server->get('/index.php?action=schedule', ['Accept' => 'text/html'], $daemon)['body']);
+    $daemon->close();
+
+    $shop = realpath(Context::$fixtures.'/wordpress/wp-content/plugins/shop/shop.php');
+    $scheduler = realpath(Context::$fixtures.'/wordpress/wp-content/plugins/action-scheduler/action-scheduler.php');
+
+    same(['shop_cleanup'], $state['scheduled'], 'The filter returns the event unchanged');
+    same([
+        ['seq' => 1, 'kind' => 'job', 'file' => $shop, 'line' => lineOf($shop, 'wp_schedule_event('), 'label' => 'scheduled', 'text' => 'shop_cleanup', 'detail' => 'hourly', 'truncated' => false],
+        ['seq' => 2, 'kind' => 'job', 'file' => $scheduler, 'line' => lineOf($scheduler, "do_action('action_scheduler_stored_action'"), 'label' => 'queued', 'text' => 'shop_send_mail', 'detail' => 'shop', 'ref' => '42', 'truncated' => false],
+    ], array_map(stable(...), entriesOf($daemon)), 'A WP-Cron event and an action of Action Scheduler');
+}
+
+function wordPressCron(WebServer $server): void
+{
+    [, $daemon] = scenario(['jobs' => true, 'queries' => true], stub: $server->stub);
+    $response = $server->get('/wp-cron.php', [], $daemon);
+    $daemon->close();
+
+    contains($response['body'], 'CRON END', 'wp-cron.php runs to its end');
+
+    $jobs = jobRequests($daemon);
+    $names = [];
+
+    foreach ($jobs as $name => $request) {
+        $names[$request['id']] = $name;
+    }
+
+    same([
+        'entries(1) shop_cleanup',
+        'end:done shop_cleanup',
+        'entries(4) action_scheduler_run_queue',
+        'entries(2) shop_send_mail',
+        'end:done shop_send_mail',
+        'entries(1) shop_fail',
+        'end:failed shop_fail',
+        'end:done action_scheduler_run_queue',
+    ], wireOrder($daemon, $names), 'Each cron event and each action is a request of its own');
+
+    same(['system' => 'cron', 'name' => 'shop_cleanup'], $jobs['shop_cleanup']['job'], 'The job object of a WP-Cron event');
+    same(['system' => 'action', 'name' => 'shop_send_mail', 'queue' => 'shop', 'uuid' => '42'], $jobs['shop_send_mail']['job'], 'The job object of an action');
+    same("http://127.0.0.1:{$server->port}/wp-cron.php", $jobs['shop_send_mail']['url'], 'A job keeps the URL of wp-cron.php');
+    same('127.0.0.1', $jobs['shop_send_mail']['host'], 'A job keeps the host');
+
+    $texts = array_map(static fn (array $entry): string => "{$names[$entry['request']]}: {$entry['label']} {$entry['text']}", entriesOf($daemon));
+
+    same([
+        'shop_cleanup: wpdb DELETE FROM wp_shop_carts WHERE expired = 1',
+        "action_scheduler_run_queue: wpdb INSERT INTO wp_actionscheduler_actions (hook) VALUES ('shop_send_mail')",
+        'action_scheduler_run_queue: queued shop_send_mail',
+        "action_scheduler_run_queue: wpdb INSERT INTO wp_actionscheduler_actions (hook) VALUES ('shop_fail')",
+        'action_scheduler_run_queue: queued shop_fail',
+        'shop_send_mail: wpdb SELECT * FROM wp_actionscheduler_actions WHERE action_id = 42',
+        'shop_send_mail: wpdb SELECT * FROM wp_shop_mail',
+        'shop_fail: wpdb SELECT * FROM wp_actionscheduler_actions WHERE action_id = 43',
+    ], $texts, 'The entries of each job, without the queries of Nexus itself');
+}
+
+function wordPressSources(WebServer $server): void
+{
+    [, $daemon] = scenario(['queries' => true, 'logs' => true], stub: $server->stub);
+    $server->get('/index.php?action=export', ['Accept' => 'text/html'], $daemon);
+    $server->get('/index.php?action=monitor', ['Accept' => 'text/html'], $daemon);
+    $daemon->close();
+
+    $shop = realpath(Context::$fixtures.'/wordpress/wp-content/plugins/shop/shop.php');
+    $export = lineOf($shop, "require ABSPATH.'wp-shop-export.php';");
+
+    same([
+        "query SELECT * FROM wp_links {$shop}:{$export}",
+        "log The export has no links. {$shop}:{$export}",
+        "query SELECT * FROM wp_options {$shop}:".lineOf($shop, '$monitored->get_results('),
+    ], array_map(static fn (array $entry): string => "{$entry['kind']} {$entry['text']} {$entry['file']}:{$entry['line']}", entriesOf($daemon)), 'A plugin on the trace wins over a file of WordPress and over a subclass of wpdb');
+}
+
+function wordPressCronWithOnlyJobs(WebServer $server): void
+{
+    [, $daemon] = scenario(['jobs' => true], stub: $server->stub);
+    $server->get('/wp-cron.php', [], $daemon);
+    $daemon->close();
+
+    same([
+        'end:done shop_cleanup',
+        'entries(2) action_scheduler_run_queue',
+        'end:done shop_send_mail',
+        'end:failed shop_fail',
+        'end:done action_scheduler_run_queue',
+    ], wireOrder($daemon, requestNames($daemon)), 'A job without entries sends its end, and the next run of a repeating event is no row');
+}
+
+function wordPressWithoutSaveQueries(WebServer $server): void
+{
+    [$folder, $daemon] = scenario(['queries' => true], stub: $server->stub);
+    $first = state($server->get('/index.php', ['Accept' => 'text/html'], $daemon)['body']);
+    $second = state($server->get('/index.php', ['Accept' => 'text/html'], $daemon)['body']);
+    $daemon->close();
+
+    same(['saveQueries' => false, 'queries' => 0], $first, 'A Bedrock site that sets SAVEQUERIES to false works and keeps its value');
+    same($first, $second, 'The second page works');
+
+    $blocked = $daemon->ofType('blocked');
+
+    same(1, count($daemon->events()), 'One event for two requests');
+    same(['savequeries', realpath(Context::$fixtures.'/wordpress-nosave/wp-config.php')], [$blocked[0]['reason'] ?? null, $blocked[0]['detail'] ?? null], 'The reason and the file of the block');
+    check(is_file("{$folder}/dumps/blocked-savequeries-127.0.0.1"), 'PHP keeps a stamp for the host and the reason.');
+}
+
+function wpCliRunsACronEvent(): void
+{
+    [, $daemon, $stub] = scenario(ALL_SWITCHES);
+    $site = realpath(Context::$fixtures.'/wordpress');
+    $result = runCli($stub, ["{$site}/wp"], $daemon, [], $site);
+    $daemon->close();
+
+    contains($result['stdout'], 'WP-CLI END', 'WP-CLI runs to its end');
+
+    $jobs = jobRequests($daemon);
+
+    same(['shop_cleanup'], array_keys($jobs), 'WP-CLI runs one event');
+    same('php '.$site.'/wp', str_replace("'", '', $jobs['shop_cleanup']['command']), 'A job of WP-CLI keeps its command');
+    same(['DELETE FROM wp_shop_carts WHERE expired = 1'], array_column(entriesOf($daemon), 'text'), 'The query of the event');
+    same(['entries', 'end'], array_column($daemon->events(), 'type'), 'The job sends its entries and its end');
+}
+
 $copy = realpath($argv[1] ?? __DIR__.'/../vendor/var-dumper');
 
 if ($copy === false) {
@@ -1203,6 +1899,7 @@ $tests = [
     'the page-mode table' => pageModeTable(...),
     'dd detection' => ddDetection(...),
     'the source of a dump' => sourceOfDump(...),
+    'the source of an entry from a short trace' => sourceOfAnEntry(...),
     'the tree of an array and its text' => treeOfAnArray(...),
     'the tree of an object with all access kinds' => treeOfAnObjectWithAllAccessKinds(...),
     'the tree of a nested object' => treeOfANestedObject(...),
@@ -1220,6 +1917,22 @@ $tests = [
     'a relative prepend file of the user' => relativeUserPrepend(...),
     'the pause after a failed connect' => pauseAfterAFailedConnect(...),
     'the deadline of a line' => writeDeadline(...),
+    'the values of a query without toRawSql()' => sqlWithBindings(...),
+    'the entries fit in lines of 1 MB' => entryLinesFit(...),
+    'a command with the dumps switch off' => switchesOffInACommand(...),
+    'the error handler' => errorHandler(...),
+    'a fatal error before the end event' => fatalError(...),
+    'a batch after 50 entries' => batchesByCount(...),
+    'a batch after 1 second' => batchesByTime(...),
+    'large batches in more lines' => batchesBySize(...),
+    'the jobs of a Laravel worker' => laravelWorker(...),
+    'a Laravel worker with --once' => laravelWorkerOnce(...),
+    'a command that runs a job becomes a worker' => laravelCommandThatRunsAJob(...),
+    'Laravel jobs without entries' => laravelJobsWithoutEntries(...),
+    'Laravel test runs send nothing' => laravelTestRunsSendNothing(...),
+    'a WP-CLI cron event' => wpCliRunsACronEvent(...),
+    'wp-cron.php from a system crontab' => wpCronFromACrontab(...),
+    'a long command line and a long URL' => longCommandLine(...),
 ];
 
 $webTests = [
@@ -1227,6 +1940,30 @@ $webTests = [
         'a page without a dump' => plainSiteWithoutADump(...),
         'dump() and dd() of Nexus in web requests' => plainSiteDumps(...),
         'a missing or paused nexusd costs no render' => missingNexusdCostsNothing(...),
+        'the switches off and a page without an event' => plainSiteWithSwitchesOff(...),
+    ],
+    'laravel/public' => [
+        'Laravel with an old stub' => laravelSwitchesOff(...),
+        'the Laravel hook without an event' => laravelHookWithoutEvents(...),
+        'the queries of a Laravel request' => laravelQueries(...),
+        'the first 500 queries' => laravelQueryLimit(...),
+        'the log lines of a Laravel request' => laravelLogs(...),
+        'a log line that logs while Nexus reads it' => laravelLogThatLogs(...),
+        'a fatal error of Laravel is one log line' => laravelFatalError(...),
+        'the queued and the sync jobs of a Laravel request' => laravelJobRows(...),
+    ],
+    'wordpress' => [
+        'WordPress with an old stub' => wordPressSwitchesOff(...),
+        'the queries of WordPress' => wordPressQueries(...),
+        'a site that defines SAVEQUERIES keeps its list' => wordPressSiteSaveQueries(...),
+        'the PHP notices of WordPress' => wordPressErrors(...),
+        'a scheduled event and a queued action' => wordPressScheduled(...),
+        'the jobs of wp-cron.php' => wordPressCron(...),
+        'wp-cron.php with only the jobs switch' => wordPressCronWithOnlyJobs(...),
+        'the source of a query or a log line in WordPress' => wordPressSources(...),
+    ],
+    'wordpress-nosave' => [
+        'SAVEQUERIES false in wp-config.php' => wordPressWithoutSaveQueries(...),
     ],
     'site/public' => [
         'a Laravel site keeps its handler and its source link' => laravelSiteKeepsItsHandler(...),

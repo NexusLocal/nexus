@@ -253,6 +253,63 @@ struct NoticeBanner<Details: View, Actions: View>: View {
     }
 }
 
+// The result of an action that went well, for example "Check for updates", "Find agents" or
+// "Restart". It stays until the user clicks OK or leaves the screen.
+struct DoneBanner: View {
+    let title: String
+    let message: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        NoticeBanner(systemImage: "checkmark.circle", color: .statusGreen, background: AnyShapeStyle(.fill.quaternary), title: title) {
+            Text(message)
+        } actions: {
+            Button("OK", action: dismiss)
+        }
+    }
+}
+
+struct DoneMessage: Equatable {
+    let title: String
+    let message: String
+}
+
+// A form gives an empty section its own space. So a screen puts DoneBanner in the footer of an
+// empty section, and only while the banner shows.
+struct DoneSection: View {
+    let done: DoneMessage
+    let dismiss: () -> Void
+
+    var body: some View {
+        Section {
+        } footer: {
+            DoneBanner(title: done.title, message: done.message, dismiss: dismiss)
+        }
+    }
+}
+
+// The label of a toolbar button whose action takes a moment. The button shows a spinner and the
+// busy title while the action runs. An example is "Checking…".
+struct BusyLabel: View {
+    let title: String
+    let busyTitle: String
+    let systemImage: String
+    let busy: Bool
+
+    var body: some View {
+        if busy {
+            Label {
+                Text(busyTitle)
+            } icon: {
+                ProgressView()
+                    .controlSize(.small)
+            }
+        } else {
+            Label(title, systemImage: systemImage)
+        }
+    }
+}
+
 // A problem that the user must know about, in the orange box of the design ("Problem" on the
 // Overview).
 struct WarningBanner<Details: View, Actions: View>: View {
@@ -717,11 +774,21 @@ struct NotificationsBlockedNote: View {
 }
 
 extension Date {
+    // The hours and minutes, for example in "Nexus checked the package list at 14:32".
+    var clockTime: String {
+        formatted(date: .omitted, time: .shortened)
+    }
+
+    // The time with its seconds: "14:32:10". The entries of one request are seconds apart.
+    var secondsTime: String {
+        formatted(date: .omitted, time: .standard)
+    }
+
     // The time of a row in a list, such as a mail or a request with dumps: the time today, then
     // "Yesterday", then the day.
     var listTime: String {
         if Calendar.current.isDateInToday(self) {
-            return formatted(date: .omitted, time: .shortened)
+            return clockTime
         }
 
         if Calendar.current.isDateInYesterday(self) {
@@ -827,13 +894,16 @@ struct ListDetailView<Item: Identifiable, Row: View, Detail: View>: View {
 }
 
 // A key and its value in the head of an open item, such as the From line of a mail. A value with a
-// link opens it in the browser.
+// link opens it in the browser. A value with an action is a link inside Nexus, with action help as
+// its tooltip.
 struct HeaderLine: View {
     let key: String
     let value: String
     var keyWidth: CGFloat = 40
     var truncation: Text.TruncationMode?
     var link: URL?
+    var color: Color?
+    var action: (help: String, perform: () -> Void)?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -848,8 +918,17 @@ struct HeaderLine: View {
                 .foregroundStyle(Color.accentText)
                 .pointerStyle(.link)
                 .help("Open \(value) in the browser")
+            } else if let action {
+                Button(action: action.perform) {
+                    valueText
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentText)
+                .pointerStyle(.link)
+                .help(action.help)
             } else {
                 valueText
+                    .foregroundStyle(color ?? .primary)
                     .textSelection(.enabled)
             }
         }
@@ -869,6 +948,35 @@ struct SiteTag: View {
     enum Tint {
         case accent
         case warning
+        case error
+        case neutral
+
+        init(_ tone: DumpTagTone) {
+            switch tone {
+            case .accent: self = .accent
+            case .warning: self = .warning
+            case .error: self = .error
+            case .neutral: self = .neutral
+            }
+        }
+
+        var text: Color {
+            switch self {
+            case .accent: .accentText
+            case .warning: .orangeText
+            case .error: .redText
+            case .neutral: .secondary
+            }
+        }
+
+        var background: AnyShapeStyle {
+            switch self {
+            case .accent: AnyShapeStyle(Color.accentSoft)
+            case .warning: AnyShapeStyle(Color.warningBackground)
+            case .error: AnyShapeStyle(Color.errorBackground)
+            case .neutral: AnyShapeStyle(.quaternary)
+            }
+        }
     }
 
     let text: String?
@@ -888,10 +996,10 @@ struct SiteTag: View {
             }
             .font(.caption2.weight(monospaced ? .semibold : .medium))
             .monospaced(monospaced)
-            .foregroundStyle(tint == .accent ? Color.accentText : Color.orangeText)
+            .foregroundStyle(tint.text)
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
-            .background(tint == .accent ? Color.accentSoft : Color.warningBackground, in: .rect(cornerRadius: 4))
+            .background(tint.background, in: .rect(cornerRadius: 4))
         } else {
             Text("No site")
                 .font(.caption2)
@@ -903,6 +1011,24 @@ struct SiteTag: View {
 func copyToPasteboard(_ text: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)
+}
+
+// The copy icon of a row. It is gray, as the remove icon of a row. The text comes from a closure,
+// so it is made only on a click.
+struct CopyButton: View {
+    let help: String
+    let text: () -> String
+
+    var body: some View {
+        Button {
+            copyToPasteboard(text())
+        } label: {
+            Image(systemName: "doc.on.doc")
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .help(help)
+    }
 }
 
 extension View {

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ServiceScreen: View {
     @Environment(AppModel.self) private var model
+    @State private var restartDone: DoneMessage?
     let kind: ServiceKind
 
     private var versions: [ServiceVersion] {
@@ -53,8 +54,10 @@ struct ServiceScreen: View {
 
                     // Each version gets its own form. So a field that the user did not send
                     // yet does not move to another version.
-                    ServiceForm(service: binding(to: selectedService))
-                        .id(selectedService.id)
+                    ServiceForm(service: binding(to: selectedService), restartDone: restartDone) {
+                        restartDone = nil
+                    }
+                    .id(selectedService.id)
                 }
             } else {
                 ContentUnavailableView {
@@ -71,8 +74,31 @@ struct ServiceScreen: View {
         .screenTitle(kind.title, subtitle: subtitle)
         .toolbar {
             if let selectedService {
-                ServiceToolbar(model: model, service: selectedService)
+                ServiceToolbar(model: model, service: selectedService, restarting: model.restartingServices.contains(selectedService.id)) {
+                    restart(selectedService)
+                }
             }
+        }
+        .onChange(of: selectedService?.id) {
+            restartDone = nil
+        }
+    }
+
+    // The button shows "Restarting…" and then the screen shows the result (design "Service Restart
+    // States"). The result stays until OK or until another screen or version shows.
+    private func restart(_ service: ServiceVersion) {
+        restartDone = nil
+        let start = ContinuousClock.now
+
+        Task {
+            let restarted = await model.restart(service)
+
+            guard restarted, selectedService?.id == service.id else {
+                return
+            }
+
+            let took = DumpedRequest.durationText((ContinuousClock.now - start) / .seconds(1))
+            restartDone = DoneMessage(title: "\(service.name) runs again", message: "Nexus restarted \(service.name) at \(Date.now.clockTime). The restart took \(took).")
         }
     }
 
@@ -152,16 +178,16 @@ private struct VersionPicker: NSViewRepresentable {
 private struct ServiceToolbar: ToolbarContent {
     let model: AppModel
     let service: ServiceVersion
+    let restarting: Bool
+    let restart: () -> Void
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
-            Button {
-                model.restart(service)
-            } label: {
-                Label("Restart", systemImage: "arrow.clockwise")
+            Button(action: restart) {
+                BusyLabel(title: "Restart", busyTitle: "Restarting…", systemImage: "arrow.clockwise", busy: restarting)
             }
             .labelStyle(.titleAndIcon)
-            .disabled(!service.isActive)
+            .disabled(!service.isActive || restarting)
         }
 
         ToolbarItem(placement: .primaryAction) {
@@ -229,9 +255,15 @@ private struct ConfigFileRow: View {
 
 private struct ServiceForm: View {
     @Binding var service: ServiceVersion
+    let restartDone: DoneMessage?
+    let dismissRestart: () -> Void
 
     var body: some View {
         Form {
+            if let restartDone {
+                DoneSection(done: restartDone, dismiss: dismissRestart)
+            }
+
             PackageCheckSection(service: service)
             StateSection(service: $service)
 

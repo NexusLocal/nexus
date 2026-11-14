@@ -105,9 +105,9 @@ extension CommandSection {
             CommandItem(command: "nexus sendmail -S 127.0.0.1:1025 -t", help: "Gives the mail on the input to the mail service. PHP runs it for mail()."),
         ]),
         CommandSection(title: "Dumps", commands: [
-            CommandItem(command: "nexus dumps", help: "Shows the 20 newest dump() and dd() values under the line of their request, the newest last. --limit changes the number. --json prints one JSON line for each dump."),
-            CommandItem(command: "nexus dumps --site shop.test --follow", help: "Shows the dumps of one site or workspace. With --follow it stays open and shows each new dump."),
-            CommandItem(command: "nexus dumps --clear", help: "Removes all dumps. With --site, only the dumps of that site or workspace."),
+            CommandItem(command: "nexus dumps", help: "Shows the 20 newest entries under the line of their request, the newest last: dump() and dd() values, queries with their tags, log lines and queue jobs. --limit changes the number. --json prints one JSON line for each entry."),
+            CommandItem(command: "nexus dumps --site shop.test --follow", help: "Shows the entries of one site or workspace. With --follow it stays open and shows each new entry."),
+            CommandItem(command: "nexus dumps --clear", help: "Removes all requests. With --site, only the requests of that site or workspace."),
             CommandItem(command: "nexus dumps open", help: "Opens the web page of the dumps in the browser."),
             CommandItem(command: "nexus dumps settings --page never", help: "Keeps each dump() out of the web page. automatic shows it only in a normal page, and always also in an API answer. Without options the command shows the settings."),
         ]),

@@ -7,6 +7,8 @@ import Testing
 @testable import NexusEngine
 
 extension NexusEngineTests {
+    private static let catchingNothing = DumpSettings(catchDumps: false, catchQueries: false, catchLogs: false, catchJobs: false, pageMode: .automatic, commands: true)
+
     private func fakeDumpLibrary(in root: URL, hash: String) throws -> URL {
         let library = root.appending(path: "Nexus.app/Contents/Resources/php/dumps", directoryHint: .isDirectory)
         let files = [
@@ -156,6 +158,7 @@ extension NexusEngineTests {
         #expect(stubText.contains("'socket' => '\(paths.dumpSocket.path(percentEncoded: false))',"))
         #expect(stubText.contains("'folder' => '\(RealPath.trimmed(paths.dumpFolder.path(percentEncoded: false)))',"))
         #expect(stubText.contains("'page' => 'automatic',"))
+        #expect(stubText.contains("    'dumps' => true,\n    'queries' => false,\n    'logs' => true,\n    'jobs' => false,\n"))
         #expect(stubText.contains("'userPrepend' => null,"))
         #expect(stubText.contains("require '\(library.appending(path: "prepend.php").path(percentEncoded: false))';"))
     }
@@ -173,6 +176,47 @@ extension NexusEngineTests {
         #expect(try text(of: folder.appending(path: "php-fpm.conf")).contains("php_value[auto_prepend_file]"))
         #expect(!exists(folder.appending(path: PHPConfig.dumpsFolderName)))
         #expect(await engine.commandDumpsFolder(line: "8.5") == nil)
+    }
+
+    @Test func withOnlyCatchQueriesOnThePoolAndTheCommandsStillNameTheStub() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var state = EngineState()
+        state.dumpSettings = Self.catchingNothing
+        state.dumpSettings.catchQueries = true
+        let engine = try makeDumpEngine(root: root, state: state)
+        let folder = await engine.paths.phpConfigFolder(line: "8.5")
+        let stubPath = folder.appending(path: PHPConfig.dumpStubName).path(percentEncoded: false)
+
+        _ = try await writeConfig(engine)
+        let stubText = try text(of: folder.appending(path: PHPConfig.dumpStubName))
+
+        #expect(try text(of: folder.appending(path: "php-fpm.conf")).hasSuffix("php_value[auto_prepend_file] = \"\(stubPath)\"\n"))
+        #expect(try text(of: folder.appending(path: "dumps.d/00-nexus-dumps.ini")).contains("\nauto_prepend_file = \"\(stubPath)\"\n"))
+        #expect(await engine.commandDumpsFolder(line: "8.5") != nil)
+        #expect(stubText.contains("    'dumps' => false,\n    'queries' => true,\n    'logs' => false,\n    'jobs' => false,\n"))
+        #expect(await engine.installedDumpLibrary != nil)
+    }
+
+    @Test func eachSwitchReachesTheStubOfEachPHPVersion() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try makeDumpEngine(root: root, lines: ["8.4", "8.5"])
+        let paths = await engine.paths
+        let settings = DumpSettings(catchDumps: true, catchQueries: true, catchLogs: false, catchJobs: true, pageMode: .automatic, commands: true)
+
+        try await whileRunning(engine) {
+            let message = try await engine.serialWeb { try await engine.setDumpSettings(settings) }
+            await engine.syncBackgroundProcesses().value
+
+            #expect(message == "The settings of the dump viewer are changed.")
+            #expect(await engine.stateStore.current().dumpSettings == settings)
+
+            for line in ["8.4", "8.5"] {
+                let stubText = try text(of: paths.phpConfigFolder(line: line).appending(path: PHPConfig.dumpStubName))
+                #expect(stubText.contains("    'dumps' => true,\n    'queries' => true,\n    'logs' => false,\n    'jobs' => true,\n"))
+            }
+        }
     }
 
     @Test func theStubIncludesThePrependFileOfTheUserButNeverItself() async throws {
@@ -228,14 +272,14 @@ extension NexusEngineTests {
         #expect(!exists(folder.appending(path: PHPConfig.dumpsFolderName)))
     }
 
-    @Test func withCatchDumpsOffAStoppedPHPFPMLosesItsStubAtOnce() async throws {
+    @Test func withAllSwitchesOffAStoppedPHPFPMLosesItsStubAtOnce() async throws {
         let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeDumpEngine(root: root)
         let folder = await engine.paths.phpConfigFolder(line: "8.5")
 
         _ = try await writeConfig(engine)
-        try await engine.stateStore.update { $0.dumpSettings.catchDumps = false }
+        try await engine.stateStore.update { $0.dumpSettings = Self.catchingNothing }
         let changed = try await writeConfig(engine)
 
         #expect(changed)
@@ -244,7 +288,7 @@ extension NexusEngineTests {
         #expect(!exists(folder.appending(path: PHPConfig.dumpStubName)))
     }
 
-    @Test func withCatchDumpsOffARunningPHPFPMKeepsItsStubUntilItsPoolNoLongerNamesIt() async throws {
+    @Test func withAllSwitchesOffARunningPHPFPMKeepsItsStubUntilItsPoolNoLongerNamesIt() async throws {
         let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeDumpEngine(root: root)
@@ -255,7 +299,7 @@ extension NexusEngineTests {
         try await whileRunning(engine) {
             _ = try await writeConfig(engine)
             try await engine.supervisor.start(fakePHPFPM)
-            try await engine.stateStore.update { $0.dumpSettings.catchDumps = false }
+            try await engine.stateStore.update { $0.dumpSettings = Self.catchingNothing }
             _ = try await writeConfig(engine)
             let stubWhilePHPFPMUsesIt = exists(stub)
             _ = try await writeConfig(engine)
@@ -294,7 +338,7 @@ extension NexusEngineTests {
         let paths = await engine.paths
         let folder = paths.phpConfigFolder(line: "8.5")
         var off = EngineState()
-        off.dumpSettings.catchDumps = false
+        off.dumpSettings = Self.catchingNothing
 
         _ = try await writeConfig(engine)
         let next = try makeDumpEngine(root: root, state: off)
@@ -312,10 +356,10 @@ extension NexusEngineTests {
 
         try await whileRunning(engine) {
             let on = try await engine.serialWeb { try await engine.setDumpSettings(DumpSettings()) }
-            let off = try await engine.serialWeb { try await engine.setDumpSettings(DumpSettings(catchDumps: false, pageMode: .automatic, commands: true)) }
+            let off = try await engine.serialWeb { try await engine.setDumpSettings(Self.catchingNothing) }
             await engine.syncBackgroundProcesses().value
 
-            #expect(on.contains("\nNexus catches no dumps, because it cannot copy the PHP library of the dump viewer from the app."))
+            #expect(on.contains("\nNexus catches nothing from PHP, because it cannot copy the PHP library of the dump viewer from the app."))
             #expect(off == "The settings of the dump viewer are changed.")
         }
     }
@@ -338,11 +382,11 @@ extension NexusEngineTests {
         #expect(try text(of: installed.appending(path: "HASH")) == "0123456789ab\n")
     }
 
-    @Test func withCatchDumpsOffNexusCopiesNoLibrary() async throws {
+    @Test func withAllSwitchesOffNexusCopiesNoLibrary() async throws {
         let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         var state = EngineState()
-        state.dumpSettings.catchDumps = false
+        state.dumpSettings = Self.catchingNothing
         let engine = try makeDumpEngine(root: root, state: state)
         let paths = await engine.paths
 

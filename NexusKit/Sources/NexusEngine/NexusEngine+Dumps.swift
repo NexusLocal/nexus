@@ -57,7 +57,7 @@ extension NexusEngine {
     // The dump list shows this text too. So it only reads and never copies the library. Before the
     // first copy nexusd knows of no problem.
     func dumpLibraryProblem(_ settings: DumpSettings) -> String? {
-        guard settings.catchDumps else {
+        guard settings.catchesAnything else {
             return nil
         }
 
@@ -65,7 +65,7 @@ extension NexusEngine {
             return nil
         }
 
-        return "Nexus catches no dumps, because it cannot copy the PHP library of the dump viewer from the app. The activity log has the reason."
+        return "Nexus catches nothing from PHP, because it cannot copy the PHP library of the dump viewer from the app. The activity log has the reason."
     }
 
     private var dumpLibraryIsMissing: Bool {
@@ -197,13 +197,14 @@ extension NexusEngine {
         return poolNamesDumpStub(line: line)
     }
 
-    // The stub needs "Catch dumps" and the library. dumps.d also needs "Commands and queue
-    // workers". The result names the stub for the pool of PHP-FPM. An error of the dump viewer never
-    // stops PHP. PHP then runs without the dump viewer.
+    // The stub needs one of the four switches (dumps, queries, log lines, queue jobs) and the
+    // library. dumps.d also needs "Commands and queue workers". The result names the stub for the
+    // pool of PHP-FPM. An error of the dump viewer never stops PHP. PHP then runs without the dump
+    // viewer.
     func writeDumpFiles(line: String, state: EngineState, keepingStub: Bool) -> (stub: URL?, stubChanged: Bool) {
         let folder = paths.phpConfigFolder(line: line)
         let stub = dumpStub(line: line)
-        let library = state.dumpSettings.catchDumps ? dumpLibrary() : nil
+        let library = state.dumpSettings.catchesAnything ? dumpLibrary() : nil
 
         guard let library else {
             try? Self.writeScanFolder(named: PHPConfig.dumpsFolderName, iniName: PHPConfig.dumpsIniName, ini: nil, in: folder)
@@ -217,7 +218,7 @@ extension NexusEngine {
 
         do {
             let text = try PHPConfig.dumpStub(
-                pageMode: state.dumpSettings.pageMode,
+                settings: state.dumpSettings,
                 socket: paths.dumpSocket,
                 folder: paths.dumpFolder,
                 library: library,
@@ -248,8 +249,8 @@ extension NexusEngine {
         return RealPath.of(URL(filePath: RealPath.trimmed(file))) == RealPath.of(dumpStub(line: line)) ? nil : file
     }
 
-    // writeDumpFiles writes dumps.d only while "Catch dumps" and "Commands and queue workers" are
-    // on and the library is installed.
+    // writeDumpFiles writes dumps.d only while one of the four switches and "Commands and queue
+    // workers" are on and the library is installed.
     func commandDumpsFolder(line: String) -> String? {
         let folder = paths.phpConfigFolder(line: line).appending(path: PHPConfig.dumpsFolderName)
 

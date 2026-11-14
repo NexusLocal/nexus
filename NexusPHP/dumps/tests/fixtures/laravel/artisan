@@ -1,0 +1,13 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Foundation\Bootstrap\BootProviders;
+
+require __DIR__.'/vendor/autoload.php';
+
+$app = require __DIR__.'/bootstrap/app.php';
+$app->bootstrapWith([BootProviders::class]);
+
+exit(App\Console::run($app, $argv[1] ?? 'list', $argv[2] ?? null));

@@ -13,6 +13,11 @@ struct AgentAlert: Identifiable {
     let copyText: String
 }
 
+enum AgentSearchResult {
+    case found([AgentKind])
+    case nothingNew(at: Date)
+}
+
 // The coding agents of the Agents screen, the first run and the notice on the Overview. Only
 // AgentSetup changes the files of the agents. Without a setup, the model holds the sample data of
 // the design "Agents" and changes no file.
@@ -123,10 +128,19 @@ final class AgentsModel {
         }
     }
 
-    // A found agent stays off until the user turns it on.
-    func findAgents() async {
+    // A found agent stays off until the user turns it on. The result says what the search added.
+    // It is nil when Nexus could not save the list. The alert of that failure then shows.
+    func findAgents() async -> AgentSearchResult? {
         await load()
-        listFoundAgents()
+        let listed = Set(rows)
+
+        guard listFoundAgents() else {
+            return nil
+        }
+
+        let added = rows.filter { !listed.contains($0) }
+
+        return added.isEmpty ? .nothingNew(at: .now) : .found(added)
     }
 
     func status(of agent: AgentKind) -> (text: String, warns: Bool, help: String?) {
@@ -302,31 +316,35 @@ final class AgentsModel {
         )
     }
 
-    private func listFoundAgents() {
+    @discardableResult
+    private func listFoundAgents() -> Bool {
         let found = found
 
-        update { settings in
+        return update { settings in
             settings.list(found)
             settings.searched = true
         }
     }
 
     // The command nexus mcp install can change agents.json while the app shows it. So each change
-    // starts from the file and not from the settings in memory.
-    private func update(_ change: (inout AgentSettings) -> Void) {
+    // starts from the file and not from the settings in memory. Returns false when the save failed.
+    @discardableResult
+    private func update(_ change: (inout AgentSettings) -> Void) -> Bool {
         var fresh = setup == nil ? settings : AgentSettings.load()
         change(&fresh)
         settings = fresh
         settingsChanges += 1
 
         guard setup != nil else {
-            return
+            return true
         }
 
         do {
             try fresh.save()
+            return true
         } catch {
             show(error, title: "Nexus did not save the settings of the agents")
+            return false
         }
     }
 

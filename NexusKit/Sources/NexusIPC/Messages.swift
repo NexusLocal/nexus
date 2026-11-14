@@ -1173,6 +1173,9 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     // arrived. It answers with caughtDumps. A dump with a lower seq that arrives later has a
     // higher number. So it comes too.
     case requestDumps(request: String, afterNumber: Int)
+    // The same with only the entries of these kinds. nexus dumps reads only the queries of a
+    // request for their tags. So the trees of its dumps and log lines stay in nexusd.
+    case requestEntries(request: String, afterNumber: Int, kinds: Set<CaughtDump.Kind>)
     case clearCaughtDumps(place: DumpPlace?)
     // number is the number of the dump in the store. A request without dumps goes from the list.
     case removeCaughtDump(number: Int)
@@ -1340,10 +1343,10 @@ public struct MailStatus: Codable, Sendable, Equatable {
 // What the Dumps screen and nexus dumps show. requests has the newest request first. The coding of
 // the messages drops fractions of a second. So the app keeps this order and does not sort by
 // started. cursor comes from the same moment as requests. newDumps after this cursor gives each
-// dump that came after the list. loaded is false while nexusd did not load the dumps of its last
+// dump that came after the list. loaded is false while nexusd did not load the requests of its last
 // run yet. The list is then empty and has no cursor.
 public struct DumpList: Codable, Sendable, Equatable {
-    public static let notLoadedText = "nexusd loads the dumps of its last run. Try again in a moment."
+    public static let notLoadedText = "nexusd loads the requests of its last run. Try again in a moment."
 
     public let requests: [DumpedRequest]
     public let settings: DumpSettings

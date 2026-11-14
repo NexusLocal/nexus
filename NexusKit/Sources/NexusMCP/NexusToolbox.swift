@@ -127,6 +127,7 @@ public struct NexusToolbox: MCPHandler {
         case "list_packages": try await packages()
         case "php_extensions": try await phpExtensions(arguments)
         case "last_errors": try await lastErrors(arguments)
+        case "read_dumps": try await readDumps(arguments, agent: agent)
         case "read_log": try await readLog(arguments)
         case "list_mail": try await listMail(arguments)
         case "read_mail": try .value(try await mailReader().read(id: arguments.string("id") ?? "latest", tags: try await mailScope(arguments.string("site")).tags))
@@ -265,6 +266,144 @@ public struct NexusToolbox: MCPHandler {
         }
 
         return try .value(lines)
+    }
+
+    // MARK: Dumps
+
+    // The longest text of read_dumps. An agent reads it all. So the oldest requests go first when
+    // the text gets longer than this.
+    static let dumpTextLimit = 60_000
+    // read_dumps reads this many requests at the same time. It starts no new reads when less
+    // room than smallestBlock is left, because a request with its header needs at least that.
+    static let dumpReadsAtOnce = 8
+    static let smallestBlock = 200
+
+    // The text of nexus dumps for the newest requests of a place or for one request, with the id
+    // of each request. The text of each request is complete, so the tags of its queries count all
+    // its queries.
+    private func readDumps(_ arguments: CallArguments, agent: String) async throws -> MCPToolResult {
+        let limit = min(max(arguments.int("limit") ?? 20, 1), 50)
+        let requestID = arguments.string("request")
+        let scope = requestID == nil ? try await dumpScope(arguments.string("site"), agent: agent) : (place: nil, host: nil)
+        let list = try await caughtDumpList(place: scope.place, agent: agent)
+
+        guard list.loaded else {
+            throw ToolFailure(DumpList.notLoadedText)
+        }
+
+        var requests = Array(list.requests.prefix(limit))
+        var notes = DumpText.notes(of: list.state, place: scope.place)
+
+        if let requestID {
+            guard let request = list.requests.first(where: { $0.id == requestID }) else {
+                throw ToolFailure("Nexus has no request \(requestID). The user can have removed it, or newer requests took its place. Call read_dumps without request to see the newest requests.")
+            }
+
+            requests = [request]
+            notes = DumpText.notes(of: list.state, place: request.place)
+        }
+
+        guard !requests.isEmpty else {
+            return MCPToolResult(text: (notes + [DumpText.noRequests(of: scope.host)]).joined(separator: "\n"), structured: nil)
+        }
+
+        let times = DumpTimeText()
+        var blocks: [String] = []
+        var size = 0
+        var next = 0
+
+        // The newest requests come first. Each group of reads keeps its order in the text.
+        reading: while next < requests.count, Self.dumpTextLimit - size >= Self.smallestBlock {
+            let group = Array(requests[next..<min(next + Self.dumpReadsAtOnce, requests.count)])
+            next += group.count
+
+            for (request, entries) in zip(group, try await caughtEntries(of: group, agent: agent)) {
+                let tags = QueryTags(entries)
+                var lines = [DumpText.header(of: request, now: now(), times: times)] + DumpText.details(of: request, id: true)
+                lines += entries.flatMap { entry in DumpText.lines(of: entry, tags: tags) }
+                var block = lines.joined(separator: "\n")
+
+                if !blocks.isEmpty, size + block.count > Self.dumpTextLimit {
+                    break reading
+                }
+
+                if block.count > Self.dumpTextLimit {
+                    block = String(block.prefix(Self.dumpTextLimit)) + "\n[The text of this request stops here, because it is too long.]"
+                }
+
+                blocks.append(block)
+                size += block.count
+            }
+        }
+
+        let leftOut = requests.count - blocks.count
+
+        if leftOut > 0 {
+            notes.append("The text leaves out the \(leftOut == 1 ? "oldest request" : "\(leftOut) oldest requests"), because it is too long. Give a lower limit or a request.")
+        }
+
+        let text = (notes.isEmpty ? [] : [notes.joined(separator: "\n")]) + blocks.reversed()
+        return MCPToolResult(text: text.joined(separator: "\n\n"), structured: nil)
+    }
+
+    // A site does not include its workspaces, as in nexus dumps. A session outside the sites reads
+    // the entries of all places. host names the place in the text of an empty list.
+    private func dumpScope(_ site: String?, agent: String) async throws -> (place: DumpPlace?, host: String?) {
+        if site == "all" {
+            return (nil, nil)
+        }
+
+        let target: SiteTarget
+
+        do {
+            target = try await self.target(site)
+        } catch is ToolFailure where site == nil {
+            return (nil, nil)
+        }
+
+        let response = try await send(.fromAgent(agent: agent, request: .dumpPlace(host: target.host)))
+
+        guard case .dumpPlace(let place, let host) = response else {
+            throw failure(response)
+        }
+
+        return (place, host)
+    }
+
+    private func caughtDumpList(place: DumpPlace?, agent: String) async throws -> DumpList {
+        let response = try await send(.fromAgent(agent: agent, request: .dumpList(place: place)))
+
+        guard case .dumpList(let list) = response else {
+            throw failure(response)
+        }
+
+        return list
+    }
+
+    // read_dumps shows each kind. So it reads all entries of each request, the reads at the same
+    // time. The answer has the order of the requests.
+    private func caughtEntries(of requests: [DumpedRequest], agent: String) async throws -> [[CaughtDump]] {
+        try await withThrowingTaskGroup(of: (Int, [CaughtDump]).self) { reads in
+            for (index, request) in requests.enumerated() {
+                reads.addTask {
+                    let response = try await send(.fromAgent(agent: agent, request: .requestDumps(request: request.id, afterNumber: 0)))
+
+                    guard case .caughtDumps(let entries) = response else {
+                        throw failure(response)
+                    }
+
+                    return (index, entries)
+                }
+            }
+
+            var found = Array(repeating: [CaughtDump](), count: requests.count)
+
+            for try await (index, entries) in reads {
+                found[index] = entries
+            }
+
+            return found
+        }
     }
 
     // MARK: Status and packages

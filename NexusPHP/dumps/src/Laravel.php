@@ -112,7 +112,7 @@ final class Laravel
         return \substr($file, \strlen($basePath) + 1);
     }
 
-    private static function basePath(): string
+    public static function basePath(): string
     {
         $app = self::app();
 
@@ -125,6 +125,43 @@ final class Laravel
         }
 
         return (string) $app->basePath();
+    }
+
+    // A service that the application already has, or null.
+    public static function service(string $name): ?object
+    {
+        $app = self::app();
+
+        if ($app === null) {
+            return null;
+        }
+
+        if (!\method_exists($app, 'bound')) {
+            return null;
+        }
+
+        if (!$app->bound($name)) {
+            return null;
+        }
+
+        $service = $app->make($name);
+
+        return \is_object($service) ? $service : null;
+    }
+
+    public static function config(string $key): mixed
+    {
+        $config = self::service('config');
+
+        if ($config === null) {
+            return null;
+        }
+
+        if (!\method_exists($config, 'get')) {
+            return null;
+        }
+
+        return $config->get($key);
     }
 
     // Container::getInstance() makes a new container when there is none. So Nexus reads the

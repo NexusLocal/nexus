@@ -373,7 +373,7 @@ struct WebConfigTests {
         let support = URL(filePath: "/Users/tim/Library/Application Support/Nexus", directoryHint: .isDirectory)
 
         let stub = try PHPConfig.dumpStub(
-            pageMode: .automatic,
+            settings: DumpSettings(),
             socket: support.appending(path: "run/dumps.sock"),
             folder: support.appending(path: "run/dumps", directoryHint: .isDirectory),
             library: support.appending(path: "php/dumps/4f1c9a0e", directoryHint: .isDirectory),
@@ -392,6 +392,10 @@ struct WebConfigTests {
                 'socket' => '/Users/tim/Library/Application Support/Nexus/run/dumps.sock',
                 'folder' => '/Users/tim/Library/Application Support/Nexus/run/dumps',
                 'page' => 'automatic',
+                'dumps' => true,
+                'queries' => false,
+                'logs' => true,
+                'jobs' => false,
                 'userPrepend' => '/Users/tim/Sites/blog/wordfence-waf.php',
             ];
 
@@ -400,12 +404,26 @@ struct WebConfigTests {
             """#)
     }
 
+    @Test func theStubHoldsEachSwitchOfTheSettings() throws {
+        let socket = URL(filePath: "/Nexus/run/dumps.sock")
+        let folder = URL(filePath: "/Nexus/run/dumps", directoryHint: .isDirectory)
+        let library = URL(filePath: "/Nexus/php/dumps/1", directoryHint: .isDirectory)
+        let onlyQueries = DumpSettings(catchDumps: false, catchQueries: true, catchLogs: false, catchJobs: false, pageMode: .automatic, commands: true)
+        let allButDumps = DumpSettings(catchDumps: false, catchQueries: true, catchLogs: true, catchJobs: true, pageMode: .automatic, commands: true)
+
+        let queriesStub = try PHPConfig.dumpStub(settings: onlyQueries, socket: socket, folder: folder, library: library, userPrepend: nil)
+        let othersStub = try PHPConfig.dumpStub(settings: allButDumps, socket: socket, folder: folder, library: library, userPrepend: nil)
+
+        #expect(queriesStub.contains("    'dumps' => false,\n    'queries' => true,\n    'logs' => false,\n    'jobs' => false,\n"))
+        #expect(othersStub.contains("    'dumps' => false,\n    'queries' => true,\n    'logs' => true,\n    'jobs' => true,\n"))
+    }
+
     @Test func theStubEscapesABackslashAndAQuoteAndRefusesALineBreak() throws {
         let socket = URL(filePath: "/Nexus/run/dumps.sock")
         let folder = URL(filePath: "/Nexus/run/dumps", directoryHint: .isDirectory)
 
-        let quoted = try PHPConfig.dumpStub(pageMode: .never, socket: socket, folder: folder, library: URL(filePath: "/Users/o'brien/php/dumps/1", directoryHint: .isDirectory), userPrepend: #"/Sites/a\b.php"#)
-        let withoutPrepend = try PHPConfig.dumpStub(pageMode: .always, socket: socket, folder: folder, library: URL(filePath: "/Nexus/php/dumps/1", directoryHint: .isDirectory), userPrepend: nil)
+        let quoted = try PHPConfig.dumpStub(settings: Self.dumpSettings(page: .never), socket: socket, folder: folder, library: URL(filePath: "/Users/o'brien/php/dumps/1", directoryHint: .isDirectory), userPrepend: #"/Sites/a\b.php"#)
+        let withoutPrepend = try PHPConfig.dumpStub(settings: Self.dumpSettings(page: .always), socket: socket, folder: folder, library: URL(filePath: "/Nexus/php/dumps/1", directoryHint: .isDirectory), userPrepend: nil)
 
         #expect(quoted.contains(#"require '/Users/o\'brien/php/dumps/1/prepend.php';"#))
         #expect(quoted.contains(#"'userPrepend' => '/Sites/a\\b.php',"#))
@@ -413,11 +431,17 @@ struct WebConfigTests {
         #expect(withoutPrepend.contains("'userPrepend' => null,"))
         #expect(withoutPrepend.contains("'page' => 'always',"))
         #expect(throws: ConfigError.self) {
-            try PHPConfig.dumpStub(pageMode: .automatic, socket: socket, folder: folder, library: URL(filePath: "/Nexus/php/dumps/1"), userPrepend: "/Sites/waf.php\nexit;")
+            try PHPConfig.dumpStub(settings: DumpSettings(), socket: socket, folder: folder, library: URL(filePath: "/Nexus/php/dumps/1"), userPrepend: "/Sites/waf.php\nexit;")
         }
         #expect(throws: ConfigError.self) {
-            try PHPConfig.dumpStub(pageMode: .automatic, socket: URL(filePath: "/Nexus/run\t/dumps.sock"), folder: folder, library: URL(filePath: "/Nexus/php/dumps/1"), userPrepend: nil)
+            try PHPConfig.dumpStub(settings: DumpSettings(), socket: URL(filePath: "/Nexus/run\t/dumps.sock"), folder: folder, library: URL(filePath: "/Nexus/php/dumps/1"), userPrepend: nil)
         }
+    }
+
+    private static func dumpSettings(page: DumpPageMode) -> DumpSettings {
+        var settings = DumpSettings()
+        settings.pageMode = page
+        return settings
     }
 
     @Test func theIniOfACommandNamesTheStub() throws {

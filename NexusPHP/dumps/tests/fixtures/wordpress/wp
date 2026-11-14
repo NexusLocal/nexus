@@ -1,0 +1,14 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+// As "wp cron event run shop_cleanup" of WP-CLI.
+define('WP_CLI', true);
+
+require __DIR__.'/wp-load.php';
+
+wp_unschedule_event(1700000000, 'shop_cleanup');
+do_action_ref_array('shop_cleanup', []);
+
+echo "WP-CLI END\n";

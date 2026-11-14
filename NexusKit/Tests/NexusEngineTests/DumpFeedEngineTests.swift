@@ -38,8 +38,16 @@ private enum DumpWire {
         line(["v": 1, "type": "end", "request": envelope(id, host: host, root: root, started: started), "status": status, "duration": 0.184])
     }
 
-    static func blocked(_ id: String, host: String? = nil, root: String?) -> String {
-        line(["v": 1, "type": "blocked", "request": envelope(id, host: host, root: root, started: started), "reason": "var_dumper_format", "detail": "server"])
+    static func blocked(_ id: String, host: String? = nil, root: String?, reason: String = "var_dumper_format", detail: String = "server") -> String {
+        line(["v": 1, "type": "blocked", "request": envelope(id, host: host, root: root, started: started), "reason": reason, "detail": detail])
+    }
+
+    static func queries(_ id: String, host: String? = nil, root: String?, texts: [String], started: Double = started) -> String {
+        let entries = texts.enumerated().map { index, text in
+            ["seq": index + 1, "time": started + Double(index + 1) / 1000, "kind": "query", "label": "mysql", "text": text, "ms": 1.5, "truncated": false] as [String: Any]
+        }
+
+        return line(["v": 1, "type": "entries", "request": envelope(id, host: host, root: root, started: started), "entries": entries])
     }
 
     static func send(_ lines: [String], to engine: NexusEngine) async throws {
@@ -146,9 +154,9 @@ extension NexusEngineTests {
             let log = try String(contentsOf: logFile, encoding: .utf8)
 
             #expect(!list.receiving)
-            #expect(list.problem?.hasPrefix("Nexus catches no dumps, because nexusd cannot listen on its socket. The socket path ") == true)
+            #expect(list.problem?.hasPrefix("Nexus catches nothing from PHP, because nexusd cannot listen on its socket. The socket path ") == true)
             #expect(list.problem?.contains("is longer than the 103 bytes that macOS permits.") == true)
-            #expect(log.contains("dumps: Nexus catches no dumps, because nexusd cannot listen on its socket."))
+            #expect(log.contains("dumps: Nexus catches nothing from PHP, because nexusd cannot listen on its socket."))
             if case .services = status {} else { Issue.record("nexusd did not answer: \(status)") }
         }
     }
@@ -345,8 +353,8 @@ extension NexusEngineTests {
             #expect(shopList.dumpCount == 3)
             #expect(emptyList.requests.isEmpty)
             #expect(dumps.map(\.text) == ["\"two\"", "\"three\""])
-            #expect(cleared == .done(message: "Nexus removed 3 dumps."))
-            #expect(clearedAgain == .done(message: "The list has no dumps to remove."))
+            #expect(cleared == .done(message: "Nexus removed 1 request."))
+            #expect(clearedAgain == .done(message: "The list has no requests to remove."))
             #expect(leftList.requests.map(\.id) == ["b1"])
         }
     }
@@ -447,6 +455,8 @@ extension NexusEngineTests {
             let arrived = await eventually { await engine.dumpStore.list().first?.dumpCount == 3 }
             let all = await engine.handle(.requestDumps(request: "s1", afterNumber: 0))
             let afterTwo = await engine.handle(.requestDumps(request: "s1", afterNumber: 2))
+            let noQueries = await engine.handle(.requestEntries(request: "s1", afterNumber: 0, kinds: [.query]))
+            let onlyDumps = await engine.handle(.requestEntries(request: "s1", afterNumber: 1, kinds: [.dump]))
 
             #expect(arrived)
             #expect(await engine.dumpStore.list().first?.lastNumber == 3)
@@ -459,6 +469,8 @@ extension NexusEngineTests {
             #expect(dumps.map(\.seq) == [1, 3, 2])
             #expect(dumps.map(\.number) == [1, 2, 3])
             #expect(later.map(\.seq) == [2])
+            #expect(noQueries == .caughtDumps([]))
+            #expect(onlyDumps == .caughtDumps(Array(dumps.dropFirst())))
         }
     }
 
@@ -681,6 +693,60 @@ extension NexusEngineTests {
             #expect(firstList?.dumpList?.blocked.map(\.host) == ["shop.test"])
             #expect(secondList?.dumpList?.blocked.isEmpty == true)
             #expect(again?.dumpList?.blocked.map(\.host) == ["shop.test"])
+        }
+    }
+
+    @Test func aBlockForSaveQueriesNamesItsFileAndStaysUntilANewerRequestSendsAQuery() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (engine, _, blog) = try twoSiteEngine(in: root)
+        let config = "\(RealPath.of(blog))/wp-config.php"
+        let block = DumpBlock(host: "blog.test", reason: .savequeries, file: config, place: DumpPlace(site: "blog.test"))
+
+        try await whileRunning(engine) {
+            await engine.startDumpReceiver()
+            let events = await dumpEvents(of: engine)
+            try await DumpWire.send([DumpWire.blocked("web", host: "blog.test", root: RealPath.of(blog), reason: "savequeries", detail: config)], to: engine)
+            let blocked = await events.next { $0.dumpList?.blocked.isEmpty == false }?.dumpList?.blocked
+
+            try await DumpWire.send([DumpWire.dump("dumped", host: "blog.test", root: RealPath.of(blog), started: DumpWire.started + 5)], to: engine)
+            _ = await events.next { $0.dumpChanges?.changed.first?.id == "dumped" }
+            try await Task.sleep(for: .milliseconds(300))
+            let afterADump = await engine.dumpList(place: nil).blocked
+
+            try await DumpWire.send([DumpWire.queries("queried", host: "blog.test", root: RealPath.of(blog), texts: ["SELECT 1"], started: DumpWire.started + 6)], to: engine)
+            let answered = await events.next { $0.dumpList?.blocked.isEmpty == true }
+
+            #expect(blocked == [block])
+            #expect(afterADump == [block])
+            #expect(answered != nil)
+        }
+    }
+
+    @Test func theQueriesOfARequestReachTheListWithTheirCountsAndMarks() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (engine, shop, _) = try twoSiteEngine(in: root)
+
+        try await whileRunning(engine) {
+            await engine.startDumpReceiver()
+            let events = await dumpEvents(of: engine)
+            try await DumpWire.send([DumpWire.queries("page", host: "shop.test", root: RealPath.of(shop), texts: ["select 1", "select 1", "select 2"])], to: engine)
+            let changed = await events.next { $0.dumpChanges?.changed.first?.id == "page" }?.dumpChanges?.changed.first
+            let response = await engine.handle(.requestDumps(request: "page", afterNumber: 0))
+
+            #expect(changed?.queryCount == 3)
+            #expect(changed?.dumpCount == 0)
+            #expect(changed?.queryMilliseconds == 4.5)
+            #expect(changed?.marks == [.duplicate])
+            #expect(changed?.site == "shop.test")
+
+            guard case .caughtDumps(let entries) = response else {
+                Issue.record("no entries: \(response)")
+                return
+            }
+
+            #expect(entries.map(\.kind) == [.query, .query, .query])
         }
     }
 

@@ -116,7 +116,7 @@ struct MailSettingsTab: View {
             }
         }
         .formStyle(.grouped)
-        .fixedSize(horizontal: false, vertical: true)
+        .settingsTabHeight()
         .onChange(of: notifyNewMail) {
             if notifyNewMail {
                 Task { await model.requestNotificationPermission() }

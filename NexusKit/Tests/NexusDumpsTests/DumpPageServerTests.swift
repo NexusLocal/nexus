@@ -118,7 +118,7 @@ struct DumpPageServerTests {
         #expect(html.contains(#"<script nonce="n0nce">"#))
         #expect(html.contains(#"<style nonce="n0nce">"#))
         #expect(html.contains("<title>Nexus &lt;Dumps&gt;</title>"))
-        #expect(html.contains("Nexus keeps the newest \(DumpStore.dumpLimit) dumps."))
+        #expect(html.contains("Nexus keeps the newest 500 requests."))
         #expect(html.hasSuffix("</script>\n</body>\n</html>\n"))
         #expect(!html.contains("{{"))
         #expect(!html.contains("innerHTML"))

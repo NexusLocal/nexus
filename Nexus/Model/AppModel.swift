@@ -263,6 +263,7 @@ final class AppModel {
     // shows. The updates of the last check stay as they were, also while they install.
     var showsPackageCheck = false
     var checkedUpdates: [PackageItem] = []
+    var restartingServices: Set<String> = []
     @ObservationIgnored var lastPackageCheck: Date?
     // The packages that wait for the start of their download. The imports that run, by
     // instance and name. The import sheet shows the end of the import that it started.
@@ -308,9 +309,18 @@ final class AppModel {
     var visibleDumpRequests: [DumpedRequest] = []
     var visibleDumpCount = 0
     var dumpPlaceChoices: [DumpPlaceChoice] = []
+    // The requests by id, and the jobs of the workers by their uuid with the newest try. The links
+    // between a job row, its job and the request that queued it read these.
+    var dumpRequestsByID: [String: DumpedRequest] = [:]
+    var dumpJobsByUUID: [String: DumpedRequest] = [:]
     var openDumpRequestID: String?
     var openDumpRequest: DumpedRequest?
-    var openDumps: [ShownDump] = []
+    // The views read openEntries. setOpenDumps changes both.
+    @ObservationIgnored var openDumps: [ShownDump] = []
+    var openEntries = OpenEntries()
+    // The tab that the user chose last. A request without that kind shows its first tab, and the
+    // next request with that kind shows it again.
+    var chosenDumpTab = DumpEntryTab.dumps
     var openDumpsProblem: String?
     var loadingDumps = false
     @ObservationIgnored var requestedLastNumber: Int?
@@ -359,6 +369,8 @@ final class AppModel {
         model.visibleDumpRequests = []
         model.visibleDumpCount = 0
         model.dumpPlaceChoices = []
+        model.dumpRequestsByID = [:]
+        model.dumpJobsByUUID = [:]
         model.agents = AgentsModel(setup: .standard)
         model.findApps()
 
@@ -640,8 +652,13 @@ final class AppModel {
         }
     }
 
-    func restart(_ service: ServiceVersion) {
-        send(.restart(service: service.id), failure: "\(service.name) did not restart", place: .window)
+    // True when the service runs again. A failure shows its alert. The service screen shows
+    // "Restarting…" until the restart ends, also after the user left the screen and came back.
+    func restart(_ service: ServiceVersion) async -> Bool {
+        restartingServices.insert(service.id)
+        defer { restartingServices.remove(service.id) }
+
+        return await perform(.restart(service: service.id), failure: "\(service.name) did not restart", place: .window) != nil
     }
 
     func stopAllServices() {
@@ -681,7 +698,7 @@ final class AppModel {
         }
 
         services[index].health = running ? .running : .stopped
-        services[index].since = running ? Date.now.formatted(date: .omitted, time: .shortened) : nil
+        services[index].since = running ? Date.now.clockTime : nil
         services[index].problem = nil
     }
 

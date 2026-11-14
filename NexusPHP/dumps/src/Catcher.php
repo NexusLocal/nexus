@@ -9,8 +9,9 @@ use Nexus\Dumps\VarDumper\Cloner\Data;
 use Nexus\Dumps\VarDumper\Dumper\HtmlDumper;
 
 /*
- * Sends each dump of this request or command to nexusd and decides if the dump also shows in the
- * page. One instance lives for the whole process.
+ * Sends each dump, query, log line and job row of this request or command to nexusd and decides if
+ * a dump also shows in the page. One instance lives for the whole process. A job of a worker is a
+ * request of its own for the time of the job.
  */
 final class Catcher
 {
@@ -29,13 +30,12 @@ final class Catcher
 
     private const FATAL_ERRORS = [\E_ERROR, \E_PARSE, \E_CORE_ERROR, \E_COMPILE_ERROR, \E_USER_ERROR, \E_RECOVERABLE_ERROR];
 
-    private const TEST_CASE = 'PHPUnit\Framework\TestCase';
-
     private static ?self $instance = null;
 
-    private int $seq = 0;
+    private ?Batch $batch = null;
 
-    private ?array $request = null;
+    /** @var list<Batch> The requests that a job interrupted, the newest last. */
+    private array $outer = [];
 
     private ?Transport $transport = null;
 
@@ -46,6 +46,10 @@ final class Catcher
     private bool $ddCalled = false;
 
     private bool $blockedChecked = false;
+
+    // An error that Nexus silences with @ replaces the last error of PHP. So Nexus keeps the fatal
+    // error of the request before it works at the shutdown.
+    private bool $fatal = false;
 
     /** @var array{send: bool, isDd: bool, source: array{file: ?string, line: ?int}, shows: bool}|null */
     private ?array $call = null;
@@ -99,20 +103,213 @@ final class Catcher
         exit(1);
     }
 
-    public function finish(): void
+    // One query, log line or job row. A missing or paused nexusd and a query after the first 500
+    // cost no text and no tree. So the fields come from a closure that runs only when the entry
+    // goes out. The source comes from a trace unless the fields hold a file.
+    /** @param \Closure(): array<string, mixed> $fields */
+    public function entry(string $kind, \Closure $fields): void
     {
-        $fatal = self::isFatal(\error_get_last());
+        $time = \microtime(true);
+
+        if (!$this->accepts()) {
+            return;
+        }
+
+        if ($kind === 'query' && !$this->batch()->takesQuery()) {
+            return;
+        }
+
+        $entry = $fields();
+        $source = \array_key_exists('file', $entry) ? $entry : Source::here();
+        [$text, $truncated] = Renderer::cut((string) ($entry['text'] ?? ''));
+
+        $this->add([
+            'time' => $entry['time'] ?? $time,
+            'kind' => $kind,
+            'file' => $source['file'] ?? null,
+            'line' => $source['line'] ?? null,
+            'label' => $entry['label'] ?? null,
+            'text' => $text,
+            'tree' => $entry['tree'] ?? null,
+            'pattern' => \is_string($entry['pattern'] ?? null) ? Renderer::cut($entry['pattern'])[0] : null,
+            'ms' => $entry['ms'] ?? null,
+            'detail' => $entry['detail'] ?? null,
+            'ref' => $entry['ref'] ?? null,
+            'truncated' => $truncated,
+        ]);
+    }
+
+    // The context of a log line gets the same tree as a dump.
+    public function tree(mixed $value): ?string
+    {
+        return $this->renderer()->tree($value);
+    }
+
+    // The entries of the request before the job go out first. So a worker keeps nothing of its
+    // own in memory during a job.
+    /** @param ?\Closure(): ?string $settle */
+    public function startJob(array $job, mixed $handle, ?\Closure $settle = null): void
+    {
+        if (isTestRun($_SERVER)) {
+            return;
+        }
+
+        $this->startSending();
+        $this->flush();
+
+        $outer = $this->batch();
+        $this->outer[] = $outer;
+        $this->batch = new Batch(Request::forJob($outer->request, $job), $handle, $settle);
+    }
+
+    public function runsJob(): bool
+    {
+        return $this->outer !== [];
+    }
+
+    // Each system ends its own job. The handle tells which job an event is about.
+    public function endJob(mixed $handle, string $outcome): void
+    {
+        if ($this->job()?->handle !== $handle) {
+            return;
+        }
+
+        $this->closeJob($outcome);
+    }
+
+    // An event can know the outcome of a job before the job ends.
+    public function noteOutcome(mixed $handle, string $outcome): void
+    {
+        $job = $this->job();
+
+        if ($job?->handle === $handle) {
+            $job->outcome ??= $outcome;
+        }
+    }
+
+    // A job that did not reach its own end. An outcome that an event gave comes first. Then the
+    // state of the job decides. Without both the job failed.
+    public function endOpenJob(): void
+    {
+        $job = $this->job();
+
+        if ($job === null) {
+            return;
+        }
+
+        $settled = $job->settle === null ? null : ($job->settle)();
+
+        $this->closeJob($job->outcome ?? $settled ?? 'failed');
+    }
+
+    // The app explains why it shows no dumps or no queries of the site. A stamp file keeps the
+    // note to one in 60 s for each host and reason.
+    public function block(string $reason, ?string $detail): void
+    {
+        if (isTestRun($_SERVER)) {
+            return;
+        }
 
         try {
+            $stamp = $reason === 'var_dumper_format'
+                ? "blocked-{$this->blockKey()}"
+                : "blocked-{$reason}-{$this->blockKey()}";
+
+            if ($this->transport()->touchedWithin($stamp, self::BLOCKED_SECONDS)) {
+                return;
+            }
+
+            $this->transport()->touch($stamp);
+            $this->send('blocked', ['reason' => $reason, 'detail' => $detail]);
+        } catch (\Throwable) {
+            // The note in the app is a help. It must never break the page or the command.
+        }
+    }
+
+    public function noteFatal(): void
+    {
+        $this->fatal = true;
+    }
+
+    public function finish(): void
+    {
+        $fatal = $this->fatal || self::isFatal(\error_get_last());
+
+        try {
+            $this->endOpenJobs();
+            $this->flush();
+
+            if (!$this->batch()->wasSent()) {
+                return;
+            }
+
             $this->send('end', [
                 'status' => self::status($fatal),
                 'exit' => isCli() ? $this->exitCode($fatal) : null,
-                'duration' => \round(\max(0.0, \microtime(true) - $this->request()['started']), 6),
-            ]);
+                'duration' => self::since($this->request()['started']),
+            ] + $this->batch()->dropped());
         } catch (\Throwable) {
             // PHP prints an error of a shutdown function at the end of the page. A lost end event
             // is the smaller problem.
         }
+    }
+
+    // A job that is still open at the end of the process did not end in a normal way.
+    private function endOpenJobs(): void
+    {
+        while ($this->outer !== []) {
+            $this->endOpenJob();
+        }
+    }
+
+    private function accepts(): bool
+    {
+        if (isTestRun($_SERVER)) {
+            return false;
+        }
+
+        try {
+            return $this->transport()->connect();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function add(array $entry): void
+    {
+        $this->startSending();
+
+        $batch = $this->batch();
+        $batch->add($entry);
+
+        if ($batch->isDue(\microtime(true))) {
+            $this->flush();
+        }
+    }
+
+    private function job(): ?Batch
+    {
+        return $this->outer === [] ? null : $this->batch;
+    }
+
+    // A worker sends and forgets each job at its end. So its memory stays the same.
+    private function closeJob(string $outcome): void
+    {
+        $job = $this->batch();
+        $this->flush();
+        $this->send('end', [
+            'status' => null,
+            'exit' => null,
+            'duration' => self::since($job->request['started']),
+            'outcome' => $outcome,
+        ] + $job->dropped());
+
+        $this->batch = \array_pop($this->outer);
+    }
+
+    private static function since(mixed $started): float
+    {
+        return \round(\max(0.0, \microtime(true) - (float) $started), 6);
     }
 
     // dd() of Symfony sets this status.
@@ -166,21 +363,11 @@ final class Catcher
         $isDd = Source::isDd($trace);
 
         return [
-            'send' => !self::isTestRun(),
+            'send' => !isTestRun($_SERVER),
             'isDd' => $isDd,
             'source' => Source::find($trace),
             'shows' => PageMode::showsInPage((string) ($this->settings['page'] ?? PageMode::AUTOMATIC), $_SERVER, $isDd, isCli()),
         ];
-    }
-
-    // A test run prints its dumps as without Nexus and sends nothing.
-    private static function isTestRun(): bool
-    {
-        if (\class_exists(self::TEST_CASE, false)) {
-            return true;
-        }
-
-        return ($_SERVER['APP_ENV'] ?? $_ENV['APP_ENV'] ?? \getenv('APP_ENV')) === 'testing';
     }
 
     // The handler of the site prints the dump. So Laravel keeps its source link and Symfony keeps
@@ -295,7 +482,7 @@ final class Catcher
             $rendered = $this->renderer()->render($var);
 
             $this->send('dump', ['dump' => [
-                'seq' => ++$this->seq,
+                'seq' => $this->batch()->nextSeq(),
                 'time' => $time,
                 'kind' => $call['isDd'] ? 'dd' : 'dump',
                 'file' => $call['source']['file'],
@@ -342,35 +529,112 @@ final class Catcher
             return;
         }
 
+        $this->batch()->markSent();
         $this->transport()->send($line);
     }
 
-    // The line of the event, without the tree and then with a shorter text when it is too long.
-    // Null when the line cannot fit.
+    // The waiting entries of the request that runs now go out in as few lines as fit.
+    private function flush(): void
+    {
+        $batch = $this->batch;
+
+        if ($batch === null) {
+            return;
+        }
+
+        $entries = $batch->take(\microtime(true));
+
+        if ($entries === []) {
+            return;
+        }
+
+        // A request with entries gets its end event, also when an entry could not fit in a line.
+        $batch->markSent();
+
+        foreach (self::entryLines($batch->request, $entries) as $line) {
+            $this->transport()->send($line);
+        }
+    }
+
+    // Each entry is encoded once. The lines are joined from the parts. An entry that cannot fit
+    // in a line alone goes without its tree and then with a shorter text, as a dump does.
+    /**
+     * @param list<array<string, mixed>> $entries
+     * @return list<string>
+     */
+    private static function entryLines(array $request, array $entries): array
+    {
+        $requestJson = self::encode($request);
+
+        if ($requestJson === null) {
+            return [];
+        }
+
+        $head = '{"v":'.self::WIRE_VERSION.',"type":"entries","request":'.$requestJson.',"entries":[';
+        $room = self::MAX_LINE_BYTES - \strlen($head) - 2;
+        $lines = [];
+        $parts = [];
+        $length = 0;
+
+        foreach ($entries as $entry) {
+            $json = self::fitted($entry, $room, self::encode(...));
+
+            if ($json === null) {
+                continue;
+            }
+
+            if ($parts !== [] && $length + 1 + \strlen($json) > $room) {
+                $lines[] = $head.\implode(',', $parts).']}';
+                $parts = [];
+                $length = 0;
+            }
+
+            $length += ($parts === [] ? 0 : 1) + \strlen($json);
+            $parts[] = $json;
+        }
+
+        if ($parts !== []) {
+            $lines[] = $head.\implode(',', $parts).']}';
+        }
+
+        return $lines;
+    }
+
+    // The line of the event. Only a dump has a tree and a text that can go or get shorter.
     private static function fittedLine(array $event): ?string
     {
-        $line = self::encode($event);
-
-        if (!self::isTooLong($line)) {
-            return $line;
+        if (isset($event['dump'])) {
+            return self::fitted($event['dump'], self::MAX_LINE_BYTES, static fn (array $dump): ?string => self::encode(\array_replace($event, ['dump' => $dump])));
         }
 
-        if (!isset($event['dump'])) {
-            return null;
-        }
-
-        $event['dump']['tree'] = null;
         $line = self::encode($event);
 
-        if (!self::isTooLong($line)) {
-            return $line;
+        return $line !== null && \strlen($line) > self::MAX_LINE_BYTES ? null : $line;
+    }
+
+    // The JSON that $encode makes from the fields. When it is longer than $room the fields go
+    // without their tree and then with a shorter text. Null when they still cannot fit.
+    /** @param \Closure(array): ?string $encode */
+    private static function fitted(array $fields, int $room, \Closure $encode): ?string
+    {
+        $json = $encode($fields);
+
+        if ($json === null || \strlen($json) <= $room) {
+            return $json;
         }
 
-        $event['dump']['text'] = self::shorterText((string) $event['dump']['text'], \strlen((string) $line) - self::MAX_LINE_BYTES);
-        $event['dump']['truncated'] = true;
-        $line = self::encode($event);
+        $fields['tree'] = null;
+        $json = $encode($fields);
 
-        return self::isTooLong($line) ? null : $line;
+        if ($json === null || \strlen($json) <= $room) {
+            return $json;
+        }
+
+        $fields['text'] = self::shorterText((string) ($fields['text'] ?? ''), \strlen($json) - $room);
+        $fields['truncated'] = true;
+        $json = $encode($fields);
+
+        return $json !== null && \strlen($json) <= $room ? $json : null;
     }
 
     private static function encode(array $event): ?string
@@ -378,15 +642,6 @@ final class Catcher
         $line = \json_encode($event, self::JSON_FLAGS);
 
         return $line === false ? null : $line;
-    }
-
-    private static function isTooLong(?string $line): bool
-    {
-        if ($line === null) {
-            return false;
-        }
-
-        return \strlen($line) > self::MAX_LINE_BYTES;
     }
 
     // Each byte that goes from the text takes at least one byte from the line. The text ends with
@@ -410,8 +665,16 @@ final class Catcher
         }
 
         $this->sending = true;
-        \register_shutdown_function($this->finish(...));
+        \register_shutdown_function($this->finishLast(...));
         Laravel::listenForExitCode();
+    }
+
+    // Other shutdown functions can still log, for example the handler of Laravel for a fatal
+    // error. So the end goes to the end of the queue when the shutdown starts.
+    private function finishLast(): void
+    {
+        $this->fatal = $this->fatal || self::isFatal(\error_get_last());
+        \register_shutdown_function($this->finish(...));
     }
 
     // The app explains why it shows no dumps of the site.
@@ -422,19 +685,7 @@ final class Catcher
         }
 
         $this->blockedChecked = true;
-
-        try {
-            $stamp = "blocked-{$this->blockKey()}";
-
-            if ($this->transport()->touchedWithin($stamp, self::BLOCKED_SECONDS)) {
-                return;
-            }
-
-            $this->transport()->touch($stamp);
-            $this->send('blocked', ['reason' => 'var_dumper_format', 'detail' => SiteVarDumper::format()]);
-        } catch (\Throwable) {
-            // The note in the app is a help. It must never break the page or the command.
-        }
+        $this->block('var_dumper_format', SiteVarDumper::format());
     }
 
     // One stamp for each host. So one site with the key does not hide the note of another site.
@@ -480,7 +731,12 @@ final class Catcher
 
     private function request(): array
     {
-        return $this->request ??= Request::describe($_SERVER, isCli());
+        return $this->batch()->request;
+    }
+
+    private function batch(): Batch
+    {
+        return $this->batch ??= new Batch(Request::describe($_SERVER, isCli()));
     }
 
     private function transport(): Transport

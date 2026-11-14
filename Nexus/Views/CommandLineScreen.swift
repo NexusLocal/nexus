@@ -81,13 +81,9 @@ struct CommandLineScreen: View {
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer()
-                            Button {
-                                copyToPasteboard(command.command)
-                            } label: {
-                                Image(systemName: "doc.on.doc")
+                            CopyButton(help: "Copy") {
+                                command.command
                             }
-                            .buttonStyle(.borderless)
-                            .help("Copy")
                         }
                     }
                 }

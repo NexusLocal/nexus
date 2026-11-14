@@ -38,14 +38,16 @@ extension NexusEngine {
         let kind: DumpedRequest.Kind
     }
 
+    // file is the wp-config.php of a block for SAVEQUERIES. The other blocked events name no file.
     struct EventDumpBlock {
         let place: DumpPlace
         let started: Date
         let arrived: ContinuousClock.Instant
+        var file: String? = nil
 
-        // A later request of the same place and kind that sends a dump shows that PHP catches
-        // these dumps again.
-        func isAnswered(by header: DumpedRequest, kind: DumpedRequest.Kind) -> Bool {
+        // A later request of the same place and kind that sends an entry of a kind that the block
+        // stops shows that PHP catches that kind again.
+        func isAnswered(by header: DumpedRequest, kind: DumpedRequest.Kind, reason: DumpBlock.Reason) -> Bool {
             guard header.place == place else {
                 return false
             }
@@ -54,7 +56,11 @@ extension NexusEngine {
                 return false
             }
 
-            return header.started > started
+            guard header.started > started else {
+                return false
+            }
+
+            return header.entryCount(of: reason.stoppedKinds) > 0
         }
     }
 
@@ -78,8 +84,10 @@ extension NexusEngine {
         let receiver = DumpReceiver(socket: paths.dumpSocket, folder: paths.dumpFolder) { [weak self] event in
             store.add(event)
 
-            if case .blocked(let request, let reason, _) = event {
-                Task { await self?.dumpBlocked(request.header, reason: reason) }
+            // The detail of a block for SAVEQUERIES is the wp-config.php that sets it.
+            if case .blocked(let request, let reason, let detail) = event {
+                let file = reason == .savequeries ? detail : nil
+                Task { await self?.dumpBlocked(request.header, reason: reason, file: file) }
                 return
             }
 
@@ -93,7 +101,7 @@ extension NexusEngine {
             dumpReceiver = receiver
             dumpReceiverProblem = nil
         } catch {
-            let problem = "Nexus catches no dumps, because nexusd cannot listen on its socket. \(ErrorText.plain(error))"
+            let problem = "Nexus catches nothing from PHP, because nexusd cannot listen on its socket. \(ErrorText.plain(error))"
             dumpReceiverProblem = problem
             activity?.write("dumps", problem)
         }
@@ -113,13 +121,13 @@ extension NexusEngine {
     }
 
     // The list shows each block with the host of a site. So a block outside every site goes.
-    func dumpBlocked(_ request: DumpedRequest, reason: DumpBlock.Reason) async {
+    func dumpBlocked(_ request: DumpedRequest, reason: DumpBlock.Reason, file: String? = nil) async {
         guard let entry = siteMap.current.entry(of: request) else {
             return
         }
 
         let key = EventDumpBlockKey(block: DumpBlockKey(host: entry.host, reason: reason), kind: request.kind)
-        dumpEventBlocks[key] = EventDumpBlock(place: entry.place, started: request.started, arrived: .now)
+        dumpEventBlocks[key] = EventDumpBlock(place: entry.place, started: request.started, arrived: .now, file: file)
 
         let first = dumpEventBlocks.count > Self.dumpEventBlockLimit ? dumpEventBlocks.min { $0.value.arrived < $1.value.arrived }?.key : nil
 
@@ -138,13 +146,13 @@ extension NexusEngine {
             .filter { files in place.includes(files.entry.place) }
             .flatMap(Self.dumpBlocks(of:))
         let named = Set(fileBlocks.map { block in DumpBlockKey(host: block.host, reason: block.reason) })
-        var eventPlaces: [DumpBlockKey: DumpPlace] = [:]
+        var eventBlocksByKey: [DumpBlockKey: EventDumpBlock] = [:]
 
         for (key, blocked) in dumpEventBlocks where place.includes(blocked.place) && !named.contains(key.block) {
-            eventPlaces[key.block] = blocked.place
+            eventBlocksByKey[key.block] = blocked
         }
 
-        let eventBlocks = eventPlaces.map { key, blockedPlace in DumpBlock(host: key.host, reason: key.reason, place: blockedPlace) }
+        let eventBlocks = eventBlocksByKey.map { key, blocked in DumpBlock(host: key.host, reason: key.reason, file: blocked.file, place: blocked.place) }
 
         return (fileBlocks + eventBlocks).sorted { ($0.host, $0.reason.rawValue) < ($1.host, $1.reason.rawValue) }
     }
@@ -171,15 +179,15 @@ extension NexusEngine {
         let count = dumpEventBlocks.count
 
         dumpEventBlocks = dumpEventBlocks.filter { key, blocked in
-            !changed.contains { header in blocked.isAnswered(by: header, kind: key.kind) }
+            !changed.contains { header in blocked.isAnswered(by: header, kind: key.kind, reason: key.block.reason) }
         }
 
         return dumpEventBlocks.count != count
     }
 
-    // The problems show only while "Catch dumps" is on. Without it PHP sends nothing.
+    // The problems show only while one of the four switches is on. Without them PHP sends nothing.
     private func dumpProblem(_ settings: DumpSettings) -> String? {
-        guard settings.catchDumps else {
+        guard settings.catchesAnything else {
             return nil
         }
 
@@ -217,28 +225,42 @@ extension NexusEngine {
             return .failure(message: DumpList.notLoadedText)
         }
 
+        // A job of a worker can be in the list without entries. So the message counts requests.
+        let requests = dumpStore.list(place: place).count
         let removed = dumpStore.clear(place: place)
         dumpsChanged()
 
-        guard removed > 0 else {
-            return .done(message: "The list has no dumps to remove.")
+        guard requests > 0 || removed > 0 else {
+            return .done(message: "The list has no requests to remove.")
         }
 
-        return .done(message: "Nexus removed \(Count.text(removed, "dump")).")
+        return .done(message: "Nexus removed \(Count.text(requests, "request")).")
     }
 
-    // Another window or the limits of the store can have removed the dump already.
+    // Another window or the limits of the store can have removed the entry already. The message
+    // names the kind of the entry: a dump, a query, a log line or a job.
     func removeCaughtDump(number: Int) -> NexusResponse {
         guard dumpStore.isLoaded else {
             return .failure(message: DumpList.notLoadedText)
         }
 
-        guard dumpStore.remove(dump: number) else {
-            return .failure(message: "Nexus has no such dump anymore.")
+        let kind = dumpStore.dump(number: number)?.kind
+
+        guard let kind, dumpStore.remove(dump: number) else {
+            return .failure(message: "Nexus has no such entry anymore.")
         }
 
         dumpsChanged()
-        return .done(message: "Nexus removed the dump.")
+        return .done(message: "Nexus removed the \(Self.entryName(kind)).")
+    }
+
+    static func entryName(_ kind: CaughtDump.Kind) -> String {
+        switch kind {
+        case .dump, .dd: "dump"
+        case .query: "query"
+        case .log: "log line"
+        case .job: "job"
+        }
     }
 
     func removeDumpedRequest(id: String) -> NexusResponse {
@@ -246,12 +268,12 @@ extension NexusEngine {
             return .failure(message: DumpList.notLoadedText)
         }
 
-        guard let removed = dumpStore.remove(request: id) else {
+        guard dumpStore.remove(request: id) else {
             return .failure(message: "Nexus has no such request anymore.")
         }
 
         dumpsChanged()
-        return .done(message: "Nexus removed the request with \(Count.text(removed, "dump")).")
+        return .done(message: "Nexus removed the request.")
     }
 
     // The changes that did not go out yet go out later. The app replaces the requests that it has

@@ -32,7 +32,7 @@ extension NexusRequest {
         case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules,
              .customSettings, .databases, .databaseSizes, .sourceDatabases, .workspaceEnv, .siteDatabases, .databaseConnections, .serverDatabases, .wordPressSite, .backgroundPreset,
              .workspaceSettings, .dumps, .probe, .tool, .inspectBackup, .inspectDump, .serviceList, .tasks, .mailStatus, .siteMail, .dumpList,
-             .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps:
+             .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps, .requestEntries:
             true
         case .fromAgent(_, let request):
             request.onlyReads

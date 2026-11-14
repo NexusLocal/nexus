@@ -6,10 +6,14 @@ import Testing
 
 private actor FakeNexus: NexusConnecting {
     let running: Bool
+    let caught: [DumpedRequest]
+    let entries: [CaughtDump]
     var requests: [NexusRequest] = []
 
-    init(running: Bool = true) {
+    init(running: Bool = true, caught: [DumpedRequest] = [], entries: [CaughtDump] = []) {
         self.running = running
+        self.caught = caught
+        self.entries = entries
     }
 
     func send(_ request: NexusRequest) async throws -> NexusResponse {
@@ -28,6 +32,12 @@ private actor FakeNexus: NexusConnecting {
             return .siteMail(SiteMail(sendsToNexus: true))
         case .mailStatus:
             return .mailStatus(MailStatus(installed: true, running: true, receiving: true, smtpPort: 1025, inboxPort: 8025, waiting: 0, waitingBytes: 0, removed: 0, refused: 0, outboxFolder: "/tmp", settings: MailSettings()))
+        case .dumpPlace(let host):
+            return .dumpPlace(place: DumpPlace(site: host), host: host)
+        case .dumpList(let place):
+            return .dumpList(DumpList(requests: caught.filter { place.includes($0.place) }, settings: DumpSettings(), receiving: true))
+        case .requestDumps(let id, _):
+            return .caughtDumps(entries.filter { $0.requestID == id })
         default:
             return .done(message: "Done.")
         }
@@ -39,7 +49,7 @@ struct NexusToolboxTests {
         NexusToolbox(connection: nexus, paths: NexusPaths(root: URL(filePath: "/tmp/nexus-tests-none")), folder: folder, loadSettings: { AgentSettings(level: level) })
     }
 
-    @Test(arguments: [(AgentLevel.read, 10), (.change, 16), (.remove, 20)])
+    @Test(arguments: [(AgentLevel.read, 11), (.change, 17), (.remove, 21)])
     func eachLevelListsItsTools(level: AgentLevel, count: Int) async {
         let tools = await toolbox(FakeNexus(), level: level).tools(agent: nil)
 
@@ -52,6 +62,103 @@ struct NexusToolboxTests {
             #expect(!tool.summary.isEmpty, "\(tool.name) has no summary")
             #expect(tool.summary.count <= 90, "The summary of \(tool.name) needs more than one line")
         }
+    }
+
+    private static let started = Date(timeIntervalSince1970: 1_762_850_000)
+
+    private static func caught(_ id: String, site: String = "shop.test", queries: Int = 0, dumps: Int = 1) -> DumpedRequest {
+        DumpedRequest(id: id, kind: .http, method: "GET", target: "/\(id)", url: "https://\(site)/\(id)", host: site, site: site, started: started, status: 200, dumpCount: dumps, queryCount: queries, queryMilliseconds: Double(queries))
+    }
+
+    private static func products(of request: String) -> [CaughtDump] {
+        (1...5).map { seq in CaughtDump(requestID: request, seq: seq, time: started, kind: .query, file: "/w/shop/app/Models/CartItem.php", line: 24, text: "select * from `products` where `id` = \(seq)", milliseconds: 1, pattern: "select * from `products` where `id` = ?") }
+    }
+
+    private static func dump(of request: String, text: String = "\"EUR\"") -> CaughtDump {
+        CaughtDump(requestID: request, seq: 9, time: started, file: "/w/shop/app/Http/Controllers/CheckoutController.php", line: 42, text: text)
+    }
+
+    @Test func readDumpsGivesTheNewestRequestsOfTheSiteOldestFirstWithTheirIDsAndTags() async throws {
+        let nexus = FakeNexus(caught: [Self.caught("new", queries: 5, dumps: 0), Self.caught("blog", site: "blog.test"), Self.caught("old")], entries: Self.products(of: "new") + [Self.dump(of: "old"), Self.dump(of: "blog")])
+
+        let result = await toolbox(nexus, level: .read, folder: "/w/shop/public").call("read_dumps", arguments: [:], agent: "claude-code")
+        let old = try #require(result.text.range(of: "request old · 1 dump"))
+        let new = try #require(result.text.range(of: "request new · 5 queries in 5 ms"))
+
+        #expect(!result.isError)
+        #expect(result.structured == nil)
+        #expect(old.lowerBound < new.lowerBound)
+        #expect(result.text.contains("  query  1 ms  N+1 · 5×  select * from `products` where `id` = 1  at /w/shop/app/Models/CartItem.php:24"))
+        #expect(result.text.contains("    This line runs the same query 5 times with other values. One query for all values is faster. In Laravel, load the relation with with()."))
+        #expect(result.text.contains("  dump at /w/shop/app/Http/Controllers/CheckoutController.php:42"))
+        #expect(!result.text.contains("blog"))
+        #expect(await nexus.requests.contains(.fromAgent(agent: "Claude Code", request: .dumpList(place: DumpPlace(site: "shop.test")))))
+        #expect(await nexus.requests.contains(.fromAgent(agent: "Claude Code", request: .requestDumps(request: "new", afterNumber: 0))))
+    }
+
+    @Test func readDumpsWithALimitReadsOnlyTheNewestRequests() async {
+        let nexus = FakeNexus(caught: [Self.caught("new"), Self.caught("old")], entries: [Self.dump(of: "new"), Self.dump(of: "old")])
+
+        let result = await toolbox(nexus, level: .read).call("read_dumps", arguments: ["limit": 1], agent: nil)
+
+        #expect(result.text.contains("request new"))
+        #expect(!result.text.contains("request old"))
+    }
+
+    @Test func readDumpsWithARequestReadsThatRequestOfAnyPlace() async {
+        let nexus = FakeNexus(caught: [Self.caught("blog", site: "blog.test"), Self.caught("shop")], entries: [Self.dump(of: "blog"), Self.dump(of: "shop")])
+
+        let result = await toolbox(nexus, level: .read).call("read_dumps", arguments: ["request": "blog"], agent: nil)
+        let missing = await toolbox(nexus, level: .read).call("read_dumps", arguments: ["request": "gone"], agent: nil)
+
+        #expect(result.text.contains("request blog · 1 dump"))
+        #expect(!result.text.contains("request shop"))
+        #expect(await nexus.requests.contains(.fromAgent(agent: "an MCP client", request: .dumpList(place: nil))))
+        #expect(missing.isError)
+        #expect(missing.text.hasPrefix("Nexus has no request gone."))
+    }
+
+    @Test func readDumpsOutsideTheSitesReadsAllPlacesAndSaysWhenThereAreNone() async {
+        let nexus = FakeNexus()
+
+        let result = await toolbox(nexus, level: .read, folder: "/w/other").call("read_dumps", arguments: [:], agent: nil)
+        let site = await toolbox(nexus, level: .read, folder: "/w/other").call("read_dumps", arguments: ["site": "shop.test"], agent: nil)
+
+        #expect(result.text == "Nexus has no requests.")
+        #expect(site.text == "Nexus has no requests of shop.test.")
+        #expect(await nexus.requests.contains(.fromAgent(agent: "an MCP client", request: .dumpList(place: nil))))
+    }
+
+    @Test func readDumpsLeavesOutTheOldestRequestsWhenTheTextIsTooLong() async {
+        let long = String(repeating: "x", count: NexusToolbox.dumpTextLimit + 10)
+        let nexus = FakeNexus(caught: [Self.caught("new"), Self.caught("old")], entries: [Self.dump(of: "new", text: long), Self.dump(of: "old")])
+
+        let result = await toolbox(nexus, level: .read).call("read_dumps", arguments: [:], agent: nil)
+
+        #expect(result.text.hasPrefix("The text leaves out the oldest request, because it is too long. Give a lower limit or a request."))
+        #expect(result.text.hasSuffix("[The text of this request stops here, because it is too long.]"))
+        #expect(!result.text.contains("request old"))
+    }
+
+    @Test func readDumpsReadsAGroupAtATimeAndStopsWhenTheTextIsNearTheLimit() async throws {
+        let ids = (1...12).map { number in "r\(number)" }
+        let long = String(repeating: "x", count: NexusToolbox.dumpTextLimit / 3)
+        let nexus = FakeNexus(caught: ids.map { id in Self.caught(id) }, entries: ids.map { id in Self.dump(of: id, text: long) })
+
+        let result = await toolbox(nexus, level: .read).call("read_dumps", arguments: [:], agent: nil)
+        let reads = await nexus.requests.filter { request in
+            if case .requestDumps = request.inner {
+                return true
+            }
+
+            return false
+        }
+        let second = try #require(result.text.range(of: "request r2 "))
+        let newest = try #require(result.text.range(of: "request r1 "))
+
+        #expect(reads.count == NexusToolbox.dumpReadsAtOnce)
+        #expect(result.text.hasPrefix("The text leaves out the 10 oldest requests, because it is too long."))
+        #expect(second.lowerBound < newest.lowerBound)
     }
 
     @Test func aToolAboveTheLevelGetsTheRefusal() async {

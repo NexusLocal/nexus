@@ -10,10 +10,15 @@ namespace Nexus\Dumps;
  */
 final class Request
 {
+    // Each line carries the request object. A very long command or URL would leave no room for the
+    // entries in a line of 1 MB. So the object keeps the start of it with a marker.
+    public const TEXT_BYTES = 4096;
+    public const CUT_MARKER = ' [...]';
+
     public static function describe(array $server, bool $cli): array
     {
         $common = [
-            'id' => \bin2hex(\random_bytes(6)),
+            'id' => self::newId(),
             'root' => self::root($server, $cli),
             'started' => (float) ($server['REQUEST_TIME_FLOAT'] ?? \microtime(true)),
             'pid' => \getmypid() ?: null,
@@ -22,7 +27,7 @@ final class Request
         if ($cli) {
             return [
                 'kind' => 'command',
-                'command' => self::command($server),
+                'command' => self::shortened(self::command($server)),
                 'cwd' => \getcwd() ?: null,
             ] + $common;
         }
@@ -32,9 +37,35 @@ final class Request
         return [
             'kind' => 'http',
             'method' => (string) ($server['REQUEST_METHOD'] ?? 'GET'),
-            'url' => self::scheme($server)."://{$hostHeader}".($server['REQUEST_URI'] ?? '/'),
+            'url' => self::shortened(self::scheme($server)."://{$hostHeader}".($server['REQUEST_URI'] ?? '/')),
             'host' => \strtolower(\preg_replace('/:\d+$/', '', $hostHeader) ?? $hostHeader),
         ] + $common;
+    }
+
+    private static function shortened(string $text): string
+    {
+        if (\strlen($text) <= self::TEXT_BYTES) {
+            return $text;
+        }
+
+        return \mb_strcut($text, 0, self::TEXT_BYTES, 'UTF-8').self::CUT_MARKER;
+    }
+
+    // A job of a worker is a request of its own. It keeps the command or the URL, the folders and
+    // the pid of the request that runs it. So nexusd finds the same site.
+    public static function forJob(array $parent, array $job): array
+    {
+        return [
+            'id' => self::newId(),
+            'kind' => 'job',
+            'started' => \microtime(true),
+            'job' => \array_filter($job, static fn (mixed $value): bool => $value !== null),
+        ] + $parent;
+    }
+
+    private static function newId(): string
+    {
+        return \bin2hex(\random_bytes(6));
     }
 
     // nexusd finds the site or the workspace from the host first and then from this folder.

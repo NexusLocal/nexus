@@ -94,28 +94,32 @@ struct DumpTextTests {
         #expect(CaughtDumpLine(request: request, dump: dump).dump.number == 0)
     }
 
+    // The texts of a block are DumpBlock.title and DumpBlock.message. A block of a kind that is
+    // switched off does not show.
     @Test func theNotesShowCatchDumpsTheProblemAndTheBlocksOfTheSite() {
+        let blog = DumpBlock(host: "blog.test", reason: .userIni, file: "/w/blog/.user.ini", place: DumpPlace(site: "blog.test"))
+        let shop = DumpBlock(host: "shop.test", reason: .varDumperFormat, file: "/w/shop/.env", place: DumpPlace(site: "shop.test"))
+        let fix = DumpBlock(host: "fix.shop.test", reason: .varDumperFormat, place: DumpPlace(site: "shop.test", workspace: "fix"))
         let list = DumpList(
             requests: [],
             settings: DumpSettings(catchDumps: false, pageMode: .automatic, commands: true),
-            blocked: [
-                DumpBlock(host: "blog.test", reason: .userIni, file: "/w/blog/.user.ini", place: DumpPlace(site: "blog.test")),
-                DumpBlock(host: "shop.test", reason: .varDumperFormat, file: "/w/shop/.env", place: DumpPlace(site: "shop.test")),
-                DumpBlock(host: "fix.shop.test", reason: .varDumperFormat, place: DumpPlace(site: "shop.test", workspace: "fix")),
-            ],
+            blocked: [blog, shop, fix],
             receiving: true,
             problem: "Nexus catches no dumps, because nexusd cannot listen on its socket.\nThe second line."
         )
+
+        let catching = DumpList(requests: [], settings: DumpSettings(), blocked: [blog, shop, fix], receiving: true)
 
         #expect(DumpText.notes(of: list.state, place: DumpPlace(site: "shop.test")) == [
             "Catch dumps is off. So Nexus catches no new dumps. Turn it on with: nexus dumps settings --catch-dumps on",
             "Warning: Nexus catches no dumps, because nexusd cannot listen on its socket.",
             "Warning: The second line.",
-            "Warning: Nexus catches no dumps of shop.test, because /w/shop/.env sets VAR_DUMPER_FORMAT. Remove that key to catch them.",
         ])
-        #expect(DumpText.notes(of: list.state, place: DumpPlace(site: "shop.test", workspace: "fix")).last == "Warning: Nexus catches no dumps of fix.shop.test, because the environment of PHP sets VAR_DUMPER_FORMAT. Remove that key to catch them.")
-        #expect(DumpText.notes(of: list.state, place: nil).contains("Warning: Nexus catches no dumps of blog.test, because /w/blog/.user.ini sets its own auto_prepend_file."))
-        #expect(DumpText.notes(of: list.state, place: nil).count == 6)
+        #expect(DumpText.notes(of: list.state, place: nil).last == "Warning: \(blog.title). \(blog.message)")
+        #expect(DumpText.notes(of: list.state, place: nil).count == 4)
+        #expect(DumpText.notes(of: catching.state, place: DumpPlace(site: "shop.test")) == ["Warning: \(shop.title). \(shop.message)"])
+        #expect(DumpText.notes(of: catching.state, place: DumpPlace(site: "shop.test", workspace: "fix")) == ["Warning: \(fix.title). \(fix.message)"])
+        #expect(DumpText.notes(of: catching.state, place: nil).count == 3)
     }
 
     @Test func aListThatCatchesHasNoNotes() {
@@ -125,15 +129,125 @@ struct DumpTextTests {
     }
 
     @Test func anEmptyListSaysSo() {
-        #expect(DumpText.noDumps(of: nil) == "Nexus has no dumps.")
-        #expect(DumpText.noDumps(of: "fix.shop.test") == "Nexus has no dumps of fix.shop.test.")
+        #expect(DumpText.noRequests(of: nil) == "Nexus has no requests.")
+        #expect(DumpText.noRequests(of: "fix.shop.test") == "Nexus has no requests of fix.shop.test.")
     }
 
     @Test func theSettingsShowOnEachLine() {
-        #expect(DumpText.lines(of: DumpSettings(catchDumps: false, pageMode: .always, commands: true)) == [
-            "Catch dumps  off",
-            "Page         always (All requests)",
-            "Commands     on",
+        #expect(DumpText.lines(of: DumpSettings(catchDumps: false, catchQueries: true, catchLogs: false, catchJobs: true, pageMode: .always, commands: true)) == [
+            "Catch dumps       off",
+            "Catch queries     on",
+            "Catch log lines   off",
+            "Catch queue jobs  on",
+            "Page              always (All requests)",
+            "Commands          on",
         ])
+    }
+
+    @Test func aJobOfAWorkerShowsItsTryItsQueueItsWorkerAndItsRequest() {
+        let job = JobRun(system: .laravel, name: "App\\Jobs\\SyncStock", queue: "default", connection: "redis", attempt: 3, maxTries: 3, outcome: .failed, command: "php artisan queue:work", queuedBy: "checkout")
+        let request = DumpedRequest(id: "j1", kind: .job, target: "App\\Jobs\\SyncStock", site: "shop.test", started: Self.started, duration: 0.22, logCount: 1, job: job)
+
+        #expect(DumpText.header(of: request, now: Self.now, times: Self.utc) == "08:33:20  JOB  App\\Jobs\\SyncStock  try 3 of 3  220 ms  shop.test")
+        #expect(DumpText.details(of: request) == [
+            "  Queue   default · redis",
+            "  Worker  php artisan queue:work",
+            "  From    request checkout",
+            "  1 log line",
+        ])
+    }
+
+    @Test func aWordPressJobShowsItsSystem() {
+        let cron = DumpedRequest(id: "c1", kind: .job, target: "wp_scheduled_delete", started: Self.started, job: JobRun(system: .cron, name: "wp_scheduled_delete"))
+
+        #expect(DumpText.header(of: cron, now: Self.now, times: Self.utc) == "08:33:20  CRON  wp_scheduled_delete")
+    }
+
+    @Test func onlyARequestWithOtherKindsGetsItsCountsAndReadDumpsAlwaysGetsTheID() {
+        var request = Self.request("checkout")
+
+        #expect(DumpText.details(of: request).isEmpty)
+        #expect(DumpText.details(of: request, id: true) == ["  request checkout · 1 dump"])
+
+        request.dumpCount = 0
+        request.queryCount = 1
+        request.queryMilliseconds = 0.84
+        request.droppedQueries = 1
+
+        #expect(DumpText.details(of: request, locale: Locale(identifier: "en_US_POSIX")) == ["  1 query in 0.84 ms", "  Nexus did not keep 1 more query."])
+    }
+
+    @Test func eachQueryGetsTheTagOfItsGroupAsTheAppShowsIt() {
+        let duplicates = (1...3).map { seq in CaughtDump(requestID: "r1", seq: seq, time: Self.started, kind: .query, file: "/w/a.php", line: seq, text: "select 1", milliseconds: 120) }
+        let posts = (4...8).map { seq in CaughtDump(requestID: "r1", seq: seq, time: Self.started, kind: .query, file: "/w/b.php", line: 9, text: "SELECT * FROM wp_posts WHERE ID = \(seq % 7)", milliseconds: 0.2) }
+        let copy = CaughtDump(requestID: "r1", seq: 9, time: Self.started, kind: .query, file: "/w/c.php", line: 3, text: "SELECT * FROM wp_posts WHERE ID = 4", milliseconds: 0.2)
+        let tags = QueryTags(duplicates + posts + [copy])
+
+        #expect(tags.texts(of: duplicates[0]) == ["duplicate · 3×", "slow"])
+        #expect(tags.texts(of: posts[0]) == ["N+1 · 5×"])
+        #expect(tags.texts(of: posts[1]) == ["N+1 · 5×"])
+        #expect(tags.texts(of: copy) == ["duplicate"])
+        #expect(tags.note(after: posts[0]) == "This line runs the same query 5 times with other values. One query for all values is faster.")
+        #expect(tags.note(after: posts[1]) == nil)
+        #expect(tags.note(after: duplicates[0]) == nil)
+    }
+
+    @Test func aLogLineShowsItsLevelItsChannelAndItsContextAsText() {
+        let tree = #"""
+        {"kind":"array","count":4,"children":[
+          {"kind":"string","key":"note","value":"Leave it","cut":12},
+          {"kind":"object","key":"exception","class":"App\\Exceptions\\InvoiceMissing","ref":412,"cut":2,"children":[
+            {"kind":"string","key":"message","access":"protected","value":"No invoice."},
+            {"kind":"array","key":"trace","access":"private","count":0}
+          ]},
+          {"kind":"object","key":"0","index":true,"class":"App\\Models\\Order","ref":7,"refersTo":7},
+          {"kind":"null","key":"coupon"}
+        ]}
+        """#
+        let log = CaughtDump(requestID: "r1", seq: 1, time: Self.started, kind: .log, file: "/w/shop/app/Services/PriceApi.php", line: 58, label: "warning", text: "The price API answered slowly.\nIt took 1.24 s.", treeJSON: tree, detail: "PHP warning", truncated: true)
+
+        #expect(DumpText.lines(of: log) == [
+            "  log  warning (PHP warning)  The price API answered slowly.  at /w/shop/app/Services/PriceApi.php:58",
+            "    It took 1.24 s.",
+            "    [The message stops here, because it is larger than 64 KB.]",
+            "    array:4 [",
+            "      \"note\" => \"Leave it\"…12",
+            "      \"exception\" => App\\Exceptions\\InvoiceMissing {#412",
+            "        #message: \"No invoice.\"",
+            "        -trace: []",
+            "        …2",
+            "      }",
+            "      0 => App\\Models\\Order {#7}",
+            "      \"coupon\" => null",
+            "    ]",
+        ])
+    }
+
+    @Test func aJobRowShowsItsLabelItsClassItsTimeAndItsQueue() {
+        let sync = CaughtDump(requestID: "r1", seq: 1, time: Self.started, kind: .job, file: "/w/shop/app/Http/Controllers/CheckoutController.php", line: 61, label: "sync", text: "App\\Jobs\\UpdateStock", milliseconds: 12, detail: "sync")
+
+        #expect(DumpText.lines(of: sync) == ["  job  sync  App\\Jobs\\UpdateStock  12 ms  sync  at /w/shop/app/Http/Controllers/CheckoutController.php:61"])
+    }
+
+    @Test func aSyncJobThatThrewShowsAsFailed() {
+        let failed = CaughtDump(requestID: "r1", seq: 1, time: Self.started, kind: .job, file: "/w/shop/app/Http/Controllers/CheckoutController.php", line: 61, label: "failed", text: "App\\Jobs\\UpdateStock", milliseconds: 12, detail: "sync")
+
+        #expect(DumpText.lines(of: failed) == ["  job  failed  App\\Jobs\\UpdateStock  12 ms  sync  at /w/shop/app/Http/Controllers/CheckoutController.php:61"])
+    }
+
+    @Test func aBlockForSaveQueriesNamesItsFile() {
+        let block = DumpBlock(host: "blog.test", reason: .savequeries, file: "/w/blog/wp-config.php", place: DumpPlace(site: "blog.test"))
+        let list = DumpList(requests: [], settings: DumpSettings(catchDumps: true, catchQueries: true, pageMode: .automatic, commands: true), blocked: [block], receiving: true)
+        let withoutQueries = DumpList(requests: [], settings: DumpSettings(), blocked: [block], receiving: true)
+
+        #expect(DumpText.notes(of: list.state, place: nil) == ["Warning: \(block.title). \(block.message)"])
+        #expect(DumpText.notes(of: withoutQueries.state, place: nil).isEmpty)
+        #expect(block.message.hasPrefix("The wp-config.php of blog.test sets SAVEQUERIES to false."))
+    }
+}
+
+private extension DumpText {
+    static func lines(of entry: CaughtDump) -> [String] {
+        lines(of: entry, tags: QueryTags([entry]))
     }
 }

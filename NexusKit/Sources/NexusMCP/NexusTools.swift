@@ -38,6 +38,11 @@ public enum NexusTools {
         "description": "A host or a folder of a site, or all for the whole inbox. A site includes the mail of its workspaces. The default is the project folder of this session.",
     ]
 
+    static let dumpSite: JSONValue = [
+        "type": "string",
+        "description": "A host such as shop.test, a folder of a site or of a git worktree, or all for each site. A site does not include its workspaces. The default is the project folder of this session, or all outside the sites.",
+    ]
+
     public static let all: [NexusToolSpec] = [
         NexusToolSpec(
             name: "site_info",
@@ -93,6 +98,19 @@ public enum NexusTools {
             properties: [
                 "site": site,
                 "limit": ["type": "integer", "minimum": 1, "maximum": 20, "description": "The number of errors. The default is 5."],
+            ],
+            required: []
+        ),
+        NexusToolSpec(
+            name: "read_dumps",
+            title: "Read dumps",
+            summary: "The dumps, queries, log lines and queue jobs of the newest requests of a site.",
+            level: .read,
+            description: "The newest requests of a site that Nexus caught from PHP, oldest first. Each request shows its dump() and dd() values, its queries with the time, the tags N+1, duplicate and slow and the line in the code, its log lines with their context, and its queue jobs. Call this after you open a page or run a command, to see what the code dumped, which queries it ran and what it logged. Queries and queue jobs show only when the user turned them on in Nexus.",
+            properties: [
+                "site": dumpSite,
+                "request": ["type": "string", "description": "The id of one request, from the line `request <id>` of an earlier result or from the `From` line of a job."],
+                "limit": ["type": "integer", "minimum": 1, "maximum": 50, "description": "The number of newest requests. The default is 20."],
             ],
             required: []
         ),

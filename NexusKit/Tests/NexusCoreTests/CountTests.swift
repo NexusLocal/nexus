@@ -6,4 +6,9 @@ struct CountTests {
     func aCountHasPlainDigitsAndAnSForMoreThanOne(number: Int, text: String) {
         #expect(Count.text(number, "dump") == text)
     }
+
+    @Test(arguments: [(0, "0 queries"), (1, "1 query"), (24, "24 queries")])
+    func aNounCanGiveItsOwnPlural(number: Int, text: String) {
+        #expect(Count.text(number, "query", plural: "queries") == text)
+    }
 }

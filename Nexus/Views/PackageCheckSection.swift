@@ -47,10 +47,8 @@ struct PackageCheckSection: View {
         let updates = service.map { service in model.checkedUpdates.filter { $0.serviceID == service.id } } ?? model.checkedUpdates
 
         if updates.isEmpty {
-            NoticeBanner(systemImage: "checkmark.circle", color: .statusGreen, background: AnyShapeStyle(.fill.quaternary), title: service.map { "\($0.name) is up to date" } ?? "All packages are up to date") {
-                Text("Nexus checked the package list at \(model.packagesChecked).")
-            } actions: {
-                okButton
+            DoneBanner(title: service.map { "\($0.name) is up to date" } ?? "All packages are up to date", message: "Nexus checked the package list at \(model.packagesChecked).") {
+                model.showsPackageCheck = false
             }
         } else {
             let list = EnglishList.joined(updates.map { "\($0.name) to \($0.newVersion ?? "")" })
@@ -63,15 +61,11 @@ struct PackageCheckSection: View {
                     Button("Show updates", action: showUpdates)
                         .buttonStyle(.borderedProminent)
                 } else {
-                    okButton
+                    Button("OK") {
+                        model.showsPackageCheck = false
+                    }
                 }
             }
-        }
-    }
-
-    private var okButton: some View {
-        Button("OK") {
-            model.showsPackageCheck = false
         }
     }
 }

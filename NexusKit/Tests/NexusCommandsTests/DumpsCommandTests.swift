@@ -6,6 +6,28 @@ import NexusMCP
 import Testing
 @testable import NexusCommands
 
+// The tags of the entries that a test shows, as KnownQueries gives them when the batch holds all
+// queries of each request.
+private extension DumpPrinter {
+    @discardableResult
+    mutating func show(_ entries: [CaughtDump], of request: DumpedRequest, now: Date) -> Bool {
+        show(entries, of: request, now: now, tags: QueryTags(entries))
+    }
+
+    @discardableResult
+    mutating func show(latest batch: DumpBatch, now: Date) -> Bool {
+        show(latest: batch, now: now, tags: Self.tags(of: batch))
+    }
+
+    mutating func show(_ batch: DumpBatch, now: Date) {
+        show(batch, now: now, tags: Self.tags(of: batch))
+    }
+
+    static func tags(of batch: DumpBatch) -> [String: QueryTags] {
+        Dictionary(uniqueKeysWithValues: batch.requests.map { request in (request.id, QueryTags(batch.dumps.filter { $0.requestID == request.id })) })
+    }
+}
+
 struct DumpsCommandTests {
     private static let utc = TimeZone(identifier: "UTC")!
     private static let now = Date(timeIntervalSince1970: 1_762_850_100)
@@ -43,7 +65,7 @@ struct DumpsCommandTests {
     }
 
     private func printer(json: Bool = false, into output: Output) -> DumpPrinter {
-        DumpPrinter(json: json, timeZone: Self.utc, write: output.write)
+        DumpPrinter(json: json, timeZone: Self.utc, locale: Locale(identifier: "en_US_POSIX"), write: output.write)
     }
 
     private func parse(_ arguments: [String]) throws -> any ParsableCommand {
@@ -117,6 +139,169 @@ struct DumpsCommandTests {
         #expect(settings.commands == .on)
     }
 
+    @Test func theNewSwitchesParse() throws {
+        let settings = try #require(try parse(["dumps", "settings", "--catch-queries", "on", "--catch-logs", "off", "--catch-jobs", "on"]) as? DumpsCommand.Settings)
+        let none = try #require(try parse(["dumps", "settings"]) as? DumpsCommand.Settings)
+
+        #expect(settings.catchQueries == .on)
+        #expect(settings.catchLogs == .off)
+        #expect(settings.catchJobs == .on)
+        #expect(settings.catchDumps == nil)
+        #expect(none.catchQueries == nil)
+        #expect(none.catchLogs == nil)
+        #expect(none.catchJobs == nil)
+    }
+
+    @Test(arguments: [["dumps", "settings", "--catch-queries", "yes"], ["dumps", "settings", "--catch-jobs"]])
+    func aWrongSwitchIsRefused(_ arguments: [String]) {
+        #expect(throws: (any Error).self) { try parse(arguments) }
+    }
+
+    private static let controller = "/w/shop/app/Http/Controllers/CheckoutController.php"
+
+    private static func query(_ seq: Int, of request: String = "checkout", _ text: String, pattern: String? = nil, file: String = controller, line: Int = 38, milliseconds: Double = 0.84) -> CaughtDump {
+        CaughtDump(requestID: request, seq: seq, time: started, kind: .query, file: file, line: line, label: "mysql", text: text, milliseconds: milliseconds, pattern: pattern, number: seq)
+    }
+
+    private static func productQueries(_ seqs: ClosedRange<Int>, of request: String = "checkout") -> [CaughtDump] {
+        seqs.map { seq in query(seq, of: request, "select * from `products` where `id` = \(seq) limit 1", pattern: "select * from `products` where `id` = ? limit 1", file: "/w/shop/app/Models/CartItem.php", line: 24) }
+    }
+
+    @Test func aRequestShowsItsEntriesOfAllKindsInTheirOrder() {
+        let output = Output()
+        var printer = printer(into: output)
+        let request = DumpedRequest(id: "checkout", kind: .http, method: "GET", target: "/checkout", url: "https://shop.test/checkout", host: "shop.test", site: "shop.test", started: Self.started, status: 200, duration: 0.184, dumpCount: 1, lastSeq: 9, queryCount: 6, queryMilliseconds: 146.2, logCount: 1, jobCount: 1, marks: [.nPlusOne, .slow], droppedQueries: 1204)
+        let tree = #"{"kind":"array","count":1,"children":[{"kind":"int","key":"order_id","value":"1042"}]}"#
+        let entries = [CaughtDump(requestID: "checkout", seq: 1, time: Self.started, file: Self.controller, line: 42, text: "\"EUR\"")]
+            + Self.productQueries(2...6)
+            + [
+                Self.query(7, "select count(*)\n  from `orders`", line: 51, milliseconds: 142),
+                CaughtDump(requestID: "checkout", seq: 8, time: Self.started, kind: .log, file: "/w/shop/app/Http/Controllers/OrderController.php", line: 77, label: "error", text: "Order 1042 has no invoice.", treeJSON: tree, detail: "stack"),
+                CaughtDump(requestID: "checkout", seq: 9, time: Self.started, kind: .job, file: Self.controller, line: 63, label: "queued", text: "App\\Jobs\\SendOrderMail", detail: "redis · default", ref: "9f1c"),
+            ]
+
+        let showed = printer.show(entries, of: request, now: Self.now)
+
+        #expect(showed)
+        #expect(output.lines == [
+            "08:33:20  GET  https://shop.test/checkout  200  184 ms",
+            "  1 dump · 6 queries in 146 ms · 1 log line · 1 job · N+1",
+            "  Nexus did not keep 1204 more queries.",
+            "  dump at \(Self.controller):42",
+            "    \"EUR\"",
+            "  query  0.84 ms  N+1 · 5×  select * from `products` where `id` = 2 limit 1  at /w/shop/app/Models/CartItem.php:24",
+            "    This line runs the same query 5 times with other values. One query for all values is faster. In Laravel, load the relation with with().",
+            "  query  0.84 ms  N+1 · 5×  select * from `products` where `id` = 3 limit 1  at /w/shop/app/Models/CartItem.php:24",
+            "  query  0.84 ms  N+1 · 5×  select * from `products` where `id` = 4 limit 1  at /w/shop/app/Models/CartItem.php:24",
+            "  query  0.84 ms  N+1 · 5×  select * from `products` where `id` = 5 limit 1  at /w/shop/app/Models/CartItem.php:24",
+            "  query  0.84 ms  N+1 · 5×  select * from `products` where `id` = 6 limit 1  at /w/shop/app/Models/CartItem.php:24",
+            "  query  142 ms  slow  select count(*) from `orders`  at \(Self.controller):51",
+            "  log  error (stack)  Order 1042 has no invoice.  at /w/shop/app/Http/Controllers/OrderController.php:77",
+            "    array:1 [",
+            "      \"order_id\" => 1042",
+            "    ]",
+            "  job  queued  App\\Jobs\\SendOrderMail  redis · default  at \(Self.controller):63",
+        ])
+    }
+
+    @Test func theTagsOfAQueryCountAllQueriesOfItsRequest() async {
+        let output = Output()
+        var printer = printer(into: output)
+        var request = Self.request("checkout")
+        request.queryCount = 6
+        let all = Self.productQueries(1...6)
+        let latest = DumpBatch(dumps: Array(all.suffix(2)), requests: [request], cursor: Self.cursor(6), olderCounts: ["checkout": 4])
+        var queries = KnownQueries()
+        var reads: [String] = []
+
+        let tags = await queries.tags(for: latest) { id, after in
+            reads.append("\(id) after \(after)")
+            return all
+        }
+        printer.show(latest: latest, now: Self.now, tags: tags)
+
+        #expect(reads == ["checkout after 0"])
+        #expect(output.lines.filter { $0.hasPrefix("  query") }.allSatisfy { $0.contains("  N+1 · 6×  ") })
+        #expect(!output.lines.contains { $0.hasPrefix("    This line") })
+    }
+
+    @Test func aBatchWithAllQueriesOfItsRequestReadsNothing() async {
+        var request = Self.request("checkout")
+        request.queryCount = 5
+        let batch = DumpBatch(dumps: Self.productQueries(1...5) + [Self.dump(6, of: "other")], requests: [request, Self.request("other")], cursor: Self.cursor(6))
+        var queries = KnownQueries()
+        var reads: [String] = []
+
+        let tags = await queries.tags(for: batch) { id, _ in
+            reads.append(id)
+            return []
+        }
+
+        #expect(reads.isEmpty)
+        #expect(tags["checkout"]?.texts(of: batch.dumps[0]) == ["N+1 · 5×"])
+        #expect(tags["other"]?.texts(of: batch.dumps[0]) == [])
+    }
+
+    @Test func aKnownRequestAsksOnlyAfterItsHighestQueryAndForgetsTheQueriesThatTheStoreRemoved() async {
+        var request = Self.request("checkout")
+        request.queryCount = 5
+        let all = Self.productQueries(1...7)
+        var queries = KnownQueries()
+        var reads: [String] = []
+        let read: (String, Int) async throws -> [CaughtDump] = { id, after in
+            reads.append("\(id) after \(after)")
+            return all.filter { query in query.number > after }
+        }
+
+        _ = await queries.tags(for: DumpBatch(dumps: Array(all[0..<5]), requests: [request], cursor: Self.cursor(5)), readRequest: read)
+        request.queryCount = 7
+        let second = await queries.tags(for: DumpBatch(dumps: [], requests: [request], cursor: Self.cursor(7)), readRequest: read)
+        request.queryCount = 4
+        request.firstNumber = 4
+        let third = await queries.tags(for: DumpBatch(dumps: [], requests: [request], cursor: Self.cursor(7)), readRequest: read)
+
+        #expect(reads == ["checkout after 5"])
+        #expect(second["checkout"]?.texts(of: all[0]) == ["N+1 · 7×"])
+        #expect(third["checkout"]?.texts(of: all[3]) == [])
+        #expect(third["checkout"]?.texts(of: all[0]) == [])
+    }
+
+    @Test func aQueryThatTheUserRemovedNoLongerCountsInTheTags() async {
+        var request = Self.request("checkout")
+        request.queryCount = 5
+        let all = Self.productQueries(1...5)
+        var queries = KnownQueries()
+        var reads: [String] = []
+        let read: (String, Int) async throws -> [CaughtDump] = { id, _ in
+            reads.append(id)
+            return []
+        }
+
+        let before = await queries.tags(for: DumpBatch(dumps: all, requests: [request], cursor: Self.cursor(5)), readRequest: read)
+        queries.forget(DumpChange(changed: [request], removedDumps: [5]))
+        request.queryCount = 4
+        let after = await queries.tags(for: DumpBatch(dumps: [], requests: [request], cursor: Self.cursor(5)), readRequest: read)
+
+        #expect(before["checkout"]?.texts(of: all[0]) == ["N+1 · 5×"])
+        #expect(after["checkout"]?.texts(of: all[0]) == [])
+        #expect(reads.isEmpty)
+    }
+
+    @Test func jsonGivesEachEntryWithTheMarksOfAQuery() throws {
+        let output = Output()
+        var printer = printer(json: true, into: output)
+        let entries = [Self.query(1, "select 1"), Self.query(2, "select 1"), Self.query(3, "select 2", milliseconds: 150), CaughtDump(requestID: "checkout", seq: 4, time: Self.started, kind: .log, label: "info", text: "Paid.")]
+
+        printer.show(entries, of: Self.request("checkout"), now: Self.now)
+
+        let lines = try output.lines.map { line in try #require(try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]) }
+        #expect(lines.count == 4)
+        #expect(lines.map { ($0["dump"] as? [String: Any])?["kind"] as? String } == ["query", "query", "query", "log"])
+        #expect(lines.map { $0["marks"] as? [String] } == [["duplicate"], ["duplicate"], ["slow"], nil])
+        #expect((lines[0]["dump"] as? [String: Any])?["ms"] as? Double == 0.84)
+        #expect(!output.lines.contains { $0.contains("umber") })
+    }
+
     @Test func aRequestShowsItsLineOnceAboveItsDumps() {
         let output = Output()
         var printer = printer(into: output)
@@ -178,14 +363,14 @@ struct DumpsCommandTests {
         #expect(showed)
         #expect(output.lines == [
             "08:33:20  GET  https://shop.test/worker",
-            "  480 older dumps of this request are not shown. Use --limit to see more.",
+            "  480 older entries of this request are not shown. Use --limit to see more.",
             "  dump",
             "    worker 481",
             "  dump",
             "    worker 482",
             "",
             "08:33:20  GET  https://shop.test/page  200",
-            "  1 older dump of this request is not shown. Use --limit to see more.",
+            "  1 older entry of this request is not shown. Use --limit to see more.",
             "  dump",
             "    page 1",
             "  dump",
@@ -213,7 +398,7 @@ struct DumpsCommandTests {
         printer.show(latest: latest, now: Self.now)
 
         #expect(output.lines.count == 1)
-        #expect(output.errors == ["Request worker: 4 older dumps of this request are not shown. Use --limit to see more."])
+        #expect(output.errors == ["Request worker: 4 older entries of this request are not shown. Use --limit to see more."])
     }
 
     @Test func aBatchShowsTheDumpsInTheOrderInWhichTheyArrived() {
@@ -249,7 +434,7 @@ struct DumpsCommandTests {
 
         #expect(output.lines.count == 3)
         #expect(output.lines.allSatisfy { $0.hasPrefix("{\"dump\":{") && !$0.contains("\n") })
-        #expect(output.errors == ["Nexus cannot write the dump broken-1 as JSON."])
+        #expect(output.errors == ["Nexus cannot write the entry broken-1 as JSON."])
     }
 
     @Test func theFollowerStartsAtTheCursorOfTheList() {
@@ -323,6 +508,11 @@ struct DumpsCommandTests {
 
             return batch(dumps.filter { $0.number > after.number && place.includes(headers[$0.dump.requestID]?.place ?? DumpPlace()) })
         }
+
+        func entries(of request: String, after number: Int) -> [CaughtDump] {
+            reads.append("request \(request) after \(number)")
+            return dumps.filter { $0.number > number && $0.dump.requestID == request }.map(\.dump)
+        }
     }
 
     private func loop(_ nexusd: FakeNexusd, limit: Int = 10, json: Bool = false, place: DumpPlace? = nil) -> DumpFollowLoop {
@@ -333,6 +523,7 @@ struct DumpsCommandTests {
             timeZone: Self.utc,
             readLatest: nexusd.latest(place:limit:through:),
             readNew: nexusd.newDumps(place:after:),
+            readRequest: nexusd.entries(of:after:),
             write: nexusd.output.write,
             now: { Self.now }
         )
@@ -374,7 +565,7 @@ struct DumpsCommandTests {
         ]))
 
         #expect(nexusd.output.lines == [
-            "Warning: Nexus catches no dumps of shop.test, because /w/shop/.env sets VAR_DUMPER_FORMAT. Remove that key to catch them.",
+            "Warning: \(block.title). \(block.message)",
             "",
             "08:33:20  GET  https://shop.test/page",
             "  dump",
@@ -461,6 +652,21 @@ struct DumpsCommandTests {
         try await follow.run(updates([.event(.dumpList(Self.list([Self.request("worker", lastSeq: 5)], cursor: Self.cursor(5))))]))
 
         #expect(nexusd.output.lines.filter { $0.hasPrefix("    worker") } == ["    worker 4", "    worker 5"])
+    }
+
+    @Test func followReadsTheWholeRequestForTheTagsOfNewQueries() async throws {
+        let nexusd = FakeNexusd()
+        var page = Self.request("page")
+        page.queryCount = 6
+        nexusd.headers = ["page": page]
+        nexusd.dumps = Self.productQueries(1...6, of: "page").enumerated().map { index, query in (index + 1, query) }
+        var follow = loop(nexusd, limit: 0)
+
+        try await follow.run(updates([.event(.dumpList(Self.list([page], cursor: Self.cursor(3)))), .event(.dumpChanges(DumpChange(changed: [page])))]))
+
+        #expect(nexusd.reads == ["new after 3", "request page after 0"])
+        #expect(nexusd.output.lines.filter { $0.hasPrefix("  query") }.count == 3)
+        #expect(nexusd.output.lines.filter { $0.contains("  N+1 · 6×  ") }.count == 3)
     }
 
     @Test func aDumpWithALowerSeqAfterTheListShowsOnce() async throws {
