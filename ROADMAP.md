@@ -7,36 +7,23 @@ needs research and a plan before the work starts.
 
 In this order:
 
-1. **More for the dump viewer:** the database queries, the log lines and the queue jobs of each
-   request.
-2. These items:
-   - **Notifications that open the right place.** A click on a notification opens the screen that
-     the notification is about. A new mail opens the Mail screen with the site of that mail and
-     the mail itself. A workspace that is ready opens its site. A service that stopped or failed
-     opens that service. An import opens its database.
-   - **Xdebug only for debug requests.** A request with the Xdebug cookie goes to a PHP process
-     with Xdebug. All other requests stay fast. One command can also run with Xdebug.
-   - **Help for a project that you add.** Nexus offers to point its database, its Redis and its
-     `APP_URL` to Nexus, with a backup of the old values.
-   - **Your own nginx and Apache lines** for each site, as `nexus ini` gives for PHP.
-   - **Import a .wpress file** with a password or with compression.
-3. **More for workspaces:**
+1. **More for workspaces:**
    - a dev server that starts when you open the site and stops when nobody uses it;
    - stop idle workspaces, if you want: their database server and workers stop until the next
      request;
    - a list of old workspaces, with a button to remove them;
    - a button on the Site screen that removes one workspace, next to "Open".
-4. **Share a site through a tunnel.** A local site gets a public link, for example for a client or
+2. **Share a site through a tunnel.** A local site gets a public link, for example for a client or
    for a webhook.
-5. **Packages:**
+3. **Packages:**
    - **PHP 8.6**, after its release.
    - **More PHP extensions:** `gmp` and `memcached`, in each PHP version where they build and
      load.
    - **PostgreSQL extensions:** pgvector, PostGIS and pgRouting.
-6. **MongoDB.** A database service with versions, as MySQL, MariaDB and PostgreSQL have. Each PHP
+4. **MongoDB.** A database service with versions, as MySQL, MariaDB and PostgreSQL have. Each PHP
    version gets the `mongodb` extension.
-7. **Valkey.** The fork of Redis with the BSD license, as a service next to Redis.
-8. **A log viewer** for the logs of your apps.
+5. **Valkey.** The fork of Redis with the BSD license, as a service next to Redis.
+6. **A log viewer** for the logs of your apps.
 
 ## Later
 
@@ -44,6 +31,10 @@ In this order:
 
 ## Done recently
 
+- **0.5.0:** the queries, the log lines and the queue jobs of each request in the dump viewer,
+  notifications that open the right place, Xdebug only for debug requests and `nexus debug`, "Use
+  Nexus…" for the `.env` of a project that you add, your own nginx and Apache lines for each site,
+  and the import of a .wpress file with a password or with compression.
 - **0.4.1:** an Agents screen with the MCP tools, the result of "Check for updates", the tag of
   each mail of a Laravel site, "Open in Mailpit" for a site, dark mails and your own redis.conf.
 - **0.4.0:** a viewer for `dump()` and `dd()` of each site, workspace and command, in the app, in
