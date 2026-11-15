@@ -292,7 +292,7 @@ private struct MailRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .background(selected ? Color.accentSoft : Color.clear)
+        .background(selected ? Color.accentSelection : Color.clear)
         .contentShape(.rect)
     }
 }

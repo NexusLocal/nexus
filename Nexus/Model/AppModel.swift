@@ -186,10 +186,14 @@ final class AppModel {
             if selection != oldValue {
                 ActivityTracker.log.write("screen", selection.map { "\($0)" } ?? "none")
                 showsPackageCheck = false
+                markedRow = nil
             }
         }
     }
     var selectedVersion: [ServiceKind: String] = [:]
+    // The workspace or the database that a click on a notification marked. The mark stays until
+    // another screen shows.
+    var markedRow: NotificationTarget?
     var sheet: SheetKind? {
         didSet {
             if let sheet {
@@ -237,11 +241,10 @@ final class AppModel {
     // The state that a switch shows while nexusd works: the id of a service, a toggle key or the
     // LAN key.
     var switching: [String: Bool] = [:]
-    // The custom php.ini lines that the user changed and did not save yet, and the last line that
-    // PHP refused, for each PHP version (D60).
-    var settingsDrafts: [String: [String]] = [:]
-    var settingsErrors: [String: SettingsError] = [:]
-    var savingSettings: Set<String> = []
+    // The custom php.ini lines of each PHP version (D60) and the custom nginx or Apache lines of
+    // each host (owner, 2026-11-14).
+    var settingsDrafts = LinesDrafts()
+    var siteLinesDrafts = LinesDrafts()
     var packages: [PackageItem] = []
     var activities: [ActivityItem] = []
     var packagesChecked = ""
@@ -271,6 +274,13 @@ final class AppModel {
     var runningImports: Set<String> = []
     var importInSheet: String?
     var importResults: [String: ImportResult] = [:]
+    // "Use Nexus…" of a Laravel site, by host. A run stays after a stop or a failure until the
+    // sheet closes. The done message stays until OK or until the Site screen goes.
+    var useNexusRuns: [String: UseNexusRun] = [:]
+    var useNexusInSheet: String?
+    var useNexusDone: [String: DoneMessage] = [:]
+    // Grows after each change. The Site screen then reads the plan and the databases again.
+    var useNexusChanges = 0
     var settings = AppSettings()
     // Settings (part 6g). The dev TLD that nexusd changes to now, the root CA that nexusd
     // reported last, and the answer of a finished uninstall.
@@ -353,8 +363,8 @@ final class AppModel {
         model.rootCertificate = nil
         model.services = []
         model.siteEntries = []
-        model.settingsDrafts = [:]
-        model.settingsErrors = [:]
+        model.settingsDrafts = LinesDrafts()
+        model.siteLinesDrafts = LinesDrafts()
         model.packages = []
         model.activities = []
         model.packagesChecked = ""
@@ -472,6 +482,20 @@ final class AppModel {
 
     var databaseInstances: [ServiceVersion] {
         services.filter(\.kind.isDatabase)
+    }
+
+    // The id and the port of each instance. A task of the Site screen has this text in its id. So
+    // it loads again after a change of a port.
+    var databaseInstancePorts: String {
+        Self.instancePorts(databaseInstances)
+    }
+
+    var redisInstancePorts: String {
+        Self.instancePorts(versions(of: .redis))
+    }
+
+    private static func instancePorts(_ instances: [ServiceVersion]) -> String {
+        instances.map { "\($0.id):\($0.ports.first?.number ?? 0)" }.joined(separator: ",")
     }
 
     func versions(of kind: ServiceKind) -> [ServiceVersion] {
@@ -596,41 +620,26 @@ final class AppModel {
         }
     }
 
-    func customSettings(of service: ServiceVersion) -> [String] {
-        settingsDrafts[service.id] ?? service.customSettings
-    }
-
-    // The editor gives one empty line for an empty text. So the lines compare as text.
-    func editCustomSettings(of service: ServiceVersion, to lines: [String]) {
-        let unchanged = lines.joined(separator: "\n") == service.customSettings.joined(separator: "\n")
-        settingsDrafts[service.id] = unchanged ? nil : lines
-    }
-
-    func revertCustomSettings(of service: ServiceVersion) {
-        settingsDrafts[service.id] = nil
-        settingsErrors[service.id] = nil
-    }
-
     // PHP checks the lines first (D60). A refused line keeps the draft and shows the error, so
-    // the user can correct the line. The draft stays when the user typed during the save.
+    // the user can correct the line.
     func saveCustomSettings(of service: ServiceVersion) {
         let id = service.id
-        let lines = customSettings(of: service)
+        let lines = settingsDrafts.lines(of: id, saved: service.customSettings)
 
         guard client != nil else {
             showSavedCustomSettings(lines, of: id)
             return
         }
 
-        savingSettings.insert(id)
+        settingsDrafts.saving.insert(id)
 
         Task {
             let response = await perform(.setCustomSettings(php: service.line, lines: lines), failure: "\(service.name) did not get the new settings", place: .window)
-            savingSettings.remove(id)
+            settingsDrafts.saving.remove(id)
 
             switch response {
             case .invalidSettings(let error):
-                settingsErrors[id] = SettingsError(line: error.line, message: error.message)
+                settingsDrafts.errors[id] = SettingsError(line: error.line, message: error.message)
             case .done:
                 showSavedCustomSettings(lines, of: id)
             default:
@@ -641,14 +650,10 @@ final class AppModel {
 
     // The next event of nexusd has the same lines. Until then the editor shows the saved lines.
     private func showSavedCustomSettings(_ lines: [String], of id: String) {
-        settingsErrors[id] = nil
+        settingsDrafts.finishSave(of: id, lines: lines)
 
         if let index = services.firstIndex(where: { $0.id == id }) {
             services[index].customSettings = lines
-        }
-
-        if settingsDrafts[id] == lines {
-            settingsDrafts[id] = nil
         }
     }
 

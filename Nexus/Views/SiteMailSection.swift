@@ -36,7 +36,7 @@ struct SiteMailSection: View {
         let rest = (mail?.mailPlugins ?? []).filter { !$0.canTurnOff }
         let after = rest.isEmpty
             ? " WordPress then gives each mail to PHP. Nexus catches it there."
-            : " \(EnglishList.joined(rest.map(\.description)).prefix(1).uppercased())\(EnglishList.joined(rest.map(\.description)).dropFirst()) can still send mail itself."
+            : " \(EnglishList.joined(rest.map(\.description)).firstLetterUppercased) can still send mail itself."
 
         return "WP-CLI turns off the \(pluginsToTurnOff.count == 1 ? "plugin" : "plugins") in this copy of the site.\(after) The live site does not change."
     }

@@ -29,6 +29,7 @@ final class Request
                 'kind' => 'command',
                 'command' => self::shortened(self::command($server)),
                 'cwd' => \getcwd() ?: null,
+                'scriptFolders' => self::scriptFolders($server),
             ] + $common;
         }
 
@@ -66,6 +67,26 @@ final class Request
     private static function newId(): string
     {
         return \bin2hex(\random_bytes(6));
+    }
+
+    // The folder as written can pass through a symbolic link into a site. The real path can name a
+    // site that the written path does not name. nexusd tries both in this order.
+    /** @return list<string> */
+    private static function scriptFolders(array $server): array
+    {
+        $written = scriptFolder($server);
+
+        if ($written === null) {
+            return [];
+        }
+
+        $real = \realpath($written);
+
+        if ($real === false) {
+            return [$written];
+        }
+
+        return \array_values(\array_unique([$written, $real]));
     }
 
     // nexusd finds the site or the workspace from the host first and then from this folder.

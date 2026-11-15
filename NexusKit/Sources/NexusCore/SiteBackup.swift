@@ -21,6 +21,12 @@ public enum BackupFormat: String, Codable, Sendable {
     }
 }
 
+// The compression of a .wpress file. An extension of All-in-One WP Migration adds it.
+public enum BackupCompression: String, Codable, Sendable {
+    case gzip
+    case bzip2
+}
+
 // What nexusd found in a backup before the import. problem says why Nexus cannot import it.
 // dump is the path of the dump in the backup, or of the folder with one dump for each table.
 public struct BackupInfo: Codable, Sendable, Equatable {
@@ -34,10 +40,14 @@ public struct BackupInfo: Codable, Sendable, Equatable {
     public let dumpDate: Date?
     public let tablePrefix: String?
     public let siteURL: String?
+    // The EncryptedSignature of package.json of a .wpress file with a password. The app and nexus
+    // import check a password with it. It is in plain text in the backup, so it is not a secret.
+    public let passwordSignature: String?
+    public let compression: BackupCompression?
     public let suggestedName: String
     public let problem: String?
 
-    public init(path: String, format: BackupFormat?, wordPressVersion: String? = nil, hasCore: Bool = false, dump: String? = nil, dumpBytes: Int64? = nil, dumpDate: Date? = nil, tablePrefix: String? = nil, siteURL: String? = nil, suggestedName: String, problem: String? = nil) {
+    public init(path: String, format: BackupFormat?, wordPressVersion: String? = nil, hasCore: Bool = false, dump: String? = nil, dumpBytes: Int64? = nil, dumpDate: Date? = nil, tablePrefix: String? = nil, siteURL: String? = nil, passwordSignature: String? = nil, compression: BackupCompression? = nil, suggestedName: String, problem: String? = nil) {
         self.path = path
         self.format = format
         self.wordPressVersion = wordPressVersion
@@ -47,6 +57,8 @@ public struct BackupInfo: Codable, Sendable, Equatable {
         self.dumpDate = dumpDate
         self.tablePrefix = tablePrefix
         self.siteURL = siteURL
+        self.passwordSignature = passwordSignature
+        self.compression = compression
         self.suggestedName = suggestedName
         self.problem = problem
     }
@@ -58,13 +70,16 @@ public struct SiteImport: Codable, Sendable, Equatable {
     public var parent: String
     public var database: String?
     public var git: Bool
+    // The password of a .wpress file. Only the request has it. nexusd never writes it.
+    public var password: String?
 
-    public init(backup: String, name: String, parent: String, database: String? = nil, git: Bool = true) {
+    public init(backup: String, name: String, parent: String, database: String? = nil, git: Bool = true, password: String? = nil) {
         self.backup = backup
         self.name = name
         self.parent = parent
         self.database = database
         self.git = git
+        self.password = password
     }
 }
 
@@ -160,6 +175,22 @@ public enum BackupText {
 
         return info.wordPressVersion.map { "Not in the backup. Nexus downloads \($0)." } ?? "Not in the backup. Nexus downloads the newest version."
     }
+
+    public static func format(_ info: BackupInfo) -> String {
+        guard let format = info.format else {
+            return "Unknown"
+        }
+
+        let details = [
+            info.passwordSignature.map { _ in "with a password" },
+            info.compression.map { "compressed with \($0.rawValue)" },
+        ].compactMap { $0 }
+
+        return details.isEmpty ? format.displayName : "\(format.displayName), \(details.joined(separator: " and "))"
+    }
+
+    public static let wrongPassword = "This is not the password of the backup."
+    public static let needsPassword = "This backup has a password. Type the password of the backup."
 }
 
 // The name of a new site from the name of a backup file, for example foo for

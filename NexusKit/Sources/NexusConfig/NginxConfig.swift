@@ -81,6 +81,12 @@ public enum NginxConfig {
             "",
         ]
 
+        let phpMaps = try sites.enumerated().map { index, site in try phpMap(for: site, index: index) }
+
+        if phpMaps.contains(where: { !$0.isEmpty }) {
+            lines += xdebugMaps
+        }
+
         if !settings.lanAccess {
             lines += [
                 "    # Only this Mac. The LAN setting removes these lines.",
@@ -116,6 +122,7 @@ public enum NginxConfig {
         for (index, site) in sites.enumerated() {
             lines.append("")
             lines += appUpstream(for: site, index: index, settings: settings).map { "    \($0)" }
+            lines += phpMaps[index].map { "    \($0)" }
             lines += try server(for: site, index: index, settings: settings).map { "    \($0)" }
         }
 
@@ -171,6 +178,49 @@ public enum NginxConfig {
         }
     }
 
+    // A request that starts an Xdebug session goes to the PHP-FPM with Xdebug (owner, 2026-11-14).
+    // Xdebug 3 reads the trigger from a cookie or from the query string, not from a header. A
+    // trigger without a value also counts. The regular expressions are case sensitive, as PHP is.
+    static let xdebugMaps = [
+        "    map $http_cookie $nexus_xdebug_cookie {",
+        "        default 0;",
+        #"        "~(^|;)\s*XDEBUG_(SESSION|TRIGGER)=" 1;"#,
+        "    }",
+        "",
+        "    map $args $nexus_xdebug {",
+        "        default $nexus_xdebug_cookie;",
+        #"        "~(^|&)XDEBUG_(SESSION|SESSION_START|TRIGGER)(=|&|$)" 1;"#,
+        "    }",
+        "",
+    ]
+
+    // nginx passes the PHP requests of a site to target. With the Xdebug switch on, the map before
+    // the server block chooses the socket of each request.
+    private static func phpPass(socket: URL, xdebugSocket: URL?, index: Int) throws -> (map: [String], target: String) {
+        let standard = try ConfigText.socket(socket, prefix: "unix:")
+
+        guard let xdebugSocket else {
+            return ([], standard)
+        }
+
+        return ([
+            "map $nexus_xdebug $nexus_php_\(index) {",
+            "    default \(standard);",
+            "    1 \(try ConfigText.socket(xdebugSocket, prefix: "unix:"));",
+            "}",
+            "",
+        ], "$nexus_php_\(index)")
+    }
+
+    // Apache chooses the socket of an Apache site itself.
+    private static func phpMap(for site: WebSite, index: Int) throws -> [String] {
+        guard case .php(.nginx, _, let socket, let xdebugSocket) = site.backend else {
+            return []
+        }
+
+        return try phpPass(socket: socket, xdebugSocket: xdebugSocket, index: index).map
+    }
+
     private static func server(for site: WebSite, index: Int, settings: NginxSettings) throws -> [String] {
         var lines = [
             "server {",
@@ -187,12 +237,15 @@ public enum NginxConfig {
         ]
 
         switch site.backend {
-        case .php(.nginx, let documentRoot, let socket):
+        case .php(.nginx, let documentRoot, let socket, let xdebugSocket):
             lines += [
                 "    root \(try ConfigText.quoted(documentRoot));",
                 "    index index.php index.html index.htm;",
                 "    charset utf-8;",
                 "",
+            ]
+            lines += try site.customLines.map { file in ["    include \(try ConfigText.quoted(file));", ""] } ?? []
+            lines += [
                 "    location / {",
                 "        try_files $uri $uri/ /index.php?$query_string;",
                 "    }",
@@ -201,6 +254,7 @@ public enum NginxConfig {
             lines += site.project == .bedrock ? bedrockRules + [""] : []
             lines += site.isWordPress ? wordPressRules + [""] : []
             lines += site.network == .subfolders ? subfolderNetworkRules(bedrock: site.project == .bedrock) + [""] : []
+            let pass = try phpPass(socket: socket, xdebugSocket: xdebugSocket, index: index).target
             lines += [
                 "    location ~ \\.php(/|$) {",
                 "        fastcgi_split_path_info ^(.+?\\.php)(/.*)$;",
@@ -208,7 +262,7 @@ public enum NginxConfig {
                 "        include \(try ConfigText.quoted(settings.runtime.appending(path: "conf/fastcgi.conf")));",
                 "        fastcgi_param PATH_INFO $fastcgi_path_info;",
                 "        fastcgi_param HTTP_PROXY \"\";",
-                "        fastcgi_pass \(try ConfigText.socket(socket, prefix: "unix:"));",
+                "        fastcgi_pass \(pass);",
                 "        fastcgi_read_timeout 300;",
                 "    }",
                 "",
@@ -217,7 +271,7 @@ public enum NginxConfig {
                 "    }",
             ]
             lines += waitLocation(on: [502], name: "nexus_php_waits", page: ErrorPages.phpWaits)
-        case .php(.apache, _, _):
+        case .php(.apache, _, _, _):
             let httpsPort = settings.httpsPort == 443 ? "" : ":\(settings.httpsPort)"
             lines += [
                 "    if ($scheme = http) {",

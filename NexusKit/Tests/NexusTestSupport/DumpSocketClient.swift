@@ -5,8 +5,8 @@ import NexusDumps
 
 public enum DumpSocketClient {
     public static func connect(to socket: URL) throws -> Int32 {
+        var address = try UnixSocket.address(of: socket.path(percentEncoded: false))
         let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-        var address = DumpReceiver.address(of: socket.path(percentEncoded: false))
 
         let result = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in

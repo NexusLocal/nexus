@@ -294,9 +294,35 @@ extension NexusEngineTests {
         }
         let engine = try makeSiteEngine(root: root, state: state)
 
-        let users = await engine.databaseUsers(kind: .mysql, port: 13306)
+        let users = await engine.databaseUsers(kind: .mysql, port: 13306, socket: "/nexus/run/mysql-8.4.sock")
 
         #expect(users == ["shop": ["blog.test", "shop.test"]])
+    }
+
+    @Test func aSiteWhoseSocketIsTheSocketOfTheInstanceUsesItsDatabase() async throws {
+        let root = siteTestRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let projects = root.appending(path: "projects", directoryHint: .isDirectory)
+        let envs = [
+            "shop.test": "DB_CONNECTION=mysql\nDB_HOST=localhost\nDB_PORT=8889\nDB_SOCKET=/nexus/run/mysql-8.4.sock\nDB_DATABASE=shop\n",
+            "mamp.test": "DB_CONNECTION=mysql\nDB_HOST=localhost\nDB_PORT=8889\nDB_SOCKET=/Applications/MAMP/tmp/mysql/mysql.sock\nDB_DATABASE=mamp\n",
+            "blog.test": "DB_CONNECTION=mysql\nDB_PORT=13306\nDB_SOCKET=/Applications/MAMP/tmp/mysql/mysql.sock\nDB_DATABASE=blog\n",
+            "notes.test": "DB_CONNECTION=pgsql\nDB_HOST=/nexus/run/\nDB_PORT=15432\nDB_DATABASE=notes\n",
+        ]
+        var state = EngineState()
+        for (host, env) in envs {
+            let site = site(host, in: projects)
+            try FileManager.default.createDirectory(at: site.folder, withIntermediateDirectories: true)
+            try Data(env.utf8).write(to: site.folder.appending(path: ".env"))
+            state.sites.append(site)
+        }
+        let engine = try makeSiteEngine(root: root, state: state)
+
+        let mysql = await engine.databaseUsers(kind: .mysql, port: 13306, socket: "/nexus/run/mysql-8.4.sock")
+        let postgresql = await engine.databaseUsers(kind: .postgresql, port: 15432, socket: "/nexus/run/.s.PGSQL.15432")
+
+        #expect(mysql == ["blog": ["blog.test"], "shop": ["shop.test"]])
+        #expect(postgresql == ["notes": ["notes.test"]])
     }
 }
 
@@ -485,6 +511,58 @@ extension NexusEngineTests {
         #expect(proxy == "app api.test:\(httpsPort) ")
     }
 
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
+    func aRealNginxRefusesAWrongLineAndServesTheGoodLines() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
+        try paths.createFolders()
+        try linkRealRuntimes(in: paths)
+
+        let httpsPort = freePort()
+        var state = EngineState()
+        state.ports[ServiceCatalog.httpPortKey] = freePort()
+        state.ports[ServiceCatalog.httpsPortKey] = httpsPort
+        state.ports[NexusEngine.dnsServiceID] = freeUDPPort()
+        try JSONEncoder().encode(state).write(to: paths.config.appending(path: "state.json"))
+
+        let shop = root.appending(path: "shop", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: shop, withIntermediateDirectories: true)
+        try Data("<?php echo 'shop';".utf8).write(to: shop.appending(path: "index.php"))
+
+        let engine = NexusEngine(
+            paths: paths,
+            helper: helper,
+            certificateAuthority: CertificateAuthority(paths: paths, store: keyStore),
+            systemFiles: SystemDNSFiles(
+                resolverFolder: root.appending(path: "etc/resolver", directoryHint: .isDirectory),
+                hostsFile: root.appending(path: "etc/hosts", directoryHint: .notDirectory)
+            )
+        )
+        let headers = { await self.curl(["-D", "-", "-o", "/dev/null", "https://shop.test:\(httpsPort)/"], host: "shop.test", port: httpsPort) }
+        var body: String?
+        var good, wrong: NexusResponse?
+        var served = false
+        var servedAfterRefusal = ""
+
+        try await whileRunning(engine) {
+            _ = await engine.handle(.addSite(folder: shop.path(percentEncoded: false), host: nil, aliases: [], php: "8.5", server: nil))
+            body = await page("shop.test", port: httpsPort, expecting: "shop")
+            good = await engine.handle(.setSiteLines(host: "shop.test", lines: ["add_header X-Nexus-Lines on;"]))
+            served = await eventually { await headers().lowercased().contains("x-nexus-lines: on") }
+            wrong = await engine.handle(.setSiteLines(host: "shop.test", lines: ["client_max_body_siz 100m;"]))
+            servedAfterRefusal = await headers()
+
+            _ = await engine.handle(.stopAll)
+        }
+
+        #expect(body == "shop")
+        #expect(good == .done(message: "shop.test runs with the new nginx lines."))
+        #expect(served)
+        #expect(wrong == .invalidSiteLines(SiteLinesError(host: "shop.test", server: .nginx, line: 1, message: "unknown directive \"client_max_body_siz\"")))
+        #expect(servedAfterRefusal.lowercased().contains("x-nexus-lines: on"), "\(servedAfterRefusal)")
+    }
+
     static let realNodeApps = ProcessInfo.processInfo.environment["NEXUS_NODE_APPS"]
 
     // NEXUS_NODE_APPS names a folder with the installed projects next, nuxt and vite. Each one has
@@ -568,7 +646,7 @@ extension NexusEngineTests {
         return body
     }
 
-    private func curl(_ arguments: [String], host: String, port: Int, seconds: Int = 3) async -> String {
+    func curl(_ arguments: [String], host: String, port: Int, seconds: Int = 3) async -> String {
         let curl = Process()
         curl.executableURL = URL(filePath: "/usr/bin/curl")
         curl.arguments = ["-sk", "--max-time", "\(seconds)", "--resolve", "\(host):\(port):127.0.0.1"] + arguments

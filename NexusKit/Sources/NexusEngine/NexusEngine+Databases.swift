@@ -2,6 +2,7 @@ import Foundation
 import NexusConfig
 import NexusCore
 import NexusIPC
+import NexusLaravel
 import NexusRuntime
 import NexusSupervisor
 import Synchronization
@@ -58,6 +59,22 @@ extension NexusEngine {
 
     func port(of tools: DatabaseTools) async throws -> Int {
         try await ports(for: tools.runtime)[tools.id] ?? tools.kind.standardPort
+    }
+
+    func socketPath(of tools: DatabaseTools, port: Int) -> String {
+        paths.databaseSocket(tools.kind, line: tools.runtime.line, port: port).path(percentEncoded: false)
+    }
+
+    // Each instance with the port and the socket file that a site can use to reach it.
+    func databaseAddresses() async throws -> [(tools: DatabaseTools, port: Int, socket: String)] {
+        var all: [(tools: DatabaseTools, port: Int, socket: String)] = []
+
+        for tools in await databaseRuntimes() {
+            let port = try await port(of: tools)
+            all.append((tools, port, socketPath(of: tools, port: port)))
+        }
+
+        return all
     }
 
     func databaseInstances() async throws -> [DatabaseInstance] {
@@ -209,10 +226,14 @@ extension NexusEngine {
         let database = try DatabaseName.validated(request.database)
         let name = try DatabaseName.validated(request.name ?? request.database)
         let port = try await connectionPort(of: tools)
-        let source = DatabaseEndpoint(host: request.source.host, port: request.source.port ?? tools.kind.standardPort, account: request.source.account)
+        let source = DatabaseEndpoint(host: request.source.host, port: request.source.port ?? tools.kind.standardPort, account: request.source.account, socket: request.source.socket)
         let target = DatabaseEndpoint(host: "127.0.0.1", port: port, account: try await account(of: tools))
 
-        if source.isLocal, source.port == port, database == name {
+        // A socket ignores the port. So only the socket file of the instance is the instance.
+        let targetSocket = socketPath(of: tools, port: port)
+        let isTarget = source.socket.map { RealPath.trimmed($0) == targetSocket } ?? (source.isLocal && source.port == port)
+
+        if isTarget, database == name {
             throw RuntimeError.unsupported("\(database) cannot be copied onto itself. Give the copy another name with --as.")
         }
 
@@ -259,7 +280,7 @@ extension NexusEngine {
         let contents = copied.views > 0 ? "\(tables) and \(views)" : tables
 
         return """
-            \(database) is copied from \(source.host):\(source.port) to \(request.instance) as \(name), with \(contents).
+            \(database) is copied from \(source.address) to \(request.instance) as \(name), with \(contents).
             Connect to port \(port) on 127.0.0.1 with the user \(target.account.user) and \(target.account.password.isEmpty ? "no password" : "the password \(target.account.password)").
             """
     }
@@ -291,13 +312,22 @@ struct DatabaseTargetExists: Error, CustomStringConvertible {
     let description: String
 }
 
+// A socket file wins over the host and the port. Only the clients of MySQL and MariaDB read it.
+// connectTimeout is the time in seconds that the client waits for a connection. nil keeps the
+// default of the client.
 struct DatabaseEndpoint {
     let host: String
     let port: Int
     let account: DatabaseAccount
+    var socket: String? = nil
+    var connectTimeout: Int? = nil
 
     var isLocal: Bool {
-        ["127.0.0.1", "localhost", "::1"].contains(host.lowercased())
+        WorkspaceEnvPlan.localHosts.contains(host.lowercased())
+    }
+
+    var address: String {
+        socket ?? "\(host):\(port)"
     }
 }
 
@@ -385,7 +415,7 @@ struct DatabaseCopier {
 
             return "CREATE DATABASE \(identifier) \(try await characterSet(of: database))"
         } catch let error as CommandError {
-            throw RuntimeError.unsupported("Nexus cannot read \(database) on \(source.host):\(source.port). \(ErrorText.plain(error))")
+            throw RuntimeError.unsupported("Nexus cannot read \(database) on \(source.address). \(ErrorText.plain(error))")
         }
     }
 
@@ -395,7 +425,7 @@ struct DatabaseCopier {
             .map(String.init)
 
         guard settings.count == 2 else {
-            throw RuntimeError.unsupported("The server on \(source.host):\(source.port) has no database \(database).")
+            throw RuntimeError.unsupported("The server on \(source.address) has no database \(database).")
         }
 
         return "CHARACTER SET \(settings[0]) COLLATE \(kind == .mysql ? DatabaseConfig.mysqlCollation(settings[1]) : settings[1])"

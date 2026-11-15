@@ -30,6 +30,42 @@ public enum PHPConfig {
 
         """
 
+    // Only nexus debug and the PHP-FPM for debug requests load Xdebug (owner, 2026-11-14). A loaded
+    // Xdebug made a loop 5 times slower, also without a debug session (measured on 2026-11-14). So
+    // conf.d never loads it. These two programs read xdebug.d after conf.d. The settings of Xdebug
+    // are in 00-nexus.ini, before the custom lines. So a custom line such as
+    // xdebug.client_port = 9000 still wins.
+    public static let xdebugFolderName = "xdebug.d"
+    public static let xdebugIniName = "00-nexus-xdebug.ini"
+    public static let xdebugFPMConfigName = "php-fpm-xdebug.conf"
+
+    static let xdebugLines = [
+        "; Only nexus debug and the PHP-FPM for debug requests load Xdebug. They read the lines below.",
+        "xdebug.mode = debug,develop",
+        "xdebug.start_with_request = trigger",
+        "xdebug.client_port = 9003",
+    ]
+
+    // php.ini or a custom line can load Xdebug itself. A second load gives a warning at each start.
+    // So the file then loads nothing.
+    public static func xdebugIni(loadsExtension: Bool) -> String {
+        let first = "; Nexus writes this file. Only nexus debug and the PHP-FPM for debug requests read this folder. The settings of Xdebug are in conf.d/00-nexus.ini."
+        return ([first] + (loadsExtension ? [loadLine("xdebug")] : [])).joined(separator: "\n") + "\n"
+    }
+
+    // A line such as zend_extension = xdebug or zend_extension = /opt/xdebug.so.
+    public static func userLoadsXdebug(phpIni: String, customLines: [String]) -> Bool {
+        let lines = phpIni.split(whereSeparator: \.isNewline) + customLines.map { Substring($0) }
+
+        return lines.contains { line in
+            guard let value = iniValue(of: "zend_extension", in: line) else {
+                return false
+            }
+
+            return ["xdebug", "xdebug.so"].contains(URL(filePath: value).lastPathComponent)
+        }
+    }
+
     // The first line of the custom file is a comment. So line 1 of the custom lines is line 2
     // of the file.
     public static let customIniHeaderLines = 1
@@ -46,8 +82,8 @@ public enum PHPConfig {
 
     // php_value and not php_admin_value: the .user.ini of a site with its own prepend file still
     // wins, for example the firewall of Wordfence (owner answer 3).
-    public static func fpmConfig(socket: URL, pidFile: URL, prepend: URL? = nil) throws -> String {
-        let config = try poolConfig(socket: socket, pidFile: pidFile)
+    public static func fpmConfig(socket: URL, pidFile: URL, prepend: URL? = nil, xdebug: Bool = false) throws -> String {
+        let config = try poolConfig(socket: socket, pidFile: pidFile, xdebug: xdebug)
 
         guard let prepend else {
             return config
@@ -56,27 +92,30 @@ public enum PHPConfig {
         return config + "php_value[auto_prepend_file] = \(try ConfigText.quoted(prepend))\n"
     }
 
-    private static func poolConfig(socket: URL, pidFile: URL) throws -> String {
-        """
-        ; Nexus writes this file. Changes are lost at the next start of this PHP version.
-        [global]
-        pid = \(try ConfigText.quoted(pidFile))
-        error_log = /dev/stderr
-        daemonize = no
+    // The pool with Xdebug starts a process only for a request and ends it after 60 seconds without
+    // a request. So while it waits, only its main process uses memory, about 11 MB (measured on
+    // 2026-11-14).
+    private static func poolConfig(socket: URL, pidFile: URL, xdebug: Bool) throws -> String {
+        let processes = xdebug
+            ? "pm = ondemand\npm.max_children = 10\npm.process_idle_timeout = 60s"
+            : "pm = dynamic\npm.max_children = 10\npm.start_servers = 2\npm.min_spare_servers = 1\npm.max_spare_servers = 3"
 
-        [nexus]
-        listen = \(try ConfigText.socket(socket))
-        listen.mode = 0600
-        pm = dynamic
-        pm.max_children = 10
-        pm.start_servers = 2
-        pm.min_spare_servers = 1
-        pm.max_spare_servers = 3
-        catch_workers_output = yes
-        decorate_workers_output = no
-        clear_env = no
+        return """
+            ; Nexus writes this file. Changes are lost at the next start of this PHP version.
+            [global]
+            pid = \(try ConfigText.quoted(pidFile))
+            error_log = /dev/stderr
+            daemonize = no
 
-        """
+            [\(xdebug ? "nexus-xdebug" : "nexus")]
+            listen = \(try ConfigText.socket(socket))
+            listen.mode = 0600
+            \(processes)
+            catch_workers_output = yes
+            decorate_workers_output = no
+            clear_env = no
+
+            """
     }
 
     public static func dumpsIni(stub: URL) throws -> String {
@@ -181,6 +220,15 @@ public enum PHPConfig {
         dependencies.loadOrder(enabled, available: available)
     }
 
+    // conf.d never loads Xdebug. Only xdebug.d loads it.
+    public static func confDExtensions(enabled: Set<String>, available: Set<String>) -> [String] {
+        extensionsToLoad(enabled: enabled, available: available).filter { $0 != "xdebug" }
+    }
+
+    static func loadLine(_ name: String) -> String {
+        zendExtensions.contains(name) ? "zend_extension = \(name)" : "extension = \(name)"
+    }
+
     public static func customIni(lines: [String]) -> String {
         (["; Nexus writes this file from the custom settings of each PHP version. Change them in the Nexus app."] + lines)
             .joined(separator: "\n") + "\n"
@@ -224,26 +272,20 @@ public enum PHPConfig {
         ]
     }
 
-    public static func nexusIni(extensionDirectory: URL, extensions: [String], mailLines: [String] = []) throws -> String {
+    public static func nexusIni(extensionDirectory: URL, extensions: [String], mailLines: [String] = [], xdebugSettings: Bool = false) throws -> String {
         var lines = [
             "; Nexus writes this file for the extension toggles and the mail service. Change the php.ini in the folder above.",
             "extension_dir = \(try ConfigText.quoted(extensionDirectory))",
         ] + mailLines
 
-        for name in extensions {
-            lines.append(zendExtensions.contains(name) ? "zend_extension = \(name)" : "extension = \(name)")
-        }
+        lines += extensions.map(loadLine)
 
         if extensions.contains("pcov") {
             lines.append("pcov.enabled = 0")
         }
 
-        if extensions.contains("xdebug") {
-            lines += [
-                "xdebug.mode = debug,develop",
-                "xdebug.start_with_request = trigger",
-                "xdebug.client_port = 9003",
-            ]
+        if xdebugSettings {
+            lines += xdebugLines
         }
 
         return lines.joined(separator: "\n") + "\n"
@@ -266,6 +308,12 @@ public enum PHPConfig {
             opcache.revalidate_freq = 0
 
             """
+    }
+}
+
+extension NexusPaths {
+    public func xdebugFolder(line: String) -> URL {
+        phpConfigFolder(line: line).appending(path: PHPConfig.xdebugFolderName)
     }
 }
 

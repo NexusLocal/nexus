@@ -79,6 +79,16 @@ public struct NexusPaths: Sendable, Equatable {
         config.appending(path: "apache/httpd.conf", directoryHint: .notDirectory)
     }
 
+    // The custom lines of each site, which the server block of nginx or the VirtualHost of Apache
+    // includes (owner, 2026-11-14). nexusd writes them from the state.
+    public func siteLinesFolder(_ server: WebServer) -> URL {
+        (server == .apache ? apacheConfig : nginxConfig).deletingLastPathComponent().appending(path: "sites", directoryHint: .isDirectory)
+    }
+
+    public func siteLinesFile(_ host: String, server: WebServer) -> URL {
+        siteLinesFolder(server).appending(path: "\(host).conf", directoryHint: .notDirectory)
+    }
+
     public var phpConfigRoot: URL {
         config.appending(path: "php", directoryHint: .isDirectory)
     }
@@ -94,6 +104,10 @@ public struct NexusPaths: Sendable, Equatable {
 
     public func phpSocket(line: String) -> URL {
         run.appending(path: "php-\(line).sock", directoryHint: .notDirectory)
+    }
+
+    public func xdebugSocket(line: String) -> URL {
+        run.appending(path: "xdebug-\(line).sock", directoryHint: .notDirectory)
     }
 
     // The prepend file of PHP sends each dump to this socket. Its path must stay below the 104

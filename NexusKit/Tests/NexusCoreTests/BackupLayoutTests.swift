@@ -142,4 +142,27 @@ struct DumpScannerTests {
         #expect(BackupName.suggested(for: "/tmp/2026-11-07.tar.gz") == "site")
         #expect(BackupName.suggested(for: "/tmp/foo-local.zip") == "foo")
     }
+
+    @Test func theFormatNamesThePasswordAndTheCompression() {
+        let both = BackupInfo(path: "/tmp/a.wpress", format: .wpress, passwordSignature: "AAAA", compression: .gzip, suggestedName: "a")
+        let password = BackupInfo(path: "/tmp/a.wpress", format: .wpress, passwordSignature: "AAAA", suggestedName: "a")
+        let compressed = BackupInfo(path: "/tmp/a.wpress", format: .wpress, compression: .bzip2, suggestedName: "a")
+        let plain = BackupInfo(path: "/tmp/a.wpress", format: .wpress, suggestedName: "a")
+        let unknown = BackupInfo(path: "/tmp/a.txt", format: nil, suggestedName: "a")
+
+        #expect(BackupText.format(both) == "All-in-One WP Migration, with a password and compressed with gzip")
+        #expect(BackupText.format(password) == "All-in-One WP Migration, with a password")
+        #expect(BackupText.format(compressed) == "All-in-One WP Migration, compressed with bzip2")
+        #expect(BackupText.format(plain) == "All-in-One WP Migration")
+        #expect(BackupText.format(unknown) == "Unknown")
+    }
+
+    @Test func anOlderBackupInfoAndSiteImportStillDecode() throws {
+        let info = try JSONDecoder().decode(BackupInfo.self, from: Data(#"{"path": "/tmp/a.wpress", "format": "wpress", "hasCore": false, "suggestedName": "a"}"#.utf8))
+        let request = try JSONDecoder().decode(SiteImport.self, from: Data(#"{"backup": "/tmp/a.wpress", "name": "a", "parent": "/tmp", "git": true}"#.utf8))
+
+        #expect(info.passwordSignature == nil)
+        #expect(info.compression == nil)
+        #expect(request.password == nil)
+    }
 }

@@ -2,6 +2,7 @@ import Foundation
 import NexusConfig
 import NexusCore
 import NexusIPC
+import NexusLaravel
 import NexusRuntime
 import NexusSupervisor
 
@@ -55,7 +56,8 @@ extension NexusEngine {
         let answer = tools.kind.usesMySQLProtocol
             ? try await client.queryWithCurrentSizes(Self.mysqlSizes)
             : try await client.query(Self.postgresqlSizes)
-        let users = await databaseUsers(kind: tools.kind, port: client.endpoint.port)
+        let port = client.endpoint.port
+        let users = await databaseUsers(kind: tools.kind, port: port, socket: socketPath(of: tools, port: port))
 
         return Self.sizes(in: DatabaseClient.rows(in: answer)).map { DatabaseSize(name: $0.name, bytes: $0.bytes, usedBy: users[$0.name]) }
     }
@@ -67,13 +69,9 @@ extension NexusEngine {
             throw RuntimeError.unsupported("Nexus has no database instance \(instance). See: nexus db list")
         }
 
-        let work = paths.run.appending(path: ".source-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let endpoint = DatabaseEndpoint(host: server.host, port: server.port ?? tools.kind.standardPort, account: server.account, socket: server.socket)
+        let (client, work) = try preparedClient(tools, endpoint: endpoint)
         defer { try? FileManager.default.removeItem(at: work) }
-
-        let endpoint = DatabaseEndpoint(host: server.host, port: server.port ?? tools.kind.standardPort, account: server.account)
-        let client = DatabaseClient(tools: tools, endpoint: endpoint, options: work.appending(path: "source.cnf"))
-        try client.prepare()
 
         do {
             guard tools.kind.usesMySQLProtocol else {
@@ -82,7 +80,7 @@ extension NexusEngine {
 
             return Self.sizes(in: DatabaseClient.rows(in: try await client.queryWithCurrentSizes(Self.mysqlSizes)))
         } catch let error as CommandError {
-            throw RuntimeError.unsupported("Nexus cannot read the databases on \(endpoint.host):\(endpoint.port). \(ErrorText.plain(error))")
+            throw RuntimeError.unsupported("Nexus cannot read the databases on \(endpoint.address). \(ErrorText.plain(error))")
         }
     }
 
@@ -105,19 +103,28 @@ extension NexusEngine {
         }
     }
 
-    // The sites whose .env points to a database on this port, for each database. Step 8a reads
+    // The sites whose .env points to a database on this instance, for each database. Step 8a reads
     // the real configuration of each application (D43). Until then the .env is enough for this
-    // list. Laravel uses 127.0.0.1 without DB_HOST.
-    func databaseUsers(kind: DatabaseKind, port: Int) async -> [String: [String]] {
+    // list. Laravel uses 127.0.0.1 without DB_HOST. PHP uses DB_SOCKET in place of the host and the
+    // port. So a site also counts when its socket is the socket of the instance. The old rule (a
+    // local host and the port) stays too. A database with no users can become a test database that
+    // tests empty, so a list with too many users is the safe error.
+    func databaseUsers(kind: DatabaseKind, port: Int, socket: String) async -> [String: [String]] {
         var users: [String: [String]] = [:]
 
         for (site, _) in resolvedSites(await stateStore.current()) {
             let env = EnvFile.values(of: site.folder.appending(path: ".env")).filter { !$0.value.isEmpty }
 
-            guard let connection = env["DB_CONNECTION"], kind.laravelConnections.contains(connection),
-                  let database = env["DB_DATABASE"],
-                  ["127.0.0.1", "localhost", "::1"].contains(env["DB_HOST"] ?? "127.0.0.1"),
-                  (env["DB_PORT"].flatMap { Int($0) } ?? kind.standardPort) == port else {
+            guard let connection = env["DB_CONNECTION"], kind.laravelConnections.contains(connection), let database = env["DB_DATABASE"] else {
+                continue
+            }
+
+            let host = env["DB_HOST"]
+            let sitePort = env["DB_PORT"].flatMap { Int($0) }
+            let usesPort = WorkspaceEnvPlan.localHosts.contains(host ?? WorkspaceEnvPlan.serverHost) && (sitePort ?? kind.standardPort) == port
+            let address = ConnectionAddress(driver: connection, host: host, port: sitePort, socket: env["DB_SOCKET"])
+
+            guard usesPort || address.reaches(port: port, socket: socket) else {
                 continue
             }
 
@@ -180,19 +187,18 @@ extension NexusEngine {
             _ = try await takesQueries(tools, port: port, until: deadline)
         }
 
-        let (client, work) = try preparedClient(tools, port: port, account: try await account(of: tools))
+        let (client, work) = try preparedClient(tools, endpoint: DatabaseEndpoint(host: "127.0.0.1", port: port, account: try await account(of: tools)))
 
         return (tools, client, work)
     }
 
     // The option file holds the password, so it goes in a private folder. The caller removes that
     // folder.
-    func preparedClient(_ tools: DatabaseTools, port: Int, account: DatabaseAccount) throws -> (DatabaseClient, URL) {
+    func preparedClient(_ tools: DatabaseTools, endpoint: DatabaseEndpoint) throws -> (DatabaseClient, URL) {
         let work = paths.run.appending(path: ".account-\(UUID().uuidString)", directoryHint: .isDirectory)
 
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
 
-        let endpoint = DatabaseEndpoint(host: "127.0.0.1", port: port, account: account)
         let client = DatabaseClient(tools: tools, endpoint: endpoint, options: work.appending(path: "client.cnf"))
 
         do {

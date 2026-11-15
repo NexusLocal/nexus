@@ -14,13 +14,20 @@ struct DatabaseClient {
 
     private var kind: DatabaseKind { tools.kind }
 
+    private var postgreSQLEnvironment: [String: String] {
+        var environment = ["PGPASSWORD": endpoint.account.password]
+        environment["PGCONNECT_TIMEOUT"] = endpoint.connectTimeout.map(String.init)
+        return environment
+    }
+
     func prepare() throws {
         guard kind.usesMySQLProtocol else {
             return
         }
 
         let plugins = tools.runtime.folder.appending(path: "lib/plugin", directoryHint: .isDirectory)
-        try Data(DatabaseConfig.clientOptions(host: endpoint.host, port: endpoint.port, account: endpoint.account, pluginFolder: plugins).utf8).write(to: options)
+        let text = DatabaseConfig.clientOptions(host: endpoint.host, port: endpoint.port, account: endpoint.account, pluginFolder: plugins, socket: endpoint.socket, connectTimeout: endpoint.connectTimeout)
+        try Data(text.utf8).write(to: options)
     }
 
     // Names are checked with DatabaseName.validated, so they have no quotes.
@@ -38,7 +45,7 @@ struct DatabaseClient {
             let command = Command(
                 executable: tools.client,
                 arguments: ["-X", "-q", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1", "-h", endpoint.host, "-p", String(endpoint.port), "-U", endpoint.account.user, "-d", database ?? "postgres", "-c", sql],
-                environment: ["PGPASSWORD": endpoint.account.password]
+                environment: postgreSQLEnvironment
             )
             return try await CommandRunner.run(command).trimmed
         }
@@ -57,7 +64,7 @@ struct DatabaseClient {
             return Command(
                 executable: tools.client,
                 arguments: ["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-h", endpoint.host, "-p", String(endpoint.port), "-U", endpoint.account.user, "-d", "postgres"],
-                environment: ["PGPASSWORD": endpoint.account.password]
+                environment: postgreSQLEnvironment
             )
         }
 
@@ -79,7 +86,7 @@ struct DatabaseClient {
             : Command(
                 executable: tools.client,
                 arguments: ["-X", "-q", "-v", "ON_ERROR_STOP=1", "-h", endpoint.host, "-p", String(endpoint.port), "-U", endpoint.account.user, "-d", "postgres"],
-                environment: ["PGPASSWORD": endpoint.account.password]
+                environment: postgreSQLEnvironment
             )
 
         try await CommandRunner.pipe(Command(executable: URL(filePath: "/bin/cat"), arguments: [file.path(percentEncoded: false)]), into: client)

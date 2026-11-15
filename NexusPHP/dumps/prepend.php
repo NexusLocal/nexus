@@ -94,6 +94,45 @@ namespace Nexus\Dumps {
         });
     }
 
+    // The folder of the script of a command as an absolute path without "." and "..". It keeps a
+    // symbolic link as written. A crontab starts a script of a site from another folder.
+    function scriptFolder(array $server): ?string
+    {
+        $script = (string) ($server['SCRIPT_FILENAME'] ?? '');
+
+        if ($script === '') {
+            return null;
+        }
+
+        if (!\str_starts_with($script, '/')) {
+            $workingFolder = \getcwd();
+
+            if ($workingFolder === false) {
+                return null;
+            }
+
+            $script = "{$workingFolder}/{$script}";
+        }
+
+        $parts = [];
+
+        foreach (\explode('/', \dirname($script)) as $part) {
+            if (\in_array($part, ['', '.'], true)) {
+                continue;
+            }
+
+            if ($part === '..') {
+                \array_pop($parts);
+
+                continue;
+            }
+
+            $parts[] = $part;
+        }
+
+        return '/'.\implode('/', $parts);
+    }
+
     // A switch of the stub. Without a key only dumps are on. So an old stub keeps working.
     function catches(string $switch): bool
     {

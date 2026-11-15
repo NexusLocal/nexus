@@ -698,7 +698,8 @@ final class Catcher
             return \preg_replace('/[^a-z0-9.-]/', '_', \strtolower($host)) ?? 'host';
         }
 
-        return 'cli-'.\substr(\sha1((string) ($request['root'] ?? '')), 0, 12);
+        // Two crontab scripts of two sites can start in the same working folder.
+        return 'cli-'.\substr(\sha1((string) ($request['scriptFolders'][0] ?? $request['root'] ?? '')), 0, 12);
     }
 
     private static function status(bool $fatal): ?int

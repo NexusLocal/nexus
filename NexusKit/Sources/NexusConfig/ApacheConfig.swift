@@ -99,7 +99,7 @@ public enum ApacheConfig {
         let hasWildcard = { (site: WebSite) in site.hosts.contains { $0.hasPrefix("*.") } }
 
         for site in sites.filter({ !hasWildcard($0) }) + sites.filter(hasWildcard) {
-            guard case .php(.apache, let documentRoot, let socket) = site.backend else {
+            guard case .php(.apache, let documentRoot, let socket, let xdebugSocket) = site.backend else {
                 continue
             }
 
@@ -124,13 +124,39 @@ public enum ApacheConfig {
                 "        Require all granted",
                 "    </Directory>",
                 "    <FilesMatch \"\\.php$\">",
-                "        SetHandler \(try ConfigText.socket(socket, prefix: "proxy:unix:").dropLast())|fcgi://\(socket.deletingPathExtension().lastPathComponent)\"",
+            ]
+            lines += try phpHandler(socket: socket, xdebugSocket: xdebugSocket)
+            lines += [
                 "        ErrorDocument 503 \"\(ErrorPages.phpWaits)\"",
                 "    </FilesMatch>",
-                "</VirtualHost>",
             ]
+            lines += try site.customLines.map { file in ["    Include \(try ConfigText.quoted(file))"] } ?? []
+            lines.append("</VirtualHost>")
         }
 
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    // A request that starts an Xdebug session goes to the PHP-FPM with Xdebug, as in nginx. nginx
+    // gives Apache the cookie and the query string as they are.
+    static let xdebugCondition = #"%{QUERY_STRING} =~ /(^|&)XDEBUG_(SESSION|SESSION_START|TRIGGER)(=|&|$)/ || %{HTTP_COOKIE} =~ /(^|;)\s*XDEBUG_(SESSION|TRIGGER)=/"#
+
+    private static func phpHandler(socket: URL, xdebugSocket: URL?) throws -> [String] {
+        guard let xdebugSocket else {
+            return ["        \(try setHandler(socket))"]
+        }
+
+        return [
+            "        <If \"\(xdebugCondition)\">",
+            "            \(try setHandler(xdebugSocket))",
+            "        </If>",
+            "        <Else>",
+            "            \(try setHandler(socket))",
+            "        </Else>",
+        ]
+    }
+
+    private static func setHandler(_ socket: URL) throws -> String {
+        "SetHandler \(try ConfigText.socket(socket, prefix: "proxy:unix:").dropLast())|fcgi://\(socket.deletingPathExtension().lastPathComponent)\""
     }
 }

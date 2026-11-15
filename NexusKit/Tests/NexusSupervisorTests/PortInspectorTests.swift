@@ -119,4 +119,31 @@ struct PortInspectorTests {
     @Test func aLowPortWithoutAListenerIsFree() {
         #expect(PortInspector.isFree(81))
     }
+
+    private func listen(onSocket path: String) -> Int32 {
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: path.utf8) }
+        _ = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
+        #expect(Darwin.listen(descriptor, 5) == 0)
+        return descriptor
+    }
+
+    @Test func aListeningUnixSocketAcceptsConnections() {
+        let path = "/tmp/nx-\(UUID().uuidString.prefix(8)).sock"
+        defer { unlink(path) }
+        let descriptor = listen(onSocket: path)
+
+        let accepts = PortInspector.acceptsConnections(socket: path)
+        close(descriptor)
+
+        #expect(accepts)
+        #expect(!PortInspector.acceptsConnections(socket: path))
+    }
+
+    @Test func aMissingSocketAcceptsNoConnection() {
+        #expect(!PortInspector.acceptsConnections(socket: "/tmp/nx-\(UUID().uuidString.prefix(8)).sock"))
+        #expect(!PortInspector.acceptsConnections(socket: "/tmp/" + String(repeating: "x", count: 120)))
+    }
 }

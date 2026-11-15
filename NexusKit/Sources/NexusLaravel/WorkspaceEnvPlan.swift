@@ -31,19 +31,23 @@ public struct WorkspaceEnvRequest: Sendable {
     public let mysqlPorts: Set<Int>
     public let postgresqlPorts: Set<Int>
     public let redisPorts: Set<Int>
+    // The socket file of each database instance, by its port. A main checkout can reach an instance
+    // through its socket.
+    public let instanceSockets: [Int: String]
     // The check of a worktree sends that worktree as mainFolder, and this field then names the main
     // checkout. A file in the main checkout is not the file of the workspace.
     public let realMainFolder: String?
     // The SMTP port of the receiver of nexusd. A workspace always sends its mail there (Phase 3, 3c).
     public let smtpPort: Int?
 
-    public init(workspace: String, mainFolder: String, workspaceFolder: String, mysqlPorts: Set<Int>, postgresqlPorts: Set<Int>, redisPorts: Set<Int>, realMainFolder: String? = nil, smtpPort: Int? = nil) {
+    public init(workspace: String, mainFolder: String, workspaceFolder: String, mysqlPorts: Set<Int>, postgresqlPorts: Set<Int>, redisPorts: Set<Int>, instanceSockets: [Int: String] = [:], realMainFolder: String? = nil, smtpPort: Int? = nil) {
         self.workspace = workspace
         self.mainFolder = mainFolder
         self.workspaceFolder = workspaceFolder
         self.mysqlPorts = mysqlPorts
         self.postgresqlPorts = postgresqlPorts
         self.redisPorts = redisPorts
+        self.instanceSockets = instanceSockets
         self.realMainFolder = realMainFolder
         self.smtpPort = smtpPort
     }
@@ -114,7 +118,7 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
         Set(serverPortKeys.keys).union(urlPorts).sorted()
     }
 
-    static let localHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+    public static let localHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
 
     init() {}
 
@@ -187,8 +191,12 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
             return
         }
 
-        guard let nexusPorts, Self.isOnNexus(path, ports: nexusPorts, settings: settings) else {
-            if isDefault {
+        let address = ConnectionAddress(path: path, driver: driver, settings: settings)
+
+        guard let nexusPorts, let port = Self.nexusPort(address, path: path, ports: nexusPorts, sockets: request.instanceSockets, settings: settings) else {
+            if isDefault, case .localhostSocket = address {
+                problems.append("The connection \(name) has the host localhost. PHP then uses the standard socket of MySQL and no Nexus database instance. Use 127.0.0.1, for example with \"Use Nexus…\" on the Site screen.")
+            } else if isDefault {
                 problems.append("The connection \(name) does not use a Nexus database instance.")
             }
 
@@ -200,7 +208,7 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
             return
         }
 
-        guard let port = Self.port(path, settings: settings), let portSetting = Self.setting("port", at: path, settings: settings), let portKey = portSetting.keys.first, portSetting.exact else {
+        guard let portSetting = Self.setting("port", at: path, settings: settings), let portKey = portSetting.keys.first, portSetting.exact else {
             problems.append("The connection \(name) has a fixed port in config/database.php.")
             return
         }
@@ -236,8 +244,9 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
             return
         }
 
+        // Only a host that keeps the port reaches an instance (nexusPort). So a fixed host is no
+        // problem: the port of the workspace isolates it.
         guard let key = host.keys.first, host.exact else {
-            problems.append("The connection \(name) has the fixed host \(host.value.description) in config/database.php, and that host can ignore the port.")
             return
         }
 
@@ -340,12 +349,21 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
         }
     }
 
-    private static func isOnNexus(_ path: String, ports: Set<Int>, settings: [String: ConfigSetting]) -> Bool {
-        isLocal(path, settings: settings) && port(path, settings: settings).map(ports.contains) ?? false
+    // The port of the Nexus instance that PHP reaches with this connection, the same rule as the
+    // Site screen. MySQL reads localhost as the standard socket of PHP, so that host reaches no
+    // instance. Else a workspace would clone data that the main checkout does not use.
+    // A connection without a port gets no standard port here. It reaches an instance only through
+    // a socket.
+    private static func nexusPort(_ address: ConnectionAddress, path: String, ports: Set<Int>, sockets: [Int: String], settings: [String: ConfigSetting]) -> Int? {
+        if case .tcp = address, port(path, settings: settings) == nil {
+            return nil
+        }
+
+        return ports.first { address.reaches(port: $0, socket: sockets[$0]) }
     }
 
     static func isLocal(_ path: String, settings: [String: ConfigSetting]) -> Bool {
-        value("host", at: path, settings: settings).map { localHosts.contains($0.description) } ?? true
+        value("host", at: path, settings: settings).map { localHosts.contains($0.description.lowercased()) } ?? true
     }
 
     static func port(_ path: String, settings: [String: ConfigSetting]) -> Int? {
@@ -362,7 +380,7 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
         setting(name, at: path, settings: settings)?.value
     }
 
-    private static func usesRedis(_ configuration: LaravelConfiguration) -> Bool {
+    static func usesRedis(_ configuration: LaravelConfiguration) -> Bool {
         let settings = configuration.settings
         let cache = settings["cache.default"]?.value.description ?? ""
         let queue = settings["queue.default"]?.value.description ?? ""

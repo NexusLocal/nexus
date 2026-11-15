@@ -16,6 +16,7 @@ struct WebPlan {
     var needsApache = false
     var warnings: [String] = []
     var siteSignature: [String] = []
+    var lineFiles: [WebServer: [URL: String]] = [:]
 }
 
 // What a change of the web configuration starts and stops.
@@ -38,11 +39,30 @@ extension NexusEngine {
     static let webPortKeys: Set<String> = [ServiceCatalog.httpPortKey, ServiceCatalog.httpsPortKey, ServiceCatalog.apacheID]
 
     func isWebService(_ id: String) -> Bool {
-        id == ServiceCatalog.nginxID || id == ServiceCatalog.apacheID || id.hasPrefix("php-")
+        id == ServiceCatalog.nginxID || id == ServiceCatalog.apacheID || ServiceID.phpLine(of: id) != nil
     }
 
     func resolvedSites(_ state: EngineState) -> [(site: Site, parked: Bool)] {
         resolveSites(state).sites
+    }
+
+    func resolvedSite(_ host: String, in state: EngineState) throws -> Site {
+        guard let site = resolvedSites(state).first(where: { $0.site.host == host })?.site else {
+            throw RuntimeError.unsupported("Nexus has no site \(host).")
+        }
+
+        return site
+    }
+
+    // An added site gets the change. A site of a parked folder becomes an added site, so it keeps
+    // its new settings.
+    static func changeOrAdd(_ site: Site, in state: inout EngineState, change: (inout Site) -> Void) {
+        guard let index = state.sites.firstIndex(where: { $0.host == site.host }) else {
+            state.sites.append(site)
+            return
+        }
+
+        change(&state.sites[index])
     }
 
     // The added sites and the sites of the parked folders. The added sites claim their hosts
@@ -226,10 +246,10 @@ extension NexusEngine {
         return port == 443 ? "https://\(host)" : "https://\(host):\(port)"
     }
 
-    private func webBackend(of site: Site, appPort: Int?, documentRoot: URL) -> WebBackend? {
+    private func webBackend(of site: Site, appPort: Int?, documentRoot: URL, xdebugLines: Set<String>) -> WebBackend? {
         switch site.kind {
         case .php:
-            .php(server: site.server, documentRoot: documentRoot, socket: paths.phpSocket(line: site.php))
+            .php(server: site.server, documentRoot: documentRoot, socket: paths.phpSocket(line: site.php), xdebugSocket: xdebugLines.contains(site.php) ? paths.xdebugSocket(line: site.php) : nil)
         case .node:
             appPort.map { .app(port: $0, framework: site.nodeProject?.framework) }
         case .proxy:
@@ -248,6 +268,7 @@ extension NexusEngine {
         let sites = ownSites + workspaces.sites
         let appPorts = appPortsByHost(state, sites: ownSites)
         let installed = await installer.installedRuntimes()
+        let debugLines = xdebugLines(state, installed: installed)
         let apache = await newestRuntime(named: "httpd")
         let layouts = SiteLayout.of(sites)
         var plan = WebPlan(warnings: resolved.conflicts + workspaces.conflicts.values.sorted(), siteSignature: Self.signature(of: sites, appPorts: appPorts, noticeHosts: workspaces.noticeHosts, layouts: layouts))
@@ -267,12 +288,22 @@ extension NexusEngine {
             let runsNoPHP = workspaces.noticeHosts.contains(site.host)
             let notice = WebBackend.notice(title: Self.wordPressWorkspaceTitle, text: Self.wordPressWorkspaceReason)
 
-            guard let root, let backend = runsNoPHP ? notice : webBackend(of: site, appPort: appPorts[site.host], documentRoot: layout.documentRoot) else {
+            guard let root, let backend = runsNoPHP ? notice : webBackend(of: site, appPort: appPorts[site.host], documentRoot: layout.documentRoot, xdebugLines: debugLines) else {
                 continue
             }
 
             let hosts = layout.hosts(of: site, tld: state.tld)
             let certificate = try certificateAuthority.hostCertificate(for: hosts, root: root, allowingWildcards: true)
+            var linesFile: URL?
+
+            // The custom lines that the webserver of a PHP site includes (owner, 2026-11-14). A
+            // notice page of a workspace runs no PHP, so it gets none.
+            if case .php = backend, let customLines = site.serverLines {
+                let file = paths.siteLinesFile(site.host, server: site.server)
+                plan.lineFiles[site.server, default: [:]][file] = SiteLinesFile.contents(customLines, server: site.server)
+                linesFile = file
+            }
+
             plan.sites.append(WebSite(
                 hosts: hosts,
                 backend: backend,
@@ -280,7 +311,8 @@ extension NexusEngine {
                 key: certificate.keyFile,
                 accessLog: paths.siteLog(site.host),
                 project: layout.projectType,
-                network: layout.network
+                network: layout.network,
+                customLines: linesFile
             ))
 
             if site.kind == .php, !runsNoPHP {
@@ -311,8 +343,8 @@ extension NexusEngine {
             let modules = ApacheConfig.dependencies.loadOrder(state.apacheModules ?? ApacheConfig.defaultModules, available: Self.apacheModules(of: apache))
             let settings = ApacheSettings(port: apachePort, runtime: apache.folder, runFolder: paths.run, modules: modules)
             try FileManager.default.createDirectory(at: paths.run.appending(path: "apache"), withIntermediateDirectories: true)
-            try writeChecked(try ApacheConfig.render(sites: plan.sites, settings: settings), to: paths.apacheConfig) {
-                try Self.check(apache.folder.appending(path: "bin/httpd"), ["-t", "-f", paths.apacheConfig.path(percentEncoded: false)])
+            try writeChecked(try ApacheConfig.render(sites: plan.sites, settings: settings), to: paths.apacheConfig, lines: plan.lineFiles[.apache] ?? [:], in: paths.siteLinesFolder(.apache)) {
+                try checkApache(apache)
             }
         }
 
@@ -333,12 +365,29 @@ extension NexusEngine {
         let unknownSitePage = ErrorPages.unknownSite(hosts: plan.sites.compactMap(\.hosts.first), httpsPort: settings.httpsPort)
         _ = try Self.writeIfChanged(unknownSitePage, to: settings.pages.appending(path: ErrorPages.unknownSiteFile))
 
-        let nginxFolder = paths.nginxConfig.deletingLastPathComponent()
-        try writeChecked(try NginxConfig.render(sites: plan.sites, settings: settings), to: paths.nginxConfig) {
-            try Self.check(nginx.folder.appending(path: "sbin/nginx"), ["-t", "-p", nginxFolder.path(percentEncoded: false), "-c", paths.nginxConfig.path(percentEncoded: false), "-e", "stderr"])
+        try writeChecked(try NginxConfig.render(sites: plan.sites, settings: settings), to: paths.nginxConfig, lines: plan.lineFiles[.nginx] ?? [:], in: paths.siteLinesFolder(.nginx)) {
+            try checkNginx(nginx)
         }
 
         return plan
+    }
+
+    private func checkApache(_ apache: InstalledRuntime) throws {
+        try Self.check(apache.folder.appending(path: "bin/httpd"), ["-t", "-f", paths.apacheConfig.path(percentEncoded: false)], server: .apache)
+    }
+
+    private func checkNginx(_ nginx: InstalledRuntime) throws {
+        let nginxFolder = paths.nginxConfig.deletingLastPathComponent()
+        try Self.check(nginx.folder.appending(path: "sbin/nginx"), ["-t", "-p", nginxFolder.path(percentEncoded: false), "-c", paths.nginxConfig.path(percentEncoded: false), "-e", "stderr"], server: .nginx)
+    }
+
+    // Checks the files of a webserver as they are on disk now.
+    func writtenConfigPasses(_ server: WebServer) async -> Bool {
+        guard let runtime = await newestRuntime(named: server == .apache ? "httpd" : "nginx") else {
+            return true
+        }
+
+        return (try? server == .apache ? checkApache(runtime) : checkNginx(runtime)) != nil
     }
 
     // Returns true when the configuration of this PHP version changed.
@@ -359,25 +408,35 @@ extension NexusEngine {
 
         let enabled = state.phpExtensions[line] ?? PHPConfig.defaultExtensions
         let (directory, available) = Self.phpExtensions(of: runtime)
+        let hasXdebug = available.contains("xdebug")
         let smtpPort = try await smtpPort(in: state)
         let mailLines = try PHPConfig.mailLines(command: paths.bin.appending(path: "nexus"), smtpPort: smtpPort)
-        let nexusIni = try PHPConfig.nexusIni(extensionDirectory: directory, extensions: PHPConfig.extensionsToLoad(enabled: enabled, available: available), mailLines: mailLines)
+        let customLines = state.phpCustomSettings[line] ?? []
+        let customIni = PHPConfig.customIni(lines: customLines)
+        let phpIni = hasXdebug ? (try? String(contentsOf: ini, encoding: .utf8)) ?? "" : ""
+        let userLoadsXdebug = hasXdebug && PHPConfig.userLoadsXdebug(phpIni: phpIni, customLines: customLines)
 
-        let customIni = PHPConfig.customIni(lines: state.phpCustomSettings[line] ?? [])
+        // A php.ini that loads Xdebug itself keeps its own Xdebug settings. conf.d comes after
+        // php.ini, so the lines of Nexus would replace them.
+        let phpIniLoadsXdebug = hasXdebug && PHPConfig.userLoadsXdebug(phpIni: phpIni, customLines: [])
+        let nexusIni = try PHPConfig.nexusIni(extensionDirectory: directory, extensions: PHPConfig.confDExtensions(enabled: enabled, available: available), mailLines: mailLines, xdebugSettings: hasXdebug && !phpIniLoadsXdebug)
         let poolUsesStub = await poolUsesDumpStub(line: line)
 
         // No await from here on. So no other write of this PHP version comes between the stub and
         // the pool that names it.
         let dumps = writeDumpFiles(line: line, state: state, keepingStub: poolUsesStub)
         let fpm = try PHPConfig.fpmConfig(socket: paths.phpSocket(line: line), pidFile: paths.run.appending(path: "php-\(line).pid"), prepend: dumps.stub)
+        let xdebugFPM = hasXdebug ? try PHPConfig.fpmConfig(socket: paths.xdebugSocket(line: line), pidFile: paths.run.appending(path: "xdebug-\(line).pid"), prepend: dumps.stub, xdebug: true) : nil
 
         try Self.writeScanFolder(named: PHPConfig.coverageFolderName, iniName: PHPConfig.coverageIniName, ini: PHPConfig.coverageIni, in: folder)
+        let xdebugIniChanged = try Self.writeScanFolder(named: PHPConfig.xdebugFolderName, iniName: PHPConfig.xdebugIniName, ini: hasXdebug ? PHPConfig.xdebugIni(loadsExtension: !userLoadsXdebug) : nil, in: folder)
+        let xdebugFPMChanged = try Self.writeOrRemove(xdebugFPM, to: folder.appending(path: PHPConfig.xdebugFPMConfigName))
 
         let fpmChanged = try Self.writeIfChanged(fpm, to: folder.appending(path: "php-fpm.conf"))
         let iniChanged = try Self.writeIfChanged(nexusIni, to: confD.appending(path: PHPConfig.nexusIniName))
         let customChanged = try Self.writeIfChanged(customIni, to: confD.appending(path: PHPConfig.customIniName))
         phpLinesWrittenAtStart?.insert(line)
-        return fpmChanged || iniChanged || customChanged || dumps.stubChanged
+        return fpmChanged || iniChanged || customChanged || dumps.stubChanged || xdebugFPMChanged || xdebugIniChanged
     }
 
     // Each PHP version writes its configuration again. A running PHP-FPM reads it at once. The
@@ -391,7 +450,7 @@ extension NexusEngine {
 
             do {
                 if try await writePHPConfig(line: runtime.line, state: await stateStore.current()), await supervisor.state(of: id)?.isActive == true {
-                    await supervisor.signal(id, SIGUSR2)
+                    await signalPHP(line: runtime.line, SIGUSR2)
                 }
             } catch {
                 failures.append((runtime.line, error))
@@ -474,11 +533,13 @@ extension NexusEngine {
                 }
             }
 
-            for status in await supervisor.status() where status.id.hasPrefix("php-") && status.state.isActive {
-                if !plan.phpLines.contains(String(status.id.dropFirst(4))), !enabled.contains(status.id) {
+            for status in await supervisor.status() where status.state.isActive {
+                if let line = ServiceID.phpLine(of: status.id), !plan.phpLines.contains(line), !enabled.contains(status.id) {
                     try await supervisor.stop(status.id)
                 }
             }
+
+            await syncXdebugServices()
 
             for (id, isNeeded, signal) in [(ServiceCatalog.apacheID, plan.needsApache, SIGUSR1), (ServiceCatalog.nginxID, !plan.sites.isEmpty, SIGHUP)] {
                 if isNeeded {
@@ -506,6 +567,8 @@ extension NexusEngine {
             for line in plan.changedPHPLines.sorted() where await supervisor.state(of: ServiceCatalog.phpID(line: line))?.isActive == true {
                 try await reload(ServiceCatalog.phpID(line: line), SIGUSR2)
             }
+
+            await syncXdebugServices()
 
             for (id, signal) in [(ServiceCatalog.apacheID, SIGUSR1), (ServiceCatalog.nginxID, SIGHUP)] where await supervisor.state(of: id)?.isActive == true {
                 try await reload(id, signal)
@@ -562,47 +625,94 @@ extension NexusEngine {
     // The process stays. The supervisor gets the definition of the new configuration. So a new
     // port of Apache shows at once, without a stop of Apache. A reload that moves a service to
     // a new port waits until that port accepts connections. When it does not, the change fails.
+    // PHP has no port, and only an update changes its definition. An update starts PHP again.
     private func reload(_ id: String, _ signal: Int32) async throws {
         guard let definition = try? await serviceDefinition(id) else {
             await supervisor.signal(id, signal)
+            await signalXdebug(of: id, signal)
             return
         }
 
         let previousPorts = await supervisor.status().first { $0.id == id }?.ports
         await supervisor.reload(definition, signal: signal)
+        await signalXdebug(of: id, signal)
 
         if previousPorts != definition.ports {
             try await waitForConnections(definition)
         }
     }
 
-    private func writeChecked(_ contents: String, to file: URL, check: () throws -> Void) throws {
+    // The PHP-FPM with Xdebug of a version reads the same files as the PHP-FPM of that version. A
+    // PHP-FPM with Xdebug that starts later in the same change gets no signal before it can handle
+    // one: the sync after the reload starts it.
+    private func signalXdebug(of id: String, _ signal: Int32) async {
+        if let line = ServiceID.phpLine(of: id) {
+            await supervisor.signal(ServiceID.xdebug(line: line), signal)
+        }
+    }
+
+    // Writes a configuration file and the files of custom lines that it includes, and checks them
+    // together. When the check refuses them, each file gets its old content back and a new file of
+    // lines goes. So a running server keeps working, also after a restart. After a good check, a
+    // file of lines that no site uses goes.
+    private func writeChecked(_ contents: String, to file: URL, lines: [URL: String], in linesFolder: URL, check: () throws -> Void) throws {
         let previous = try? Data(contentsOf: file)
+        let previousLines = lines.keys.map { (file: $0, data: try? Data(contentsOf: $0)) }
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: linesFolder, withIntermediateDirectories: true)
+
+        for (linesFile, text) in lines {
+            _ = try Self.writeIfChanged(text, to: linesFile)
+        }
+
         try Data(contents.utf8).write(to: file, options: .atomic)
 
         do {
             try check()
         } catch {
-            if let previous {
-                try? previous.write(to: file, options: .atomic)
+            // Without an old file the new file stays. Then the files that it includes stay too.
+            guard let previous else {
+                throw error
             }
+
+            try? previous.write(to: file, options: .atomic)
+
+            for (linesFile, data) in previousLines {
+                if let data {
+                    try? data.write(to: linesFile, options: .atomic)
+                } else {
+                    try? FileManager.default.removeItem(at: linesFile)
+                }
+            }
+
             throw error
+        }
+
+        Self.removeFiles(in: linesFolder, except: Set(lines.keys.map(\.lastPathComponent)))
+    }
+
+    private static func removeFiles(in folder: URL, except kept: Set<String>) {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false))) ?? []
+
+        for name in names where !kept.contains(name) {
+            try? FileManager.default.removeItem(at: folder.appending(path: name))
         }
     }
 
-    // A folder that only commands add to PHP_INI_SCAN_DIR, for example coverage.d. Without an ini
-    // the folder goes. A change does not count for PHP-FPM, because PHP-FPM does not read it.
-    static func writeScanFolder(named name: String, iniName: String, ini: String?, in folder: URL) throws {
+    // A folder that only some programs add to PHP_INI_SCAN_DIR, for example coverage.d. Without an
+    // ini the folder goes. The result says if the ini changed. Only the PHP-FPM with Xdebug reads
+    // such a folder, xdebug.d.
+    @discardableResult
+    static func writeScanFolder(named name: String, iniName: String, ini: String?, in folder: URL) throws -> Bool {
         let scanFolder = folder.appending(path: name, directoryHint: .isDirectory)
 
         guard let ini else {
             try? FileManager.default.removeItem(at: scanFolder)
-            return
+            return false
         }
 
         try FileManager.default.createDirectory(at: scanFolder, withIntermediateDirectories: true)
-        _ = try writeIfChanged(ini, to: scanFolder.appending(path: iniName))
+        return try writeIfChanged(ini, to: scanFolder.appending(path: iniName))
     }
 
     static func writeIfChanged(_ contents: String, to file: URL) throws -> Bool {
@@ -614,7 +724,17 @@ extension NexusEngine {
         return true
     }
 
-    private static func check(_ program: URL, _ arguments: [String]) throws {
+    // Without contents the file goes. The result says if the contents changed.
+    static func writeOrRemove(_ contents: String?, to file: URL) throws -> Bool {
+        guard let contents else {
+            try? FileManager.default.removeItem(at: file)
+            return false
+        }
+
+        return try writeIfChanged(contents, to: file)
+    }
+
+    private static func check(_ program: URL, _ arguments: [String], server: WebServer) throws {
         let process = Process()
         process.executableURL = program
         process.arguments = arguments
@@ -626,7 +746,7 @@ extension NexusEngine {
         process.waitUntilExit()
 
         guard process.terminationStatus == 0 else {
-            throw RuntimeError.unsupported("\(program.lastPathComponent) refused the new configuration: \(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))")
+            throw ConfigCheckFailure(server: server, output: String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
         }
     }
 }
@@ -701,7 +821,9 @@ extension NexusEngine {
                 workspaceDump: site.workspaceDump,
                 workspaceDumpURLs: site.workspaceDumpURLs,
                 workspaceDumpCheck: shownDumpCheck(of: site),
-                workspaceDumpChecking: dumpCheckProgress[site.host]
+                workspaceDumpChecking: dumpCheckProgress[site.host],
+                nginxLines: site.nginxLines,
+                apacheLines: site.apacheLines
             ))
         }
 
@@ -889,11 +1011,7 @@ extension NexusEngine {
     // site keeps its place in the list, so its place in the sidebar does not change.
     func editSite(_ host: String, change: SiteChange) async throws -> String {
         let state = await stateStore.current()
-
-        guard var site = resolvedSites(state).first(where: { $0.site.host == host })?.site else {
-            throw RuntimeError.unsupported("Nexus has no site \(host).")
-        }
-
+        var site = try resolvedSite(host, in: state)
         let kindBefore = site.kind
 
         if let php = change.php {
@@ -968,11 +1086,7 @@ extension NexusEngine {
 
         let edited = site
         let store: @Sendable (inout EngineState) -> Void = { state in
-            if let index = state.sites.firstIndex(where: { $0.host == host }) {
-                state.sites[index] = edited
-            } else {
-                state.sites.append(edited)
-            }
+            Self.changeOrAdd(edited, in: &state) { site in site = edited }
         }
 
         // The Node line, the command and the workspace settings change no server. So they need no
@@ -982,7 +1096,13 @@ extension NexusEngine {
         let hasSetting = change.node != nil || change.automaticWorkspaces != nil || change.workspaceKeys != nil || change.workspaceCommands != nil || change.removalCommands != nil || change.workspaceFiles != nil || changesProcesses || changesDatabases
         let changesServers = change.php != nil || change.server != nil || change.aliases != nil || change.address != nil || change.documentRoot != nil || edited.kind != kindBefore
         let onlySettings = hasSetting && !changesServers
-        var notes = onlySettings ? [] : try await changeWeb(.sites, store)
+        var notes: [String] = []
+
+        do {
+            notes = onlySettings ? [] : try await changeWeb(.sites, store)
+        } catch let failure as ConfigCheckFailure {
+            throw await storedLinesRefusal(failure, host: host) ?? failure
+        }
 
         if onlySettings {
             try await stateStore.update(store)
@@ -1398,10 +1518,24 @@ extension NexusEngine {
         try await stateStore.update { $0.phpExtensions[line] = updated }
 
         if try await writePHPConfig(line: line, state: await stateStore.current()) {
-            await supervisor.signal(ServiceCatalog.phpID(line: line), SIGUSR2)
+            await signalPHP(line: line, SIGUSR2)
         }
 
-        return "\(EnglishList.joined(changed.sorted())) \(enabled ? "on" : "off") for PHP \(line). Other PHP versions do not change."
+        let message = "\(EnglishList.joined(changed.sorted())) \(enabled ? "on" : "off") for PHP \(line). Other PHP versions do not change."
+
+        // The Xdebug switch changes the sockets of nginx and Apache and the PHP-FPM with Xdebug. A
+        // web error without a relation to Xdebug does not stop the switch. nginx and Apache then
+        // get the new sockets at their next good change.
+        if changed.contains("xdebug") {
+            do {
+                _ = try await applyWeb(.setting)
+            } catch {
+                await syncXdebug(line: line)
+                return "\(message) nginx and Apache did not change yet, so a debug request does not reach Xdebug: \(ErrorText.plain(error))"
+            }
+        }
+
+        return message
     }
 
     func moduleToggles(_ server: WebServer) async throws -> [Toggle] {

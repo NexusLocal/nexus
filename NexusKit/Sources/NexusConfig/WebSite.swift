@@ -16,8 +16,10 @@ public enum ConfigError: Error, Equatable, CustomStringConvertible {
 // nginx. A Node.js app that Nexus starts listens on a port of this Mac. A proxy site gets its
 // requests from nginx at its address. A notice is a page of nginx that says why the site runs no
 // PHP, for example a workspace of WordPress that Nexus cannot isolate yet (Phase 4, 3a).
+// A request that starts an Xdebug session goes to xdebugSocket, when the Xdebug switch of the PHP
+// version is on.
 public enum WebBackend: Sendable, Equatable {
-    case php(server: WebServer, documentRoot: URL, socket: URL)
+    case php(server: WebServer, documentRoot: URL, socket: URL, xdebugSocket: URL? = nil)
     case app(port: Int, framework: NodeFramework?)
     case proxy(address: String)
     case notice(title: String, text: String)
@@ -34,8 +36,10 @@ public struct WebSite: Sendable, Equatable {
     public let project: PHPProjectType
     // A WordPress network in subfolders needs the rewrites of WordPress in nginx (Phase 4, 3g).
     public let network: WordPressNetworkKind?
+    // The file with the custom lines of a PHP site (owner, 2026-11-14). nil without lines.
+    public let customLines: URL?
 
-    public init(hosts: [String], backend: WebBackend, certificate: URL, key: URL, accessLog: URL, project: PHPProjectType = .other, network: WordPressNetworkKind? = nil) {
+    public init(hosts: [String], backend: WebBackend, certificate: URL, key: URL, accessLog: URL, project: PHPProjectType = .other, network: WordPressNetworkKind? = nil, customLines: URL? = nil) {
         self.hosts = hosts
         self.backend = backend
         self.certificate = certificate
@@ -43,6 +47,7 @@ public struct WebSite: Sendable, Equatable {
         self.accessLog = accessLog
         self.project = project
         self.network = network
+        self.customLines = customLines
     }
 
     public var isWordPress: Bool {
@@ -50,7 +55,7 @@ public struct WebSite: Sendable, Equatable {
     }
 
     public var usesApache: Bool {
-        if case .php(.apache, _, _) = backend {
+        if case .php(.apache, _, _, _) = backend {
             return true
         }
 

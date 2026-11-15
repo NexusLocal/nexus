@@ -1,3 +1,4 @@
+import NexusCore
 import Testing
 @testable import NexusLaravel
 
@@ -213,5 +214,68 @@ struct EnvRewriteTests {
 
         #expect(changes.map(\.key) == ["APP_URL", "SESSION_DOMAIN"])
         #expect(changes.map(\.value) == ["https://my.shop-fix.test", ".shop-fix.test"])
+    }
+
+    @Test func aRemovedKeyKeepsItsOldLineOnlyAsACommentLine() {
+        let text = "DB_HOST=localhost\nDB_SOCKET=/Applications/MAMP/tmp/mysql/mysql.sock\nDB_DATABASE=shop\n"
+
+        let result = EnvRewrite.applyKeepingOldValues(to: text, keys: ["DB_HOST": "127.0.0.1"], removing: ["DB_SOCKET"])
+
+        #expect(result == "# Before Nexus: DB_HOST=localhost\nDB_HOST=127.0.0.1\n# Before Nexus: DB_SOCKET=/Applications/MAMP/tmp/mysql/mysql.sock\nDB_DATABASE=shop\n")
+    }
+
+    @Test func aRemovedKeyWithACommentLineOfNexusGetsNoSecondOne() {
+        let text = "# Before Nexus: DB_SOCKET=/Applications/MAMP/tmp/mysql/mysql.sock\nDB_SOCKET=/tmp/mysql.sock\n"
+
+        let result = EnvRewrite.applyKeepingOldValues(to: text, keys: [:], removing: ["DB_SOCKET"])
+
+        #expect(result == "# Before Nexus: DB_SOCKET=/Applications/MAMP/tmp/mysql/mysql.sock\n")
+    }
+
+    @Test func theRestorePutsBackARemovedLine() {
+        let text = "DB_HOST=localhost\nDB_SOCKET=/Applications/MAMP/tmp/mysql/mysql.sock\nDB_DATABASE=shop\n"
+        let changed = EnvRewrite.applyKeepingOldValues(to: text, keys: ["DB_HOST": "127.0.0.1"], removing: ["DB_SOCKET"])
+
+        let restore = EnvRewrite.restoringOldValues(in: changed)
+
+        #expect(restore.text == text)
+        #expect(restore.restored == ["DB_HOST", "DB_SOCKET"])
+    }
+
+    @Test func theChangesOfASheetSetAndRemoveKeys() {
+        let text = "DB_PORT=8889\nDB_SOCKET=/Applications/MAMP/tmp/mysql/mysql.sock\nDB_PASSWORD=root\n"
+        let changes = [
+            EnvValueChange(key: "DB_PORT", oldValue: "8889", newValue: "13306"),
+            EnvValueChange(key: "DB_SOCKET", oldValue: "/Applications/MAMP/tmp/mysql/mysql.sock", newValue: nil),
+            EnvValueChange(key: "DB_PASSWORD", oldValue: "root", newValue: ""),
+            EnvValueChange(key: "REDIS_SOCKET", oldValue: nil, newValue: ""),
+        ]
+
+        let result = EnvRewrite.applyKeepingOldValues(to: text, changes: changes)
+
+        #expect(result == """
+        # Before Nexus: DB_PORT=8889
+        DB_PORT=13306
+        # Before Nexus: DB_SOCKET=/Applications/MAMP/tmp/mysql/mysql.sock
+        # Before Nexus: DB_PASSWORD=root
+        DB_PASSWORD=
+        # Added by Nexus: REDIS_SOCKET
+        REDIS_SOCKET=
+
+        """)
+    }
+
+    @Test func theMarkedKeysNameEachKeyWithACommentLineOfNexus() {
+        let text = "# Before Nexus: DB_HOST=localhost\nDB_HOST=127.0.0.1\n# Added by Nexus: MAIL_USERNAME\nMAIL_USERNAME=shop.test\n# Before Nexus: not a key line\n# MAIL_PORT=587\n"
+
+        #expect(EnvRewrite.markedKeys(in: text) == ["DB_HOST", "MAIL_USERNAME"])
+    }
+
+    @Test func oldValuesOfOtherKeysDoNotCount() {
+        let text = "# Before Nexus: DB_HOST=localhost\nDB_HOST=127.0.0.1\n"
+
+        #expect(EnvRewrite.hasOldValues(in: text))
+        #expect(!EnvRewrite.hasOldValues(in: text, keys: ["MAIL_HOST"]))
+        #expect(!EnvRewrite.hasOldValues(in: text, keys: []))
     }
 }

@@ -67,6 +67,10 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let workspaceDumpURLs: [String]?
     public let workspaceDumpCheck: WordPressDumpCheck?
     public let workspaceDumpChecking: WorkspaceDumpProgress?
+    // The custom lines of the server block of nginx and of the VirtualHost of Apache (owner,
+    // 2026-11-14). A PHP site uses the lines of its webserver.
+    public let nginxLines: [String]?
+    public let apacheLines: [String]?
 
     public init(
         hosts: [String],
@@ -106,12 +110,16 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         workspaceDump: String? = nil,
         workspaceDumpURLs: [String]? = nil,
         workspaceDumpCheck: WordPressDumpCheck? = nil,
-        workspaceDumpChecking: WorkspaceDumpProgress? = nil
+        workspaceDumpChecking: WorkspaceDumpProgress? = nil,
+        nginxLines: [String]? = nil,
+        apacheLines: [String]? = nil
     ) {
         self.workspaceDump = workspaceDump
         self.workspaceDumpURLs = workspaceDumpURLs
         self.workspaceDumpCheck = workspaceDumpCheck
         self.workspaceDumpChecking = workspaceDumpChecking
+        self.nginxLines = nginxLines
+        self.apacheLines = apacheLines
         self.documentRootSetting = documentRootSetting
         self.removalCommands = removalCommands
         self.workspaceFiles = workspaceFiles
@@ -366,8 +374,13 @@ public struct ToolCommand: Codable, Sendable, Equatable {
     // and to the background processes while the setting "Commands and queue workers" is on. A test
     // run sends no dump, because the prepend file finds the test run itself.
     public var dumpsFolder: String?
+    // The folder that loads Xdebug, for nexus debug only (owner, 2026-11-14). nil from an older
+    // nexusd.
+    public var xdebugFolder: String?
 
-    public init(executable: String, arguments: [String] = [], environment: [String: String] = [:], path: [String] = [], wordPressCore: String? = nil, coverageFolder: String? = nil, dumpsFolder: String? = nil) {
+    public static let xdebugSession = "nexus"
+
+    public init(executable: String, arguments: [String] = [], environment: [String: String] = [:], path: [String] = [], wordPressCore: String? = nil, coverageFolder: String? = nil, dumpsFolder: String? = nil, xdebugFolder: String? = nil) {
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
@@ -375,6 +388,7 @@ public struct ToolCommand: Codable, Sendable, Equatable {
         self.wordPressCore = wordPressCore
         self.coverageFolder = coverageFolder
         self.dumpsFolder = dumpsFolder
+        self.xdebugFolder = xdebugFolder
     }
 
     // phpunit, pest, paratest and php artisan test name each coverage report with --coverage. The
@@ -390,6 +404,15 @@ public struct ToolCommand: Codable, Sendable, Equatable {
     // example is the PHP of php artisan test.
     public func environment(for arguments: [String]) -> [String: String] {
         var folders: [String] = []
+        var changed = environment
+
+        // The trigger is in the environment. So each PHP that the command starts also starts a
+        // debug session. Composer starts again without Xdebug unless COMPOSER_ALLOW_XDEBUG is set.
+        if let xdebugFolder {
+            folders.append(xdebugFolder)
+            changed["XDEBUG_SESSION"] = Self.xdebugSession
+            changed["COMPOSER_ALLOW_XDEBUG"] = "1"
+        }
 
         if let coverageFolder, Self.asksForCoverage(arguments) {
             folders.append(coverageFolder)
@@ -400,10 +423,9 @@ public struct ToolCommand: Codable, Sendable, Equatable {
         }
 
         guard !folders.isEmpty else {
-            return environment
+            return changed
         }
 
-        var changed = environment
         changed["PHP_INI_SCAN_DIR"] = ([changed["PHP_INI_SCAN_DIR"]].compactMap { $0 } + folders).joined(separator: ":")
         return changed
     }
@@ -459,8 +481,36 @@ public struct PHPSettingsError: Error, Codable, Sendable, Equatable, CustomStrin
     }
 
     public var description: String {
-        let place = line.map { "Line \($0): " } ?? ""
-        return "\(place)\(message). PHP \(php) keeps its old custom settings."
+        "\(LineErrorText.text(message, line: line)). PHP \(php) keeps its old custom settings."
+    }
+}
+
+// An error of custom lines starts with its line, for example "Line 3: unknown directive". An
+// error without a line starts with its message.
+public enum LineErrorText {
+    public static func text(_ message: String, line: Int?) -> String {
+        line.map { "Line \($0): \(message)" } ?? message
+    }
+}
+
+// A custom nginx or Apache line of a site that nginx -t or httpd -t refused (owner, 2026-11-14).
+// The line counts from 1. It is nil when the error is in a line of Nexus, for example a second
+// location /.
+public struct SiteLinesError: Error, Codable, Sendable, Equatable, CustomStringConvertible {
+    public let host: String
+    public let server: WebServer
+    public let line: Int?
+    public let message: String
+
+    public init(host: String, server: WebServer, line: Int?, message: String) {
+        self.host = host
+        self.server = server
+        self.line = line
+        self.message = message
+    }
+
+    public var description: String {
+        "\(LineErrorText.text(message, line: line)). \(host) keeps its old \(server.displayName) lines."
     }
 }
 
@@ -697,11 +747,15 @@ public struct DatabaseServer: Codable, Sendable, Equatable {
     public var host: String
     public var port: Int?
     public var account: DatabaseAccount
+    // A socket file wins over the host and the port. Only MySQL and MariaDB read it. PostgreSQL
+    // has the folder of its socket in host.
+    public var socket: String?
 
-    public init(host: String = "127.0.0.1", port: Int? = nil, account: DatabaseAccount = .standard) {
+    public init(host: String = "127.0.0.1", port: Int? = nil, account: DatabaseAccount = .standard, socket: String? = nil) {
         self.host = host
         self.port = port
         self.account = account
+        self.socket = socket
     }
 }
 
@@ -1085,6 +1139,10 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case setModule(server: WebServer, name: String, enabled: Bool)
     case customSettings(php: String)
     case setCustomSettings(php: String, lines: [String])
+    // The custom nginx or Apache lines of a PHP site (owner, 2026-11-14). The answer to siteLines is
+    // lines. The answer to setSiteLines is done or invalidSiteLines.
+    case siteLines(host: String)
+    case setSiteLines(host: String, lines: [String])
     case lan(enabled: Bool?)
     // nil shows the dev TLD. Another value changes it.
     case tld(String?)
@@ -1098,8 +1156,9 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case stopTask(id: String)
     // The command that a tool runs in this folder, with the versions of its site (D38). The
     // arguments can name the folder of another site, for example php /Sites/shop/artisan. That
-    // site wins then. An older nexus command sends no argumentFolder.
-    case tool(ProjectTool, folder: String, argumentFolder: String? = nil)
+    // site wins then. An older nexus command sends no argumentFolder. debug is true for nexus
+    // debug. nexusd then gives xdebugFolder, or refuses a PHP version without Xdebug.
+    case tool(ProjectTool, folder: String, argumentFolder: String? = nil, debug: Bool? = nil)
     // The configuration of the Laravel application that holds this folder (D43). php is a version
     // line. Without it the PHP of the site applies.
     case probe(folder: String, php: String?)
@@ -1161,6 +1220,10 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case siteMail(host: String)
     case sendMailToNexus(host: String)
     case restoreMailSettings(host: String)
+    // "Use Nexus…" of a Laravel site: the keys of the .env of the main checkout that do not use
+    // Nexus, and the change that the user confirmed. nexusd changes the .env only after the copy.
+    case useNexusInfo(host: String)
+    case useNexus(UseNexusRequest)
     // The services with their versions and problems for the MCP server (0.3.0). Also the tasks
     // that run. The app gets the same lists as events.
     case serviceList
@@ -1429,6 +1492,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case rootCertificate(RootCertificateInfo)
     case portInUse(PortConflict)
     case invalidSettings(PHPSettingsError)
+    case invalidSiteLines(SiteLinesError)
     // A task that stopped because the user asked for it. The message says what changed.
     case stopped(message: String)
     case failure(message: String)
@@ -1447,6 +1511,7 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case backgroundPreset([String])
     case mailStatus(MailStatus)
     case siteMail(SiteMail)
+    case useNexusInfo(UseNexusInfo?)
     case siteCreated(CreatedSite)
     case siteNotCreated(SiteCreationFailure)
     case backup(BackupInfo)

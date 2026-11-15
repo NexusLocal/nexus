@@ -14,11 +14,12 @@ public struct DumpEnvelope: Decodable, Sendable, Equatable {
     public let command: String?
     public let cwd: String?
     public let root: String?
+    public let scriptFolders: [String]?
     public let started: Date
     public let pid: Int?
     public let job: JobRun?
 
-    public init(id: String, kind: DumpedRequest.Kind, method: String? = nil, url: String? = nil, host: String? = nil, command: String? = nil, cwd: String? = nil, root: String? = nil, started: Date, pid: Int? = nil, job: JobRun? = nil) {
+    public init(id: String, kind: DumpedRequest.Kind, method: String? = nil, url: String? = nil, host: String? = nil, command: String? = nil, cwd: String? = nil, root: String? = nil, scriptFolders: [String]? = nil, started: Date, pid: Int? = nil, job: JobRun? = nil) {
         self.id = id
         self.kind = kind
         self.method = method
@@ -27,6 +28,7 @@ public struct DumpEnvelope: Decodable, Sendable, Equatable {
         self.command = command
         self.cwd = cwd
         self.root = root
+        self.scriptFolders = scriptFolders
         self.started = started
         self.pid = pid
         self.job = job
@@ -35,7 +37,7 @@ public struct DumpEnvelope: Decodable, Sendable, Equatable {
     // The header of the list starts without a place, an end and entries. The target of a job is its
     // name. So its job keeps the command line of the worker.
     public var header: DumpedRequest {
-        DumpedRequest(id: id, kind: kind, method: method, target: target, url: url, host: host, root: root, started: started, job: headerJob)
+        DumpedRequest(id: id, kind: kind, method: method, target: target, url: url, host: host, root: root, scriptFolders: scriptFolders ?? [], started: started, job: headerJob)
     }
 
     private var headerJob: JobRun? {

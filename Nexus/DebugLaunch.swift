@@ -7,12 +7,12 @@ import NexusCore
 // Add Site sheet can read another folder: --sheet add-site --folder /path. The New site sheet can
 // start at a template: --sheet new-site --template wordpress. --alert update-ready shows the window
 // of an update that is ready to install. --agents-notice shows the notice of the coding agents on
-// the Overview.
+// the Overview. --notification '<userInfo as JSON>' opens the screen of a click on a notification.
 // The services of the sample data, such as the port problem of --sheet port, need --sample.
 enum DebugLaunch {
     // A check of the look does not get the first run on top of the screen that it checks.
     static var checksTheLook: Bool {
-        ["--sample", "--screen", "--sheet", "--settings", "--appearance", "--version", "--alert", "--agents-notice"].contains(where: CommandLine.arguments.contains)
+        ["--sample", "--screen", "--sheet", "--settings", "--appearance", "--version", "--alert", "--agents-notice", "--notification"].contains(where: CommandLine.arguments.contains)
     }
 
     // --background keeps the app behind the other apps, for a check while the user works on this
@@ -47,6 +47,10 @@ enum DebugLaunch {
 
         if let version = value(of: "--version"), let service = model.service(version) {
             model.selectedVersion[service.kind] = service.id
+        }
+
+        if let json = value(of: "--notification"), let userInfo = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any], let target = NotificationTarget(userInfo: userInfo) {
+            model.show(target)
         }
 
         switch value(of: "--sheet") {

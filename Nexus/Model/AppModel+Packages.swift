@@ -433,7 +433,7 @@ extension AppModel {
                 if let service = service(instance) {
                     loadDatabases(of: service)
                 }
-                Notifier.post("The import is done", "\(file) is in \(request.name) now.", setting: AppPreference.notifyImportDone)
+                Notifier.post("The import is done", "\(file) is in \(request.name) now.", target: .database(instance: instance, name: request.name), setting: AppPreference.notifyImportDone)
             case .answer(.stopped(let message)):
                 if inSheet {
                     importResults[key] = .stopped(message)
@@ -441,20 +441,22 @@ extension AppModel {
                     failure = ActionFailure(title: "The import of \(file) stopped", message: message, place: .window)
                 }
             case .failure(let message):
-                showDumpFailure(message, file: file, key: key, inSheet: inSheet)
+                showDumpFailure(message, file: file, instance: instance, key: key, inSheet: inSheet)
             case .portInUse(let conflict):
-                showDumpFailure(conflict.description, file: file, key: key, inSheet: inSheet)
+                showDumpFailure(conflict.description, file: file, instance: instance, key: key, inSheet: inSheet)
             default:
                 break
             }
         }
     }
 
-    private func showDumpFailure(_ message: String, file: String, key: String, inSheet: Bool) {
-        Notifier.post("\(file) was not imported", message, setting: AppPreference.notifyImportDone)
+    private func showDumpFailure(_ message: String, file: String, instance: String, key: String, inSheet: Bool) {
+        // A click on the notification passes the alert with the same title (NotificationClicks).
+        let title = "\(file) was not imported"
+        Notifier.post(title, message, target: .service(id: instance), setting: AppPreference.notifyImportDone)
 
         guard inSheet else {
-            failure = ActionFailure(title: "\(file) was not imported", message: message, place: .window)
+            failure = ActionFailure(title: title, message: message, place: .window)
             return
         }
 
@@ -486,7 +488,7 @@ extension AppModel {
                 if let service = service(copy.instance) {
                     loadDatabases(of: service)
                 }
-                Notifier.post("The import is done", "\(copy.name ?? copy.database) is in \(service(copy.instance)?.name ?? copy.instance) now.", setting: AppPreference.notifyImportDone)
+                Notifier.post("The import is done", "\(copy.name ?? copy.database) is in \(service(copy.instance)?.name ?? copy.instance) now.", target: .database(instance: copy.instance, name: copy.name ?? copy.database), setting: AppPreference.notifyImportDone)
             case .answer(.stopped(let message)):
                 if inSheet {
                     importResults[key] = .stopped(message)
@@ -504,10 +506,12 @@ extension AppModel {
     }
 
     private func showImportFailure(_ message: String, of copy: DatabaseCopy, key: String, inSheet: Bool) {
-        Notifier.post("\(copy.database) was not imported", message, setting: AppPreference.notifyImportDone)
+        // A click on the notification passes the alert with the same title (NotificationClicks).
+        let title = "\(copy.database) was not imported"
+        Notifier.post(title, message, target: .service(id: copy.instance), setting: AppPreference.notifyImportDone)
 
         guard inSheet else {
-            failure = ActionFailure(title: "\(copy.database) was not imported", message: message, place: .window)
+            failure = ActionFailure(title: title, message: message, place: .window)
             return
         }
 

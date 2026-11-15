@@ -25,7 +25,7 @@ public enum ToggleHelp {
         "pdo_pgsql": "Connects PDO and Laravel to PostgreSQL.",
         "pgsql": "Connects to PostgreSQL with the pg_ functions.",
         "redis": "Connects to Redis. Laravel uses it for the cache, sessions and queues. It needs igbinary.",
-        "xdebug": "Step debugger and profiler. It makes every request slower. So turn it on only while you debug.",
+        "xdebug": "Step debugger. Only a request that starts a debug session uses Xdebug, for example with the browser extension Xdebug helper. Other requests stay fast. nexus debug runs one command with Xdebug.",
         "yaml": "Reads and writes YAML.",
     ]
 

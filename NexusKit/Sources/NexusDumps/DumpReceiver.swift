@@ -49,9 +49,8 @@ public final class DumpReceiver: Sendable {
             return
         }
 
-        try SocketError.checkPath(socket)
-
         let path = socket.path(percentEncoded: false)
+        var address = try UnixSocket.address(of: path)
         let manager = FileManager.default
         try manager.createDirectory(at: socket.deletingLastPathComponent(), withIntermediateDirectories: true)
         try manager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -64,7 +63,6 @@ public final class DumpReceiver: Sendable {
 
         // The socket of an earlier nexusd stays as a file and blocks the bind.
         unlink(path)
-        var address = Self.address(of: path)
 
         let bound = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
@@ -188,18 +186,6 @@ public final class DumpReceiver: Sendable {
         close(descriptor)
         socketFile?.remove()
         return .system(call, code)
-    }
-
-    package static func address(of path: String) -> sockaddr_un {
-        var address = sockaddr_un()
-        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
-        address.sun_family = sa_family_t(AF_UNIX)
-
-        withUnsafeMutableBytes(of: &address.sun_path) { buffer in
-            buffer.copyBytes(from: path.utf8.prefix(buffer.count - 1))
-        }
-
-        return address
     }
 }
 

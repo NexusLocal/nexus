@@ -382,6 +382,12 @@ private struct DumpRequestHead: View {
                 if let root = request.root {
                     HeaderLine(key: "Folder", value: (root as NSString).abbreviatingWithTildeInPath, keyWidth: 48, truncation: .middle)
                 }
+
+                // A crontab starts a script of a site from another folder. This line shows why the
+                // command belongs to that site.
+                if let script = request.scriptFolders.first, script != request.root {
+                    HeaderLine(key: "Script", value: (script as NSString).abbreviatingWithTildeInPath, keyWidth: 48, truncation: .middle)
+                }
             }
 
             if let result = DumpScreenText.result(of: request) {

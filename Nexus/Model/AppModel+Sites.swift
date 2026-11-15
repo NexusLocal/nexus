@@ -46,7 +46,9 @@ extension SiteItem {
             workspaceDump: info.workspaceDump,
             workspaceDumpURLs: info.workspaceDumpURLs ?? [],
             workspaceDumpCheck: info.workspaceDumpCheck,
-            workspaceDumpChecking: info.workspaceDumpChecking
+            workspaceDumpChecking: info.workspaceDumpChecking,
+            nginxLines: info.nginxLines ?? [],
+            apacheLines: info.apacheLines ?? []
         )
     }
 }
@@ -180,7 +182,7 @@ extension AppModel {
         }
 
         let php = site.kind == .php ? [ServiceID.php(line: site.php)] : []
-        let apache = site.kind == .php && site.server == WebServer.apache.rawValue ? [ServiceID.apache] : []
+        let apache = site.kind == .php && site.webServer == .apache ? [ServiceID.apache] : []
         let needed = [ServiceID.nginx] + php + apache
         let app = site.kind == .node ? [Health(site.app?.state)] : []
         let healths = needed.map { service($0)?.health ?? .stopped } + app
@@ -297,6 +299,41 @@ extension AppModel {
         }
 
         return await perform(.editSite(host: site.host, change: change), failure: "\(site.host) did not change", place: .window) != nil
+    }
+
+    // nginx -t or httpd -t checks the lines first. A refused line keeps the draft and shows the
+    // error, so the user can correct the line.
+    func saveSiteLines(of site: SiteItem) {
+        let host = site.host
+        let key = site.linesKey
+        let lines = siteLinesDrafts.lines(of: key, saved: site.serverLines)
+
+        guard client != nil else {
+            showSavedSiteLines(lines, of: site)
+            return
+        }
+
+        siteLinesDrafts.saving.insert(key)
+
+        Task {
+            let response = await perform(.setSiteLines(host: host, lines: lines), failure: "\(host) did not get the new lines", place: .window)
+            siteLinesDrafts.saving.remove(key)
+
+            switch response {
+            case .invalidSiteLines(let error):
+                siteLinesDrafts.errors[key] = SettingsError(line: error.line, message: error.message)
+            case .done:
+                showSavedSiteLines(lines, of: site)
+            default:
+                break
+            }
+        }
+    }
+
+    // The next event of nexusd has the same lines. Until then the editor shows the saved lines.
+    private func showSavedSiteLines(_ lines: [String], of site: SiteItem) {
+        siteLinesDrafts.finishSave(of: site.linesKey, lines: lines)
+        siteEntries = siteEntries.map { entry in entry.changingSite(site.host) { site in site.serverLines = lines } }
     }
 
     func confirm(_ removal: Removal) {

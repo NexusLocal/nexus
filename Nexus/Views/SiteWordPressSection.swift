@@ -390,7 +390,7 @@ struct SetDBHostSheet: View {
     }
 
     private var commentStart: String {
-        (info.type == .bedrock ? EnvFile.beforeNexus : WordPressFiles.beforeNexus).trimmingCharacters(in: .whitespaces)
+        info.type == .bedrock ? EnvFile.commentStart : WordPressFiles.commentStart
     }
 
     // The design is "Sheet Set DB_HOST · Account" when the account changes too.

@@ -754,7 +754,8 @@ extension NexusEngine {
 
     // The ports of the Nexus instances of each kind, and of the servers of the workspace.
     func workspaceEnvRequest(workspace: String, mainFolder: String, workspaceFolder: String, realMainFolder: String? = nil, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)]) async throws -> WorkspaceEnvRequest {
-        let instances = try await databaseInstances()
+        let instances = try await databaseAddresses()
+        let sockets = Dictionary(instances.map { ($0.port, $0.socket) }) { first, _ in first }
         let redisPorts = Set(try await redisInstances().map(\.port))
         let mysqlServers = servers.filter(\.tools.kind.usesMySQLProtocol).map(\.port)
         let postgresqlServers = servers.filter { !$0.tools.kind.usesMySQLProtocol }.map(\.port)
@@ -763,9 +764,10 @@ extension NexusEngine {
             workspace: workspace,
             mainFolder: mainFolder,
             workspaceFolder: workspaceFolder,
-            mysqlPorts: Set(instances.filter(\.kind.usesMySQLProtocol).map(\.port)).union(mysqlServers),
-            postgresqlPorts: Set(instances.filter { !$0.kind.usesMySQLProtocol }.map(\.port)).union(postgresqlServers),
+            mysqlPorts: Set(instances.filter(\.tools.kind.usesMySQLProtocol).map(\.port)).union(mysqlServers),
+            postgresqlPorts: Set(instances.filter { !$0.tools.kind.usesMySQLProtocol }.map(\.port)).union(postgresqlServers),
             redisPorts: redisPorts,
+            instanceSockets: sockets,
             realMainFolder: realMainFolder,
             smtpPort: try await smtpPort(in: await stateStore.current())
         )

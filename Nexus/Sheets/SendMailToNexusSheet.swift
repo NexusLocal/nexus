@@ -22,27 +22,7 @@ struct SendMailToNexusSheet: View {
             Form {
                 Section {
                     ForEach(changes, id: \.key) { change in
-                        LabeledContent {
-                            HStack {
-                                if change.isNew {
-                                    Text("New line")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                if change.value.isEmpty {
-                                    Text("Empty")
-                                        .foregroundStyle(.tertiary)
-                                } else {
-                                    Text(verbatim: change.value)
-                                        .font(.system(.body, design: .monospaced))
-                                        .textSelection(.enabled)
-                                }
-                            }
-                        } label: {
-                            Text(verbatim: change.key)
-                                .font(.system(.body, design: .monospaced))
-                        }
+                        EnvKeyRow(change)
                     }
                 }
             }
@@ -51,7 +31,7 @@ struct SendMailToNexusSheet: View {
             .padding(.horizontal, -20)
             .fixedSize(horizontal: false, vertical: true)
 
-            Text("The old values stay in the .env as comment lines that start with \"\(Self.commentStart)\". \"Use the old mail settings…\" on the Site screen puts them back. A queue worker reads the new values after a restart.")
+            Text("The old values stay in the .env as comment lines that start with \"\(EnvFile.commentStart)\". \"Use the old mail settings…\" on the Site screen puts them back. A queue worker reads the new values after a restart.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -73,6 +53,4 @@ struct SendMailToNexusSheet: View {
         .padding(20)
         .frame(width: 520)
     }
-
-    private static let commentStart = EnvFile.beforeNexus.trimmingCharacters(in: .whitespaces)
 }

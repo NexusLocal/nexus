@@ -25,6 +25,11 @@ struct MainWindow: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .task {
+            // The view goes when the window closes. So the click keeps the action and not the
+            // view.
+            let openMainWindow = openWindow
+            NotificationClicks.shared.connect(openMainWindow: { openMainWindow(id: MainWindow.id) })
+
             // A new user first reads why in the first run, and clicks Allow there.
             if AppPreference.isOn(AppPreference.firstRunDone) {
                 background.registerIfNeeded()
@@ -70,7 +75,7 @@ struct MainWindow: View {
                 }
             }
         }
-        .alert(windowFailure?.title ?? "", isPresented: showsFailure, presenting: windowFailure) { failure in
+        .alert(model.windowFailure?.title ?? "", isPresented: showsFailure, presenting: model.windowFailure) { failure in
             FailureAlertButtons(failure: failure, place: .window)
         } message: { failure in
             Text(ErrorDetails.split(failure.message).text)
@@ -140,16 +145,6 @@ struct MainWindow: View {
         }
 
         UserDefaults.standard.set(true, forKey: AppPreference.firstRunDone)
-    }
-
-    private var windowFailure: ActionFailure? {
-        model.failure.flatMap { failure in
-            switch failure.place {
-            case .window, .background: failure
-            case .firstRun: model.firstRunIsOpen ? nil : failure
-            case .menuBar, .settings: nil
-            }
-        }
     }
 
     private var groupNamingTitle: String {
@@ -246,7 +241,7 @@ struct MainWindow: View {
 
     private var showsFailure: Binding<Bool> {
         Binding(
-            get: { windowFailure != nil },
+            get: { model.windowFailure != nil },
             set: { shown in
                 if !shown {
                     model.failure = nil

@@ -22,6 +22,8 @@ struct ImportSiteForm: View {
     @State private var folder: URL?
     @State private var database = ""
     @State private var git = true
+    @State private var password = ""
+    @State private var typedPassword = ""
     @State private var errorReport: ErrorReport?
 
     let refusal: String?
@@ -39,6 +41,8 @@ struct ImportSiteForm: View {
         _folder = State(initialValue: URL(filePath: request.parent, directoryHint: .isDirectory))
         _database = State(initialValue: request.database ?? "")
         _git = State(initialValue: request.git)
+        _password = State(initialValue: request.password ?? "")
+        _typedPassword = State(initialValue: request.password ?? "")
     }
 
     var body: some View {
@@ -116,7 +120,7 @@ struct ImportSiteForm: View {
 
     private func foundSection(_ info: BackupInfo) -> some View {
         Section {
-            LabeledContent("Format", value: info.format?.displayName ?? "Unknown")
+            LabeledContent("Format", value: BackupText.format(info))
             LabeledContent("WordPress", value: BackupText.wordPress(info))
             LabeledContent("Dump") {
                 Text(dumpText(info))
@@ -127,10 +131,32 @@ struct ImportSiteForm: View {
                 Text(info.siteURL ?? "Unknown")
                     .rowValue(.middle)
             }
+
+            if info.passwordSignature != nil {
+                LabeledContent("Password") {
+                    SecureField("Password", text: $password)
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.leading)
+                        .frame(width: 220)
+                        .task(id: password) {
+                            try? await Task.sleep(for: .milliseconds(600))
+
+                            if !Task.isCancelled {
+                                typedPassword = password
+                            }
+                        }
+                }
+            }
         } header: {
             Text("Found in the backup")
         } footer: {
-            if info.format == .localSiteFolder {
+            if passwordIsWrong {
+                Text(BackupText.wrongPassword)
+                    .foregroundStyle(Color.redText)
+            } else if info.passwordSignature != nil {
+                Text("All-in-One WP Migration protected this backup with a password. Nexus checks the password while you type. \"Import site\" works after the right password.")
+            } else if info.format == .localSiteFolder {
                 Text("Local writes this dump when the site stops. So it can be older than the site. For a current copy, use Export in Local.")
                     .foregroundStyle(Color.orangeText)
             }
@@ -188,12 +214,26 @@ struct ImportSiteForm: View {
     }
 
     private var canImport: Bool {
-        guard let info, info.problem == nil, problem == nil, !reading, folder != nil, !database.isEmpty else {
+        guard let info, info.problem == nil, problem == nil, !reading, folder != nil, !database.isEmpty, passwordIsRight else {
             return false
         }
 
         let siteName = name.isEmpty ? info.suggestedName : name
         return newSiteNameProblem(siteName, in: folder) == nil
+    }
+
+    private var passwordIsRight: Bool {
+        guard let signature = info?.passwordSignature else {
+            return true
+        }
+
+        return WpressCipher.isPassword(password, of: signature)
+    }
+
+    // The red text waits until the user stops typing. Else it shows after each letter of the right
+    // password.
+    private var passwordIsWrong: Bool {
+        !password.isEmpty && password == typedPassword && !passwordIsRight
     }
 
     private func read() async {
@@ -250,6 +290,8 @@ struct ImportSiteForm: View {
         }
 
         name = ""
+        password = ""
+        typedPassword = ""
         info = nil
         problem = nil
         backup = chosen
@@ -277,7 +319,7 @@ struct ImportSiteForm: View {
         }
 
         savedFolder = folder.path(percentEncoded: false)
-        model.startImport(SiteImport(backup: backup.path(percentEncoded: false), name: name.isEmpty ? info.suggestedName : name, parent: folder.path(percentEncoded: false), database: database, git: git), format: info.format)
+        model.startImport(SiteImport(backup: backup.path(percentEncoded: false), name: name.isEmpty ? info.suggestedName : name, parent: folder.path(percentEncoded: false), database: database, git: git, password: info.passwordSignature == nil ? nil : password), format: info.format)
     }
 }
 

@@ -768,8 +768,9 @@ private struct DumpSummary: View {
 // The size of the tables on the other server is an estimate for the size of the copy. So the
 // text says "about", and the time left shows only when the copy runs for a few seconds. A dump
 // file has an exact size only when it is not compressed.
-private struct ImportProgress: View {
+struct ImportProgress: View {
     let task: TaskInfo?
+    var goesOn = "You can close this sheet. The import goes on."
 
     private var loadsDump: Bool {
         if case .importDump = task?.work {
@@ -840,8 +841,6 @@ private struct ImportProgress: View {
     }
 
     private var detail: String {
-        let goesOn = "You can close this sheet. The import goes on."
-
         guard let task, let table = task.table, let number = task.tableNumber else {
             return goesOn
         }

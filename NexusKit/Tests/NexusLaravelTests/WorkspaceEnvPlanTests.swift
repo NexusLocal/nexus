@@ -9,7 +9,8 @@ struct WorkspaceEnvPlanTests {
         workspaceFolder: "/work/ticket-1",
         mysqlPorts: [13306],
         postgresqlPorts: [15432],
-        redisPorts: [16379]
+        redisPorts: [16379],
+        instanceSockets: [13306: "/tmp/mysql.sock"]
     )
 
     private func keyed(_ value: ConfigValue, _ key: String) -> ConfigSetting {
@@ -86,19 +87,55 @@ struct WorkspaceEnvPlanTests {
         #expect(result.databases == [WorkspaceDatabase(name: "shop", port: 13306, isDefault: true)])
     }
 
-    @Test(arguments: ["localhost", "::1"])
-    func aLocalHostThatCanIgnoreThePortGetsTheAddressOfTheServer(host: String) {
-        let result = plan(connection("main", database: keyed(.text("shop"), "DB_DATABASE"), host: host))
+    @Test(arguments: [("mysql", "::1", 13306), ("pgsql", "localhost", 15432)])
+    func aLocalHostGetsTheAddressOfTheServer(driver: String, host: String, port: Int) {
+        let result = plan(connection("main", database: keyed(.text("shop"), "DB_DATABASE"), driver: driver, port: port, host: host))
 
         #expect(result.keys == ["DB_HOST": "127.0.0.1"])
         #expect(result.problems.isEmpty)
     }
 
-    @Test func aFixedLocalHostIsNotIsolated() {
+    @Test func aMySQLConnectionOnLocalhostUsesTheSocketOfPHPAndNoInstance() {
+        let result = plan(connection("main", database: keyed(.text("shop"), "DB_DATABASE"), host: "localhost"))
+
+        #expect(result.keys.isEmpty)
+        #expect(result.problems == ["The connection main has the host localhost. PHP then uses the standard socket of MySQL and no Nexus database instance. Use 127.0.0.1, for example with \"Use Nexus…\" on the Site screen."])
+    }
+
+    @Test func theSocketOfAnInstanceGivesThePortOfThatInstance() {
+        var settings = connection("main", database: keyed(.text("shop"), "DB_DATABASE"), port: 3306)
+        settings["database.connections.main.unix_socket"] = keyed(.text("/tmp/mysql.sock"), "DB_SOCKET")
+
+        let result = plan(settings)
+
+        #expect(result.connections == ["main": 13306])
+        #expect(result.keys == ["DB_SOCKET": ""])
+        #expect(result.problems.isEmpty)
+    }
+
+    @Test func aConnectionWithoutAPortIsNoInstanceOfNexus() {
         var settings = connection("main", database: keyed(.text("shop"), "DB_DATABASE"))
+        settings["database.connections.main.port"] = nil
+
+        #expect(plan(settings).problems == ["The connection main does not use a Nexus database instance."])
+    }
+
+    @Test func aSocketOfAnotherServerIsNoInstanceOfNexus() {
+        var settings = connection("main", database: keyed(.text("shop"), "DB_DATABASE"))
+        settings["database.connections.main.unix_socket"] = keyed(.text("/Applications/MAMP/tmp/mysql/mysql.sock"), "DB_SOCKET")
+
+        #expect(plan(settings).problems == ["The connection main does not use a Nexus database instance."])
+    }
+
+    @Test func aFixedLocalHostThatKeepsThePortGetsOnlyThePortOfTheWorkspace() {
+        var settings = connection("main", database: keyed(.text("shop"), "DB_DATABASE"), driver: "pgsql", port: 15432)
         settings["database.connections.main.host"] = ConfigSetting(value: .text("localhost"))
 
-        #expect(plan(settings).problems == ["The connection main has the fixed host localhost in config/database.php, and that host can ignore the port."])
+        let result = plan(settings)
+
+        #expect(result.keys.isEmpty)
+        #expect(result.isolatingKeys == ["DB_PORT"])
+        #expect(result.problems.isEmpty)
     }
 
     @Test func aSocketKeyGetsAnEmptyValue() {

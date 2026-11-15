@@ -1683,7 +1683,8 @@ function wpCronFromACrontab(): void
 {
     [, $daemon, $stub] = scenario(['jobs' => true, 'queries' => true]);
     $script = realpath(Context::$fixtures.'/wordpress/wp-cron.php');
-    $result = runCli($stub, [$script], $daemon, [], Context::caseFolder());
+    $crontabFolder = Context::caseFolder();
+    $result = runCli($stub, [$script], $daemon, [], $crontabFolder);
     $daemon->close();
 
     contains($result['stdout'], 'CRON END', 'wp-cron.php runs to its end');
@@ -1698,6 +1699,25 @@ function wpCronFromACrontab(): void
         'end:done action_scheduler_run_queue',
     ], wireOrder($daemon, requestNames($daemon)), 'wp-cron.php in a command gets the same job requests');
     contains(jobRequests($daemon)['shop_cleanup']['command'], 'wp-cron.php', 'A job keeps the command');
+    same([dirname($script)], jobRequests($daemon)['shop_cleanup']['scriptFolders'], 'A job keeps the folder of the script of the crontab');
+    same(realpath($crontabFolder), realpath(jobRequests($daemon)['shop_cleanup']['cwd']), 'The working folder stays the folder of the crontab');
+}
+
+function scriptFolderOfARelativeScript(): void
+{
+    [, $daemon, $stub] = scenario(['jobs' => true]);
+    runCli($stub, ['wordpress/wp-cron.php'], $daemon, [], Context::$fixtures);
+    $daemon->close();
+
+    same(realpath(Context::$fixtures.'/wordpress'), jobRequests($daemon)['shop_cleanup']['scriptFolders'][0], 'A relative script gets the working folder in front');
+
+    [, $daemon, $stub] = scenario(['jobs' => true]);
+    runCli($stub, ['../wordpress/./wp-cron.php'], $daemon, [], Context::$fixtures.'/cli');
+    $daemon->close();
+
+    same(realpath(Context::$fixtures.'/wordpress'), jobRequests($daemon)['shop_cleanup']['scriptFolders'][0], 'The folder of a script has no "." and ".."');
+    same(null, \Nexus\Dumps\scriptFolder(['SCRIPT_FILENAME' => '']), 'Without a script there is no folder');
+    same('/Sites/shop', \Nexus\Dumps\scriptFolder(['SCRIPT_FILENAME' => '/Sites/blog/../shop/artisan']), 'An absolute path loses its ".."');
 }
 
 function longCommandLine(): void
@@ -1932,6 +1952,7 @@ $tests = [
     'Laravel test runs send nothing' => laravelTestRunsSendNothing(...),
     'a WP-CLI cron event' => wpCliRunsACronEvent(...),
     'wp-cron.php from a system crontab' => wpCronFromACrontab(...),
+    'the folder of a relative script' => scriptFolderOfARelativeScript(...),
     'a long command line and a long URL' => longCommandLine(...),
 ];
 

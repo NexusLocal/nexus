@@ -87,7 +87,7 @@ struct NexusCommand: AsyncParsableCommand {
             Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Installed.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
             SiteCommand.self, WorkspaceCommand.self, OpenSite.self, EditSite.self, Errors.self, New.self, Import.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
-            Database.self, PHP.self, Composer.self, Node.self, NPM.self, WP.self, MailCommand.self, Sendmail.self, DumpsCommand.self, MCPCommand.self,
+            Database.self, PHP.self, Debug.self, Composer.self, Node.self, NPM.self, WP.self, MailCommand.self, Sendmail.self, DumpsCommand.self, MCPCommand.self,
         ]
     )
 }
@@ -105,6 +105,27 @@ struct PHP: AsyncParsableCommand {
 
     func run() async throws {
         try await runTool(.php, arguments)
+    }
+}
+
+// nexus debug runs one PHP command with Xdebug (owner, 2026-11-14). Other commands never load
+// Xdebug.
+struct Debug: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Runs one PHP command with Xdebug, for example: nexus debug artisan my:command",
+        discussion: "The first word is php, composer, wp or a PHP file, for example artisan or vendor/bin/pest. Xdebug starts a debug session for the command and for each PHP that it starts. Your code editor must listen for Xdebug, on port 9003 unless a custom setting changes xdebug.client_port. The PHP version comes from the site of the current folder. Other commands never load Xdebug. Code coverage stays with PCOV."
+    )
+
+    @Argument(parsing: .captureForPassthrough, help: "The command and its arguments.") var arguments: [String] = []
+
+    // The parser gives --help to the arguments too. php --help needs no Xdebug. So it shows this help.
+    func run() async throws {
+        if let first = arguments.first, ["--help", "-h"].contains(first) {
+            throw CleanExit.helpRequest(self)
+        }
+
+        let target = try DebugCommand.target(of: arguments, currentFolder: FileManager.default.currentDirectoryPath)
+        try await runTool(target.tool, target.arguments, debug: true)
     }
 }
 
@@ -163,7 +184,7 @@ struct WP: AsyncParsableCommand {
 // user until Nexus has WP-CLI too. An older nexusd that cannot read the request gives the next
 // program too. nexusd answers first, because it refuses php, Composer and wp in a workspace that
 // it cannot isolate. The search on the PATH runs only for the next program.
-private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bool = false) async throws {
+private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bool = false, debug: Bool = false) async throws {
     let response: NexusResponse
     let environment = ProcessInfo.processInfo.environment
     let path = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -191,7 +212,7 @@ private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bo
     do {
         let folder = FileManager.default.currentDirectoryPath
         let argumentFolder = ToolArguments.folder(of: tool, in: arguments, currentFolder: folder)
-        response = try await NexusClient().send(.tool(tool, folder: folder, argumentFolder: argumentFolder))
+        response = try await NexusClient().send(.tool(tool, folder: folder, argumentFolder: argumentFolder, debug: debug ? true : nil))
     } catch let error as NexusClientError {
         guard let other = nextProgram() else {
             try fail("\(ErrorText.plain(error))")
@@ -221,6 +242,10 @@ private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bo
     guard case .tool(let command) = response else {
         try finish(response)
         throw ExitCode.failure
+    }
+
+    if debug, command.xdebugFolder == nil {
+        try fail("nexusd is older than this nexus command. Open the Nexus app, so that it starts the new nexusd. Then run the command again.")
     }
 
     var toolEnvironment = environment.merging(command.environment(for: arguments)) { _, new in new }
@@ -710,7 +735,7 @@ struct SiteCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "site",
         abstract: "Adds, lists, changes and removes sites.",
-        subcommands: [List.self, Info.self, Add.self, Edit.self, Remove.self, Defaults.self, Probe.self, Mail.self, WordPress.self],
+        subcommands: [List.self, Info.self, Add.self, Edit.self, Lines.self, Remove.self, Defaults.self, Probe.self, Mail.self, WordPress.self],
         defaultSubcommand: List.self
     )
 
@@ -1188,6 +1213,26 @@ struct SiteCommand: AsyncParsableCommand {
         }
     }
 
+    // The custom nginx or Apache lines of a PHP site (owner, 2026-11-14).
+    struct Lines: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Shows or replaces the custom nginx or Apache lines of a PHP site.",
+            discussion: "For example: nexus site lines shop.test \"client_max_body_size 100m;\". nginx -t or httpd -t checks the lines first. When it refuses a line, the old lines stay. Each workspace of the site gets the same lines."
+        )
+
+        @Argument(help: "The host of the site.") var host: String
+        @Argument(help: "The new lines. They replace all custom lines. A line break in an argument starts a new line.") var lines: [String] = []
+        @Flag(help: "Removes all custom lines.") var clear = false
+
+        func validate() throws {
+            try validateCustomLines(lines, clear: clear)
+        }
+
+        func run() async throws {
+            try await showOrReplaceCustomLines(lines, clear: clear, show: .siteLines(host: host), replace: .setSiteLines(host: host, lines: lines), noLines: "\(host) has no custom lines.")
+        }
+    }
+
     struct Remove: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Removes an added site. The folder stays.")
 
@@ -1293,6 +1338,7 @@ struct Import: AsyncParsableCommand {
     @Option(help: "The folder that gets the new site. The default is the current folder.") var folder: String = "."
     @Option(help: "The database instance, for example mysql-8.4. The default is MySQL 8.4 or the newest MySQL that runs.") var database: String?
     @Flag(inversion: .prefixedNo, help: "Makes a git repository with a first commit. It ignores wp-config.php and the uploads.") var git = true
+    @Flag(help: "Reads the password of a .wpress backup from the input. Without it, the command asks for the password.") var passwordStdin = false
 
     func run() async throws {
         let path = absolutePath(backup)
@@ -1309,7 +1355,7 @@ struct Import: AsyncParsableCommand {
         }
 
         let found = [
-            info.format.map { "Format: \($0.displayName)" },
+            info.format == nil ? nil : "Format: \(BackupText.format(info))",
             "WordPress: \(BackupText.wordPress(info))",
             info.dump.map { "Dump: \($0)" },
             "Table prefix: \(info.tablePrefix ?? "as in wp-config.php")",
@@ -1322,9 +1368,10 @@ struct Import: AsyncParsableCommand {
             print("Local writes this dump when the site stops. So it can be older than the site. For a current copy, use Export in Local.")
         }
 
+        let password = try info.passwordSignature.map { try BackupPassword.ask(signature: $0, fromInput: passwordStdin) }
         let siteName = name ?? info.suggestedName
         print("Nexus imports the site as \(siteName). This can take some minutes. The log is \(NexusPaths.standard.log("new-site-\(siteName)").path(percentEncoded: false))")
-        let response = try await send(.importSite(SiteImport(backup: path, name: siteName, parent: absolutePath(folder), database: database, git: git)))
+        let response = try await send(.importSite(SiteImport(backup: path, name: siteName, parent: absolutePath(folder), database: database, git: git, password: password)))
 
         switch response {
         case .siteCreated(let created):
@@ -1401,25 +1448,11 @@ struct Ini: AsyncParsableCommand {
     @Flag(help: "Removes all custom lines.") var clear = false
 
     func validate() throws {
-        if clear, !lines.isEmpty {
-            throw ValidationError("Give new lines or --clear, not both.")
-        }
+        try validateCustomLines(lines, clear: clear)
     }
 
     func run() async throws {
-        guard lines.isEmpty, !clear else {
-            try finish(try await send(.setCustomSettings(php: php, lines: clear ? [] : lines)))
-            return
-        }
-
-        let response = try await send(.customSettings(php: php))
-
-        guard case .lines(let lines) = response else {
-            try finish(response)
-            return
-        }
-
-        print(lines.isEmpty ? "PHP \(php) has no custom lines." : lines.joined(separator: "\n"))
+        try await showOrReplaceCustomLines(lines, clear: clear, show: .customSettings(php: php), replace: .setCustomSettings(php: php, lines: lines), noLines: "PHP \(php) has no custom lines.")
     }
 }
 
@@ -1619,6 +1652,30 @@ enum OnOff: String, ExpressibleByArgument {
     case off
 }
 
+private func validateCustomLines(_ lines: [String], clear: Bool) throws {
+    if clear, !lines.isEmpty {
+        throw ValidationError("Give new lines or --clear, not both.")
+    }
+}
+
+// Without new lines and without --clear, the command shows the custom lines. --clear sends no
+// lines, so it removes them.
+private func showOrReplaceCustomLines(_ lines: [String], clear: Bool, show: NexusRequest, replace: NexusRequest, noLines: String) async throws {
+    guard lines.isEmpty, !clear else {
+        try finish(try await send(replace))
+        return
+    }
+
+    let response = try await send(show)
+
+    guard case .lines(let current) = response else {
+        try finish(response)
+        return
+    }
+
+    print(current.isEmpty ? noLines : current.joined(separator: "\n"))
+}
+
 private func printToggles(_ response: NexusResponse) throws {
     guard case .toggles(let toggles) = response else {
         try finish(response)
@@ -1657,7 +1714,7 @@ func finish(_ response: NexusResponse) throws {
     case .portInUse(let conflict):
         FileHandle.standardError.write(Data("\(conflict)\n".utf8))
         throw ExitCode.failure
-    case .invalidSettings(let error):
+    case .invalidSettings(let error as any Error), .invalidSiteLines(let error as any Error):
         FileHandle.standardError.write(Data("\(ErrorText.plain(error))\n".utf8))
         throw ExitCode.failure
     case .stopped(let message):

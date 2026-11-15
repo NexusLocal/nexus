@@ -25,7 +25,11 @@ extension NexusEngine {
                 continue
             }
 
-            guard poolNamesDumpStub(line: runtime.line) else {
+            // A conf.d from before xdebug.d can load Xdebug for each command. So such a PHP version
+            // gets its full configuration too.
+            let confDFromBeforeXdebugD = toggleNames(of: runtime).contains("xdebug") && !hasXdebugIni(line: runtime.line)
+
+            guard poolNamesDumpStub(line: runtime.line) || confDFromBeforeXdebugD else {
                 _ = writeDumpFiles(line: runtime.line, state: state, keepingStub: false)
                 continue
             }
@@ -190,7 +194,10 @@ extension NexusEngine {
     // A running PHP-FPM reads the stub until it reloads with a pool that does not name it. For a
     // PHP-FPM that does not run, the pool on disk does not matter.
     func poolUsesDumpStub(line: String) async -> Bool {
-        guard await supervisor.state(of: ServiceCatalog.phpID(line: line))?.isActive == true else {
+        let phpRuns = await supervisor.state(of: ServiceCatalog.phpID(line: line))?.isActive == true
+        let xdebugRuns = await supervisor.state(of: ServiceID.xdebug(line: line))?.isActive == true
+
+        guard phpRuns || xdebugRuns else {
             return false
         }
 
@@ -207,7 +214,7 @@ extension NexusEngine {
         let library = state.dumpSettings.catchesAnything ? dumpLibrary() : nil
 
         guard let library else {
-            try? Self.writeScanFolder(named: PHPConfig.dumpsFolderName, iniName: PHPConfig.dumpsIniName, ini: nil, in: folder)
+            _ = try? Self.writeScanFolder(named: PHPConfig.dumpsFolderName, iniName: PHPConfig.dumpsIniName, ini: nil, in: folder)
 
             if !keepingStub {
                 try? FileManager.default.removeItem(at: stub)
@@ -232,7 +239,7 @@ extension NexusEngine {
             return (stub, stubChanged)
         } catch {
             activity?.write("dumps", "PHP \(line) runs without the dump viewer. \(ErrorText.plain(error))")
-            try? Self.writeScanFolder(named: PHPConfig.dumpsFolderName, iniName: PHPConfig.dumpsIniName, ini: nil, in: folder)
+            _ = try? Self.writeScanFolder(named: PHPConfig.dumpsFolderName, iniName: PHPConfig.dumpsIniName, ini: nil, in: folder)
             return (nil, false)
         }
     }

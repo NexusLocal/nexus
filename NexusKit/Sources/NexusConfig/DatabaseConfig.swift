@@ -45,18 +45,21 @@ public enum DatabaseConfig {
     // clients read the host localhost as their socket and ignore the port. The clients look
     // for their login plugins in a folder that was compiled in and does not exist. Without the
     // plugin folder of the package, MySQL 9 cannot log in with mysql_native_password (as in
-    // MAMP PRO), and MariaDB cannot log in to MySQL 8 with caching_sha2_password.
-    public static func clientOptions(host: String, port: Int, account: DatabaseAccount, pluginFolder: URL) -> String {
-        """
-        [client]
-        protocol = TCP
-        host = \(optionString(host))
-        port = \(port)
-        user = \(optionString(account.user))
-        password = \(optionString(account.password))
-        plugin-dir = \(optionString(pluginFolder.path(percentEncoded: false)))
+    // MAMP PRO), and MariaDB cannot log in to MySQL 8 with caching_sha2_password. A socket file of
+    // another server, for example MAMP PRO, goes in place of the host and the port. connectTimeout
+    // is the time in seconds that the client waits for the server.
+    public static func clientOptions(host: String, port: Int, account: DatabaseAccount, pluginFolder: URL, socket: String? = nil, connectTimeout: Int? = nil) -> String {
+        let address = socket.map { "protocol = SOCKET\nsocket = \(optionString($0))" } ?? "protocol = TCP\nhost = \(optionString(host))\nport = \(port)"
+        let timeout = connectTimeout.map { "connect-timeout = \($0)\n" } ?? ""
 
-        """
+        return """
+            [client]
+            \(address)
+            \(timeout)user = \(optionString(account.user))
+            password = \(optionString(account.password))
+            plugin-dir = \(optionString(pluginFolder.path(percentEncoded: false)))
+
+            """
     }
 
     // MySQL does not know some table definitions of MariaDB: the uca1400 collations, the uuid and

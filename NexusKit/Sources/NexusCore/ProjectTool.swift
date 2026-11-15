@@ -16,6 +16,13 @@ public enum ProjectTool: String, Codable, Sendable, CaseIterable {
         default: rawValue
         }
     }
+
+    public var runsPHP: Bool {
+        switch self {
+        case .php, .composer, .wp: true
+        case .node, .npm: false
+        }
+    }
 }
 
 // The bin folder of Nexus has a link to the nexus command for nexus itself and for each tool. A

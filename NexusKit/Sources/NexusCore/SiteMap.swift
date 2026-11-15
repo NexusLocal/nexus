@@ -66,13 +66,26 @@ public struct SiteMap: Sendable, Equatable {
         phpSites.append(PHPFiles(entry: entry, env: env, userIni: userIni))
     }
 
-    // PHP gives the root as a real path.
+    // PHP gives the root as a real path. A command can also name a site with the folder of its
+    // script. The deeper of the two folders wins. On the same depth the script wins. So a crontab
+    // script of a site counts for that site. A tool outside every site counts for the working folder.
     public func entry(of request: DumpedRequest) -> Entry? {
         if let entry = request.host.flatMap({ host in hosts[host] }) {
             return entry
         }
 
-        return request.root.flatMap(entry(holding:))
+        let script = request.scriptFolders.lazy.compactMap { folder in match(holding: folder) }.first
+        let root = request.root.flatMap { root in match(holding: root) }
+
+        guard let script else {
+            return root?.entry
+        }
+
+        guard let root, root.folder.count > script.folder.count else {
+            return script.entry
+        }
+
+        return root.entry
     }
 
     public func place(of request: DumpedRequest) -> DumpPlace {
@@ -85,11 +98,16 @@ public struct SiteMap: Sendable, Equatable {
     }
 
     public func entry(holding path: String) -> Entry? {
+        match(holding: path)?.entry
+    }
+
+    // The entry of the deepest known folder that holds the path, and that folder.
+    private func match(holding path: String) -> (entry: Entry, folder: String)? {
         var folder = RealPath.trimmed(path)
 
         while true {
             if let entry = folders[folder] ?? projectFolders[folder] {
-                return entry
+                return (entry, folder)
             }
 
             let parent = (folder as NSString).deletingLastPathComponent

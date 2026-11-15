@@ -163,6 +163,7 @@ public enum WordPressFiles {
     }
 
     public static let beforeNexus = beforeNexus(for: .current)
+    public static let commentStart = beforeNexus.trimmingCharacters(in: .whitespaces)
 
     // Each variant writes its own name, as in a .env file.
     public static func beforeNexus(for variant: NexusVariant) -> String {

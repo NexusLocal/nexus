@@ -390,6 +390,10 @@ public actor NexusEngine {
                 return .lines(try await customSettings(line: php))
             case .setCustomSettings(let php, let lines):
                 return .done(message: try await serialWeb { try await self.setCustomSettings(line: php, lines: lines) })
+            case .siteLines(let host):
+                return .lines(try await siteLines(host: host))
+            case .setSiteLines(let host, let lines):
+                return .done(message: try await serialWeb { try await self.setSiteLines(host: host, lines: lines) })
             case .lan(let enabled):
                 return .done(message: try await serialWeb { try await self.lan(enabled) })
             case .tld(nil):
@@ -411,8 +415,8 @@ public actor NexusEngine {
                 return .databaseSizes(try await sourceDatabases(source, instance: instance))
             case .stopTask(let id):
                 return .done(message: stopTask(id))
-            case .tool(let tool, let folder, let argumentFolder):
-                return .tool(try await toolCommand(tool, folder: folder, argumentFolder: argumentFolder))
+            case .tool(let tool, let folder, let argumentFolder, let debug):
+                return .tool(try await toolCommand(tool, folder: folder, argumentFolder: argumentFolder, debug: debug == true))
             case .probe(let folder, let php):
                 return .configuration(try await probeConfiguration(folder: folder, php: php))
             case .workspaceEnv(let host):
@@ -485,6 +489,11 @@ public actor NexusEngine {
                 return .done(message: try await sendMailToNexus(host: host))
             case .restoreMailSettings(let host):
                 return .done(message: try await restoreMailSettings(host: host))
+            case .useNexusInfo(let host):
+                return .useNexusInfo(await useNexusInfo(host: host))
+            case .useNexus(let request):
+                // A copy can take minutes, so it does not wait in the queue of the changes.
+                return .done(message: try await useNexus(request))
             case .serviceList:
                 return .serviceList(try await serviceList())
             case .tasks:
@@ -521,6 +530,8 @@ public actor NexusEngine {
             return .portInUse(conflict)
         } catch let settings as PHPSettingsError {
             return .invalidSettings(settings)
+        } catch let lines as SiteLinesError {
+            return .invalidSiteLines(lines)
         } catch let stopped as TaskStopped {
             return .stopped(message: stopped.description)
         } catch let failed as SiteCreationFailed {
@@ -678,6 +689,7 @@ public actor NexusEngine {
 
             let details = webDetails(of: runtime, state: state, sites: sites)
             let mail = runtime.name == "mailpit" ? mailDetails(running: status.state.isActive) : nil
+            let debugProblem = await xdebugProblem(of: runtime, phpRuns: status.state.isActive)
             services.append(ServiceInfo(
                 id: status.id,
                 name: runtime.name,
@@ -685,7 +697,7 @@ public actor NexusEngine {
                 version: runtime.version,
                 ports: status.ports,
                 state: status.state,
-                problem: mail?.problem,
+                problem: mail?.problem ?? debugProblem,
                 portConflict: status.state.isActive ? nil : portConflicts[status.id] ?? mail?.conflict,
                 logFile: paths.log(status.id).path(percentEncoded: false),
                 dataFolder: ownsData ? catalog.dataFolder(for: runtime).path(percentEncoded: false) : nil,
@@ -766,8 +778,8 @@ public actor NexusEngine {
             try await startMailReceiver()
         }
 
-        if id.hasPrefix("php-") {
-            _ = try await writePHPConfig(line: String(id.dropFirst(4)), state: await stateStore.current())
+        if let line = ServiceID.phpLine(of: id) {
+            _ = try await writePHPConfig(line: line, state: await stateStore.current())
         }
 
         if let database = await databaseRuntime(id), await supervisor.state(of: id)?.isActive != true {
@@ -819,6 +831,10 @@ public actor NexusEngine {
         }
 
         portConflicts[id] = nil
+
+        if let line = ServiceID.phpLine(of: id) {
+            await syncXdebug(line: line)
+        }
 
         if definition.ports.isEmpty {
             return "\(definition.displayName) runs."
@@ -902,6 +918,10 @@ public actor NexusEngine {
 
         portConflicts[id] = nil
         try await supervisor.stop(id)
+
+        if let line = ServiceID.phpLine(of: id) {
+            await syncXdebug(line: line)
+        }
 
         if id == ServiceCatalog.mailID {
             await mailServiceChanged()
@@ -1038,7 +1058,7 @@ public actor NexusEngine {
             if id == ServiceCatalog.nginxID {
                 throw RuntimeError.unsupported("nginx has two ports. Run: nexus port http <port>, or: nexus port https <port>")
             }
-            if id.hasPrefix("php-") {
+            if ServiceID.phpLine(of: id) != nil {
                 throw RuntimeError.unsupported("PHP has no port. nginx and Apache reach it through a socket.")
             }
             if id == ServiceCatalog.mailID {
@@ -1521,7 +1541,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var mayChangeSites: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .siteDatabases, .databaseConnections, .serverDatabases, .createDatabase, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines, .serviceList, .tasks, .dumpList, .clearCaughtDumps, .removeCaughtDump, .removeDumpedRequest, .openCaughtDumpFile, .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps, .requestEntries: false
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .siteLines, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .useNexusInfo, .useNexus, .siteDatabases, .databaseConnections, .serverDatabases, .createDatabase, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines, .serviceList, .tasks, .dumpList, .clearCaughtDumps, .removeCaughtDump, .removeDumpedRequest, .openCaughtDumpFile, .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps, .requestEntries: false
         case .fromAgent(_, let inner): inner.mayChangeSites
         default: true
         }

@@ -11,6 +11,7 @@ extension NexusRequest {
         case .remove(let name, let line): "remove \(name) \(line)"
         case .removeSite(let host): "removeSite \(host)"
         case .editSite(let host, _): "editSite \(host)"
+        case .setSiteLines(let host, _): "setSiteLines \(host)"
         case .restartApp(let host, let workspace): "restartApp \(host)\(workspace.map { " \($0)" } ?? "")"
         case .setAccount(let instance, _): "setAccount \(instance)"
         case .retryWorkspace(let host, let name): "retryWorkspace \(host) \(name)"
@@ -21,6 +22,7 @@ extension NexusRequest {
         case .importSite(let site): "importSite \(site.name)"
         case .createDatabase(_, let name): "createDatabase \(name)"
         case .importDump(let request): "importDump \(request.name)\(request.existing.map { " \($0.rawValue)" } ?? "")"
+        case .useNexus(let request): "useNexus \(request.host)\(request.copy ? " with a copy" : "")"
         case .fromAgent(let agent, let request): "\(request.activitySummary) (\(agent))"
         default: Mirror(reflecting: self).children.first?.label ?? "\(self)"
         }
@@ -30,8 +32,8 @@ extension NexusRequest {
     public var onlyReads: Bool {
         switch self {
         case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules,
-             .customSettings, .databases, .databaseSizes, .sourceDatabases, .workspaceEnv, .siteDatabases, .databaseConnections, .serverDatabases, .wordPressSite, .backgroundPreset,
-             .workspaceSettings, .dumps, .probe, .tool, .inspectBackup, .inspectDump, .serviceList, .tasks, .mailStatus, .siteMail, .dumpList,
+             .customSettings, .siteLines, .databases, .databaseSizes, .sourceDatabases, .workspaceEnv, .siteDatabases, .databaseConnections, .serverDatabases, .wordPressSite, .backgroundPreset,
+             .workspaceSettings, .dumps, .probe, .tool, .inspectBackup, .inspectDump, .serviceList, .tasks, .mailStatus, .siteMail, .useNexusInfo, .dumpList,
              .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps, .requestEntries:
             true
         case .fromAgent(_, let request):
@@ -53,6 +55,7 @@ extension NexusResponse {
         case .stopped(let message): "stopped: \(message)"
         case .portInUse(let conflict): "port in use: \(conflict.description)"
         case .invalidSettings: "failed: the settings are not valid"
+        case .invalidSiteLines: "failed: the lines are not valid"
         case .siteNotCreated(let failure): "failed: \(failure.message)"
         default: "done"
         }
@@ -60,7 +63,7 @@ extension NexusResponse {
 
     public var failed: Bool {
         switch self {
-        case .failure, .portInUse, .invalidSettings, .siteNotCreated: true
+        case .failure, .portInUse, .invalidSettings, .invalidSiteLines, .siteNotCreated: true
         default: false
         }
     }

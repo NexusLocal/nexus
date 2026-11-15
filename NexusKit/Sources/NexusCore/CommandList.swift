@@ -37,6 +37,7 @@ extension CommandSection {
             CommandItem(command: "nexus new laravel foo --kit react", help: "Makes a new site from a template: laravel, wordpress, next, nuxt, vite or astro."),
             CommandItem(command: "nexus import ~/Downloads/foo.wpress", help: "Makes a WordPress site from a backup of Local, Jetpack, Studio or All-in-One WP Migration, or from a folder with a dump."),
             CommandItem(command: "nexus site edit shop.test --server apache", help: "Changes the kind, the PHP version, the Node version, the webserver, the document root, the aliases or the workspace settings. --workspace-databases empty gives new workspaces an empty database."),
+            CommandItem(command: "nexus site lines shop.test \"client_max_body_size 100m;\"", help: "Replaces the custom nginx or Apache lines of a PHP site and its workspaces. Without lines, it shows them."),
             CommandItem(command: "nexus site remove shop.test", help: "Removes a site. The folder stays."),
             CommandItem(command: "nexus site defaults --php 8.4", help: "Changes the PHP version, the Node version or the webserver of a new site."),
             CommandItem(command: "nexus site probe .", help: "Shows which env key feeds each setting of a Laravel application."),
@@ -83,6 +84,7 @@ extension CommandSection {
         ]),
         CommandSection(title: "PHP and tools", commands: [
             CommandItem(command: "nexus php -v", help: "Runs the PHP of the site in the current folder."),
+            CommandItem(command: "nexus debug artisan my:command", help: "Runs one command with Xdebug. Other commands never load Xdebug."),
             CommandItem(command: "nexus composer install", help: "Runs Composer with that PHP."),
             CommandItem(command: "nexus node -v", help: "Runs the Node of the site in the current folder."),
             CommandItem(command: "nexus npm ci", help: "Runs npm with the Node of the site."),

@@ -33,6 +33,8 @@ struct SiteScreen: View {
     @State private var address: String
     @FocusState private var focusedKindField: KindField?
     @State private var wordPressInfo: WordPressSiteInfo?
+    @State private var useNexusInfo: UseNexusInfo?
+    @State private var activations = 0
     @State private var asksToAddWorkspaceLines = false
     @State private var workspaceDatabases: WorkspaceDatabaseChoice
     @State private var workspaceSeeders: Bool
@@ -92,8 +94,54 @@ struct SiteScreen: View {
         )
     }
 
+    private static let workspacesAnchor = "workspaces"
+
+    // The plan of "Use Nexus…" loads for the whole form, because a section that shows nothing
+    // would not run its task. A user can change the .env in another app. So the plan loads again
+    // when Nexus becomes the active app. A new key stops the load that runs.
     var body: some View {
-        updating(form)
+        ScrollViewReader { reader in
+            updating(form)
+                .task(id: model.markedRow) {
+                    await showMarkedWorkspace(with: reader)
+                }
+                .task(id: useNexusKey) {
+                    await loadUseNexusInfo()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    activations += 1
+                }
+                .onDisappear {
+                    model.useNexusDone[site.host] = nil
+                }
+        }
+    }
+
+    // A click on the notification of a ready workspace shows its row (owner, 2026-11-14). The form
+    // needs its first layout before the scroll.
+    private func showMarkedWorkspace(with reader: ScrollViewProxy) async {
+        guard case .workspace(let host, let name)? = model.markedRow, host == site.host else {
+            return
+        }
+
+        if site.workspaces.contains(where: { $0.name == name }) {
+            await reader.scrollAfterLayout(to: NotificationTarget.workspace(site: host, name: name), anchor: .center)
+        } else {
+            await reader.scrollAfterLayout(to: Self.workspacesAnchor, anchor: .top)
+        }
+    }
+
+    private func loadUseNexusInfo() async {
+        guard kind == .php, site.projectType == .laravel else {
+            useNexusInfo = nil
+            return
+        }
+
+        useNexusInfo = await model.useNexusInfo(of: site)
+    }
+
+    private var useNexusKey: String {
+        [site.host, site.php, site.folder, site.url, kind.rawValue, String(model.useNexusChanges), String(activations), model.databaseInstancePorts, model.redisInstancePorts].joined(separator: " ")
     }
 
     // The design of a WordPress site is "Site · WordPress" in nexus.pen (Phase 4, 3a).
@@ -105,6 +153,10 @@ struct SiteScreen: View {
     // for a Node.js app, the workspaces (D67). A WordPress site has no .env either.
     private var form: some View {
         Form {
+            if kind == .php, site.projectType == .laravel {
+                SiteUseNexusSection(site: site, info: useNexusInfo)
+            }
+
             Section {
                 LabeledContent("Host") {
                     Text(site.host)
@@ -214,6 +266,7 @@ struct SiteScreen: View {
             switch kind {
             case .php:
                 serverSection
+                SiteLinesSection(site: site)
 
                 if site.projectType == .laravel {
                     SiteDatabasesSection(site: site)
@@ -377,6 +430,7 @@ struct SiteScreen: View {
         Section {
             Toggle("Create workspaces automatically", isOn: $automaticWorkspaces)
                 .toggleStyle(.switch)
+                .id(Self.workspacesAnchor)
 
             if isWordPress {
                 Picker("Databases", selection: wordPressDatabases) {
@@ -469,6 +523,7 @@ struct SiteScreen: View {
                 }
                 .labeledContentStyle(.rowValue)
                 .help((workspace.folder as NSString).abbreviatingWithTildeInPath)
+                .rowMark(.workspace(site: site.host, name: workspace.name), marked: model.markedRow)
             }
 
             HStack {

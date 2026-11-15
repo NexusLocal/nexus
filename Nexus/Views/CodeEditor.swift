@@ -1,4 +1,5 @@
 import AppKit
+import NexusIPC
 import SwiftUI
 
 // A plain text editor with line numbers. It marks the line with an error.
@@ -96,6 +97,57 @@ struct CodeEditor: NSViewRepresentable {
             lines.wrappedValue = textView.string.components(separatedBy: "\n")
             textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true
         }
+    }
+}
+
+// An editor of custom lines with the error of the last check, "Revert" and a save button (D60,
+// owner 2026-11-14). The PHP screen and the Site screen use it, so both look the same. The editor
+// marks the line of the error. The error also says that the subject still runs with the old lines,
+// or keeps them when it does not run. The noun names the lines, for example "settings".
+struct CustomLinesSection: View {
+    let title: String
+    let saveTitle: String
+    @Binding var lines: [String]
+    let error: SettingsError?
+    let subject: String
+    let runs: Bool
+    let noun: String
+    let changed: Bool
+    let saving: Bool
+    let footer: String
+    let revert: () -> Void
+    let save: () -> Void
+
+    var body: some View {
+        Section {
+            if let error {
+                Label(text(of: error), systemImage: "xmark.circle")
+                    .foregroundStyle(Color.redText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(Color.errorBackground, in: .rect(cornerRadius: 6))
+            }
+
+            CodeEditor(lines: $lines, errorLine: error?.line)
+                .frame(height: 96)
+        } header: {
+            HStack {
+                Text(title)
+                Spacer()
+                Button("Revert", action: revert)
+                    .disabled(saving || !changed && error == nil)
+                Button(saveTitle, action: save)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(saving || !changed)
+            }
+        } footer: {
+            Text(footer)
+        }
+    }
+
+    private func text(of error: SettingsError) -> String {
+        let state = runs ? "still runs with the old \(noun)" : "keeps the old \(noun)"
+        return "\(LineErrorText.text(error.message, line: error.line)). \(subject) \(state)."
     }
 }
 

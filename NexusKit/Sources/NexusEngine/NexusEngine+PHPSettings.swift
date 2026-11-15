@@ -45,7 +45,7 @@ extension NexusEngine {
         let newFilesChanged = try await writePHPConfig(line: line, state: await stateStore.current())
 
         if oldFilesChanged || newFilesChanged, running {
-            await supervisor.signal(id, SIGUSR2)
+            await signalPHP(line: line, SIGUSR2)
         }
 
         return running
@@ -67,6 +67,14 @@ extension NexusEngine {
         let others = (try? FileManager.default.contentsOfDirectory(at: confD, includingPropertiesForKeys: nil)) ?? []
         for file in others where file.pathExtension == "ini" && file.lastPathComponent != PHPConfig.customIniName {
             try FileManager.default.copyItem(at: file, to: check.appending(path: file.lastPathComponent))
+        }
+
+        // conf.d never loads Xdebug (owner, 2026-11-14). The check loads it, so a wrong xdebug line
+        // gets its message too. nexus debug and the PHP-FPM with Xdebug read these lines.
+        let xdebugIni = paths.xdebugFolder(line: runtime.line).appending(path: PHPConfig.xdebugIniName)
+
+        if FileManager.default.fileExists(atPath: xdebugIni.path(percentEncoded: false)) {
+            try FileManager.default.copyItem(at: xdebugIni, to: check.appending(path: "50-xdebug.ini"))
         }
 
         let customFile = check.appending(path: PHPConfig.customIniName)

@@ -15,12 +15,31 @@ package enum SocketError: Error, Equatable, CustomStringConvertible {
         }
     }
 
-    // A Unix socket path has room for 104 bytes with the end byte.
     package static func checkPath(_ socket: URL) throws {
-        let path = socket.path(percentEncoded: false)
+        try checkPath(socket.path(percentEncoded: false))
+    }
 
+    // A Unix socket path has room for 104 bytes with the end byte.
+    package static func checkPath(_ path: String) throws {
         guard path.utf8.count <= 103 else {
             throw SocketError.pathTooLong(path)
         }
+    }
+}
+
+package enum UnixSocket {
+    // The address of a socket file for bind and connect.
+    package static func address(of path: String) throws -> sockaddr_un {
+        try SocketError.checkPath(path)
+
+        var address = sockaddr_un()
+        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        address.sun_family = sa_family_t(AF_UNIX)
+
+        withUnsafeMutableBytes(of: &address.sun_path) { buffer in
+            buffer.copyBytes(from: path.utf8)
+        }
+
+        return address
     }
 }

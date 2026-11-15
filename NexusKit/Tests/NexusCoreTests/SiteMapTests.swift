@@ -19,8 +19,23 @@ struct SiteMapTests {
         SiteMap(hosts: hosts, folders: folders)
     }
 
-    private func request(host: String? = nil, root: String? = nil) -> DumpedRequest {
-        DumpedRequest(id: "a1", kind: host == nil ? .command : .http, target: "/", host: host, root: root, started: Date(timeIntervalSince1970: 1_794_414_394))
+    private func request(host: String? = nil, root: String? = nil, scriptFolders: [String] = []) -> DumpedRequest {
+        DumpedRequest(id: "a1", kind: host == nil ? .command : .http, target: "/", host: host, root: root, scriptFolders: scriptFolders, started: Date(timeIntervalSince1970: 1_794_414_394))
+    }
+
+    @Test func theScriptOfACrontabCountsForItsSite() {
+        #expect(map.place(of: request(root: "/Users/tim", scriptFolders: ["/Sites/shop"])) == DumpPlace(site: "shop.test"))
+        #expect(map.place(of: request(root: "/Users/tim", scriptFolders: ["/Links/shop", "/Sites/shop/wp"])) == DumpPlace(site: "shop.test"))
+    }
+
+    @Test func onTheSameDepthTheScriptWinsAndElseTheDeeperFolder() {
+        #expect(map.place(of: request(root: "/Sites/blog", scriptFolders: ["/Sites/shop"])) == DumpPlace(site: "shop.test"))
+        #expect(map.place(of: request(root: "/Sites/shop/.worktrees/fix/app", scriptFolders: ["/Sites/shop/vendor/bin"])) == DumpPlace(site: "shop.test", workspace: "fix"))
+        #expect(map.place(of: request(root: "/Sites/shop", scriptFolders: ["/Sites/shop/.worktrees/fix"])) == DumpPlace(site: "shop.test", workspace: "fix"))
+    }
+
+    @Test func aScriptOutsideEverySiteLeavesTheChoiceToTheWorkingFolder() {
+        #expect(map.place(of: request(root: "/Sites/blog", scriptFolders: ["/Applications/Nexus.app/Contents/Helpers"])) == DumpPlace(site: "blog.test"))
     }
 
     @Test func theHostDecidesBeforeTheRoot() {

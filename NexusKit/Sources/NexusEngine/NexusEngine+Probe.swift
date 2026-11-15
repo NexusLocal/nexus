@@ -37,10 +37,8 @@ extension NexusEngine {
         }
 
         let configuration = try await shownConfiguration(of: site, folder: RealPath.of(root))
-        var instances: [SiteDatabases.Instance] = []
-
-        for tools in await databaseRuntimes() {
-            instances.append(SiteDatabases.Instance(id: tools.id, usesMySQLProtocol: tools.kind.usesMySQLProtocol, port: try await port(of: tools)))
+        let instances = try await databaseAddresses().map { address in
+            SiteDatabases.Instance(id: address.tools.id, usesMySQLProtocol: address.tools.kind.usesMySQLProtocol, port: address.port, socket: address.socket)
         }
 
         return SiteDatabases.list(configuration, instances: instances)

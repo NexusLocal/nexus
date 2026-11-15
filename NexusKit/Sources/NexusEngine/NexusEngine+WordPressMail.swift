@@ -51,7 +51,7 @@ extension NexusEngine {
         }
 
         let rest = found.plugins.filter { !$0.canTurnOff }
-        let restText = rest.isEmpty ? "" : " \(Self.capitalized(EnglishList.joined(rest.map(\.description)))) can still send mail itself."
+        let restText = rest.isEmpty ? "" : " \(EnglishList.joined(rest.map(\.description)).firstLetterUppercased) can still send mail itself."
         return "Nexus turned off \(EnglishList.joined(turnedOff)) in this copy of \(host). The live site does not change.\(restText)"
     }
 
@@ -293,11 +293,11 @@ extension NexusEngine {
 
         if !certain.isEmpty {
             let one = certain.count == 1
-            parts.append("\(capitalized(EnglishList.joined(certain.map(\.description)))) \(one ? "sends" : "send") each mail \(one ? "itself" : "themselves") and not through Nexus. So a mail can reach a real person.")
+            parts.append("\(EnglishList.joined(certain.map(\.description)).firstLetterUppercased) \(one ? "sends" : "send") each mail \(one ? "itself" : "themselves") and not through Nexus. So a mail can reach a real person.")
         }
 
         if !uncertain.isEmpty {
-            parts.append("\(capitalized(EnglishList.joined(uncertain.map(\.description)))) can send each mail \(uncertain.count == 1 ? "itself" : "themselves"). Check this code.")
+            parts.append("\(EnglishList.joined(uncertain.map(\.description)).firstLetterUppercased) can send each mail \(uncertain.count == 1 ? "itself" : "themselves"). Check this code.")
         }
 
         let turnOff = plugins.filter(\.canTurnOff)
@@ -311,10 +311,6 @@ extension NexusEngine {
         }
 
         return parts.joined(separator: " ")
-    }
-
-    private static func capitalized(_ text: String) -> String {
-        text.prefix(1).uppercased() + text.dropFirst()
     }
 
     private static func mailerTitle(_ mailer: String) -> String {

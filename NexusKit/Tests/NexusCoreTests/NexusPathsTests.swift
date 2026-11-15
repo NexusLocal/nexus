@@ -26,6 +26,14 @@ struct NexusPathsTests {
         #expect(folder.path(percentEncoded: false) == "/tmp/Nexus Test/data/mysql-8.4/")
     }
 
+    @Test func theLinesOfASiteAreNextToTheConfigurationOfTheirServer() {
+        let paths = NexusPaths(root: URL(filePath: "/tmp/Nexus Test", directoryHint: .isDirectory))
+
+        #expect(paths.siteLinesFile("shop.test", server: .nginx).path(percentEncoded: false) == "/tmp/Nexus Test/config/nginx/sites/shop.test.conf")
+        #expect(paths.siteLinesFile("shop.test", server: .apache).path(percentEncoded: false) == "/tmp/Nexus Test/config/apache/sites/shop.test.conf")
+        #expect(paths.siteLinesFolder(.nginx).path(percentEncoded: false) == "/tmp/Nexus Test/config/nginx/sites/")
+    }
+
     @Test func logFileIsNamedAfterTheService() {
         let paths = NexusPaths(root: URL(filePath: "/tmp/Nexus Test", directoryHint: .isDirectory))
 

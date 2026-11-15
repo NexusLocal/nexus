@@ -521,7 +521,7 @@ extension Workspace {
         }
 
         let hosts = hosts(of: sites, tld: tld)
-        return Site(host: hosts[0], folder: URL(filePath: folder, directoryHint: .isDirectory), aliases: Array(hosts.dropFirst()), php: main.php, server: main.server, node: main.node, runsAs: main.runsAs, command: main.command, address: main.address, documentRootFolder: Self.documentRootFolder(of: main))
+        return Site(host: hosts[0], folder: URL(filePath: folder, directoryHint: .isDirectory), aliases: Array(hosts.dropFirst()), php: main.php, server: main.server, node: main.node, runsAs: main.runsAs, command: main.command, address: main.address, documentRootFolder: Self.documentRootFolder(of: main), nginxLines: main.nginxLines, apacheLines: main.apacheLines)
     }
 
     // A chosen document root is a path from the folder of the main site. The workspace folder is

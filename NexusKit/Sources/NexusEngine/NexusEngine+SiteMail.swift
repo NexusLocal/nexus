@@ -41,7 +41,7 @@ extension NexusEngine {
             // gives the route.
             let folder = RealPath.of(root)
             let text = (try? Self.envText(of: "\(folder)/.env")) ?? ""
-            canRestore = EnvRewrite.hasOldValues(in: text)
+            canRestore = EnvRewrite.hasOldValues(in: text, keys: Self.mailMarkedKeys(in: text, state: state, host: site.host))
 
             let configuration = try await self.configuration(of: site, folder: folder)
             let route = LaravelMail.route(configuration, nexusPort: port)
@@ -82,7 +82,7 @@ extension NexusEngine {
             return "\(host) sends its mail to the mail service of Nexus already."
         }
 
-        let file = try envFile(in: folder, of: host)
+        let file = try envFile(in: folder, of: host, else: Self.noMailChange)
         try Self.write(EnvRewrite.applyKeepingOldValues(to: try Self.envText(of: file), keys: nexus.keys), to: file)
         try await stateStore.update { $0.declinedMailTags.remove(host) }
 
@@ -93,9 +93,11 @@ extension NexusEngine {
     // The way back of "Send mail to Nexus". Each old line comes back. Each line that Nexus added
     // goes out. The comment lines of Nexus go out too.
     func restoreMailSettings(host: String) async throws -> String {
-        let (_, folder) = try laravelSite(host, in: await stateStore.current(), else: "Nexus did not change its mail settings.")
-        let file = try envFile(in: folder, of: host)
-        let restore = EnvRewrite.restoringOldValues(in: try Self.envText(of: file))
+        let state = await stateStore.current()
+        let (_, folder) = try laravelSite(host, in: state, else: "Nexus did not change its mail settings.")
+        let file = try envFile(in: folder, of: host, else: Self.noMailChange)
+        let text = try Self.envText(of: file)
+        let restore = EnvRewrite.restoringOldValues(in: text, keys: Self.mailMarkedKeys(in: text, state: state, host: host))
 
         guard !restore.restored.isEmpty || !restore.removed.isEmpty else {
             throw RuntimeError.unsupported("The .env of \(host) has no old mail settings from before Nexus.")
@@ -107,6 +109,14 @@ extension NexusEngine {
         let restored = restore.restored.isEmpty ? [] : ["Nexus put back the old values of \(EnglishList.joined(restore.restored)) in its .env."]
         let removed = restore.removed.isEmpty ? [] : ["Nexus removed \(EnglishList.joined(restore.removed)) from its .env."]
         return (["\(host) uses its old mail settings again."] + restored + removed + ["A queue worker reads the old values after a restart."]).joined(separator: " ")
+    }
+
+    private static let noMailChange = "Nexus cannot change its mail settings."
+
+    // "Use Nexus" also writes comment lines of Nexus. Its keys are no mail settings, so the way
+    // back of the mail leaves them as they are.
+    static func mailMarkedKeys(in text: String, state: EngineState, host: String) -> Set<String> {
+        EnvRewrite.markedKeys(in: text).subtracting(state.useNexusKeys[host] ?? [])
     }
 
     // The keys in the order of their lines in the .env. A new key comes last, as
@@ -125,7 +135,7 @@ extension NexusEngine {
             .map { EnvKeyChange(key: $0.key, value: $0.value, isNew: firstLine[$0.key] == nil) }
     }
 
-    private func laravelSite(_ host: String, in state: EngineState, else reason: String) throws -> (site: Site, folder: String) {
+    func laravelSite(_ host: String, in state: EngineState, else reason: String) throws -> (site: Site, folder: String) {
         guard let site = resolvedSites(state).map(\.site).first(where: { $0.host == host }) else {
             throw RuntimeError.unsupported("Nexus has no site \(host).")
         }
@@ -137,11 +147,11 @@ extension NexusEngine {
         return (site, RealPath.of(root))
     }
 
-    private func envFile(in folder: String, of host: String) throws -> String {
+    func envFile(in folder: String, of host: String, else reason: String) throws -> String {
         let file = "\(folder)/.env"
 
         guard FileManager.default.fileExists(atPath: file) else {
-            throw RuntimeError.unsupported("\(host) has no .env file, so Nexus cannot change its mail settings.")
+            throw RuntimeError.unsupported("\(host) has no .env file, so \(reason)")
         }
 
         return file
@@ -152,7 +162,7 @@ extension NexusEngine {
         try FileText.write(text, to: URL(filePath: file))
     }
 
-    private func laravelRoot(of site: Site) -> URL? {
+    func laravelRoot(of site: Site) -> URL? {
         LaravelProject.root(containing: URL(filePath: ProjectFolder.projectFolder(of: site), directoryHint: .isDirectory))
     }
 }

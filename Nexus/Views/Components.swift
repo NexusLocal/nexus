@@ -1,5 +1,6 @@
 import AppKit
 import NexusCore
+import NexusIPC
 import SwiftUI
 
 // A box of rows with a line between them, for the screens that cannot use a grouped Form.
@@ -64,6 +65,96 @@ struct PathText: View {
     }
 }
 
+// A key of a .env with its new value, in a sheet that asks before Nexus changes the .env. "Use
+// Nexus…" shows the old value before an arrow, on the row of its key. Each value keeps one line,
+// gets "…" in its middle when the row is too narrow, and shows all of its text in a tooltip. A
+// short new value keeps its whole width. "Send mail to Nexus…" marks a key that gets a new line.
+struct EnvKeyRow: View {
+    private enum OldValue {
+        case hidden(isNew: Bool)
+        case shown(String?)
+    }
+
+    private let key: String
+    private let oldValue: OldValue
+    private let newValue: String?
+
+    init(_ change: EnvValueChange) {
+        key = change.key
+        oldValue = .shown(change.oldValue)
+        newValue = change.newValue
+    }
+
+    init(_ change: EnvKeyChange) {
+        key = change.key
+        oldValue = .hidden(isNew: change.isNew)
+        newValue = change.value
+    }
+
+    var body: some View {
+        switch oldValue {
+        case .shown(let old):
+            LabeledContent {
+                HStack(spacing: 6) {
+                    oneLineValue(old, missing: "New line", style: AnyShapeStyle(.tertiary))
+                        .rowValue(.middle)
+
+                    Image(systemName: "arrow.right")
+                        .foregroundStyle(.tertiary)
+
+                    oneLineValue(newValue, missing: "Removed", style: AnyShapeStyle(.primary))
+                }
+            } label: {
+                keyLabel
+            }
+            .labeledContentStyle(.rowValue)
+        case .hidden(let isNew):
+            LabeledContent {
+                HStack {
+                    if isNew {
+                        Text("New line")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let newValue, !newValue.isEmpty {
+                        Text(verbatim: newValue)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                    } else {
+                        Text("Empty")
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            } label: {
+                keyLabel
+            }
+        }
+    }
+
+    private var keyLabel: some View {
+        Text(verbatim: key)
+            .font(.system(.body, design: .monospaced))
+    }
+
+    // nil and an empty value get a word instead of the value, in the color of the old value.
+    @ViewBuilder
+    private func oneLineValue(_ text: String?, missing: String, style: AnyShapeStyle) -> some View {
+        if let text, !text.isEmpty {
+            Text(verbatim: text)
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(style)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .help(text)
+        } else {
+            Text(text == nil ? missing : "Empty")
+                .foregroundStyle(.tertiary)
+        }
+    }
+}
+
 extension View {
     // A form puts a value on a second line when the value is wider than the row. This value has no
     // width of its own, so it stays on the row of its label. It takes the free width of the row and
@@ -102,6 +193,32 @@ extension View {
     func trailingInRow() -> some View {
         frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.vertical, -4)
+    }
+
+    // The row of a workspace or a database that a click on a notification can mark. The target is
+    // also the scroll id of the row. A grouped form on macOS 27 does not show listRowBackground.
+    // The form puts 10 points above and below the content of a row. The section cuts the color at
+    // its sides.
+    func rowMark(_ row: NotificationTarget, marked: NotificationTarget?) -> some View {
+        background {
+            if row == marked {
+                Color.accentSelection
+                    .padding(.horizontal, -20)
+                    .padding(.vertical, -10)
+            }
+        }
+        .id(row)
+    }
+}
+
+extension ScrollViewProxy {
+    // A form needs its first layout before it can scroll to a row.
+    func scrollAfterLayout(to id: some Hashable, anchor: UnitPoint) async {
+        guard (try? await Task.sleep(for: .milliseconds(100))) != nil else {
+            return
+        }
+
+        scrollTo(id, anchor: anchor)
     }
 }
 
@@ -842,6 +959,11 @@ struct ListDetailView<Item: Identifiable, Row: View, Detail: View>: View {
         remove == nil ? [.upArrow, .downArrow] : [.upArrow, .downArrow, .delete, .deleteForward, backspaceKey]
     }
 
+    // The open item can come into the list after it opened, for example when a new filter loads.
+    private var openItemIsListed: Bool {
+        openID.map { id in items.contains { $0.id == id } } ?? false
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             ScrollViewReader { reader in
@@ -866,9 +988,16 @@ struct ListDetailView<Item: Identifiable, Row: View, Detail: View>: View {
                         return .handled
                     }
                 }
-                .onChange(of: openID) { _, id in
+                // The open item can be far down when the list appears, for example the mail of a
+                // notification.
+                .onChange(of: openID, initial: true) { _, id in
                     if let id {
                         reader.scrollTo(id)
+                    }
+                }
+                .onChange(of: openItemIsListed) { _, listed in
+                    if listed, let openID {
+                        reader.scrollTo(openID)
                     }
                 }
             }

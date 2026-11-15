@@ -32,6 +32,7 @@ struct ToolInvocationTests {
         #expect(NexusCLI.toolInvocation(["/Applications/Nexus.app/Contents/Helpers/nexus", "status"]) == nil)
         #expect(NexusCLI.toolInvocation(["nexus"]) == nil)
         #expect(NexusCLI.toolInvocation(["nexus", "site", "edit", "shop.test", "--node", "24"]) == nil)
+        #expect(NexusCLI.toolInvocation(["nexus", "debug", "artisan", "my:command"]) == nil)
     }
 
     @Test func withoutNexusdALinkFindsTheNextProgramOnThePath() throws {

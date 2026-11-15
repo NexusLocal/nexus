@@ -194,6 +194,9 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
     // site and the workspace again from the host and this folder when a site changes. A request
     // of an older nexusd has none.
     public let root: String?
+    // The folder of the script of a command as written and its real path. A crontab starts a script
+    // of a site from another folder. So nexusd looks for the site in these folders too.
+    public let scriptFolders: [String]
     // nexusd sets the place, its first host and its project folder from its map of the sites.
     // placeHost is the host that a block names. The project folder is a real path, for example the
     // folder above public/. A request outside every site and a request of an older nexusd have no
@@ -236,7 +239,7 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
     public var droppedQueries: Int
     public var job: JobRun?
 
-    public init(id: String, kind: Kind, method: String? = nil, target: String, url: String? = nil, host: String? = nil, root: String? = nil, site: String? = nil, workspace: String? = nil, started: Date, status: Int? = nil, exitCode: Int? = nil, duration: TimeInterval? = nil, dumpCount: Int = 0, hasDD: Bool = false, lastSeq: Int = 0, firstSeq: Int = 0, placeHost: String? = nil, projectFolder: String? = nil, lastNumber: Int = 0, firstNumber: Int = 0, queryCount: Int = 0, queryMilliseconds: Double = 0, logCount: Int = 0, jobCount: Int = 0, marks: Set<QueryMark> = [], droppedQueries: Int = 0, job: JobRun? = nil) {
+    public init(id: String, kind: Kind, method: String? = nil, target: String, url: String? = nil, host: String? = nil, root: String? = nil, scriptFolders: [String] = [], site: String? = nil, workspace: String? = nil, started: Date, status: Int? = nil, exitCode: Int? = nil, duration: TimeInterval? = nil, dumpCount: Int = 0, hasDD: Bool = false, lastSeq: Int = 0, firstSeq: Int = 0, placeHost: String? = nil, projectFolder: String? = nil, lastNumber: Int = 0, firstNumber: Int = 0, queryCount: Int = 0, queryMilliseconds: Double = 0, logCount: Int = 0, jobCount: Int = 0, marks: Set<QueryMark> = [], droppedQueries: Int = 0, job: JobRun? = nil) {
         self.id = id
         self.kind = kind
         self.method = method
@@ -244,6 +247,7 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
         self.url = url
         self.host = host
         self.root = root
+        self.scriptFolders = scriptFolders
         self.site = site
         self.workspace = workspace
         self.started = started
@@ -275,6 +279,7 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
         case url
         case host
         case root
+        case scriptFolders
         case site
         case workspace
         case placeHost
@@ -310,6 +315,7 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
         url = try container.decodeIfPresent(String.self, forKey: .url)
         host = try container.decodeIfPresent(String.self, forKey: .host)
         root = try container.decodeIfPresent(String.self, forKey: .root)
+        scriptFolders = try container.decodeIfPresent([String].self, forKey: .scriptFolders) ?? []
         site = try container.decodeIfPresent(String.self, forKey: .site)
         workspace = try container.decodeIfPresent(String.self, forKey: .workspace)
         started = try container.decode(Date.self, forKey: .started)
@@ -346,6 +352,9 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
         try container.encodeIfPresent(url, forKey: .url)
         try container.encodeIfPresent(host, forKey: .host)
         try container.encodeIfPresent(root, forKey: .root)
+        if !scriptFolders.isEmpty {
+            try container.encode(scriptFolders, forKey: .scriptFolders)
+        }
         try container.encodeIfPresent(site, forKey: .site)
         try container.encodeIfPresent(workspace, forKey: .workspace)
         try container.encodeIfPresent(placeHost, forKey: .placeHost)

@@ -7,6 +7,15 @@ public enum WebServer: String, Codable, Sendable, CaseIterable {
     public var displayName: String {
         self == .nginx ? "nginx" : "Apache"
     }
+
+    public var serviceID: String {
+        self == .nginx ? ServiceID.nginx : ServiceID.apache
+    }
+
+    // The name of the program that checks the configuration, for example httpd -t.
+    public var programName: String {
+        self == .nginx ? "nginx" : "httpd"
+    }
 }
 
 // How a site answers a request (D67). A PHP site runs its files with PHP. Nexus starts the command
@@ -36,6 +45,9 @@ public enum SiteKind: String, Codable, Sendable, CaseIterable {
 // the site folder that the user chose. So a workspace serves the same folder in its worktree.
 // removalCommands run in a workspace before Nexus removes it. nil is none. workspaceFiles are paths
 // in the project folder that git ignores, for example .env.testing. Each workspace gets a clone.
+// nginxLines and apacheLines are the custom lines of the server block of nginx and of the
+// VirtualHost of Apache (owner, 2026-11-14). A site keeps both, so a change of the webserver back
+// restores them.
 public struct Site: Codable, Sendable, Equatable {
     public static let commandFromProject = "project"
 
@@ -65,6 +77,8 @@ public struct Site: Codable, Sendable, Equatable {
     // check of the dump file.
     public var workspaceDumpURLs: [String]?
     public var workspaceDumpCheck: WordPressDumpCheck?
+    public var nginxLines: [String]?
+    public var apacheLines: [String]?
 
     public init(
         host: String,
@@ -87,9 +101,13 @@ public struct Site: Codable, Sendable, Equatable {
         documentRootFolder: String? = nil,
         removalCommands: [String]? = nil,
         workspaceFiles: [String]? = nil,
-        workspaceDump: String? = nil
+        workspaceDump: String? = nil,
+        nginxLines: [String]? = nil,
+        apacheLines: [String]? = nil
     ) {
         self.workspaceDump = workspaceDump
+        self.nginxLines = nginxLines
+        self.apacheLines = apacheLines
         self.host = host
         self.folder = folder
         self.aliases = aliases
@@ -140,6 +158,24 @@ public struct Site: Codable, Sendable, Equatable {
 
     public var usesApache: Bool {
         kind == .php && server == .apache
+    }
+
+    // The custom lines of the webserver that the site uses now.
+    public var serverLines: [String]? {
+        get {
+            lines(of: server)
+        }
+        set {
+            if server == .apache {
+                apacheLines = newValue
+            } else {
+                nginxLines = newValue
+            }
+        }
+    }
+
+    public func lines(of server: WebServer) -> [String]? {
+        server == .apache ? apacheLines : nginxLines
     }
 
     // A proxy site sends each host to one server that the user starts. So a workspace cannot get

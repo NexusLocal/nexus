@@ -68,11 +68,25 @@ extension AppModel {
         }
     }
 
-    func filterMail(by tag: String?) {
+    // A mail to open that is gone, for example after "Clear Inbox", gives no message. The first mail
+    // of the list then opens, as after a change of the filter by hand. The id stops refreshMail from
+    // the open of the first mail before the check.
+    func filterMail(by tag: String?, opening id: String? = nil) {
         mailFilter = tag
-        openMailID = nil
+        openMailID = id
         openMail = nil
-        Task { await refreshMail() }
+
+        Task {
+            await refreshMail()
+
+            guard let id, openMailID == id else {
+                return
+            }
+
+            let shown = mails.contains { $0.id == id } ? id : mails.first?.id
+            openMailID = nil
+            shown.map(showMail)
+        }
     }
 
     func showMail(_ id: String) {
@@ -297,7 +311,7 @@ extension AppModel {
 
         for mail in newest.prefix(while: { $0.id != seen }).reversed() {
             let tag = mail.tags.first.map { " for \($0)" } ?? ""
-            Notifier.post("New mail\(tag)", "\(mail.subject)\n\(mail.from)", setting: AppPreference.notifyNewMail)
+            Notifier.post("New mail\(tag)", "\(mail.subject)\n\(mail.from)", target: .mail(id: mail.id, tag: mail.tags.first), setting: AppPreference.notifyNewMail)
         }
     }
 }

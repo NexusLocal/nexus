@@ -17,13 +17,15 @@ extension AppModel {
         model.packagesChecked = "08:55"
         model.settings = sampleSettings
         model.rootCertificate = sampleRootCertificate
-        model.settingsDrafts["php-8.4"] = [
+        model.settingsDrafts.drafts["php-8.4"] = [
             "memory_limit = 512M",
             "upload_max_filesize = 64M",
             "post_max_size == 64M",
             "max_execution_time = 120",
         ]
-        model.settingsErrors["php-8.4"] = SettingsError(line: 3, message: "syntax error, unexpected '='")
+        model.settingsDrafts.errors["php-8.4"] = SettingsError(line: 3, message: "syntax error, unexpected '='")
+        model.siteLinesDrafts.drafts[sampleShop.linesKey] = ["client_max_body_siz 100m;"] + Array(sampleShop.nginxLines.dropFirst())
+        model.siteLinesDrafts.errors[sampleShop.linesKey] = SettingsError(line: 1, message: "unknown directive \"client_max_body_siz\"")
         model.mails = sampleMails
         model.mailCount = 248
         model.mailTags = ["blog.test", "crm.test", "fix.shop.test", "shop.test"]
@@ -449,6 +451,13 @@ extension AppModel {
         site.workspaces = [
             WorkspaceInfo(name: "fix", worktree: "~/Development/blog-fix", folder: "~/Development/blog-fix", branch: "fix", hosts: ["blog-fix.test"], url: "https://blog-fix.test", state: .ready),
         ]
+        site.apacheLines = ["LimitRequestBody 104857600", "Header set X-Robots-Tag \"noindex\""]
+        return site
+    }
+
+    private static var sampleShop: SiteItem {
+        var site = site("shop.test", folder: "~/Development/shop", aliases: ["www.shop.test"])
+        site.nginxLines = ["client_max_body_size 100m;", "location /storage/ {", "    add_header Cache-Control \"public, max-age=3600\";", "}"]
         return site
     }
 
@@ -470,7 +479,7 @@ extension AppModel {
                 site("docs.agency.test", folder: "~/Development/Agency/docs", group: "Agency"),
                 site("status.agency.test", folder: "~/Development/Agency/status", group: "Agency"),
             ])),
-            .site(site("shop.test", folder: "~/Development/shop", aliases: ["www.shop.test"])),
+            .site(sampleShop),
             .site(site("crm.test", folder: "~/Development/crm", php: "8.5")),
             .site(sampleWordPress),
             .site(sampleNodeApp),
@@ -714,7 +723,7 @@ extension AppModel {
             ToggleItem(name: "apcu", enabled: false, help: "A cache in the memory of PHP-FPM."),
             ToggleItem(name: "imagick", enabled: true, help: "Changes images with ImageMagick."),
             ToggleItem(name: "yaml", enabled: false, help: "Reads and writes YAML."),
-            ToggleItem(name: "xdebug", enabled: false, help: "Step debugger and profiler. It makes every request slower. So turn it on only while you debug."),
+            ToggleItem(name: "xdebug", enabled: false, help: "Step debugger. Only a request that starts a debug session uses Xdebug, for example with the browser extension Xdebug helper. Other requests stay fast. nexus debug runs one command with Xdebug."),
             ToggleItem(name: "pcov", enabled: false, help: "Measures code coverage for tests. It is faster than Xdebug for coverage."),
         ]
     }

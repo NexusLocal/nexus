@@ -29,6 +29,8 @@ let package = Package(
     ],
     targets: [
         .target(name: "NexusCore"),
+        // libbz2 of macOS for .wpress files with bzip2. The SDK has no module map for bzlib.h.
+        .systemLibrary(name: "CBzip2", path: "Sources/CBzip2"),
         // The app and nexusd send their crashes to Sentry. The product Sentry is a static library.
         // The build without AppKit is a dynamic framework, and nexusd is a tool without a folder
         // for frameworks, so it would not start.
@@ -52,7 +54,7 @@ let package = Package(
         .target(name: "NexusIPC", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusMail"]),
         .target(name: "NexusLaravel", dependencies: ["NexusCore", "NexusSupervisor"]),
         .target(name: "NexusWorkspaces", dependencies: ["NexusCore", "NexusSupervisor"]),
-        .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig", "NexusLaravel", "NexusWorkspaces", "NexusMail", "NexusDumps"]),
+        .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig", "NexusLaravel", "NexusWorkspaces", "NexusMail", "NexusDumps", "CBzip2"]),
         // The MCP server of nexus mcp, the tools that agents call, and the setup of each agent.
         // The app uses the setup and the settings of the agents.
         .target(name: "NexusMCP", dependencies: ["NexusCore", "NexusIPC", "NexusLaravel", "NexusMail", "NexusRuntime", "NexusSupervisor", "NexusWorkspaces"]),
@@ -70,7 +72,7 @@ let package = Package(
         ]),
         .testTarget(name: "NexusRuntimeTests", dependencies: ["NexusRuntime"]),
         .testTarget(name: "NexusSupervisorTests", dependencies: ["NexusSupervisor"]),
-        .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusMail", "NexusTestSupport"]),
+        .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusMail", "NexusTestSupport", "CBzip2"]),
         .testTarget(name: "NexusDNSTests", dependencies: ["NexusDNS", "NexusTestSupport"]),
         .testTarget(name: "NexusMailTests", dependencies: ["NexusMail"]),
         .testTarget(name: "NexusDumpsTests", dependencies: ["NexusDumps", "NexusCore", "NexusTestSupport"]),

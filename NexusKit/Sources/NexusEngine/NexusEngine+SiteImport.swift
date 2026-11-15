@@ -32,6 +32,8 @@ struct SiteBackupPlan: Sendable {
     // importer of the plugin sets them again (3f).
     var theme: (template: String, stylesheet: String)?
     var plugins: [String] = []
+    // package.json of .wpress gives the compression and the files that stay plain.
+    var coding = WpressCoding.plain
 
     var reader: BackupFileReader {
         BackupFileReader(source: source, kind: kind, archivePaths: archivePaths, wpressEntries: wpressEntries)
@@ -84,8 +86,20 @@ extension NexusEngine {
     func importSite(_ request: SiteImport) async throws -> CreatedSite {
         let (info, plan) = try await readBackup(at: request.backup)
 
-        guard let plan else {
+        guard var plan else {
             throw RuntimeError.unsupported(info.problem ?? BackupLayout.problem)
+        }
+
+        if let signature = info.passwordSignature {
+            guard let password = request.password, !password.isEmpty else {
+                throw RuntimeError.unsupported(BackupText.needsPassword)
+            }
+
+            guard WpressCipher.isPassword(password, of: signature) else {
+                throw RuntimeError.unsupported(BackupText.wrongPassword)
+            }
+
+            plan.coding.key = WpressKey(password: password)
         }
 
         let site = NewSite(template: .wordpress, name: request.name, parent: request.parent, git: request.git, database: request.database)
@@ -165,6 +179,9 @@ extension NexusEngine {
         var replacesPrefix = false
         var theme: (template: String, stylesheet: String)?
         var plugins: [String] = []
+        var passwordSignature: String?
+        var compression: BackupCompression?
+        var plainByName = false
 
         if layout.hasCore {
             let file = layout.siteRoot.isEmpty ? "wp-includes/version.php" : "\(layout.siteRoot)/wp-includes/version.php"
@@ -177,12 +194,25 @@ extension NexusEngine {
             let wordPress = package?["WordPress"] as? [String: Any]
 
             if (package?["Encrypted"] as? Bool) == true {
-                return (BackupInfo(path: path, format: .wpress, suggestedName: name, problem: "This backup has a password. Nexus cannot read it. Export the site again without \"Encrypt this backup with a password\"."), nil)
+                guard let signature = package?["EncryptedSignature"] as? String, !signature.isEmpty else {
+                    return (BackupInfo(path: path, format: .wpress, suggestedName: name, problem: "This backup has a password, but its package.json has no EncryptedSignature. So Nexus cannot check the password. Export the site again."), nil)
+                }
+
+                passwordSignature = signature
             }
 
-            if ((package?["Compression"] as? [String: Any])?["Enabled"] as? Bool) == true {
-                return (BackupInfo(path: path, format: .wpress, suggestedName: name, problem: "This backup is compressed by an extension of All-in-One WP Migration. Nexus cannot read it. Export the site again without compression."), nil)
+            let compressionValues = package?["Compression"] as? [String: Any]
+            let compressionType = compressionValues?["Type"] as? String ?? ""
+
+            if (compressionValues?["Enabled"] as? Bool) == true, !compressionType.isEmpty {
+                guard let known = BackupCompression(rawValue: compressionType.lowercased()) else {
+                    return (BackupInfo(path: path, format: .wpress, suggestedName: name, problem: "This backup is compressed with \(compressionType). Nexus can read only gzip and bzip2."), nil)
+                }
+
+                compression = known
             }
+
+            plainByName = WpressCoding.keepsEachPackageJSONPlain(pluginVersion: (package?["Plugin"] as? [String: Any])?["Version"] as? String)
 
             prefix = (database?["Prefix"] as? String).flatMap(Self.safePrefix) ?? "wp_"
             siteURL = (package?["HomeURL"] as? String) ?? (package?["SiteURL"] as? String)
@@ -209,8 +239,8 @@ extension NexusEngine {
 
         // Without a wp-config.php in the backup, Nexus writes one with the prefix wp_.
         let tablePrefix = prefix ?? (layout.hasConfig ? nil : "wp_")
-        let info = BackupInfo(path: path, format: layout.format, wordPressVersion: version, hasCore: layout.hasCore, dump: dumpText, dumpBytes: dumpBytes, dumpDate: dumpDate, tablePrefix: tablePrefix, siteURL: siteURL, suggestedName: name)
-        let plan = SiteBackupPlan(source: source, kind: kind, layout: layout, archivePaths: archivePaths, wpressEntries: wpressEntries, prefix: tablePrefix, replacesPrefix: replacesPrefix, siteURL: siteURL, wordPressVersion: version, dumpBytes: dumpBytes, theme: theme, plugins: plugins)
+        let info = BackupInfo(path: path, format: layout.format, wordPressVersion: version, hasCore: layout.hasCore, dump: dumpText, dumpBytes: compression == nil ? dumpBytes : nil, dumpDate: dumpDate, tablePrefix: tablePrefix, siteURL: siteURL, passwordSignature: passwordSignature, compression: compression, suggestedName: name)
+        let plan = SiteBackupPlan(source: source, kind: kind, layout: layout, archivePaths: archivePaths, wpressEntries: wpressEntries, prefix: tablePrefix, replacesPrefix: replacesPrefix, siteURL: siteURL, wordPressVersion: version, dumpBytes: dumpBytes, theme: theme, plugins: plugins, coding: WpressCoding(key: nil, compression: compression, plainByName: plainByName))
 
         return (info, plan)
     }
@@ -289,7 +319,7 @@ extension NexusEngine {
         case .wpress:
             Self.appendToLog("Nexus unpacks \(plan.source.lastPathComponent) into wp-content.\n", context.log)
             try await Self.detached {
-                try WpressArchive.extract(plan.source, entries: plan.wpressEntries, wpContent: project.appending(path: "wp-content", directoryHint: .isDirectory), other: other)
+                try WpressArchive.extract(plan.source, entries: plan.wpressEntries, coding: plan.coding, wpContent: project.appending(path: "wp-content", directoryHint: .isDirectory), other: other)
             }
         case .folder:
             let source = root.isEmpty ? plan.source : plan.source.appending(path: root)
@@ -393,7 +423,14 @@ extension NexusEngine {
             name: tools.client.lastPathComponent
         )
 
-        let total = files.contains { $0.lowercased().hasSuffix(".gz") } ? nil : plan.dumpBytes
+        let total: Int64?
+
+        if plan.kind == .wpress {
+            total = files.compactMap { Self.fileSize(URL(filePath: $0)) }.reduce(0, +)
+        } else {
+            total = files.contains { $0.lowercased().hasSuffix(".gz") } ? nil : plan.dumpBytes
+        }
+
         let progress = context.progress
         let counted = Mutex<Int64>(0)
 
@@ -722,9 +759,11 @@ enum WpressArchive {
     }
 
     // Each file goes to its place below the folder. package.json and database.sql go to other.
-    static func extract(_ archive: URL, entries: [Entry], wpContent: URL, other: URL) throws {
+    // coding gives the original bytes of a backup with a password or with compression.
+    static func extract(_ archive: URL, entries: [Entry], coding: WpressCoding, wpContent: URL, other: URL) throws {
         let file = try FileHandle(forReadingFrom: archive)
         defer { try? file.close() }
+        var buffer = Data()
 
         for entry in entries {
             let path = entry.header.path
@@ -742,20 +781,7 @@ enum WpressArchive {
 
             let output = try FileHandle(forWritingTo: target)
             defer { try? output.close() }
-            try file.seek(toOffset: entry.offset)
-            var left = entry.header.size
-
-            while left > 0 {
-                try Task.checkCancellation()
-                let chunk = try file.read(upToCount: Int(min(left, 1 << 20))) ?? Data()
-
-                guard !chunk.isEmpty else {
-                    break
-                }
-
-                try output.write(contentsOf: chunk)
-                left -= Int64(chunk.count)
-            }
+            try coding.copy(entry, from: file, to: output, archive: archive.lastPathComponent, buffer: &buffer)
         }
     }
 }

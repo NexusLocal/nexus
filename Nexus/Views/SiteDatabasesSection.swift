@@ -16,6 +16,7 @@ struct SiteDatabasesSection: View {
     @State private var tests: TestDatabaseCheck?
     @State private var projectFolder: URL?
     @State private var choosesTestDatabase = false
+    @State private var activations = 0
 
     private var warnsAboutTests: Bool {
         tests?.usesDevelopmentDatabase == true && !model.keepsTestDatabase(of: site)
@@ -61,18 +62,14 @@ struct SiteDatabasesSection: View {
                 }
             }
         }
-        .task(id: "\(site.host) \(site.php) \(site.folder) \(instancePorts)") {
+        .task(id: "\(site.host) \(site.php) \(site.folder) \(model.databaseInstancePorts) \(model.useNexusChanges) \(activations)") {
             await load()
         }
         // A change of the .env happens in another app. So the list loads again when Nexus becomes
-        // the active app.
+        // the active app. A new id stops the load that runs.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await load() }
+            activations += 1
         }
-    }
-
-    private var instancePorts: String {
-        model.databaseInstances.map { "\($0.id):\($0.ports.first?.number ?? 0)" }.joined(separator: ",")
     }
 
     private func row(_ database: SiteDatabase) -> some View {

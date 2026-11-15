@@ -176,6 +176,36 @@ struct DatabaseConfigTests {
         #expect(sql.contains(#"IDENTIFIED BY 'it''s "secret"\\';"#))
     }
 
+    @Test func theOptionsOfASocketHaveNoHostAndNoPort() {
+        let options = DatabaseConfig.clientOptions(host: "localhost", port: 8889, account: .standard, pluginFolder: URL(filePath: "/mysql/lib/plugin/"), socket: "/Applications/MAMP/tmp/mysql/mysql.sock")
+
+        #expect(options == """
+            [client]
+            protocol = SOCKET
+            socket = "/Applications/MAMP/tmp/mysql/mysql.sock"
+            user = "root"
+            password = "root"
+            plugin-dir = "/mysql/lib/plugin/"
+
+            """)
+    }
+
+    @Test func theOptionsCanLimitTheWaitForTheServer() {
+        let options = DatabaseConfig.clientOptions(host: "127.0.0.1", port: 8889, account: .standard, pluginFolder: URL(filePath: "/mysql/lib/plugin/"), connectTimeout: 3)
+
+        #expect(options == """
+            [client]
+            protocol = TCP
+            host = "127.0.0.1"
+            port = 8889
+            connect-timeout = 3
+            user = "root"
+            password = "root"
+            plugin-dir = "/mysql/lib/plugin/"
+
+            """)
+    }
+
     @Test func identifiersGetTheQuotesOfTheirServer() {
         #expect(DatabaseConfig.identifier("shop-ticket-1", kind: .mysql) == "`shop-ticket-1`")
         #expect(DatabaseConfig.identifier("shop-ticket-1", kind: .postgresql) == "\"shop-ticket-1\"")

@@ -139,21 +139,7 @@ public struct ServiceCatalog: Sendable {
                 logFile: paths.log(id)
             )
         case "php":
-            let folder = paths.phpConfigFolder(line: runtime.line)
-
-            return ServiceDefinition(
-                id: id,
-                displayName: "PHP \(runtime.version)",
-                executable: runtime.folder.appending(path: "sbin/php-fpm"),
-                arguments: [
-                    "--nodaemonize",
-                    "--fpm-config", folder.appending(path: "php-fpm.conf").path(percentEncoded: false),
-                    "-c", folder.appending(path: "php.ini").path(percentEncoded: false),
-                ],
-                environment: Self.phpEnvironment.merging(["PHP_INI_SCAN_DIR": folder.appending(path: "conf.d").path(percentEncoded: false)]) { _, new in new },
-                workingDirectory: folder,
-                logFile: paths.log(id)
-            )
+            return phpFPMDefinition(for: runtime, id: id, displayName: "PHP \(runtime.version)", fpmConfig: "php-fpm.conf", afterConfD: [])
         case "mailpit":
             let data = dataFolder(for: runtime)
             try? FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
@@ -174,6 +160,31 @@ public struct ServiceCatalog: Sendable {
 
             return databaseDefinition(kind, id: id, displayName: "\(kind.displayName) \(runtime.version)", runtime: runtime, port: requiredPorts[0], data: dataFolder(for: runtime), socket: paths.databaseSocket(kind, line: runtime.line, port: requiredPorts[0]), logFile: paths.log(id), extra: [])
         }
+    }
+
+    // The PHP-FPM with Xdebug of a PHP version. It reads xdebug.d after conf.d. It writes into the
+    // log of its PHP version, so the PHP errors of all requests are in one file.
+    public func xdebugDefinition(for runtime: InstalledRuntime) -> ServiceDefinition {
+        phpFPMDefinition(for: runtime, id: ServiceID.xdebug(line: runtime.line), displayName: "PHP \(runtime.version) with Xdebug", fpmConfig: PHPConfig.xdebugFPMConfigName, afterConfD: [paths.xdebugFolder(line: runtime.line)])
+    }
+
+    private func phpFPMDefinition(for runtime: InstalledRuntime, id: String, displayName: String, fpmConfig: String, afterConfD: [URL]) -> ServiceDefinition {
+        let folder = paths.phpConfigFolder(line: runtime.line)
+        let scanPath = ([folder.appending(path: "conf.d")] + afterConfD).map { $0.path(percentEncoded: false) }.joined(separator: ":")
+
+        return ServiceDefinition(
+            id: id,
+            displayName: displayName,
+            executable: runtime.folder.appending(path: "sbin/php-fpm"),
+            arguments: [
+                "--nodaemonize",
+                "--fpm-config", folder.appending(path: fpmConfig).path(percentEncoded: false),
+                "-c", folder.appending(path: "php.ini").path(percentEncoded: false),
+            ],
+            environment: Self.phpEnvironment.merging(["PHP_INI_SCAN_DIR": scanPath]) { _, new in new },
+            workingDirectory: folder,
+            logFile: paths.log(Self.phpID(line: runtime.line))
+        )
     }
 
     public func dataFolder(for runtime: InstalledRuntime) -> URL {

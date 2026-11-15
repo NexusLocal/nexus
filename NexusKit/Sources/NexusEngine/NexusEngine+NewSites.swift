@@ -722,8 +722,12 @@ extension NexusEngine {
     }
 
     static func instanceName(_ instance: DatabaseInstance) -> String {
-        let line = instance.id.split(separator: "-").last.map(String.init) ?? instance.version
-        return "\(instance.kind.displayName) \(line)"
+        instanceName(instance.kind, line: instance.id.split(separator: "-").last.map(String.init) ?? instance.version)
+    }
+
+    // For example MySQL 8.4.
+    static func instanceName(_ kind: DatabaseKind, line: String) -> String {
+        "\(kind.displayName) \(line)"
     }
 
     func runLogged(_ command: Command, display: String, context: NewSiteContext, input: Data? = nil) async throws {

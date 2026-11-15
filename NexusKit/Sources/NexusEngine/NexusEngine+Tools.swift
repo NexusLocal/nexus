@@ -13,13 +13,17 @@ import NexusRuntime
 // load WordPress. The setup of that workspace runs these tools after it wrote the values of the
 // workspace (Phase 4, 3e).
 extension NexusEngine {
-    func toolCommand(_ tool: ProjectTool, folder path: String, argumentFolder: String? = nil, inSetup: Bool = false) async throws -> ToolCommand {
+    func toolCommand(_ tool: ProjectTool, folder path: String, argumentFolder: String? = nil, inSetup: Bool = false, debug: Bool = false) async throws -> ToolCommand {
+        if debug, !tool.runsPHP {
+            throw RuntimeError.unsupported(DebugCommand.onlyPHP(tool))
+        }
+
         let state = await stateStore.current()
         let sites = resolvedSites(state).map(\.site)
         let (folder, location) = Self.toolFolder(path, argumentFolder: argumentFolder, sites: sites)
         let installed = await installer.installedRuntimes()
 
-        if !inSetup, [.php, .composer, .wp].contains(tool), let workspace = Self.wordPressWorkspace(holding: folder, location: location, sites: sites, state: state), workspace.worktree != runningSetupWorktree {
+        if !inSetup, tool.runsPHP, let workspace = Self.wordPressWorkspace(holding: folder, location: location, sites: sites, state: state), workspace.worktree != runningSetupWorktree {
             // A Ready record without a digest comes from before 3e. It waits for its setup.
             switch workspace.state {
             case .ready where workspace.configurationDigest != nil:
@@ -32,46 +36,50 @@ extension NexusEngine {
         }
 
         do {
-            return try await toolCommand(tool, folder: folder, location: location, state: state, installed: installed, inSetup: inSetup)
+            return try await toolCommand(tool, folder: folder, location: location, state: state, installed: installed, inSetup: inSetup, debug: debug)
         } catch where !installed.contains(where: { $0.name == tool.package }) {
             throw ToolNotInstalled(description: ErrorText.plain(error))
         }
     }
 
     // A command of a setup is a PHP run of Nexus. So it gets no folder of the dump viewer.
-    private func toolCommand(_ tool: ProjectTool, folder: URL, location: ProjectLocation?, state: EngineState, installed: [InstalledRuntime], inSetup: Bool) async throws -> ToolCommand {
-        switch tool {
-        case .php, .composer, .wp:
+    private func toolCommand(_ tool: ProjectTool, folder: URL, location: ProjectLocation?, state: EngineState, installed: [InstalledRuntime], inSetup: Bool, debug: Bool) async throws -> ToolCommand {
+        if tool.runsPHP {
             let php = try installedPHP(try phpLine(for: location, state: state, installed: installed), in: installed)
+            var command: ToolCommand
 
             switch tool {
             case .composer:
-                return try await phpCommand(php, script: try phar("composer", title: "Composer", in: installed))
+                command = try await phpCommand(php, script: try phar("composer", title: "Composer", in: installed))
             case .wp:
-                var command = try await wpCLICommand(php, installed: installed)
+                command = try await wpCLICommand(php, installed: installed)
                 command.wordPressCore = location.flatMap { WordPressCore.coreFolder(for: folder, in: $0.root) }
-                return command
             default:
-                var command = try await phpCommand(php)
+                command = try await phpCommand(php)
                 command.dumpsFolder = inSetup ? nil : commandDumpsFolder(line: php.line)
-                return command
-            }
-        case .node, .npm:
-            let choice = nodeChoice(for: folder, in: location, state: state, installed: installed.filter { $0.name == "node" }.map(\.line))
-
-            guard let node = installed.first(where: { $0.name == "node" && $0.line == choice.line }) else {
-                throw RuntimeError.unsupported("Node \(choice.line) is not installed (\(choice.reason)). Run: nexus install node \(choice.line)")
             }
 
-            let bin = node.folder.appending(path: "bin")
-            let npm = node.folder.appending(path: "lib/node_modules/npm/bin/npm-cli.js")
+            if debug {
+                command.xdebugFolder = try await xdebugFolder(of: php)
+            }
 
-            return ToolCommand(
-                executable: bin.appending(path: "node").path(percentEncoded: false),
-                arguments: tool == .npm ? [npm.path(percentEncoded: false)] : [],
-                path: [bin.path(percentEncoded: false), commandLinks]
-            )
+            return command
         }
+
+        let choice = nodeChoice(for: folder, in: location, state: state, installed: installed.filter { $0.name == "node" }.map(\.line))
+
+        guard let node = installed.first(where: { $0.name == "node" && $0.line == choice.line }) else {
+            throw RuntimeError.unsupported("Node \(choice.line) is not installed (\(choice.reason)). Run: nexus install node \(choice.line)")
+        }
+
+        let bin = node.folder.appending(path: "bin")
+        let npm = node.folder.appending(path: "lib/node_modules/npm/bin/npm-cli.js")
+
+        return ToolCommand(
+            executable: bin.appending(path: "node").path(percentEncoded: false),
+            arguments: tool == .npm ? [npm.path(percentEncoded: false)] : [],
+            path: [bin.path(percentEncoded: false), commandLinks]
+        )
     }
 
     struct ToolNotInstalled: Error, CustomStringConvertible {

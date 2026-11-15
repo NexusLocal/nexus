@@ -551,7 +551,7 @@ extension NexusEngine {
     private func logsIn(_ config: WordPressConfig, on instance: DatabaseInstance) async -> Bool {
         let account = DatabaseAccount(user: config.user ?? "", password: config.password ?? "")
 
-        guard account != instance.account, let tools = await databaseRuntime(instance.id), let (client, work) = try? preparedClient(tools, port: instance.port, account: account) else {
+        guard account != instance.account, let tools = await databaseRuntime(instance.id), let (client, work) = try? preparedClient(tools, endpoint: DatabaseEndpoint(host: "127.0.0.1", port: instance.port, account: account)) else {
             return true
         }
 

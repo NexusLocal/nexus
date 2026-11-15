@@ -8,15 +8,18 @@ import NexusCore
 // that the default connection does not read. A stock connection that the application does not
 // use reads the same keys, or none. A SQLite file is no server.
 public enum SiteDatabases {
+    // socket is the socket file of the instance. PostgreSQL names it after its port.
     public struct Instance: Sendable {
         public let id: String
         public let usesMySQLProtocol: Bool
         public let port: Int
+        public let socket: String?
 
-        public init(id: String, usesMySQLProtocol: Bool, port: Int) {
+        public init(id: String, usesMySQLProtocol: Bool, port: Int, socket: String? = nil) {
             self.id = id
             self.usesMySQLProtocol = usesMySQLProtocol
             self.port = port
+            self.socket = socket
         }
     }
 
@@ -73,9 +76,8 @@ public enum SiteDatabases {
         let port = WorkspaceEnvPlan.port(path, settings: settings)
         let host = WorkspaceEnvPlan.value("host", at: path, settings: settings)?.description ?? WorkspaceEnvPlan.serverHost
         let usesMySQLProtocol = driver != "pgsql"
-        let instance = WorkspaceEnvPlan.isLocal(path, settings: settings)
-            ? instances.first { $0.usesMySQLProtocol == usesMySQLProtocol && $0.port == port }
-            : nil
+        let address = ConnectionAddress(path: path, driver: driver, settings: settings)
+        let instance = instances.first { $0.usesMySQLProtocol == usesMySQLProtocol && address.reaches(port: $0.port, socket: $0.socket) }
 
         return SiteDatabase(connection: name, database: database, host: host, port: port, instance: instance?.id)
     }

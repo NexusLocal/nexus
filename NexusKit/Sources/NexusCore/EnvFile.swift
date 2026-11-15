@@ -9,6 +9,8 @@ public enum EnvFile {
     // in a project that is a site in both.
     public static let beforeNexus = beforeNexus(for: .current)
     public static let addedByNexus = addedByNexus(for: .current)
+    // The start of an old line as a sheet names it, without the space at the end.
+    public static let commentStart = beforeNexus.trimmingCharacters(in: .whitespaces)
 
     public static func beforeNexus(for variant: NexusVariant) -> String {
         "# Before \(variant.name): "

@@ -75,6 +75,29 @@ struct SiteTests {
         #expect(workspace.site(of: [main], tld: "test")?.documentRoot.path(percentEncoded: false) == "/w/fix/htdocs/")
     }
 
+    @Test func aWorkspaceGetsTheNginxAndApacheLinesOfItsSite() {
+        let main = Site(host: "shop.test", folder: URL(filePath: "/w/shop", directoryHint: .isDirectory), php: "8.5", nginxLines: ["client_max_body_size 100m;"], apacheLines: ["LimitRequestBody 104857600"])
+        let workspace = Workspace(name: "fix", worktree: "/w/fix", folder: "/w/fix")
+
+        let site = workspace.site(of: [main], tld: "test")
+
+        #expect(site?.nginxLines == ["client_max_body_size 100m;"])
+        #expect(site?.apacheLines == ["LimitRequestBody 104857600"])
+    }
+
+    @Test func theLinesOfASiteFollowItsWebserver() {
+        var nginx = Site(host: "shop.test", folder: URL(filePath: "/w/shop", directoryHint: .isDirectory), php: "8.5", nginxLines: ["a"], apacheLines: ["b"])
+        var apache = Site(host: "blog.test", folder: URL(filePath: "/w/blog", directoryHint: .isDirectory), php: "8.5", server: .apache, nginxLines: ["a"], apacheLines: ["b"])
+
+        nginx.serverLines = ["c"]
+        apache.serverLines = ["d"]
+
+        #expect(nginx.nginxLines == ["c"])
+        #expect(nginx.apacheLines == ["b"])
+        #expect(apache.serverLines == ["d"])
+        #expect(apache.nginxLines == ["a"])
+    }
+
     @Test func aWorkspaceOfASiteOnPublicServesTheChosenFolderInPublic() throws {
         defer { try? FileManager.default.removeItem(at: root) }
         _ = try makeFolder("shop/.git")

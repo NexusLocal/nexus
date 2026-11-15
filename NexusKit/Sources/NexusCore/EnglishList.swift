@@ -9,3 +9,11 @@ public enum EnglishList {
         return items.count == 1 ? last : "\(items.dropLast().joined(separator: ", ")) and \(last)"
     }
 }
+
+extension String {
+    // The text with an upper case first letter, for example a list at the start of a sentence.
+    // capitalized of Foundation changes each word.
+    public var firstLetterUppercased: String {
+        prefix(1).uppercased() + dropFirst()
+    }
+}

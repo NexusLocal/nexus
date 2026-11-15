@@ -1331,6 +1331,12 @@ public enum DumpPage {
         lines.push(headLine("Folder", request.root));
       }
 
+      const script = request.kind === "command" ? request.scriptFolders?.[0] : null;
+
+      if (script && script !== request.root) {
+        lines.push(headLine("Script", script));
+      }
+
       const result = resultText(request);
 
       if (result) {

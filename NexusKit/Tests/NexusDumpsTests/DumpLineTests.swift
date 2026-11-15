@@ -124,6 +124,14 @@ struct DumpLineTests {
 
     private static let workerRequest = #""request":{"id":"b2c3d4e5f6a1","kind":"job","command":"php artisan queue:work","cwd":"/Users/tim/Sites/shop","root":"/Users/tim/Sites/shop","started":1763040730.2,"pid":4300,"job":{"system":"laravel","name":"App\\Jobs\\SendOrderMail","queue":"default","connection":"redis","uuid":"9f1c0f6e","attempt":1,"maxTries":3}}"#
 
+    @Test func theHeaderOfACommandKeepsTheFolderOfItsScript() throws {
+        let line = #"{"v":1,"type":"end","request":{"id":"c3d4e5f6a1b2","kind":"command","command":"php /Users/tim/Sites/shop/artisan schedule:run","cwd":"/Users/tim","root":"/Users/tim","scriptFolders":["/Users/tim/Sites/shop"],"started":1763040730.2},"status":null,"exit":0,"duration":0.1}"#
+        let event = try decode(line)
+
+        #expect(event.request.header.scriptFolders == ["/Users/tim/Sites/shop"])
+        #expect(event.request.header.root == "/Users/tim")
+    }
+
     @Test func anEntriesLineGivesEachEntryWithItsFields() throws {
         guard case .entries(let request, let entries) = try decode(Self.entriesLine) else {
             Issue.record("not an entries event")

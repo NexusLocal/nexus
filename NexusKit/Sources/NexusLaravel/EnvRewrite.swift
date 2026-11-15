@@ -52,8 +52,9 @@ public enum EnvRewrite {
     // "Send mail to Nexus" keeps the old line of each key that it changes as a comment line above
     // that key. A key that Nexus adds gets a comment line with its name. So "Use the old mail
     // settings…" can put the old lines back. A key line after a comment line of Nexus for that key
-    // gets no second comment line. The first one holds the value of before Nexus.
-    public static func applyKeepingOldValues(to text: String, keys: [String: String]) -> String {
+    // gets no second comment line. The first one holds the value of before Nexus. A key in
+    // removing loses its line. Its old line stays only as a comment line.
+    public static func applyKeepingOldValues(to text: String, keys: [String: String], removing: Set<String> = []) -> String {
         var result: [String] = []
         var written: Set<String> = []
         var marked: Set<String> = []
@@ -69,6 +70,14 @@ public enum EnvRewrite {
             }
 
             let hasMark = marked.remove(envLine.key) != nil
+
+            if removing.contains(envLine.key) {
+                if !hasMark {
+                    result.append(EnvFile.beforeNexus + line)
+                }
+
+                continue
+            }
 
             guard let value = keys[envLine.key] else {
                 result.append(line)
@@ -99,6 +108,14 @@ public enum EnvRewrite {
         return joined + missing.map { "\(EnvFile.addedByNexus)\($0.key)\n\($0.key)=\(quoted($0.value))\n" }.joined()
     }
 
+    // The changes of a sheet: a new value sets the key, nil removes the line.
+    public static func applyKeepingOldValues(to text: String, changes: [EnvValueChange]) -> String {
+        let keys = Dictionary(changes.compactMap { change in change.newValue.map { (change.key, $0) } }) { _, last in last }
+        let removing = Set(changes.filter { $0.newValue == nil }.map(\.key))
+
+        return applyKeepingOldValues(to: text, keys: keys, removing: removing)
+    }
+
     // Removes the comment lines of Nexus for these keys, and keeps the key lines. A next change then
     // keeps the value of just before it, as "Undo…" of a URL change needs it.
     public static func removingOldValues(in text: String, keys: Set<String>) -> String {
@@ -107,9 +124,15 @@ public enum EnvRewrite {
             .joined(separator: "\n")
     }
 
-    public static func hasOldValues(in text: String) -> Bool {
-        let restore = restoringOldValues(in: text)
+    // With keys, only the comment lines of these keys count.
+    public static func hasOldValues(in text: String, keys: Set<String>? = nil) -> Bool {
+        let restore = restoringOldValues(in: text, keys: keys)
         return !restore.restored.isEmpty || !restore.removed.isEmpty
+    }
+
+    // The keys that have a comment line of Nexus.
+    public static func markedKeys(in text: String) -> Set<String> {
+        Set(text.components(separatedBy: "\n").compactMap { NexusMark($0)?.key })
     }
 
     // Puts back each old line and removes each line that Nexus added, with the comment lines of

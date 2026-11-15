@@ -259,30 +259,32 @@ private struct ServiceForm: View {
     let dismissRestart: () -> Void
 
     var body: some View {
-        Form {
-            if let restartDone {
-                DoneSection(done: restartDone, dismiss: dismissRestart)
-            }
+        ScrollViewReader { reader in
+            Form {
+                if let restartDone {
+                    DoneSection(done: restartDone, dismiss: dismissRestart)
+                }
 
-            PackageCheckSection(service: service)
-            StateSection(service: $service)
+                PackageCheckSection(service: service)
+                StateSection(service: $service)
 
-            switch service.kind {
-            case .webservers:
-                WebserverSections(service: service)
-            case .php:
-                PHPSections(service: service)
-            case .mysql, .mariadb, .postgresql:
-                DatabaseSections(service: $service)
-            case .redis, .mail, .dns:
-                EmptyView()
-            }
+                switch service.kind {
+                case .webservers:
+                    WebserverSections(service: service)
+                case .php:
+                    PHPSections(service: service)
+                case .mysql, .mariadb, .postgresql:
+                    DatabaseSections(service: $service, reader: reader)
+                case .redis, .mail, .dns:
+                    EmptyView()
+                }
 
-            if service.kind != .dns {
-                LogSection(file: service.logFile, sampleLines: service.log)
+                if service.kind != .dns {
+                    LogSection(file: service.logFile, sampleLines: service.log)
+                }
             }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
     }
 }
 
@@ -458,9 +460,7 @@ private struct PHPSections: View {
     let service: ServiceVersion
 
     var body: some View {
-        let error = model.settingsErrors[service.id]
-        let changed = model.settingsDrafts[service.id] != nil
-        let saving = model.savingSettings.contains(service.id)
+        let id = service.id
 
         Section {
             ToggleGrid(service: service)
@@ -470,54 +470,45 @@ private struct PHPSections: View {
             Text("An extension is on for every site that uses \(service.name). Click a name to see what it does.")
         }
 
-        Section {
-            if let error {
-                Label(errorText(error), systemImage: "xmark.circle")
-                    .foregroundStyle(Color.redText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(Color.errorBackground, in: .rect(cornerRadius: 6))
-            }
-
-            CodeEditor(
-                lines: Binding(get: { model.customSettings(of: service) }, set: { model.editCustomSettings(of: service, to: $0) }),
-                errorLine: error?.line
-            )
-            .frame(height: 96)
-        } header: {
-            HStack {
-                Text("Custom settings")
-                Spacer()
-                Button("Revert") {
-                    model.revertCustomSettings(of: service)
-                }
-                .disabled(saving || !changed && error == nil)
-                Button("Save and restart") {
-                    model.saveCustomSettings(of: service)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(saving || !changed)
-            }
-        } footer: {
-            Text("Nexus adds these lines after its own settings in php.ini. Nexus checks the lines before it restarts \(service.name). When a line has an error, \(service.name) keeps the old settings.")
-        }
-    }
-
-    private func errorText(_ error: SettingsError) -> String {
-        let place = error.line.map { "Line \($0): " } ?? ""
-        let state = service.isActive ? "still runs with the old settings" : "keeps the old settings"
-        return "\(place)\(error.message). \(service.name) \(state)."
+        CustomLinesSection(
+            title: "Custom settings",
+            saveTitle: "Save and restart",
+            lines: Binding(
+                get: { model.settingsDrafts.lines(of: id, saved: service.customSettings) },
+                set: { model.settingsDrafts.edit(id, to: $0, saved: service.customSettings) }
+            ),
+            error: model.settingsDrafts.errors[id],
+            subject: service.name,
+            runs: service.isActive,
+            noun: "settings",
+            changed: model.settingsDrafts.drafts[id] != nil,
+            saving: model.settingsDrafts.saving.contains(id),
+            footer: "Nexus adds these lines after its own settings in php.ini. Nexus checks the lines before it restarts \(service.name). When a line has an error, \(service.name) keeps the old settings.",
+            revert: { model.settingsDrafts.revert(id) },
+            save: { model.saveCustomSettings(of: service) }
+        )
     }
 }
 
 private struct DatabaseSections: View {
     @Environment(AppModel.self) private var model
     @Binding var service: ServiceVersion
+    let reader: ScrollViewProxy
     @State private var editedUser: String?
     @State private var editedPassword: String?
 
     private var databases: [DatabaseItem] {
         model.databases(of: service)
+    }
+
+    private func row(of database: DatabaseItem) -> NotificationTarget {
+        .database(instance: service.id, name: database.name)
+    }
+
+    // A click on the notification of a done import shows the row of the database (owner,
+    // 2026-11-14). The list loads after the screen opens. So the row can come later.
+    private var markedDatabase: NotificationTarget? {
+        databases.map(row(of:)).first { $0 == model.markedRow }
     }
 
     var body: some View {
@@ -582,6 +573,7 @@ private struct DatabaseSections: View {
                         .frame(width: 64, alignment: .trailing)
                     OpenDatabaseButton(kind: service.kind, url: service.databaseURL(database.name))
                 }
+                .rowMark(row(of: database), marked: model.markedRow)
             }
         } header: {
             HStack {
@@ -596,6 +588,11 @@ private struct DatabaseSections: View {
         }
         .task(id: "\(service.id) \(service.isActive)") {
             model.loadDatabases(of: service)
+        }
+        .task(id: markedDatabase) {
+            if let markedDatabase {
+                await reader.scrollAfterLayout(to: markedDatabase, anchor: .center)
+            }
         }
     }
 }

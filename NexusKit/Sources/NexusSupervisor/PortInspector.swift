@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import NexusCore
 
 public struct PortOwner: Codable, Sendable, Equatable {
     public let pid: Int32
@@ -152,6 +153,26 @@ public enum PortInspector {
 
         let result = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+
+        return result == 0
+    }
+
+    // A Unix socket of a server on this Mac, for example the MySQL of MAMP PRO. A path that is too
+    // long for a socket accepts no connection.
+    public static func acceptsConnections(socket path: String) -> Bool {
+        guard var address = try? UnixSocket.address(of: path) else {
+            return false
+        }
+
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            return false
+        }
+        defer { close(descriptor) }
+
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
 
         return result == 0

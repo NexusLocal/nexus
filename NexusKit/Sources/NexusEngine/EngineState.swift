@@ -57,6 +57,9 @@ public struct EngineState: Codable, Sendable, Equatable {
     // The hosts that went back to their old mail settings. Nexus does not add the tag to their
     // .env by itself again, until "Send mail to Nexus" (owner, 2026-11-12).
     public var declinedMailTags: Set<String> = []
+    // The keys that "Use Nexus" changed in the .env of each host. "Use the old mail settings"
+    // leaves them as they are.
+    public var useNexusKeys: [String: Set<String>] = [:]
 
     public init() {}
 
@@ -98,6 +101,7 @@ public struct EngineState: Codable, Sendable, Equatable {
         dumpSettings = (try? container.decodeIfPresent(DumpSettings.self, forKey: .dumpSettings)) ?? defaults.dumpSettings
         wordPressURLChanges = (try? container.decodeIfPresent([String: WordPressURLChange].self, forKey: .wordPressURLChanges)) ?? defaults.wordPressURLChanges
         declinedMailTags = try container.decodeIfPresent(Set<String>.self, forKey: .declinedMailTags) ?? defaults.declinedMailTags
+        useNexusKeys = try container.decodeIfPresent([String: Set<String>].self, forKey: .useNexusKeys) ?? defaults.useNexusKeys
     }
 }
 

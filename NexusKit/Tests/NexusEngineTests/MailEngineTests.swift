@@ -471,6 +471,30 @@ extension NexusEngineTests {
         #expect(await engine.stateStore.current().declinedMailTags == ["shop.test"])
     }
 
+    @Test func theRestoreOfTheMailSettingsKeepsTheKeysOfUseNexus() async throws {
+        let root = siteTestRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = site("shop.test", in: root.appending(path: "projects", directoryHint: .isDirectory))
+        try FileManager.default.createDirectory(at: shop.folder.appending(path: "bootstrap"), withIntermediateDirectories: true)
+        try Data().write(to: shop.folder.appending(path: "artisan"))
+        try Data().write(to: shop.folder.appending(path: "bootstrap/app.php"))
+        let env = shop.folder.appending(path: ".env")
+        let old = "DB_HOST=localhost\nMAIL_HOST=smtp.postmarkapp.com\n"
+        let useNexus = EnvRewrite.applyKeepingOldValues(to: old, keys: ["DB_HOST": "127.0.0.1"])
+        try Data(EnvRewrite.applyKeepingOldValues(to: useNexus, keys: ["MAIL_HOST": "127.0.0.1"]).utf8).write(to: env)
+        var state = EngineState()
+        state.sites = [shop]
+        state.useNexusKeys = ["shop.test": ["DB_HOST"]]
+        let engine = try makeSiteEngine(root: root, state: state)
+
+        let response = await engine.handle(.restoreMailSettings(host: "shop.test"))
+        let again = await engine.handle(.restoreMailSettings(host: "shop.test"))
+
+        #expect(response == .done(message: "shop.test uses its old mail settings again. Nexus put back the old values of MAIL_HOST in its .env. A queue worker reads the old values after a restart."))
+        #expect(try String(contentsOf: env, encoding: .utf8) == useNexus)
+        #expect(again == .failure(message: "The .env of shop.test has no old mail settings from before Nexus."))
+    }
+
     @Test func theChangesOfSendMailToNexusFollowTheLinesOfTheEnvAndANewKeyComesLast() {
         let text = "MAIL_PORT=587\n# MAIL_USERNAME=old\nMAIL_HOST=smtp.postmarkapp.com\n"
 

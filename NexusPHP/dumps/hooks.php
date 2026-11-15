@@ -109,13 +109,15 @@ function catchErrors(): void
 function laravelRoot(): ?string
 {
     if (isCli()) {
-        $script = (string) ($_SERVER['SCRIPT_FILENAME'] ?? '');
-
-        if (\basename($script) !== 'artisan') {
+        if (\basename((string) ($_SERVER['SCRIPT_FILENAME'] ?? '')) !== 'artisan') {
             return null;
         }
 
-        $folder = \dirname($script);
+        $folder = scriptFolder($_SERVER);
+
+        if ($folder === null) {
+            return null;
+        }
 
         return \is_file("{$folder}/vendor/autoload.php") ? $folder : null;
     }
@@ -274,10 +276,8 @@ function wordPressFolder(bool $cli): ?string
         return (string) ($_SERVER['DOCUMENT_ROOT'] ?? '');
     }
 
-    $script = (string) ($_SERVER['SCRIPT_FILENAME'] ?? '');
-
-    if (\basename($script) === 'wp-cron.php') {
-        return \dirname($script);
+    if (\basename((string) ($_SERVER['SCRIPT_FILENAME'] ?? '')) === 'wp-cron.php') {
+        return scriptFolder($_SERVER);
     }
 
     return isWpCli() ? (string) \getcwd() : null;

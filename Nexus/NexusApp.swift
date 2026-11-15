@@ -19,10 +19,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct NexusApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var background = BackgroundServices()
-    @State private var model = AppModel.forLaunch()
+    @State private var model: AppModel
     @State private var updater = AppUpdater()
     @AppStorage(AppPreference.showInMenuBar) private var showInMenuBar = true
     @AppStorage(AppPreference.showInDock) private var showInDock = true
+
+    // SwiftUI can make the app value more than one time. So there is one model for the launch.
+    private static let launchModel = AppModel.forLaunch()
+
+    init() {
+        _model = State(initialValue: Self.launchModel)
+        NotificationClicks.shared.connect(Self.launchModel)
+    }
 
     var body: some Scene {
         Window(NexusVariant.current.name, id: MainWindow.id) {

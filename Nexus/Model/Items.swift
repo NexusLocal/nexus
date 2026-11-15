@@ -82,6 +82,39 @@ struct SettingsError {
     let message: String
 }
 
+// The custom lines that the user changed and did not save yet, the last line that the check
+// refused and the saves that run, for each key (D60). The key of PHP is the id of the version.
+// The key of a site is its host.
+struct LinesDrafts {
+    var drafts: [String: [String]] = [:]
+    var errors: [String: SettingsError] = [:]
+    var saving: Set<String> = []
+
+    func lines(of key: String, saved: [String]) -> [String] {
+        drafts[key] ?? saved
+    }
+
+    // The editor gives one empty line for an empty text. So the lines compare as text.
+    mutating func edit(_ key: String, to lines: [String], saved: [String]) {
+        let unchanged = lines.joined(separator: "\n") == saved.joined(separator: "\n")
+        drafts[key] = unchanged ? nil : lines
+    }
+
+    mutating func revert(_ key: String) {
+        drafts[key] = nil
+        errors[key] = nil
+    }
+
+    // The draft stays when the user typed during the save.
+    mutating func finishSave(of key: String, lines: [String]) {
+        errors[key] = nil
+
+        if drafts[key] == lines {
+            drafts[key] = nil
+        }
+    }
+}
+
 // The summary is short, for a row. The detail is the full text of nexusd.
 struct ServiceProblem {
     let summary: String
@@ -200,6 +233,9 @@ struct SiteItem: Identifiable, Hashable {
     var workspaceDumpURLs: [String] = []
     var workspaceDumpCheck: WordPressDumpCheck?
     var workspaceDumpChecking: WorkspaceDumpProgress?
+    // The custom lines of nginx and Apache (owner, 2026-11-14).
+    var nginxLines: [String] = []
+    var apacheLines: [String] = []
 
     var id: String { host }
 
@@ -209,6 +245,30 @@ struct SiteItem: Identifiable, Hashable {
 
     var node: String? {
         nodeSetting ?? projectNode?.line
+    }
+
+    var webServer: WebServer {
+        WebServer(rawValue: server) ?? .nginx
+    }
+
+    // A draft of custom lines belongs to the host and its webserver. So an nginx draft does not
+    // become Apache lines after a change of the webserver.
+    var linesKey: String {
+        "\(host) \(webServer.rawValue)"
+    }
+
+    // The lines of the webserver that the site uses now.
+    var serverLines: [String] {
+        get {
+            webServer == .apache ? apacheLines : nginxLines
+        }
+        set {
+            if webServer == .apache {
+                apacheLines = newValue
+            } else {
+                nginxLines = newValue
+            }
+        }
     }
 
     var folderURL: URL {
@@ -276,6 +336,29 @@ enum SiteEntry: Identifiable {
         case .group(let group): group.sites
         case .site(let site): [site]
         case .parked(let folder): folder.sites
+        }
+    }
+
+    func changingSite(_ host: String, _ change: (inout SiteItem) -> Void) -> SiteEntry {
+        switch self {
+        case .site(var site):
+            if site.host == host {
+                change(&site)
+            }
+
+            return .site(site)
+        case .group(var group):
+            Self.changeSite(host, in: &group.sites, change)
+            return .group(group)
+        case .parked(var folder):
+            Self.changeSite(host, in: &folder.sites, change)
+            return .parked(folder)
+        }
+    }
+
+    private static func changeSite(_ host: String, in sites: inout [SiteItem], _ change: (inout SiteItem) -> Void) {
+        for index in sites.indices where sites[index].host == host {
+            change(&sites[index])
         }
     }
 

@@ -233,7 +233,7 @@ extension NexusEngine {
     }
 
     func serverClient(_ tools: DatabaseTools, _ server: WorkspaceDatabaseServer) throws -> (DatabaseClient, URL) {
-        try preparedClient(tools, port: server.port, account: server.account)
+        try preparedClient(tools, endpoint: DatabaseEndpoint(host: "127.0.0.1", port: server.port, account: server.account))
     }
 
     // The folder with the id of this clone. It exists before the clone has its final name.

@@ -315,12 +315,103 @@ struct WebConfigTests {
         #expect(loaded == ["apcu"])
     }
 
-    @Test func xdebugIsAZendExtensionThatStartsOnATrigger() throws {
-        let ini = try PHPConfig.nexusIni(extensionDirectory: URL(filePath: "/ext", directoryHint: .isDirectory), extensions: ["apcu", "xdebug"])
+    @Test func confDNeverLoadsXdebugAndHoldsItsSettings() throws {
+        let extensions = PHPConfig.confDExtensions(enabled: ["apcu", "xdebug"], available: ["apcu", "xdebug"])
+        let ini = try PHPConfig.nexusIni(extensionDirectory: URL(filePath: "/ext", directoryHint: .isDirectory), extensions: extensions, xdebugSettings: true)
+        let withoutSettings = try PHPConfig.nexusIni(extensionDirectory: URL(filePath: "/ext", directoryHint: .isDirectory), extensions: extensions)
 
+        #expect(extensions == ["apcu"])
         #expect(ini.contains("extension = apcu\n"))
-        #expect(ini.contains("zend_extension = xdebug\n"))
-        #expect(ini.contains("xdebug.start_with_request = trigger"))
+        #expect(!ini.contains("zend_extension = xdebug"))
+        #expect(ini.contains("xdebug.mode = debug,develop\nxdebug.start_with_request = trigger\nxdebug.client_port = 9003\n"))
+        #expect(!withoutSettings.contains("xdebug."))
+        #expect(!withoutSettings.contains("zend_extension = xdebug"))
+    }
+
+    private func debugSite(_ server: WebServer, php: String) -> WebSite {
+        site(.php(
+            server: server,
+            documentRoot: URL(filePath: "/Sites/My Shop/public", directoryHint: .isDirectory),
+            socket: URL(filePath: "/Nexus/run/php-\(php).sock"),
+            xdebugSocket: URL(filePath: "/Nexus/run/xdebug-\(php).sock")
+        ))
+    }
+
+    @Test func thePoolWithXdebugStartsAProcessOnlyForARequest() throws {
+        let debug = try PHPConfig.fpmConfig(socket: URL(filePath: "/Nexus/run/xdebug-8.5.sock"), pidFile: URL(filePath: "/Nexus/run/xdebug-8.5.pid"), xdebug: true)
+        let normal = try PHPConfig.fpmConfig(socket: URL(filePath: "/Nexus/run/php-8.5.sock"), pidFile: URL(filePath: "/Nexus/run/php-8.5.pid"), xdebug: false)
+
+        #expect(debug.contains("[nexus-xdebug]\n"))
+        #expect(debug.contains("listen = \"/Nexus/run/xdebug-8.5.sock\"\n"))
+        #expect(debug.contains("listen.mode = 0600\n"))
+        #expect(debug.contains("\npm = ondemand\n"))
+        #expect(debug.contains("\npm.process_idle_timeout = 60s\n"))
+        #expect(!debug.contains("pm.start_servers"))
+        #expect(normal.contains("[nexus]\n"))
+        #expect(normal.contains("\npm = dynamic\n"))
+    }
+
+    @Test func aDebugRequestOfAnNginxSiteGoesToTheSocketWithXdebug() throws {
+        let config = try NginxConfig.render(sites: [debugSite(.nginx, php: "8.5")], settings: nginxSettings())
+
+        #expect(config.contains(#"""
+                map $http_cookie $nexus_xdebug_cookie {
+                    default 0;
+                    "~(^|;)\s*XDEBUG_(SESSION|TRIGGER)=" 1;
+                }
+
+                map $args $nexus_xdebug {
+                    default $nexus_xdebug_cookie;
+                    "~(^|&)XDEBUG_(SESSION|SESSION_START|TRIGGER)(=|&|$)" 1;
+                }
+
+            """#))
+        #expect(config.contains("    map $nexus_xdebug $nexus_php_0 {\n"))
+        #expect(config.contains("        default \"unix:/Nexus/run/php-8.5.sock\";\n"))
+        #expect(config.contains("        1 \"unix:/Nexus/run/xdebug-8.5.sock\";\n"))
+        #expect(config.contains("fastcgi_pass $nexus_php_0;"))
+        #expect(!config.contains("fastcgi_pass \"unix:"))
+    }
+
+    @Test func aSiteWithoutXdebugKeepsOneSocketAndNoMap() throws {
+        let config = try NginxConfig.render(sites: [site(.nginx)], settings: nginxSettings())
+
+        #expect(!config.contains("$nexus_xdebug"))
+        #expect(!config.contains("$nexus_php_"))
+        #expect(config.contains("fastcgi_pass \"unix:/Nexus/run/php-8.5.sock\";"))
+    }
+
+    @Test func anApacheSiteSendsADebugRequestToTheSocketWithXdebug() throws {
+        let settings = ApacheSettings(port: 8081, runtime: URL(filePath: "/Nexus/runtimes/httpd/2.4"), runFolder: run, modules: [])
+
+        let apache = try ApacheConfig.render(sites: [debugSite(.apache, php: "8.4")], settings: settings)
+        let nginx = try NginxConfig.render(sites: [debugSite(.apache, php: "8.4")], settings: nginxSettings())
+        let plain = try ApacheConfig.render(sites: [site(.apache, php: "8.4")], settings: settings)
+
+        #expect(apache.contains("""
+                <FilesMatch "\\.php$">
+                    <If "\(ApacheConfig.xdebugCondition)">
+                        SetHandler "proxy:unix:/Nexus/run/xdebug-8.4.sock|fcgi://xdebug-8.4"
+                    </If>
+                    <Else>
+                        SetHandler "proxy:unix:/Nexus/run/php-8.4.sock|fcgi://php-8.4"
+                    </Else>
+                    ErrorDocument 503
+            """))
+        #expect(!nginx.contains("$nexus_xdebug"))
+        #expect(!plain.contains("<If"))
+        #expect(plain.contains("    <FilesMatch \"\\.php$\">\n        SetHandler \"proxy:unix:/Nexus/run/php-8.4.sock|fcgi://php-8.4\"\n        ErrorDocument 503"))
+    }
+
+    @Test func aLineThatLoadsXdebugIsFound() {
+        #expect(PHPConfig.userLoadsXdebug(phpIni: "memory_limit = 1G\nzend_extension = xdebug\n", customLines: []))
+        #expect(PHPConfig.userLoadsXdebug(phpIni: "zend_extension=\"/opt/lib/xdebug.so\"", customLines: []))
+        #expect(PHPConfig.userLoadsXdebug(phpIni: "", customLines: ["zend_extension=xdebug"]))
+        #expect(!PHPConfig.userLoadsXdebug(phpIni: "; zend_extension = xdebug", customLines: []))
+        #expect(!PHPConfig.userLoadsXdebug(phpIni: "extension = xdebug", customLines: []))
+        #expect(!PHPConfig.userLoadsXdebug(phpIni: "zend_extension = opcache", customLines: []))
+        #expect(PHPConfig.xdebugIni(loadsExtension: true).contains("\nzend_extension = xdebug\n"))
+        #expect(!PHPConfig.xdebugIni(loadsExtension: false).contains("zend_extension"))
     }
 
     @Test func mailOfPHPGoesToNexusSendmailWithThePathInSingleQuotes() throws {
@@ -533,5 +624,51 @@ struct WebConfigTests {
         let messages = PHPConfig.newStartupMessages(in: output, baseline: baseline)
 
         #expect(messages.map(\.text) == [#"Module "redis" is already loaded"#])
+    }
+
+    private func siteWithLines(_ server: WebServer) -> WebSite {
+        let base = site(server)
+        let lines = URL(filePath: "/Nexus/config/\(server == .apache ? "apache" : "nginx")/sites/shop.test.conf")
+        return WebSite(hosts: base.hosts, backend: base.backend, certificate: base.certificate, key: base.key, accessLog: base.accessLog, customLines: lines)
+    }
+
+    private var apacheSettings: ApacheSettings {
+        ApacheSettings(port: 8081, runtime: URL(filePath: "/Nexus/runtimes/httpd/2.4"), runFolder: run, modules: [])
+    }
+
+    @Test func anNginxSiteIncludesItsLinesBeforeTheLocationsOfNexus() throws {
+        let config = try NginxConfig.render(sites: [siteWithLines(.nginx)], settings: nginxSettings())
+        let block = "        charset utf-8;\n    \n        include \"/Nexus/config/nginx/sites/shop.test.conf\";\n    \n        location / {\n            try_files"
+
+        #expect(config.contains(block))
+        #expect(config.components(separatedBy: "sites/shop.test.conf").count == 2)
+    }
+
+    @Test func aSiteWithoutLinesIncludesNoFileOfLines() throws {
+        let nginx = try NginxConfig.render(sites: [site(.nginx)], settings: nginxSettings())
+        let apache = try ApacheConfig.render(sites: [site(.apache)], settings: apacheSettings)
+
+        #expect(!nginx.contains("sites/shop.test.conf"))
+        #expect(!apache.contains("sites/shop.test.conf"))
+    }
+
+    @Test func anApacheSiteIncludesItsLinesAtTheEndOfItsVirtualHost() throws {
+        let config = try ApacheConfig.render(sites: [siteWithLines(.apache)], settings: apacheSettings)
+
+        #expect(config.contains("    </FilesMatch>\n    Include \"/Nexus/config/apache/sites/shop.test.conf\"\n</VirtualHost>"))
+    }
+
+    @Test func theNginxBlockOfAnApacheSiteGetsNoLines() throws {
+        let config = try NginxConfig.render(sites: [siteWithLines(.apache)], settings: nginxSettings())
+
+        #expect(!config.contains("sites/shop.test.conf"))
+    }
+
+    @Test func theFileOfLinesStartsWithOneCommentLine() {
+        let file = SiteLinesFile.contents(["a", "b"], server: .nginx)
+
+        #expect(file.split(separator: "\n").count == SiteLinesFile.headerLines + 2)
+        #expect(file.hasPrefix("# Nexus writes this file from the custom nginx lines of a site."))
+        #expect(file.hasSuffix("b\n"))
     }
 }

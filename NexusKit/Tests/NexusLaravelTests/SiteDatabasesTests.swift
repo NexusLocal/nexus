@@ -87,6 +87,26 @@ struct SiteDatabasesTests {
         #expect(databases == [SiteDatabase(connection: "mysql", database: "", host: "127.0.0.1", port: 3306, instance: "mysql-8.0")])
     }
 
+    @Test func aMySQLConnectionOnLocalhostUsesTheSocketOfPHPAndNoInstance() {
+        let databases = list([connection("mysql", driver: "mysql", database: .text("shop"), host: "localhost")], connections: ["mysql"])
+
+        #expect(databases == [SiteDatabase(connection: "mysql", database: "shop", host: "localhost", port: 3306, instance: nil)])
+    }
+
+    @Test func aConnectionThroughTheSocketOfAnInstanceFindsThatInstance() {
+        let settings = connection("mysql", driver: "mysql", database: .text("shop"), host: "localhost", port: 8889).merging([
+            "database.connections.mysql.unix_socket": setting(.text("/nexus/run/mysql-8.4.sock/"), "DB_SOCKET"),
+        ]) { own, _ in own }
+        let configuration = LaravelConfiguration(version: "12.0.0", settings: settings.merging(["database.default": ConfigSetting(value: .text("mysql"))]) { own, _ in own }, databaseConnections: ["mysql"], redisConnections: [])
+
+        let databases = SiteDatabases.list(configuration, instances: [
+            SiteDatabases.Instance(id: "mysql-8.0", usesMySQLProtocol: true, port: 8889, socket: "/nexus/run/mysql-8.0.sock"),
+            SiteDatabases.Instance(id: "mysql-8.4", usesMySQLProtocol: true, port: 13306, socket: "/nexus/run/mysql-8.4.sock"),
+        ])
+
+        #expect(databases.map(\.instance) == ["mysql-8.4"])
+    }
+
     @Test func theDatabaseOfTheWriteSettingsComesFirst() {
         let settings = connection("mysql", driver: "mysql", database: .null).merging([
             "database.connections.mysql.write.database": ConfigSetting(value: .text("shop_write")),

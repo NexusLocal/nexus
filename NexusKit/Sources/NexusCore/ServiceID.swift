@@ -17,6 +17,16 @@ public enum ServiceID {
         "php-\(line)"
     }
 
+    public static func phpLine(of id: String) -> String? {
+        id.hasPrefix("php-") ? String(id.dropFirst("php-".count)) : nil
+    }
+
+    // The PHP-FPM with Xdebug of a PHP version (owner, 2026-11-14). It runs with the PHP-FPM of its
+    // version and is no row in the list of services.
+    public static func xdebug(line: String) -> String {
+        "xdebug-\(line)"
+    }
+
     public static func redis(line: String) -> String {
         "redis-\(line)"
     }

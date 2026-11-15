@@ -496,7 +496,7 @@ extension NexusEngine {
     // servers do not know.
     static let postgresFilter = #"/^\\connect /d; /^CREATE DATABASE /Id; /^ALTER .* OWNER TO .*;$/d; /^(GRANT|REVOKE) /d; /^SET transaction_timeout /d"#
 
-    private static func fileSize(_ file: URL) -> Int64? {
+    static func fileSize(_ file: URL) -> Int64? {
         (try? FileManager.default.attributesOfItem(atPath: file.path(percentEncoded: false))[.size] as? NSNumber)?.int64Value
     }
 }

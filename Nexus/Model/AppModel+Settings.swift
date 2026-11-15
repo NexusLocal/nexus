@@ -69,7 +69,7 @@ enum Notifier {
         await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
     }
 
-    static func post(_ title: String, _ body: String, setting key: String) {
+    static func post(_ title: String, _ body: String, target: NotificationTarget, setting key: String) {
         guard AppPreference.isOn(key) else {
             return
         }
@@ -84,6 +84,7 @@ enum Notifier {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = ErrorDetails.split(body).text
+            content.userInfo = target.userInfo
             try? await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
         }
     }
@@ -407,9 +408,9 @@ extension AppModel {
 
                 switch workspace.state {
                 case .ready:
-                    Notifier.post("\(workspace.name) is ready", "\(workspace.hosts?.first ?? workspace.name) is the workspace of \(host).", setting: AppPreference.notifyWorkspaceReady)
+                    Notifier.post("\(workspace.name) is ready", "\(workspace.hosts?.first ?? workspace.name) is the workspace of \(host).", target: .workspace(site: host, name: workspace.name), setting: AppPreference.notifyWorkspaceReady)
                 case .notIsolated(let reason):
-                    Notifier.post("\(workspace.name) is ready without its own data", reason, setting: AppPreference.notifyWorkspaceReady)
+                    Notifier.post("\(workspace.name) is ready without its own data", reason, target: .workspace(site: host, name: workspace.name), setting: AppPreference.notifyWorkspaceReady)
                 case .preparing, nil:
                     break
                 }
@@ -432,9 +433,9 @@ extension AppModel {
             }
 
             if service.health == .failed, old.health != .failed {
-                Notifier.post("\(service.name) failed", service.problem?.detail ?? "", setting: AppPreference.notifyServiceStops)
+                Notifier.post("\(service.name) failed", service.problem?.detail ?? "", target: .service(id: service.id), setting: AppPreference.notifyServiceStops)
             } else if !old.stoppedUnexpectedly {
-                Notifier.post("\(service.name) stopped", "\(service.name) stopped without a request. Nexus starts it again.", setting: AppPreference.notifyServiceStops)
+                Notifier.post("\(service.name) stopped", "\(service.name) stopped without a request. Nexus starts it again.", target: .service(id: service.id), setting: AppPreference.notifyServiceStops)
             }
         }
     }
