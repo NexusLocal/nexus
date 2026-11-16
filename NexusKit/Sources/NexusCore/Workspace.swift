@@ -123,6 +123,9 @@ public struct DatabaseRemoval: Codable, Sendable, Hashable {
     // The switch of Settings > Workspaces when the removal began. A later change of the switch
     // does not change what the removal promised.
     public let writesDump: Bool
+    // The dump file of each database that the removal wrote, with the name of the database as the
+    // key. The next run writes a dump only for a database without a dump file here.
+    public var dumps: [String: String] = [:]
 
     public var keepsDump: Bool { writesDump && server.isComplete }
 
@@ -134,7 +137,8 @@ public struct DatabaseRemoval: Codable, Sendable, Hashable {
         self.writesDump = writesDump
     }
 
-    // A removal of a nexusd before 0.6.2 has no switch and writes a dump.
+    // A removal of a nexusd before 0.6.2 has no switch and writes a dump. A removal of a nexusd
+    // before 0.6.4 names no dumps.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
@@ -143,6 +147,7 @@ public struct DatabaseRemoval: Codable, Sendable, Hashable {
         workspace = try container.decode(String.self, forKey: .workspace)
         site = try container.decode(String.self, forKey: .site)
         writesDump = try container.decodeIfPresent(Bool.self, forKey: .writesDump) ?? true
+        dumps = try container.decodeIfPresent([String: String].self, forKey: .dumps) ?? [:]
     }
 }
 

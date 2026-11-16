@@ -207,9 +207,6 @@ public actor NexusEngine {
     static let gateEndText = "nexusd stops now. Connect again in a few seconds."
     // The problem of each server of a removed workspace, with its folder as the key.
     var databaseRemovalProblems: [String: DatabaseRemovalProblem] = [:]
-    // The complete dumps of a server that Nexus did not remove yet, with the folder of that server
-    // and the database as the key. So a retry writes no second dump.
-    var dumpsOfRemovals: [String: URL] = [:]
     // The folders of the clones that a setup makes now, and of the servers that a removal stops.
     var cloningServers: Set<String> = []
     var removingServers: Set<String> = []
@@ -645,6 +642,7 @@ public actor NexusEngine {
         // the services also reaches it, before the background processes get SIGKILL.
         await endServicesOfEarlierRun()
         await endProcessesOfEarlierRun()
+        await removeClonesOfEarlierRun()
         await beginIdleStops()
         _ = try? await startDNS()
         applyMailSettings(await stateStore.current().mailSettings)

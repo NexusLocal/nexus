@@ -260,11 +260,46 @@ extension NexusEngine {
         (server.folder as NSString).deletingLastPathComponent
     }
 
-    // A clone can hold many files, and each request of nexusd would wait for this removal.
+    // A clone can hold many files, and each request of nexusd would wait for this removal. A stop of
+    // nexusd during the delete leaves a part of the folder. So the folder first gets a new name in
+    // one step. No server can start from a folder with that name. A retry of the removal deletes the
+    // rest.
     static func removeClone(of server: WorkspaceDatabaseServer) async throws {
         let folder = cloneFolder(of: server)
+        let deleting = deletingFolder(of: server)
 
-        try await Task.detached { try FileManager.default.removeItem(atPath: folder) }.value
+        try await Task.detached {
+            if FileManager.default.fileExists(atPath: folder) {
+                try FileManager.default.moveItem(atPath: folder, toPath: deleting)
+            }
+
+            try FileManager.default.removeItem(atPath: deleting)
+        }.value
+    }
+
+    static func hasClone(_ server: WorkspaceDatabaseServer) -> Bool {
+        [cloneFolder(of: server), deletingFolder(of: server)].contains(where: FileManager.default.fileExists(atPath:))
+    }
+
+    private static let deletingExtension = "deleting"
+
+    private static func deletingFolder(of server: WorkspaceDatabaseServer) -> String {
+        "\(cloneFolder(of: server)).\(deletingExtension)"
+    }
+
+    // A clone of a setup that a stop of nexusd did not delete. No record names it any more. A
+    // removal deletes its own clone. So this delete leaves those out. The delete runs outside the
+    // actor, because a clone can hold many files.
+    func removeClonesOfEarlierRun() async {
+        let ofRemovals = Set(await stateStore.current().databaseRemovals.map { URL(filePath: Self.deletingFolder(of: $0.server)).lastPathComponent })
+        let folders = (try? FileManager.default.contentsOfDirectory(at: paths.workspaceData, includingPropertiesForKeys: nil)) ?? []
+        let leftovers = folders
+            .filter { $0.pathExtension == Self.deletingExtension }
+            .filter { !ofRemovals.contains($0.lastPathComponent) }
+
+        Task.detached {
+            leftovers.forEach { try? FileManager.default.removeItem(at: $0) }
+        }
     }
 
     // An update runs in the queue, and a sync can wait for that queue. So this stop needs no sync. The

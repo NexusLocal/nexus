@@ -235,15 +235,17 @@ struct WorkspaceHostPairTests {
         #expect(WorkspaceSettings(dumpDays: 3, dumpsBeforeRemoval: false).keptDumpDays == nil)
     }
 
-    @Test func aRemovalFromBeforeTheSwitchOfTheDumpsKeepsADump() throws {
+    @Test func aRemovalFromBeforeTheSwitchAndTheSavedDumpsKeepsADump() throws {
         let server = WorkspaceDatabaseServer(instance: "mysql-8.4", folder: "/clones/one/mysql-8.4/", port: 20000, account: .standard, isComplete: true)
         let old = try JSONEncoder().encode(DatabaseRemoval(server: server, databases: ["shop"], workspace: "fix", site: "/w"))
         var fields = try #require(try JSONSerialization.jsonObject(with: old) as? [String: Any])
         fields["writesDump"] = nil
+        fields["dumps"] = nil
 
         let removal = try JSONDecoder().decode(DatabaseRemoval.self, from: JSONSerialization.data(withJSONObject: fields))
 
         #expect(removal.keepsDump)
+        #expect(removal.dumps.isEmpty)
     }
 
     @Test func settingsFromBeforeOldWorkspacesAndTheSwitchOfTheDumpsGetTheDefaults() throws {

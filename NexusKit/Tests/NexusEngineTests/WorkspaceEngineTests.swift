@@ -1292,6 +1292,69 @@ extension NexusEngineTests {
         #expect(await engine.stateStore.current().databaseRemovals.isEmpty)
     }
 
+    @Test func aRemovalDeletesTheRestOfItsCloneAfterAStop() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try makeSiteEngine(root: root)
+        let data = await engine.paths.workspaceData
+        let rest = data.appending(path: "one.deleting/mysql-8.4", directoryHint: .isDirectory)
+        let server = WorkspaceDatabaseServer(instance: "mysql-8.4", folder: data.appending(path: "one/mysql-8.4").path(percentEncoded: false), port: 20000, account: .standard, isComplete: true)
+        try FileManager.default.createDirectory(at: rest, withIntermediateDirectories: true)
+
+        try await engine.stateStore.update { $0.databaseRemovals = [DatabaseRemoval(server: server, databases: ["shop"], workspace: "fix", site: "/w")] }
+        await engine.startDatabaseRemovals().value
+
+        #expect(!FileManager.default.fileExists(atPath: rest.deletingLastPathComponent().path(percentEncoded: false)))
+        #expect(await engine.dumps().isEmpty)
+        #expect(await engine.stateStore.current().databaseRemovals.isEmpty)
+    }
+
+    @Test func theStartDeletesTheRestOfACloneThatNoRemovalNames() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try makeSiteEngine(root: root)
+        let data = await engine.paths.workspaceData
+        let orphan = data.appending(path: "one.deleting/mysql-8.4", directoryHint: .isDirectory)
+        let ofARemoval = data.appending(path: "two.deleting/mysql-8.4", directoryHint: .isDirectory)
+        let clone = data.appending(path: "three/mysql-8.4", directoryHint: .isDirectory)
+        let server = WorkspaceDatabaseServer(instance: "mysql-8.4", folder: data.appending(path: "two/mysql-8.4").path(percentEncoded: false), port: 20000, account: .standard, isComplete: true)
+        for folder in [orphan, ofARemoval, clone] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+
+        try await engine.stateStore.update { $0.databaseRemovals = [DatabaseRemoval(server: server, databases: ["shop"], workspace: "fix", site: "/w")] }
+        await engine.removeClonesOfEarlierRun()
+
+        #expect(await eventually { !FileManager.default.fileExists(atPath: orphan.deletingLastPathComponent().path(percentEncoded: false)) })
+        #expect(FileManager.default.fileExists(atPath: ofARemoval.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: clone.path(percentEncoded: false)))
+    }
+
+    @Test func aRemovalWritesNoSecondDumpOfADatabaseWithADump() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try makeSiteEngine(root: root)
+        let clone = root.appending(path: "clones/one/mysql-8.4", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: clone, withIntermediateDirectories: true)
+        let trash = await engine.paths.trash
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        let dump = trash.appending(path: "2026-11-16-120000-mysql-8.4-shop_fix.sql.gz")
+        try Data("dump".utf8).write(to: dump)
+        let server = WorkspaceDatabaseServer(instance: "mysql-8.4", folder: clone.path(percentEncoded: false), port: 20000, account: .standard, isComplete: true)
+        var removal = DatabaseRemoval(server: server, databases: ["shop"], workspace: "fix", site: "/w")
+        removal.dumps = ["shop": dump.path(percentEncoded: false)]
+
+        try await engine.stateStore.update { [removal] in $0.databaseRemovals = [removal] }
+        await engine.startDatabaseRemovals().value
+
+        let clones = clone.deletingLastPathComponent()
+
+        #expect(!FileManager.default.fileExists(atPath: clones.path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: clones.appendingPathExtension("deleting").path(percentEncoded: false)))
+        #expect(await engine.dumps().map(\.name) == [dump.lastPathComponent])
+        #expect(await engine.stateStore.current().databaseRemovals.isEmpty)
+    }
+
     @Test func aPackageWithTheServerOfAWorkspaceStays() async throws {
         let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

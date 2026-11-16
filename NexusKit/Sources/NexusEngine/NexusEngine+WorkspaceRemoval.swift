@@ -216,8 +216,7 @@ extension NexusEngine {
 
                 do {
                     try await remove(next)
-                    dumpsOfRemovals = dumpsOfRemovals.filter { !$0.key.hasPrefix("\(folder)\n") }
-                    try await stateStore.update { $0.databaseRemovals.removeAll { $0 == next } }
+                    try await stateStore.update { $0.databaseRemovals.removeAll { $0.server.folder == folder } }
                     databaseRemovalProblems[folder] = nil
                 } catch {
                     databaseRemovalProblems[folder] = DatabaseRemovalProblem(reason: ErrorText.plain(error), nextTry: .now + Self.removalRetryWait)
@@ -281,7 +280,7 @@ extension NexusEngine {
             try? await Task.sleep(for: .milliseconds(100))
         }
 
-        guard FileManager.default.fileExists(atPath: Self.cloneFolder(of: server)) else {
+        guard Self.hasClone(server) else {
             return
         }
 
@@ -298,6 +297,11 @@ extension NexusEngine {
 
     private func writeDumps(of removal: DatabaseRemoval) async throws {
         let server = removal.server
+        let missing = removal.databases.filter { !hasDump(of: $0, in: removal) }
+
+        guard !missing.isEmpty else {
+            return
+        }
 
         guard let tools = await databaseRuntime(server.instance) else {
             throw RuntimeError.unsupported("\(server.instance) is not installed, so Nexus cannot make a dump. Install it again.")
@@ -313,21 +317,27 @@ extension NexusEngine {
 
         try copier.prepare()
 
-        for database in removal.databases {
+        for database in missing {
             let name = try DatabaseName.validated(database)
-            let key = "\(server.folder)\n\(database)"
 
-            guard try await copier.exists(name), !hasDump(key) else {
+            guard try await copier.exists(name) else {
                 continue
             }
 
-            dumpsOfRemovals[key] = try await writeDump(of: name, as: Workspace.databaseName(database, workspace: removal.workspace), with: copier, instance: server.instance, kind: tools.kind, workspace: removal.workspace)
+            let file = try await writeDump(of: name, as: Workspace.databaseName(database, workspace: removal.workspace), with: copier, instance: server.instance, kind: tools.kind, workspace: removal.workspace)
+
+            // A save that fails costs only a second dump after a stop of nexusd.
+            try? await stateStore.update { state in
+                for index in state.databaseRemovals.indices where state.databaseRemovals[index].server.folder == server.folder {
+                    state.databaseRemovals[index].dumps[database] = file.path(percentEncoded: false)
+                }
+            }
         }
     }
 
     // The trash can have removed an earlier dump before a retry.
-    private func hasDump(_ key: String) -> Bool {
-        dumpsOfRemovals[key].map { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) } ?? false
+    private func hasDump(of database: String, in removal: DatabaseRemoval) -> Bool {
+        removal.dumps[database].map { FileManager.default.fileExists(atPath: $0) } ?? false
     }
 
     func writeDump(of name: String, as fileName: String, with copier: DatabaseCopier, instance: String, kind: DatabaseKind, workspace: String? = nil) async throws -> URL {
