@@ -233,14 +233,18 @@ extension NexusEngine {
         }
 
         let deadline = ContinuousClock.now + ServiceCatalog.databaseStartTimeout
+        var accepts = PortInspector.acceptsConnections(port)
 
-        while !PortInspector.acceptsConnections(port), ContinuousClock.now < deadline {
+        while !accepts, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(50))
+            accepts = PortInspector.acceptsConnections(port)
         }
 
+        // A second probe right after the first one can fail while the server still handles the
+        // first one. So the answer of the wait counts.
         let takesQueries = tools.kind == .postgresql
             ? try await takesQueries(tools, port: port, until: deadline)
-            : PortInspector.acceptsConnections(port)
+            : accepts
 
         guard takesQueries else {
             throw RuntimeError.unsupported("The database server of this workspace does not start on port \(port). See \(paths.log(tools.id).path(percentEncoded: false)).")
