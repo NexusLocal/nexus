@@ -2746,7 +2746,7 @@ extension NexusEngineTests {
         let services = ProcessSupervisor(policy: policy)
         let processes = ProcessSupervisor(policy: policy)
         let engine = try makeSiteEngine(root: root, supervisor: services, processSupervisor: processes)
-        let ports = try (0..<2).map { _ in try #require((0..<50).lazy.map { _ in self.freePort() }.first { $0 > 50_000 }) }
+        let ports = Array(Set((0..<10).map { _ in freePortAboveNexus() }).prefix(2))
 
         for (supervisor, id, port) in [(services, "service", ports[0]), (processes, "workspace", ports[1])] {
             try await supervisor.start(ServiceDefinition(

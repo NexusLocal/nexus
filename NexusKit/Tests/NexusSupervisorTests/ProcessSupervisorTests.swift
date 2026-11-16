@@ -426,7 +426,7 @@ struct ProcessSupervisorTests {
         let order = logs.appending(path: "order.txt")
         let servers = ProcessSupervisor(policy: fastPolicy)
         let programs = ProcessSupervisor(policy: fastPolicy)
-        let port = try #require((0..<50).lazy.map { _ in Self.freePort() }.first { $0 > 50_000 })
+        let port = PortGateTests.freePort()
         let program = definition("program", executable: "/bin/sh", arguments: ["-c", "trap 'sleep 1; echo program >> \"$0\"; exit 0' TERM; echo ready >> \"$0.ready\"; while :; do sleep 0.1; done", order.path(percentEncoded: false)])
         let server = definition("server", executable: "/bin/sh", arguments: ["-c", "trap 'echo server >> \"$0\"; exit 0' TERM; echo ready >> \"$0.ready\"; while :; do sleep 0.1; done", order.path(percentEncoded: false)], ports: [port])
         let ready = logs.appending(path: "order.txt.ready")

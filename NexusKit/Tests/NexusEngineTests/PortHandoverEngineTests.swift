@@ -121,7 +121,7 @@ extension NexusEngineTests {
     }
 
     private func highPort() throws -> Int {
-        try #require((0..<50).lazy.map { _ in self.freePort() }.first { $0 > 50_000 })
+        freePortAboveNexus()
     }
 
     private func gatedServer(in root: URL, port: Int) -> GatedServer {
@@ -196,7 +196,7 @@ extension NexusEngineTests {
         var state = EngineState()
         state.sites = [Site(host: "shop.test", folder: shop, php: "8.4", backgroundCommands: ["exec sleep 300"])]
         let engine = try makeSiteEngine(root: root, state: state, runtimes: [("mysql", "8.4")], serverGate: gate)
-        let port = try #require((0..<50).lazy.map { _ in self.freePort() }.first { $0 > 50_000 })
+        let port = freePortAboveNexus()
         let clone = root.appending(path: "clones/one/mysql-8.4", directoryHint: .isDirectory)
 
         try FileManager.default.createDirectory(at: clone, withIntermediateDirectories: true)

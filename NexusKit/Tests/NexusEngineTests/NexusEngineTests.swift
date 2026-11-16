@@ -187,6 +187,23 @@ struct NexusEngineTests {
         return Int(UInt16(bigEndian: bound.sin_port))
     }
 
+    func freePortAboveNexus() -> Int {
+        while true {
+            let port = Int.random(in: 50_001...65_000)
+            let listener = socket(AF_INET, SOCK_STREAM, 0)
+            var address = sockaddr_in()
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = in_port_t(UInt16(port).bigEndian)
+            address.sin_addr = in_addr(s_addr: INADDR_ANY)
+            let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(listener, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+            close(listener)
+
+            if bound == 0 {
+                return port
+            }
+        }
+    }
+
     private func makeEngine(
         package: ManifestPackage,
         port: Int,
