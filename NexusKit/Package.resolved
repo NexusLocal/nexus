@@ -1,5 +1,5 @@
 {
-  "originHash" : "695113cec647512e6cd1ee26a2210746b72c64bf39d4fa08a350e1fbdc5eac60",
+  "originHash" : "f966fd3571a1f4a405de79e9e388ab50ca04e4a6b1fdc69da61756807641a01a",
   "pins" : [
     {
       "identity" : "sentry-cocoa",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-asn1",
       "state" : {
-        "revision" : "3b6410f7dee09eb33cdd26260c5fd47fda19b0e2",
-        "version" : "1.7.3"
+        "revision" : "917b472dbe53ba699cbb0495f9a95a084bc6364d",
+        "version" : "1.7.4"
       }
     },
     {
@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-crypto",
       "state" : {
-        "revision" : "c2cbadd7263439d8015189668f96ff5b5be565ce",
-        "version" : "5.0.3"
+        "revision" : "f8fad2f95ad67b45f6340c0960e2396094d67e07",
+        "version" : "5.1.1"
       }
     }
   ],

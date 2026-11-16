@@ -12,9 +12,9 @@ and Redis. These programs are not part of the app. So this file does not name th
 | [Sentry Cocoa SDK](#sentry-cocoa-sdk) | 9.33.0 | MIT | Crash reports of the app and nexusd |
 | [Sparkle](#sparkle) | 2.10.1 | MIT | The updates of the app |
 | [Swift Argument Parser](#swift-argument-parser) | 1.8.2 | Apache 2.0 | The arguments of the nexus command |
-| [SwiftASN1](#swiftasn1) | 1.7.3 | Apache 2.0 | The certificates of nexusd |
+| [SwiftASN1](#swiftasn1) | 1.7.4 | Apache 2.0 | The certificates of nexusd |
 | [Swift Certificates](#swift-certificates) | 1.21.1 | Apache 2.0 | The certificates of nexusd |
-| [Swift Crypto](#swift-crypto) | 5.0.3 | Apache 2.0 | The certificates of nexusd |
+| [Swift Crypto](#swift-crypto) | 5.1.1 | Apache 2.0 | The certificates of nexusd |
 | [Symfony VarDumper](#symfony-vardumper) | 7.4.22 | MIT | The dumps of your PHP sites |
 
 The License column gives the main license of a project. The section of the project names all its
@@ -301,7 +301,7 @@ As an exception, if you use this Software to compile your source code and portio
 
 ## SwiftASN1
 
-Version 1.7.3, https://github.com/apple/swift-asn1
+Version 1.7.4, https://github.com/apple/swift-asn1
 
 nexusd makes the certificates of the sites with it. License: Apache License 2.0. The text of the
 license is in the section [Apache License 2.0](#apache-license-20). Its NOTICE file:
@@ -435,7 +435,7 @@ This product contains derivations of various scripts from Swift OpenAPI Generato
 
 ## Swift Crypto
 
-Version 5.0.3, https://github.com/apple/swift-crypto
+Version 5.1.1, https://github.com/apple/swift-crypto
 
 nexusd uses it for the keys of the certificates. License: Apache License 2.0. The text of the
 license is in the section [Apache License 2.0](#apache-license-20). Its NOTICE file:
