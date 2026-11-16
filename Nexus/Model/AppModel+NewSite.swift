@@ -128,7 +128,7 @@ extension AppModel {
 
     // The URL of a new host, with the HTTPS port of the sites that exist.
     func newSiteURL(host: String) -> String {
-        let port = allSites.lazy.compactMap { URL(string: $0.url)?.port }.first
+        let port = allSites.firstNonNil { URL(string: $0.url)?.port }
         return port.map { "https://\(host):\($0)" } ?? "https://\(host)"
     }
 

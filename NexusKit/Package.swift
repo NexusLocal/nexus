@@ -71,7 +71,7 @@ let package = Package(
             .product(name: "Sentry", package: "sentry-cocoa"),
         ]),
         .testTarget(name: "NexusRuntimeTests", dependencies: ["NexusRuntime"]),
-        .testTarget(name: "NexusSupervisorTests", dependencies: ["NexusSupervisor"]),
+        .testTarget(name: "NexusSupervisorTests", dependencies: ["NexusSupervisor", "NexusCore"]),
         .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusMail", "NexusTestSupport", "CBzip2"]),
         .testTarget(name: "NexusDNSTests", dependencies: ["NexusDNS", "NexusTestSupport"]),
         .testTarget(name: "NexusMailTests", dependencies: ["NexusMail"]),

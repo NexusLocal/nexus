@@ -36,7 +36,7 @@ extension NexusEngineTests {
             if [ -n "$init_file" ]; then
                 \(initialization)
             fi
-            exec /usr/bin/nc -lk 127.0.0.1 "$port"
+            exec \(fakeListener(port: "$port"))
 
             """
         try Data(script.utf8).write(to: server)

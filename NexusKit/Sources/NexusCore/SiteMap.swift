@@ -74,7 +74,7 @@ public struct SiteMap: Sendable, Equatable {
             return entry
         }
 
-        let script = request.scriptFolders.lazy.compactMap { folder in match(holding: folder) }.first
+        let script = request.scriptFolders.firstNonNil { folder in match(holding: folder) }
         let root = request.root.flatMap { root in match(holding: root) }
 
         guard let script else {

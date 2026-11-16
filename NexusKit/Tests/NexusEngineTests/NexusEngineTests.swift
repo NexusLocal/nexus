@@ -39,6 +39,10 @@ func shortTemporaryRoot() -> URL {
     URL(filePath: "/tmp/nx-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
 }
 
+func fakeListener(port: String) -> String {
+    #"/usr/bin/perl -MIO::Socket::INET -e '$| = 1; $SIG{CHLD} = "IGNORE"; my $server = IO::Socket::INET->new(LocalAddr => "127.0.0.1", LocalPort => $ARGV[0], Listen => 16, ReuseAddr => 1) or die "bind: $!"; while (my $client = $server->accept) { my $child = fork; die "fork: $!" unless defined $child; if ($child) { close $client; next } close $server; while (sysread($client, my $bytes, 4096)) { print $bytes } exit 0 }' "\#(port)""#
+}
+
 func eventually(_ condition: () async throws -> Bool) async rethrows -> Bool {
     let deadline = ContinuousClock.now + .seconds(10)
 
@@ -160,7 +164,7 @@ struct NexusEngineTests {
         let source = workspace.appending(path: "source/redis-\(version)/bin", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
         let server = source.appending(path: "redis-server")
-        try Data("#!/bin/sh\nexec /usr/bin/nc -lk 127.0.0.1 \"$3\"\n".utf8).write(to: server)
+        try Data("#!/bin/sh\nexec \(fakeListener(port: "$3"))\n".utf8).write(to: server)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: server.path(percentEncoded: false))
 
         let archive = workspace.appending(path: "redis-\(version).tar.xz")

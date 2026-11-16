@@ -19,7 +19,7 @@ extension NexusEngine {
             return sites.contains { $0.workspaceDatabases == .dump && $0.workspaceDump != nil } ? .dump : .copy
         }
 
-        return sites.lazy.compactMap(\.workspaceDatabases).first ?? settings.newWorkspaceDatabases
+        return sites.firstNonNil(\.workspaceDatabases) ?? settings.newWorkspaceDatabases
     }
 
     // The first setup chooses, and the workspace keeps that choice. A workspace from before the

@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import NexusCore
 import Synchronization
 import Testing
 @testable import NexusSupervisor
@@ -243,7 +244,7 @@ struct PortGateTests {
     }
 
     private func fakeServer() throws -> FakeServer {
-        try #require((0..<20).lazy.compactMap { _ in try? FakeServer(port: Self.freePort()) }.first)
+        try #require((0..<20).firstNonNil { _ in try? FakeServer(port: Self.freePort()) })
     }
 
     @Test func aHeldPortIsNotFreeUntilItsRelease() async throws {
@@ -447,10 +448,10 @@ struct PortGateTests {
     }
 
     @Test func onlyAConnectionToTheLoopbackAddressPassesTheFilterOfTheNetwork() throws {
-        let (listener, port) = try #require((0..<20).lazy.compactMap { _ -> (Int32, Int)? in
+        let (listener, port) = try #require((0..<20).firstNonNil { _ -> (Int32, Int)? in
             let port = Self.freePort()
             return (try? PortGate.listener(on: port, host: inet_addr("127.0.0.1"))).map { ($0, port) }
-        }.first)
+        })
         defer { close(listener) }
         let local = try client(port)
         defer { close(local) }

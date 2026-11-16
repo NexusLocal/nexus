@@ -275,9 +275,9 @@ extension NexusEngine {
     private func objectCachePlan(of target: WordPressTarget, config: WordPressConfig) async throws -> (port: Int?, problems: [String]) {
         let names = target.type == .bedrock ? ["web/app/object-cache.php", "public/content/object-cache.php"] : ["wp-content/object-cache.php"]
         let base = target.type == .bedrock ? target.project : target.core
-        let found = names.lazy.compactMap { name in
+        let found = names.firstNonNil { name in
             base.flatMap { try? String(contentsOf: $0.appending(path: name), encoding: .utf8) }.map { (name, $0) }
-        }.first
+        }
 
         guard let (name, text) = found, text.localizedCaseInsensitiveContains("redis") else {
             return (nil, [])

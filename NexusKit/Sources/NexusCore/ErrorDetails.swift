@@ -149,7 +149,7 @@ public enum ErrorDetails {
 
     // "PHP Fatal error:  Uncaught Name\Of\Exception: The message. in /path/Config.php:106"
     static func phpError(_ line: String) -> String {
-        guard let start = phpErrors.lazy.compactMap({ line.range(of: $0) }).first else {
+        guard let start = phpErrors.firstNonNil({ line.range(of: $0) }) else {
             return line
         }
 

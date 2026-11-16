@@ -385,7 +385,7 @@ extension NexusEngineTests {
         let port = freePort()
         let clone = root.appending(path: "clones/one/mysql-8.4", directoryHint: .isDirectory)
         let mysqld = await engine.paths.runtime("mysql", line: "8.4").appending(path: "bin/mysqld")
-        let script = "#!/bin/sh\nfor argument in \"$@\"; do case \"$argument\" in --port=*) port=\"${argument#--port=}\";; esac; done\nexec /usr/bin/nc -lk 127.0.0.1 \"$port\"\n"
+        let script = "#!/bin/sh\nfor argument in \"$@\"; do case \"$argument\" in --port=*) port=\"${argument#--port=}\";; esac; done\nexec \(fakeListener(port: "$port"))\n"
 
         try FileManager.default.createDirectory(at: clone, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: mysqld.deletingLastPathComponent(), withIntermediateDirectories: true)

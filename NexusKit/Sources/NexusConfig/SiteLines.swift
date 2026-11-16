@@ -88,7 +88,7 @@ public struct ConfigCheckFailure: Error, Sendable, Equatable, CustomStringConver
     private static func nginxError(in lines: [String]) -> ConfigCheckError? {
         let levels = ["[emerg] ", "[alert] ", "[crit] "]
 
-        guard let line = lines.first(where: { line in levels.contains { line.contains($0) } }), let start = levels.lazy.compactMap({ line.range(of: $0) }).first else {
+        guard let line = lines.first(where: { line in levels.contains { line.contains($0) } }), let start = levels.firstNonNil({ line.range(of: $0) }) else {
             return nil
         }
 

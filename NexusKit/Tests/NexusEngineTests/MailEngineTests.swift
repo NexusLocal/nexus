@@ -43,7 +43,7 @@ extension NexusEngineTests {
             return engine
         }
 
-        try Data("#!/bin/sh\nexec /usr/bin/nc -lk 127.0.0.1 \"${4##*:}\"\n".utf8).write(to: mailpit)
+        try Data("#!/bin/sh\nexec \(fakeListener(port: "${4##*:}"))\n".utf8).write(to: mailpit)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: mailpit.path(percentEncoded: false))
         return engine
     }

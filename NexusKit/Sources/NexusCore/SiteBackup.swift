@@ -134,7 +134,7 @@ public struct DumpScanner: Sendable {
         }
 
         // The text before the rows of the options table does not go to the next part.
-        if !inOptions, let prefix = mainPrefix, let start = ["INSERT INTO `\(prefix)options`", "INSERT INTO \(prefix)options "].lazy.compactMap({ window.range(of: $0) }).first {
+        if !inOptions, let prefix = mainPrefix, let start = ["INSERT INTO `\(prefix)options`", "INSERT INTO \(prefix)options "].firstNonNil({ window.range(of: $0) }) {
             inOptions = true
             window = String(window[start.lowerBound...])
         }

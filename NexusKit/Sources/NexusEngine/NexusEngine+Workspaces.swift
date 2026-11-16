@@ -382,7 +382,7 @@ extension NexusEngine {
         let sites = resolvedSites(await stateStore.current()).map(\.site)
         let sitesOfRecord = Dictionary(grouping: sites, by: ProjectFolder.workspaceKey(of:))
         let projects = Set(sites.map(ProjectFolder.projectFolder(of:)))
-        let repositories = sitesOfRecord.compactMapValues { $0.lazy.compactMap(ProjectFolder.repository(of:)).first }
+        let repositories = sitesOfRecord.compactMapValues { $0.firstNonNil(ProjectFolder.repository(of:)) }
         let lists = await Self.worktreeLists(of: Set(repositories.values.map(\.root)))
 
         let current = await stateStore.current().worktrees

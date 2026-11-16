@@ -108,8 +108,9 @@ extension NexusEngineTests {
             #!/bin/sh
             for argument in "$@"; do case "$argument" in --port=*) port="${argument#--port=}";; --socket=*) socket="${argument#--socket=}";; --datadir=*) data="${argument#--datadir=}";; esac; done
             if [ -e "$data/end-once" ]; then rm "$data/end-once"; exit 1; fi
-            /usr/bin/nc -lk 127.0.0.1 "$port" < /dev/null &
-            sleep 0.1
+            \(fakeListener(port: "$port")) < /dev/null &
+            listener=$!
+            until /usr/sbin/lsof -nP -a -p "$listener" -iTCP -sTCP:LISTEN > /dev/null 2>&1; do kill -0 "$listener" 2> /dev/null || exit 1; sleep 0.02; done
             while :; do rm -f "$socket"; printf x | /usr/bin/nc -lU "$socket"; done &
             wait
 

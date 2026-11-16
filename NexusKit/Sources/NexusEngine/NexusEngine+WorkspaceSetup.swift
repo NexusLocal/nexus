@@ -350,7 +350,7 @@ extension NexusEngine {
         let state = await stateStore.current()
         let sites = resolvedSites(state).map(\.site).filter { ProjectFolder.workspaceKey(of: $0) == key }
 
-        guard let path = sites.lazy.compactMap(\.workspaceDump).first else {
+        guard let path = sites.firstNonNil(\.workspaceDump) else {
             throw RuntimeError.unsupported("\(WorkspaceDumpText.gone) This site has no dump file. Choose one under Dump file, and then click Retry.")
         }
 

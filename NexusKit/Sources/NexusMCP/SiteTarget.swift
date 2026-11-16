@@ -191,7 +191,7 @@ public struct SiteTarget: Equatable, Sendable {
 extension DatabaseTarget {
     // The server of the first connection on a server of Nexus. A workspace uses its own server.
     public static func server(of target: SiteTarget, connections: [DatabaseConnectionInfo]) -> DatabaseTarget? {
-        guard let instance = connections.lazy.compactMap(\.instance).first else {
+        guard let instance = connections.firstNonNil(\.instance) else {
             return nil
         }
 
