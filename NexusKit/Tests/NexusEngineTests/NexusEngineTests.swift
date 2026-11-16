@@ -357,6 +357,19 @@ struct NexusEngineTests {
         #expect(free == .done(message: "redis-1.0 uses port 23457."))
     }
 
+    @Test func bothWebPortsMoveOnlyToFreeDifferentPortsWithNginxInstalled() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: 23456)
+        _ = await engine.handle(.install(name: "redis", line: "1.0"))
+
+        let same = await engine.handle(.setWebPorts(http: 8080, https: 8080))
+        let taken = await engine.handle(.setWebPorts(http: 23456, https: 23457))
+        let noNginx = await engine.handle(.setWebPorts(http: 23458, https: 23459))
+
+        #expect(same == .failure(message: "HTTP and HTTPS need two different ports."))
+        #expect(taken == .failure(message: "Port 23456 belongs to redis-1.0 already."))
+        #expect(noNginx == .failure(message: "nginx is not installed. Run: nexus install nginx 1.30"))
+    }
+
     @Test func onlyAKnownPortNameCanChange() async throws {
         let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
 

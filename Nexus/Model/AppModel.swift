@@ -111,6 +111,7 @@ enum AppPreference {
     static let addedEditors = "addedEditors"
     static let addedDatabaseApps = "addedDatabaseApps"
     static let hiddenDatabaseApps = "hiddenDatabaseApps"
+    static let hiddenWebServerNotice = "hiddenWebServerNotice"
     static let mysqlApp = "mysqlApp"
     static let postgresqlApp = "postgresqlApp"
     static let firstRunDone = "firstRunDone"
@@ -227,6 +228,8 @@ final class AppModel {
     var databaseLists: [String: [DatabaseItem]] = [:]
     var databaseListProblems: [String: String] = [:]
     var stoppedByStopAll: [String] = []
+    var otherWebServers: [String] = []
+    var hiddenWebServerNotice = Set(UserDefaults.standard.stringArray(forKey: AppPreference.hiddenWebServerNotice) ?? [])
     var nexusdProblem: NexusdProblem? {
         didSet {
             if let nexusdProblem, nexusdProblem != oldValue {
@@ -404,11 +407,13 @@ final class AppModel {
         model.dumpJobsByUUID = [:]
         model.agents = AgentsModel(setup: .standard)
         model.findApps()
+        model.findOtherWebServers()
 
         // An app that the user installs or removes while Nexus runs then shows in the lists.
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak model] _ in
             MainActor.assumeIsolated {
                 model?.findApps()
+                model?.findOtherWebServers()
             }
         }
 

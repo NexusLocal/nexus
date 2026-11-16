@@ -1271,6 +1271,7 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case stopAll
     case startStopped
     case setPort(service: String, port: Int)
+    case setWebPorts(http: Int, https: Int)
     case available
     case installed
     case install(name: String, line: String)

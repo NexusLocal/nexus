@@ -380,6 +380,8 @@ public actor NexusEngine {
                 return .done(message: try await serialWeb { try await self.startStopped() })
             case .setPort(let id, let port):
                 return .done(message: try await serialWeb { try await self.setPort(id, port) })
+            case .setWebPorts(let http, let https):
+                return .done(message: try await serialWeb { try await self.setWebPorts(http: http, https: https) })
             case .available:
                 return .available(try await manifest().packages)
             case .installed:
@@ -1140,14 +1142,7 @@ public actor NexusEngine {
     }
 
     private func setPort(_ id: String, _ port: Int) async throws -> String {
-        guard (1...65535).contains(port) else {
-            throw RuntimeError.unsupported("\(port) is not a valid port.")
-        }
-
-        let state = await stateStore.current()
-        if let other = state.ports.first(where: { $0.key != id && $0.value == port })?.key {
-            throw RuntimeError.unsupported("Port \(port) belongs to \(other) already.")
-        }
+        try checkPort(port, for: [id], in: await stateStore.current())
 
         let names = await portNames()
         guard names.contains(id) else {
@@ -1186,6 +1181,37 @@ public actor NexusEngine {
         }
 
         return "\(id) uses port \(port)."
+    }
+
+    // Both ports change with one restart of nginx, so nginx never runs with only one of them.
+    private func setWebPorts(http: Int, https: Int) async throws -> String {
+        guard http != https else {
+            throw RuntimeError.unsupported("HTTP and HTTPS need two different ports.")
+        }
+
+        let ports = [ServiceCatalog.httpPortKey: http, ServiceCatalog.httpsPortKey: https]
+        let state = await stateStore.current()
+
+        for port in [http, https] {
+            try checkPort(port, for: Set(ports.keys), in: state)
+        }
+
+        guard await portNames().contains(ServiceCatalog.httpPortKey) else {
+            throw RuntimeError.unsupported("nginx is not installed. Run: nexus install nginx 1.30")
+        }
+
+        try await setNginxPorts(ports)
+        return "nginx uses port \(http) for HTTP and \(https) for HTTPS."
+    }
+
+    private func checkPort(_ port: Int, for keys: Set<String>, in state: EngineState) throws {
+        guard (1...65535).contains(port) else {
+            throw RuntimeError.unsupported("\(port) is not a valid port.")
+        }
+
+        if let other = state.ports.first(where: { !keys.contains($0.key) && $0.value == port })?.key {
+            throw RuntimeError.unsupported("Port \(port) belongs to \(other) already.")
+        }
     }
 
     // The names that nexus port accepts: dns and the port keys of the installed services.

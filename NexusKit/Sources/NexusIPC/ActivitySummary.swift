@@ -7,6 +7,7 @@ extension NexusRequest {
         case .stop(let service): "stop \(service)"
         case .restart(let service): "restart \(service)"
         case .setPort(let service, let port): "setPort \(service) \(port)"
+        case .setWebPorts(let http, let https): "setWebPorts \(http) \(https)"
         case .install(let name, let line): "install \(name) \(line)"
         case .remove(let name, let line): "remove \(name) \(line)"
         case .removeSite(let host): "removeSite \(host)"

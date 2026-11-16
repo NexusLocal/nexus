@@ -22,11 +22,7 @@ public struct PortOwner: Codable, Sendable, Equatable {
 
     // These apps start their servers again. So only the app itself can stop them.
     public var managerBundleIdentifier: String? {
-        switch application {
-        case "MAMP PRO": "de.appsolute.mamppro"
-        case "Herd": "de.beyondco.herd"
-        default: nil
-        }
+        OtherWebServers.managerBundleIdentifier(of: application)
     }
 
     public var canStop: Bool {

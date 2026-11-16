@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct OverviewScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(BackgroundServices.self) private var background
+    @State private var webPortsMoved: DoneMessage?
 
     var body: some View {
         ScrollView {
@@ -51,6 +52,18 @@ struct OverviewScreen: View {
 
                 ForEach(model.blockedServices, id: \.service.id) { blocked in
                     ProblemBanner(service: blocked.service, holder: blocked.holder)
+                }
+
+                let webServerNames = model.webServerNoticeNames
+
+                if let webPortsMoved {
+                    DoneBanner(title: webPortsMoved.title, message: webPortsMoved.message) {
+                        self.webPortsMoved = nil
+                    }
+                } else if !webServerNames.isEmpty {
+                    OtherWebServersNotice(names: webServerNames) {
+                        webPortsMoved = await model.moveWebPortsForOtherApps()
+                    }
                 }
 
                 if model.agents.showsNotice, AppPreference.isOn(AppPreference.firstRunDone) {
@@ -121,39 +134,63 @@ private struct AgentsNotice: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "sparkles")
-                .font(.title3)
-                .foregroundStyle(Color.accentText)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Let your coding agent use Nexus")
-                    .fontWeight(.semibold)
-                Text("Claude Code, Codex, Cursor and other agents can then see the URL, database, logs and mail of each project.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 12)
-
+        NoticeBanner(systemImage: "sparkles", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: "Let your coding agent use Nexus") {
+            Text("Claude Code, Codex, Cursor and other agents can then see the URL, database, logs and mail of each project.")
+        } actions: {
             Button("Set up…") {
                 model.agents.hideNotice()
                 model.selection = .agents
             }
 
-            Button {
+            HideNoticeButton {
                 model.agents.hideNotice()
-            } label: {
-                Image(systemName: "xmark")
-                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderless)
-            .help("Hide this notice")
-            .accessibilityLabel("Hide this notice")
         }
-        .padding(12)
-        .background(Color.accentSoft, in: .rect(cornerRadius: 10))
+    }
+}
+
+private struct OtherWebServersNotice: View {
+    @Environment(AppModel.self) private var model
+    @State private var moving = false
+    let names: [String]
+    let move: () async -> Void
+
+    var body: some View {
+        NoticeBanner(systemImage: "info.circle", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: OtherWebServers.noticeTitle(names)) {
+            Text(OtherWebServers.noticeMessage(names))
+        } actions: {
+            Button(OtherWebServers.moveButtonTitle) {
+                moving = true
+                Task {
+                    await move()
+                    moving = false
+                }
+            }
+            .disabled(moving)
+
+            Button("Stop all services") {
+                model.stopAllServices()
+            }
+            .disabled(moving)
+
+            HideNoticeButton {
+                model.hideWebServerNotice()
+            }
+        }
+    }
+}
+
+private struct HideNoticeButton: View {
+    let hide: () -> Void
+
+    var body: some View {
+        Button(action: hide) {
+            Image(systemName: "xmark")
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.borderless)
+        .help("Hide this notice")
+        .accessibilityLabel("Hide this notice")
     }
 }
 
