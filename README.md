@@ -32,7 +32,12 @@
   and mail. Choose the versions that you need.
 - 🌳 **A workspace for each branch.** Each branch gets its own database server, domain, Redis indexes
   and workers. It starts with a copy of your data, an empty database or your own dump file. So
-  several Claude Code sessions can work at the same time.
+  several Claude Code sessions can work at the same time. A workspace that nobody uses stops by
+  itself.
+- 🤖 **Made for coding agents.** Claude Code and Codex use Nexus through its MCP server. They read
+  the errors, the dumps and the mail of your sites. You decide what an agent can do.
+- 🐞 **See what your code does.** Each `dump()`, query, log line and queue job of a request in one
+  place. Xdebug runs only when you debug.
 - 🧱 **WordPress, done right.** Bedrock, multisite on subdomains and WP-CLI. Change the URLs in one
   click. Changed your mind? Undo it.
 - 📥 **Import a WordPress backup.** From Local, Studio, Jetpack or All-in-One WP Migration.
@@ -69,6 +74,14 @@ Each workspace gets:
 A new worktree is ready within seconds, also with a large database. When you remove the worktree,
 Nexus removes the workspace. By default it keeps a dump of its databases in the trash for 7 days.
 
+- **Idle workspaces stop.** A workspace without activity stops after 1 hour. The next page, command
+  or database connection starts it again. Settings > Workspaces sets the time.
+- **Dev servers on demand.** Vite and the app of a Node.js site start with the first page. They stop
+  when no page needs them.
+- **Old workspaces go.** The Site screen names the workspaces without activity for some days.
+  Review… shows what git knows about each one, for example merged or not pushed. You choose which
+  ones go. Nexus never removes a workspace by itself.
+
 <details>
 <summary><b>How a workspace works</b></summary>
 
@@ -104,6 +117,36 @@ nexus site edit shop.test --workspace-key SCOUT_PORT={port:scout}
 ```
 
 </details>
+
+## 🤖 Made for coding agents
+
+Nexus has an MCP server for Claude Code, Codex and other coding agents. The Agents screen under Tools
+turns it on for each agent that Nexus finds. An agent then works with your sites as you do:
+
+- **Errors first.** When a page fails, the agent reads the newest errors of the site.
+- **Mail from start to end.** The agent fills in a sign-up form, waits for the mail and opens the link
+  in it. No mail leaves your Mac.
+- **Workspaces.** In a git worktree the agent uses the URL and the database of that workspace.
+- **Dumps.** The agent reads the dumps, the queries and the log lines of a request.
+- **You decide.** An agent can only look, look and set up, or also remove. No agent can delete a
+  database or your files.
+- **Safe tests.** When the tests of a Laravel site use your development database, Nexus warns you
+  and the agent. "Choose test database…" on the Site screen makes a separate one.
+
+## 🐞 Dumps, queries and Xdebug
+
+The Dumps screen under Tools shows each `dump()` and `dd()` of your PHP sites. With each request it
+shows the queries, the log lines and the queue jobs. Nexus marks a slow query, a duplicate query and
+an N+1 query. A click on a file opens your code editor at that line.
+
+- **Off by default.** Turn on the Catch switches on the Dumps screen. Until then PHP runs your sites
+  without the dump viewer.
+- **API answers stay valid.** A page in your browser shows each dump. An API answer or an update of
+  Livewire, Inertia, htmx or Turbo stays clean.
+- **In the terminal and the browser.** `nexus dumps --follow` shows each new dump. `nexus dumps open`
+  opens a web page with the same list.
+- **Xdebug only when you debug.** Only a request that starts a debug session uses Xdebug. So your
+  normal pages stay fast. `nexus debug artisan my:command` runs one command with Xdebug.
 
 ## 🧱 WordPress, done right
 
@@ -176,6 +219,12 @@ nexus site add . --php 8.4
 
 The site opens on `https://shop.test`. To make each folder in `~/Sites` a site, run `nexus park ~/Sites`.
 
+When the `.env` of a Laravel site points to another server on your Mac, the Site screen says so.
+"Use Nexus…" shows each key with its old and its new value. Nexus can copy your data first.
+
+Each PHP site can have its own nginx or Apache lines, for example `client_max_body_size 100m;`. Write
+them on the Site screen or with `nexus site lines`. Nexus checks them before it uses them.
+
 ## Bring a database
 
 Open a database service in the app and choose Import database. Copy a database from another server,
@@ -192,17 +241,21 @@ new instance is `root` without a password.
 
 ## Command line
 
-Turn on Add Nexus to PATH in the settings of Nexus. Then you can use the `nexus` command in your
-terminal. Run `nexus --help` for all commands, or open the Command line page in the app.
+Turn on Add Nexus to PATH on the Command line screen of Nexus. Then you can use the `nexus` command in
+your terminal. Run `nexus --help` for all commands, or see the Command line screen.
 
 ```sh
 nexus status                  # the services and their state
 nexus site list               # the sites
 nexus workspace list          # the workspaces
 nexus workspace info --json   # the URL, the databases and the ports of a workspace
+nexus workspace list --old    # the workspaces without activity for some days
 nexus php -v                  # the PHP of the site in this folder
 nexus composer install        # Composer with that PHP
 nexus wp plugin list          # WP-CLI with that PHP
+nexus errors                  # the newest errors of the site in this folder
+nexus dumps --follow          # each new dump of your sites
+nexus debug artisan my:task   # one command with Xdebug
 ```
 
 ## Feedback
