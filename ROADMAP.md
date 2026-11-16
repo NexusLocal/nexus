@@ -7,23 +7,17 @@ needs research and a plan before the work starts.
 
 In this order:
 
-1. **More for workspaces:**
-   - a dev server that starts when you open the site and stops when nobody uses it;
-   - stop idle workspaces, if you want: their database server and workers stop until the next
-     request;
-   - a list of old workspaces, with a button to remove them;
-   - a button on the Site screen that removes one workspace, next to "Open".
-2. **Share a site through a tunnel.** A local site gets a public link, for example for a client or
+1. **Share a site through a tunnel.** A local site gets a public link, for example for a client or
    for a webhook.
-3. **Packages:**
+2. **Packages:**
    - **PHP 8.6**, after its release.
    - **More PHP extensions:** `gmp` and `memcached`, in each PHP version where they build and
      load.
    - **PostgreSQL extensions:** pgvector, PostGIS and pgRouting.
-4. **MongoDB.** A database service with versions, as MySQL, MariaDB and PostgreSQL have. Each PHP
+3. **MongoDB.** A database service with versions, as MySQL, MariaDB and PostgreSQL have. Each PHP
    version gets the `mongodb` extension.
-5. **Valkey.** The fork of Redis with the BSD license, as a service next to Redis.
-6. **A log viewer** for the logs of your apps.
+4. **Valkey.** The fork of Redis with the BSD license, as a service next to Redis.
+5. **A log viewer** for the logs of your apps.
 
 ## Later
 
@@ -31,6 +25,9 @@ In this order:
 
 ## Done recently
 
+- **0.6.0:** workspaces that stop when nobody uses them and start again with the next page,
+  command or database connection, dev servers that start with the first page, a list of old
+  workspaces with one step to remove them, and "Remove Workspace…" for one workspace.
 - **0.5.0:** the queries, the log lines and the queue jobs of each request in the dump viewer,
   notifications that open the right place, Xdebug only for debug requests and `nexus debug`, "Use
   Nexus…" for the `.env` of a project that you add, your own nginx and Apache lines for each site,
