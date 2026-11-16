@@ -233,10 +233,16 @@ final class AppModel {
             }
         }
     }
+    var waitsForNewNexusd: Bool {
+        versionCheck.waitsForNewNexusd
+    }
+    var restartsForNewBuild: Bool {
+        versionCheck.restartRuns
+    }
     @ObservationIgnored private var pendingStarts: Set<String> = []
     // Read once at the launch. A later read could see the nexusd file of a newer build.
     private static let appIdentity = NexusVersion.identity()
-    @ObservationIgnored private var versionCheck = NexusdVersionCheck(appBuild: appIdentity, lastRestartBuild: UserDefaults.standard.string(forKey: AppPreference.nexusdRestartBuild))
+    private var versionCheck = NexusdVersionCheck(appBuild: appIdentity, lastRestartBuild: UserDefaults.standard.string(forKey: AppPreference.nexusdRestartBuild))
     // Grows after each change to a WordPress site. The Mail section then checks the site again.
     var wordPressChanges = 0
     // The message whose details a window shows (owner, 2026-11-07).
@@ -690,24 +696,16 @@ final class AppModel {
 
     // launchd starts nexusd again from the app, so it gets the version of the app. The event feed
     // then connects again. The services stop and start with nexusd.
-    func restartNexusd(from place: ActionPlace) {
-        let process = Process()
-        process.executableURL = URL(filePath: "/bin/launchctl")
-        process.arguments = ["kickstart", "-k", "gui/\(getuid())/\(NexusIdentifiers.daemon)"]
-        process.terminationHandler = { [weak self] process in
-            guard process.terminationStatus != 0 else {
-                return
-            }
-
-            Task { @MainActor in
-                self?.failure = ActionFailure(title: "Nexus did not start its background service again", message: "launchctl could not restart nexusd.", place: place)
-            }
-        }
+    @discardableResult
+    func restartNexusd(from place: ActionPlace) async -> Bool {
+        let kickstart = Command(executable: URL(filePath: "/bin/launchctl"), arguments: ["kickstart", "-k", "gui/\(getuid())/\(NexusIdentifiers.daemon)"])
 
         do {
-            try process.run()
+            try await CommandRunner.run(kickstart)
+            return true
         } catch {
             failure = ActionFailure(title: "Nexus did not start its background service again", message: ErrorText.plain(error), place: place)
+            return false
         }
     }
 
@@ -883,6 +881,11 @@ final class AppModel {
             return nil
         }
 
+        if waitsForNewNexusd, !request.isSafeForAnOlderNexusd {
+            ActivityTracker.log.write("request", "\(request.activitySummary) waits for the new nexusd")
+            return .failure(Self.waitsForNewNexusdText)
+        }
+
         do {
             switch try await client.send(request) {
             case .failure(let message), .toolNotInstalled(let message):
@@ -896,6 +899,35 @@ final class AppModel {
             ActivityTracker.log.write("request", "\(request.activitySummary) did not reach nexusd: \(error)")
             return .failure(ErrorText.plain(error))
         }
+    }
+
+    private static let newNexusdText = "Nexus starts version \(NexusVersion.current()) when its current work ends."
+    static let newNexusdBannerText = "\(newNexusdText) Until then you can start and stop services and workspaces, but you cannot make other changes."
+    static let waitsForNewNexusdText = "\(newNexusdText) Until then nexusd cannot take this change. Try again then, or click Restart Now on the Overview."
+
+    func restartForNewBuild(from place: ActionPlace) {
+        guard versionCheck.beginRestart() else {
+            return
+        }
+
+        runRestartForNewBuild(from: place)
+    }
+
+    // The next launch knows the restart only when launchctl did it.
+    private func runRestartForNewBuild(from place: ActionPlace) {
+        Task {
+            guard await restartNexusd(from: place) else {
+                versionCheck.restartFailed()
+                return
+            }
+
+            UserDefaults.standard.set(Self.appIdentity, forKey: AppPreference.nexusdRestartBuild)
+        }
+    }
+
+    // --waits-for-nexusd: a nexusd of an older build that starts the build of the app after its work.
+    func showNexusdUpdateForCheck() {
+        versionCheck.received(build: "0", updateBuild: Self.appIdentity)
     }
 
     // The answer and the event of nexusd can arrive in either order. After a success the switch
@@ -1009,8 +1041,7 @@ final class AppModel {
             return
         }
 
-        UserDefaults.standard.set(Self.appIdentity, forKey: AppPreference.nexusdRestartBuild)
-        restartNexusd(from: .window)
+        runRestartForNewBuild(from: .window)
     }
 
     // Groups first, then the sites outside a group, then the folders of projects (D58). nexusd

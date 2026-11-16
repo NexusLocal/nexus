@@ -464,7 +464,7 @@ struct WebConfigTests {
         let support = URL(filePath: "/Users/tim/Library/Application Support/Nexus", directoryHint: .isDirectory)
 
         let stub = try PHPConfig.dumpStub(
-            settings: DumpSettings(),
+            settings: Self.dumpSettings(page: .automatic),
             socket: support.appending(path: "run/dumps.sock"),
             folder: support.appending(path: "run/dumps", directoryHint: .isDirectory),
             library: support.appending(path: "php/dumps/4f1c9a0e", directoryHint: .isDirectory),
@@ -530,9 +530,7 @@ struct WebConfigTests {
     }
 
     private static func dumpSettings(page: DumpPageMode) -> DumpSettings {
-        var settings = DumpSettings()
-        settings.pageMode = page
-        return settings
+        DumpSettings(catchDumps: true, catchLogs: true, pageMode: page)
     }
 
     @Test func theIniOfACommandNamesTheStub() throws {

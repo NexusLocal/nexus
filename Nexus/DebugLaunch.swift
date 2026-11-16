@@ -8,12 +8,13 @@ import NexusCore
 // start at a template: --sheet new-site --template wordpress. --alert update-ready shows the window
 // of an update that is ready to install. --agents-notice shows the notice of the coding agents on
 // the Overview. --notification '<userInfo as JSON>' opens the screen of a click on a notification.
-// --sheet old-workspaces --site shop.test opens the sheet of the old workspaces. The services of
-// the sample data, such as the port problem of --sheet port, need --sample.
+// --sheet old-workspaces --site shop.test opens the sheet of the old workspaces. --waits-for-nexusd
+// with --sample shows the banner of a nexusd that still runs an older build. The services of the
+// sample data, such as the port problem of --sheet port, need --sample.
 enum DebugLaunch {
     // A check of the look does not get the first run on top of the screen that it checks.
     static var checksTheLook: Bool {
-        ["--sample", "--screen", "--sheet", "--settings", "--appearance", "--version", "--alert", "--agents-notice", "--notification"].contains(where: CommandLine.arguments.contains)
+        ["--sample", "--screen", "--sheet", "--settings", "--appearance", "--version", "--alert", "--agents-notice", "--notification", "--waits-for-nexusd"].contains(where: CommandLine.arguments.contains)
     }
 
     // --background keeps the app behind the other apps, for a check while the user works on this
@@ -36,6 +37,10 @@ enum DebugLaunch {
 
         if let screen = value(of: "--screen") {
             model.selection = selection(screen)
+        }
+
+        if CommandLine.arguments.contains("--waits-for-nexusd") {
+            model.showNexusdUpdateForCheck()
         }
 
         if CommandLine.arguments.contains("--agents-notice") {

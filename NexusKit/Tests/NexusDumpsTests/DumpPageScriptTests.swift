@@ -204,8 +204,8 @@ struct DumpPageScriptTests {
     }
 
     @Test(arguments: [
-        DumpSettings(),
-        DumpSettings(catchDumps: false, pageMode: .automatic, commands: true),
+        DumpSettings(catchDumps: true, catchLogs: true),
+        DumpSettings(catchDumps: false, catchLogs: true, pageMode: .automatic, commands: true),
         DumpSettings(catchDumps: false, catchQueries: true, catchLogs: false, catchJobs: false, pageMode: .automatic, commands: true),
         DumpSettings(catchDumps: false, catchQueries: false, catchLogs: false, catchJobs: true, pageMode: .automatic, commands: true),
         DumpSettings(catchDumps: false, catchQueries: false, catchLogs: false, catchJobs: false, pageMode: .automatic, commands: true),

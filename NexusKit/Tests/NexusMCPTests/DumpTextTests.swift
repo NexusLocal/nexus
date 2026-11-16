@@ -102,13 +102,13 @@ struct DumpTextTests {
         let fix = DumpBlock(host: "fix.shop.test", reason: .varDumperFormat, place: DumpPlace(site: "shop.test", workspace: "fix"))
         let list = DumpList(
             requests: [],
-            settings: DumpSettings(catchDumps: false, pageMode: .automatic, commands: true),
+            settings: DumpSettings(catchLogs: true),
             blocked: [blog, shop, fix],
             receiving: true,
             problem: "Nexus catches no dumps, because nexusd cannot listen on its socket.\nThe second line."
         )
 
-        let catching = DumpList(requests: [], settings: DumpSettings(), blocked: [blog, shop, fix], receiving: true)
+        let catching = DumpList(requests: [], settings: DumpSettings(catchDumps: true, catchLogs: true),blocked: [blog, shop, fix], receiving: true)
 
         #expect(DumpText.notes(of: list.state, place: DumpPlace(site: "shop.test")) == [
             "Catch dumps is off. So Nexus catches no new dumps. Turn it on with: nexus dumps settings --catch-dumps on",
@@ -123,7 +123,7 @@ struct DumpTextTests {
     }
 
     @Test func aListThatCatchesHasNoNotes() {
-        let list = DumpList(requests: [Self.request("r1")], settings: DumpSettings(), receiving: true)
+        let list = DumpList(requests: [Self.request("r1")], settings: DumpSettings(catchDumps: true, catchLogs: true),receiving: true)
 
         #expect(DumpText.notes(of: list.state, place: nil).isEmpty)
     }
@@ -238,7 +238,7 @@ struct DumpTextTests {
     @Test func aBlockForSaveQueriesNamesItsFile() {
         let block = DumpBlock(host: "blog.test", reason: .savequeries, file: "/w/blog/wp-config.php", place: DumpPlace(site: "blog.test"))
         let list = DumpList(requests: [], settings: DumpSettings(catchDumps: true, catchQueries: true, pageMode: .automatic, commands: true), blocked: [block], receiving: true)
-        let withoutQueries = DumpList(requests: [], settings: DumpSettings(), blocked: [block], receiving: true)
+        let withoutQueries = DumpList(requests: [], settings: DumpSettings(catchDumps: true, catchLogs: true),blocked: [block], receiving: true)
 
         #expect(DumpText.notes(of: list.state, place: nil) == ["Warning: \(block.title). \(block.message)"])
         #expect(DumpText.notes(of: withoutQueries.state, place: nil).isEmpty)

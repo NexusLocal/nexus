@@ -38,7 +38,7 @@ private actor FakeNexus: NexusConnecting {
         case .dumpPlace(let host):
             return .dumpPlace(place: DumpPlace(site: host), host: host)
         case .dumpList(let place):
-            return .dumpList(DumpList(requests: caught.filter { place.includes($0.place) }, settings: DumpSettings(), receiving: true))
+            return .dumpList(DumpList(requests: caught.filter { place.includes($0.place) }, settings: DumpSettings(catchDumps: true, catchLogs: true), receiving: true))
         case .requestDumps(let id, _):
             return .caughtDumps(entries.filter { $0.requestID == id })
         default:

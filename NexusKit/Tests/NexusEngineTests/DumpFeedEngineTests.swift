@@ -144,7 +144,7 @@ extension NexusEngineTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let logFile = root.appending(path: "activity.log")
         let activity = ActivityLog(file: logFile, source: "nexusd")
-        let engine = try makeSiteEngine(root: root, activity: activity)
+        let engine = try makeSiteEngine(root: root, state: Self.catchingDumpsAndLogs, activity: activity)
 
         try await whileRunning(engine) {
             await engine.startEnabledServices()
@@ -612,7 +612,7 @@ extension NexusEngineTests {
         let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let engine = try makeSiteEngine(root: root, runtimes: [("php", "8.5")])
-        let settings = DumpSettings(catchDumps: true, pageMode: .never, commands: true)
+        let settings = DumpSettings(catchDumps: true, catchLogs: true, pageMode: .never, commands: true)
 
         try await whileRunning(engine) {
             let events = await dumpEvents(of: engine)
@@ -775,7 +775,7 @@ extension NexusEngineTests {
         let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let (engine, _, _) = try twoSiteEngine(in: root)
-        let settings = DumpSettings(catchDumps: false, pageMode: .always, commands: false)
+        let settings = DumpSettings(catchDumps: false, catchLogs: true, pageMode: .always, commands: false)
 
         try await whileRunning(engine) {
             await engine.startDumpReceiver()
@@ -862,7 +862,7 @@ extension NexusEngineTests {
         let library = root.appending(path: "library", directoryHint: .isDirectory)
         try FileManager.default.copyItem(at: repository.appending(path: "NexusPHP/dumps", directoryHint: .isDirectory), to: library)
         try Data("0123456789ab\n".utf8).write(to: library.appending(path: NexusEngine.dumpLibraryHashFile))
-        var state = EngineState()
+        var state = Self.catchingDumpsAndLogs
         state.sites = [Site(host: "shop.test", folder: shop, php: "8.5")]
         let engine = try makeSiteEngine(root: root, state: state, runtimes: [("php", "8.5")], dumpLibrarySource: library)
 

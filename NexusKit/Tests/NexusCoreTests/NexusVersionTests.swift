@@ -3,6 +3,25 @@ import Testing
 @testable import NexusCore
 
 struct NexusVersionTests {
+    @Test(arguments: [
+        ("11", "12", true),
+        ("12", "12", false),
+        ("12", "11", false),
+        ("9", "10", true),
+        ("1+100", "1+200", true),
+        ("1+300", "1+200", false),
+        ("12", "12+100", true),
+        ("old", "12", true),
+        ("unknown", "unknown", false),
+    ])
+    func anIdentityIsOlderOnlyWhenItsNumbersComeFirst(identity: String, other: String, older: Bool) {
+        #expect(NexusVersion.isOlder(identity, than: other) == older)
+    }
+
+    @Test func anIdentityWithoutABuildIsOlder() {
+        #expect(NexusVersion.isOlder(nil, than: "12"))
+    }
+
     @Test func aDebugBuildAddsTheTimeOfItsNexusdFileToTheBuild() throws {
         let app = FileManager.default.temporaryDirectory.appending(path: "nexus-version-\(UUID().uuidString)/Nexus.app", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: app.deletingLastPathComponent()) }

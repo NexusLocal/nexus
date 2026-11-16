@@ -28,19 +28,17 @@ public enum DumpPageMode: String, Codable, Sendable, CaseIterable {
 }
 
 // The settings of the dump viewer. The limits of the dump store have no setting. So the store keeps
-// them. The defaults are the answer of the owner of 2026-11-13: dumps and log lines on, queries
-// and queue jobs off. commands applies to all four kinds.
+// them. All four kinds are off by default since 0.6.1 (owner, 2026-11-16). commands applies to all
+// four kinds.
 public struct DumpSettings: Codable, Sendable, Equatable {
-    public var catchDumps = true
+    public var catchDumps = false
     public var catchQueries = false
-    public var catchLogs = true
+    public var catchLogs = false
     public var catchJobs = false
     public var pageMode = DumpPageMode.automatic
     public var commands = true
 
-    public init() {}
-
-    public init(catchDumps: Bool, catchQueries: Bool = false, catchLogs: Bool = true, catchJobs: Bool = false, pageMode: DumpPageMode, commands: Bool) {
+    public init(catchDumps: Bool = false, catchQueries: Bool = false, catchLogs: Bool = false, catchJobs: Bool = false, pageMode: DumpPageMode = .automatic, commands: Bool = true) {
         self.catchDumps = catchDumps
         self.catchQueries = catchQueries
         self.catchLogs = catchLogs

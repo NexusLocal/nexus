@@ -11,7 +11,7 @@ struct DumpListTests {
             DumpedRequest(id: "65f1c2a9e3b1", kind: .http, method: "GET", target: "/checkout", url: "https://shop.test/checkout", host: "shop.test", site: "shop.test", started: started, status: 200, duration: 0.184, dumpCount: 3, hasDD: true),
             DumpedRequest(id: "a1b2c3", kind: .command, target: "php artisan import:products", site: "shop.test", started: started, exitCode: 0, duration: 3.2, dumpCount: 4),
         ],
-        settings: DumpSettings(catchDumps: true, pageMode: .always, commands: false),
+        settings: DumpSettings(catchDumps: true, catchLogs: true, pageMode: .always, commands: false),
         blocked: [DumpBlock(host: "blog.test", reason: .userIni, file: "/Users/x/Sites/blog/.user.ini")],
         receiving: true,
         problem: "nexusd cannot open its dump socket.",
@@ -35,7 +35,7 @@ struct DumpListTests {
     @Test func aListWithNoDefaultValueKeepsEachField() throws {
         let list = DumpList(
             requests: Self.list.requests,
-            settings: DumpSettings(catchDumps: false, pageMode: .never, commands: false),
+            settings: DumpSettings(catchDumps: false, catchLogs: true, pageMode: .never, commands: false),
             blocked: Self.list.blocked,
             receiving: true,
             problem: "A problem.",
@@ -73,7 +73,7 @@ struct DumpListTests {
             .removeCaughtDump(number: 12),
             .removeDumpedRequest(id: "65f1c2a9e3b1"),
             .openCaughtDumpFile(number: 12),
-            .setDumpSettings(DumpSettings(catchDumps: false, pageMode: .never, commands: false)),
+            .setDumpSettings(DumpSettings(catchDumps: false, catchLogs: true, pageMode: .never, commands: false)),
             .newDumps(place: nil, after: Self.cursor),
             .newDumps(place: DumpPlace(site: "shop.test", workspace: "fix"), after: Self.cursor),
             .lastDumps(place: DumpPlace(site: "shop.test"), limit: 20, through: Self.cursor),
@@ -113,7 +113,7 @@ struct DumpListTests {
             .dumpBatch(DumpBatch(dumps: [dump], requests: [Self.list.requests[0]], cursor: Self.cursor)),
             .dumpBatch(DumpBatch(dumps: [dump], requests: [Self.list.requests[0]], cursor: Self.cursor, olderCounts: ["65f1c2a9e3b1": 480])),
             .dumpPlace(place: DumpPlace(site: "shop.test", workspace: "fix"), host: "fix.shop.test"),
-            .dumpState(DumpState(settings: DumpSettings(catchDumps: false, pageMode: .never, commands: false), blocked: Self.list.blocked, receiving: true, problem: "A problem.", loaded: false)),
+            .dumpState(DumpState(settings: DumpSettings(catchDumps: false, catchLogs: true, pageMode: .never, commands: false), blocked: Self.list.blocked, receiving: true, problem: "A problem.", loaded: false)),
         ]
 
         for response in responses {

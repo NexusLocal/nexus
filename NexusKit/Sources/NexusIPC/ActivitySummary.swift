@@ -60,7 +60,8 @@ extension NexusRequest {
         return (host, name)
     }
 
-    // nexusd answers these questions many times a minute. They only matter when they fail.
+    // nexusd answers these questions many times a minute. They only matter when they fail. They
+    // also reach an older nexusd while the app waits for the new one (isSafeForAnOlderNexusd).
     public var onlyReads: Bool {
         switch self {
         case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules,

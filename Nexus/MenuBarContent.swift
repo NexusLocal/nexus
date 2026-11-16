@@ -51,8 +51,9 @@ struct MenuBarContent: View {
             case .otherVersion(let problem):
                 Notice(text: "Nexus cannot read its background service", detail: problem) {
                     Button("Start again") {
-                        model.restartNexusd(from: .menuBar)
+                        Task { await model.restartNexusd(from: .menuBar) }
                     }
+                    .disabled(model.restartsForNewBuild)
                 }
             case nil:
                 EmptyView()

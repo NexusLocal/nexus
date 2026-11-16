@@ -23,11 +23,22 @@ struct OverviewScreen: View {
                 case .otherVersion(let problem):
                     WarningBanner(title: "Nexus cannot read its background service", message: problem) {
                         Button("Start it again") {
-                            model.restartNexusd(from: .window)
+                            Task { await model.restartNexusd(from: .window) }
                         }
+                        .disabled(model.restartsForNewBuild)
                     }
                 case nil:
                     EmptyView()
+                }
+
+                if model.waitsForNewNexusd {
+                    InfoBanner(text: AppModel.newNexusdBannerText) {
+                        Button("Restart Now") {
+                            model.restartForNewBuild(from: .window)
+                        }
+                        .disabled(model.restartsForNewBuild)
+                        .help("Starts the new version now. This stops the current work, for example an import or the setup of a workspace.")
+                    }
                 }
 
                 if let approval = background.approvalNeeded {

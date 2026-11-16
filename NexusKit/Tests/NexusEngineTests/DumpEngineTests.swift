@@ -7,7 +7,8 @@ import Testing
 @testable import NexusEngine
 
 extension NexusEngineTests {
-    private static let catchingNothing = DumpSettings(catchDumps: false, catchQueries: false, catchLogs: false, catchJobs: false, pageMode: .automatic, commands: true)
+    private static let catchingNothing = DumpSettings()
+    private static let catchingDumpsAndLogSettings = DumpSettings(catchDumps: true, catchLogs: true)
 
     private func fakeDumpLibrary(in root: URL, hash: String) throws -> URL {
         let library = root.appending(path: "Nexus.app/Contents/Resources/php/dumps", directoryHint: .isDirectory)
@@ -27,7 +28,13 @@ extension NexusEngineTests {
         return library
     }
 
-    private func makeDumpEngine(root: URL, lines: [String] = ["8.5"], state: EngineState = EngineState(), hash: String = "0123456789ab") throws -> NexusEngine {
+    static var catchingDumpsAndLogs: EngineState {
+        var state = EngineState()
+        state.dumpSettings = catchingDumpsAndLogSettings
+        return state
+    }
+
+    private func makeDumpEngine(root: URL, lines: [String] = ["8.5"], state: EngineState = catchingDumpsAndLogs, hash: String = "0123456789ab") throws -> NexusEngine {
         try makeSiteEngine(root: root, state: state, runtimes: lines.map { ("php", $0) }, dumpLibrarySource: try fakeDumpLibrary(in: root, hash: hash))
     }
 
@@ -166,7 +173,7 @@ extension NexusEngineTests {
     @Test func withCommandsOffOnlyThePoolNamesTheStub() async throws {
         let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        var state = EngineState()
+        var state = Self.catchingDumpsAndLogs
         state.dumpSettings.commands = false
         let engine = try makeDumpEngine(root: root, state: state)
         let folder = await engine.paths.phpConfigFolder(line: "8.5")
@@ -314,7 +321,7 @@ extension NexusEngineTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = root.appending(path: "shop", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: shop.appending(path: "public"), withIntermediateDirectories: true)
-        var state = EngineState()
+        var state = Self.catchingDumpsAndLogs
         state.sites = [Site(host: "shop.test", folder: shop, php: "8.5")]
         let engine = try makeDumpEngine(root: root, lines: ["8.4", "8.5"], state: state)
         let paths = await engine.paths
@@ -355,7 +362,7 @@ extension NexusEngineTests {
         let engine = try makeSiteEngine(root: root, runtimes: [("php", "8.5")])
 
         try await whileRunning(engine) {
-            let on = try await engine.serialWeb { try await engine.setDumpSettings(DumpSettings()) }
+            let on = try await engine.serialWeb { try await engine.setDumpSettings(Self.catchingDumpsAndLogSettings) }
             let off = try await engine.serialWeb { try await engine.setDumpSettings(Self.catchingNothing) }
             await engine.syncBackgroundProcesses().value
 
@@ -416,7 +423,7 @@ extension NexusEngineTests {
         let paths = await engine.paths
 
         try await whileRunning(engine) {
-            let message = try await engine.serialWeb { try await engine.setDumpSettings(DumpSettings(catchDumps: true, pageMode: .always, commands: true)) }
+            let message = try await engine.serialWeb { try await engine.setDumpSettings(DumpSettings(catchDumps: true, catchLogs: true, pageMode: .always, commands: true)) }
             await engine.syncBackgroundProcesses().value
 
             #expect(message == "The settings of the dump viewer are changed.")
@@ -433,7 +440,7 @@ extension NexusEngineTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = root.appending(path: "shop", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: shop, withIntermediateDirectories: true)
-        var state = EngineState()
+        var state = Self.catchingDumpsAndLogs
         state.sites = [Site(host: "shop.test", folder: shop, php: "8.5")]
         let engine = try makeSiteEngine(root: root, state: state, runtimes: [("php", "8.5"), ("composer", "2")], dumpLibrarySource: try fakeDumpLibrary(in: root, hash: "0123456789ab"))
         let dumps = await engine.paths.phpConfigFolder(line: "8.5").appending(path: "dumps.d").path(percentEncoded: false)
@@ -444,7 +451,7 @@ extension NexusEngineTests {
             let setup = try await engine.toolCommand(.php, folder: shop.path(percentEncoded: false), inSetup: true)
             let backgroundEnvironment = await engine.environment(of: php)
             let setupEnvironment = await engine.environment(of: setup)
-            _ = try await engine.setDumpSettings(DumpSettings(catchDumps: true, pageMode: .automatic, commands: false))
+            _ = try await engine.setDumpSettings(DumpSettings(catchDumps: true, catchLogs: true, pageMode: .automatic, commands: false))
             let withoutCommands = try await toolCommand(engine, .php, in: shop)
             await engine.syncBackgroundProcesses().value
 

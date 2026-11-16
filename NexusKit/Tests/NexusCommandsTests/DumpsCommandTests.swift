@@ -47,7 +47,7 @@ struct DumpsCommandTests {
         CaughtDump(requestID: request, seq: seq, time: started, text: text ?? "\(request) \(seq)")
     }
 
-    private static func list(_ requests: [DumpedRequest], cursor: DumpCursor? = cursor(0), settings: DumpSettings = DumpSettings(), blocked: [DumpBlock] = []) -> DumpList {
+    private static func list(_ requests: [DumpedRequest], cursor: DumpCursor? = cursor(0), settings: DumpSettings = DumpSettings(catchDumps: true, catchLogs: true), blocked: [DumpBlock] = []) -> DumpList {
         DumpList(requests: requests, settings: settings, blocked: blocked, receiving: true, cursor: cursor, loaded: cursor != nil)
     }
 
@@ -727,7 +727,7 @@ struct DumpsCommandTests {
         let nexusd = FakeNexusd()
         nexusd.headers = ["page": Self.request("page")]
         nexusd.dumps = [(1, Self.dump(1, of: "page"))]
-        let list = Self.list([Self.request("page")], cursor: Self.cursor(1), settings: DumpSettings(catchDumps: false, pageMode: .automatic, commands: true))
+        let list = Self.list([Self.request("page")], cursor: Self.cursor(1), settings: DumpSettings(catchDumps: false, catchLogs: true, pageMode: .automatic, commands: true))
         var follow = loop(nexusd, json: true)
 
         try await follow.run(updates([.event(.dumpList(list))]))

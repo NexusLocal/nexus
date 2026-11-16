@@ -52,6 +52,9 @@ public struct EngineState: Codable, Sendable, Equatable {
     public var appPorts: [String: Int] = [:]
     public var mailSettings = MailSettings()
     public var dumpSettings = DumpSettings()
+    // 0.6.1 turns the four Catch switches of the dump viewer off one time for each user (owner,
+    // 2026-11-16). Only a file of an older nexusd has no such key.
+    public private(set) var dumpSwitchesTurnedOff = true
     // The last change of the URLs of each WordPress site, by its host (Phase 4, 3d).
     public var wordPressURLChanges: [String: WordPressURLChange] = [:]
     // The hosts that went back to their old mail settings. Nexus does not add the tag to their
@@ -105,6 +108,11 @@ public struct EngineState: Codable, Sendable, Equatable {
         appPorts = try container.decodeIfPresent([String: Int].self, forKey: .appPorts) ?? defaults.appPorts
         mailSettings = (try? container.decodeIfPresent(MailSettings.self, forKey: .mailSettings)) ?? defaults.mailSettings
         dumpSettings = (try? container.decodeIfPresent(DumpSettings.self, forKey: .dumpSettings)) ?? defaults.dumpSettings
+
+        if !container.contains(.dumpSwitchesTurnedOff) {
+            dumpSettings = DumpSettings(pageMode: dumpSettings.pageMode, commands: dumpSettings.commands)
+        }
+
         wordPressURLChanges = (try? container.decodeIfPresent([String: WordPressURLChange].self, forKey: .wordPressURLChanges)) ?? defaults.wordPressURLChanges
         declinedMailTags = try container.decodeIfPresent(Set<String>.self, forKey: .declinedMailTags) ?? defaults.declinedMailTags
         useNexusKeys = try container.decodeIfPresent([String: Set<String>].self, forKey: .useNexusKeys) ?? defaults.useNexusKeys

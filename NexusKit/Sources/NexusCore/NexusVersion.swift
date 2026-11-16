@@ -36,6 +36,20 @@ public enum NexusVersion {
         #endif
     }
 
+    // An identity without a build, or with a build that is not a number, comes from a nexusd that
+    // is older than the identities.
+    public static func isOlder(_ identity: String?, than other: String) -> Bool {
+        guard identity != other else {
+            return false
+        }
+
+        guard let identity, identity.allSatisfy({ "0123456789+".contains($0) }) else {
+            return true
+        }
+
+        return VersionLine.isOlder(identity, than: other)
+    }
+
     // Bundle keeps the Info.plist that it read first. An update replaces the file on disk, so this
     // reads the file again each time. nil when the app is not there, for example during an update.
     private static func buildOnDisk(ofAppAt app: URL) -> String? {

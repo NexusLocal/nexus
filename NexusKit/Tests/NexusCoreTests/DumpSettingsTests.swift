@@ -3,16 +3,16 @@ import NexusCore
 import Testing
 
 struct DumpSettingsTests {
-    @Test func theDefaultsCatchDumpsLogLinesAndCommandsWithTheAutomaticPageMode() {
+    @Test func theDefaultsCatchNothingAndKeepCommandsWithTheAutomaticPageMode() {
         let settings = DumpSettings()
 
-        #expect(settings.catchDumps)
+        #expect(!settings.catchDumps)
         #expect(!settings.catchQueries)
-        #expect(settings.catchLogs)
+        #expect(!settings.catchLogs)
         #expect(!settings.catchJobs)
         #expect(settings.pageMode == .automatic)
         #expect(settings.commands)
-        #expect(settings.catchesAnything)
+        #expect(!settings.catchesAnything)
     }
 
     @Test func anOldFileWithoutTheKeysGetsTheDefaults() throws {
@@ -65,7 +65,7 @@ struct DumpSettingsTests {
     @Test func aSettingThatTheFileDoesNotHaveGetsItsDefault() throws {
         let settings = try JSONDecoder().decode(DumpSettings.self, from: Data(#"{"commands":false}"#.utf8))
 
-        #expect(settings == DumpSettings(catchDumps: true, pageMode: .automatic, commands: false))
+        #expect(settings == DumpSettings(commands: false))
     }
 
     @Test func anUnknownPageModeGetsTheDefault() throws {

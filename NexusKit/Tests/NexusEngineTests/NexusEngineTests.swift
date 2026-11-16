@@ -678,11 +678,30 @@ struct NexusEngineTests {
 
     @Test func theDumpSettingsSurviveASaveOfTheState() throws {
         var state = EngineState()
-        state.dumpSettings = DumpSettings(catchDumps: false, pageMode: .always, commands: false)
+        state.dumpSettings = DumpSettings(catchDumps: false, catchLogs: true, pageMode: .always, commands: false)
 
         let saved = try JSONDecoder().decode(EngineState.self, from: JSONEncoder().encode(state))
 
         #expect(saved.dumpSettings == state.dumpSettings)
+    }
+
+    @Test func aStateFileOfAnOlderNexusdGetsAllCatchSwitchesOffOneTime() throws {
+        let old = #"{"dumpSettings":{"catchDumps":true,"catchQueries":true,"catchLogs":true,"catchJobs":true,"pageMode":"always","commands":false}}"#
+
+        let state = try JSONDecoder().decode(EngineState.self, from: Data(old.utf8))
+        let saved = try JSONEncoder().encode(state)
+
+        #expect(state.dumpSettings == DumpSettings(pageMode: .always, commands: false))
+        #expect(String(decoding: saved, as: UTF8.self).contains(#""dumpSwitchesTurnedOff":true"#))
+    }
+
+    @Test func aSwitchThatTheUserTurnsOnAfterTheOneTimeChangeStaysOn() throws {
+        var state = try JSONDecoder().decode(EngineState.self, from: Data(#"{"dumpSettings":{"catchDumps":true}}"#.utf8))
+        state.dumpSettings.catchDumps = true
+
+        let saved = try JSONDecoder().decode(EngineState.self, from: JSONEncoder().encode(state))
+
+        #expect(saved.dumpSettings.catchDumps)
     }
 }
 
