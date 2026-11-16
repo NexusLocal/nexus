@@ -25,6 +25,9 @@ In this order:
 
 ## Done recently
 
+- **0.6.4:** a faster switch to a new version after an update, a clear message when a newer
+  `nexus` command meets an older background service, and two fixes for a workspace removal that
+  stopped halfway.
 - **0.6.3:** a notice when Local, Herd, Valet or another app also needs ports 80 and 443, .local
   as a choice for the domain of your sites, and a fix for the message of a failed port change.
 - **0.6.2:** a switch to remove a workspace without a dump of its databases, and a fix for a
