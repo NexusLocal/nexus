@@ -1160,8 +1160,21 @@ public actor NexusEngine {
 
         let nginxPortKeys = [ServiceCatalog.httpPortKey, ServiceCatalog.httpsPortKey]
         let service = nginxPortKeys.contains(id) ? ServiceCatalog.nginxID : Self.mailPortKeys.contains(id) ? ServiceCatalog.mailID : id
-        portConflicts[service] = nil
+        let earlierConflict = portConflicts[service]
+        let message = try await applyPort(id, port, of: service)
+        clearConflict(of: service, ifStill: earlierConflict)
+        return message
+    }
 
+    // The conflict goes only after a change that worked. A failed change keeps it, so the app still
+    // shows why the service does not run. A new conflict of the change itself stays too.
+    private func clearConflict(of service: String, ifStill earlierConflict: PortConflict?) {
+        if portConflicts[service] == earlierConflict {
+            portConflicts[service] = nil
+        }
+    }
+
+    private func applyPort(_ id: String, _ port: Int, of service: String) async throws -> String {
         if id == Self.dnsServiceID {
             return try await setDNSPort(port)
         }
@@ -1200,7 +1213,9 @@ public actor NexusEngine {
             throw RuntimeError.unsupported("nginx is not installed. Run: nexus install nginx 1.30")
         }
 
+        let earlierConflict = portConflicts[ServiceCatalog.nginxID]
         try await setNginxPorts(ports)
+        clearConflict(of: ServiceCatalog.nginxID, ifStill: earlierConflict)
         return "nginx uses port \(http) for HTTP and \(https) for HTTPS."
     }
 

@@ -1640,7 +1640,7 @@ extension NexusEngine {
     func setWebPort(_ key: String, _ port: Int) async throws -> String {
         // A graceful restart moves Apache to the new port. nginx then reads the new port of Apache.
         if key == ServiceCatalog.apacheID {
-            try await checkFree([key: port])
+            try await checkFree([key: port], of: ServiceCatalog.apacheID)
             _ = try await changeWeb(.setting) { $0.ports[key] = port }
             return "Apache uses port \(port) on 127.0.0.1."
         }
@@ -1649,18 +1649,17 @@ extension NexusEngine {
         return "nginx uses port \(port) for \(key.uppercased())."
     }
 
-    // A stored port conflict stays when the new ports are not free, so the Overview still shows why
-    // nginx does not run.
     func setNginxPorts(_ ports: [String: Int]) async throws {
-        try await checkFree(ports)
-        portConflicts[ServiceCatalog.nginxID] = nil
+        try await checkFree(ports, of: ServiceCatalog.nginxID)
         try await changeAndRestartNginx { $0.ports.merge(ports) { _, new in new } }
     }
 
-    // A port that one of the changed keys has now is free for the others, for example in a swap.
-    private func checkFree(_ ports: [String: Int]) async throws {
+    // While the service runs, a port that one of its changed keys has now is its own, so the others
+    // can take it, for example in a swap. A stopped service can have a port that another app holds.
+    private func checkFree(_ ports: [String: Int], of service: String) async throws {
         let current = await stateStore.current().ports
-        let held = Set(ports.keys.compactMap { current[$0] })
+        let runs = await supervisor.state(of: service)?.isActive == true
+        let held = runs ? Set(ports.keys.compactMap { current[$0] }) : []
 
         for port in ports.values.sorted() where !held.contains(port) && !PortInspector.isFree(port) {
             throw SupervisorError.portInUse(port: port, owner: PortInspector.owner(of: port))
