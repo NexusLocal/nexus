@@ -25,6 +25,8 @@ In this order:
 
 ## Done recently
 
+- **0.6.2:** a switch to remove a workspace without a dump of its databases, and a fix for a
+  crash of the background service.
 - **0.6.1:** an update no longer loses a change while the background service ends its work, and
   the dump viewer is off until you turn it on.
 - **0.6.0:** workspaces that stop when nobody uses them and start again with the next page,
