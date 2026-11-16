@@ -25,7 +25,10 @@ private actor FakeNexus: NexusConnecting {
 
         switch request.inner {
         case .sites:
-            return .sites([SiteInfo(hosts: ["shop.test"], folder: "/w/shop/public", documentRoot: "/w/shop/public", php: "8.4", server: .nginx, parked: false, url: "https://shop.test", projectType: .laravel)])
+            let workspace = WorkspaceInfo(name: "fix", worktree: "/w/shop-fix", folder: "/w/shop-fix", hosts: ["shop-fix.test"], url: "https://shop-fix.test", state: .ready, runState: .stopped)
+            return .sites([SiteInfo(hosts: ["shop.test"], folder: "/w/shop/public", documentRoot: "/w/shop/public", php: "8.4", server: .nginx, parked: false, url: "https://shop.test", workspaces: [workspace], projectType: .laravel)])
+        case .tool:
+            return .failure(message: "No PHP in this test.")
         case .databaseConnections:
             return .databaseConnections([])
         case .siteMail:
@@ -49,12 +52,74 @@ struct NexusToolboxTests {
         NexusToolbox(connection: nexus, paths: NexusPaths(root: URL(filePath: "/tmp/nexus-tests-none")), folder: folder, loadSettings: { AgentSettings(level: level) })
     }
 
-    @Test(arguments: [(AgentLevel.read, 11), (.change, 17), (.remove, 21)])
+    @Test(arguments: [(AgentLevel.read, 11), (.change, 19), (.remove, 23)])
     func eachLevelListsItsTools(level: AgentLevel, count: Int) async {
         let tools = await toolbox(FakeNexus(), level: level).tools(agent: nil)
 
         #expect(tools.count == count)
         #expect(tools.allSatisfy { $0.readOnly == (NexusTools.spec($0.name)?.level == .read) })
+    }
+
+    @Test func theToolsOfTheIdleStopNeedTheLevelChange() async {
+        let read = await toolbox(FakeNexus(), level: .read).tools(agent: nil).map(\.name)
+        let change = await toolbox(FakeNexus(), level: .change).tools(agent: nil).map(\.name)
+
+        #expect(!read.contains("stop_workspace"))
+        #expect(!read.contains("start_workspace"))
+        #expect(change.contains("stop_workspace"))
+        #expect(change.contains("start_workspace"))
+    }
+
+    @Test func stopWorkspaceStopsTheWorkspaceOfItsNameForTheAgent() async {
+        let nexus = FakeNexus()
+
+        let result = await toolbox(nexus, level: .change).call("stop_workspace", arguments: ["workspace": "fix"], agent: "claude-code")
+
+        #expect(!result.isError)
+        #expect(await nexus.requests.contains(.fromAgent(agent: "Claude Code", request: .stopWorkspace(host: "shop.test", name: "fix"))))
+    }
+
+    @Test func startWorkspaceWithKeepTurnsStopWhenIdleOff() async {
+        let nexus = FakeNexus()
+
+        _ = await toolbox(nexus, level: .change, folder: "/w/shop-fix/app").call("start_workspace", arguments: ["keep": true], agent: "claude-code")
+        _ = await toolbox(nexus, level: .change).call("start_workspace", arguments: ["workspace": "/w/shop-fix"], agent: "claude-code")
+
+        #expect(await nexus.requests.contains(.fromAgent(agent: "Claude Code", request: .startWorkspace(host: "shop.test", name: "fix", keepAwake: true))))
+        #expect(await nexus.requests.contains(.fromAgent(agent: "Claude Code", request: .startWorkspace(host: "shop.test", name: "fix", keepAwake: nil))))
+    }
+
+    @Test func theCheckOfTheExtensionsIsNoActivityOfAWorkspace() async {
+        let nexus = FakeNexus()
+
+        _ = await toolbox(nexus, level: .read, folder: "/w/shop-fix").call("php_extensions", arguments: [:], agent: nil)
+        let activities = await nexus.requests.compactMap { request -> Bool?? in
+            guard case .tool(_, _, _, _, let activity) = request.inner else {
+                return nil
+            }
+
+            return activity
+        }
+
+        #expect(activities == [false])
+    }
+
+    @Test func theInstructionsOfAWorkspaceSayThatItStopsWhenIdle() async {
+        let change = await toolbox(FakeNexus(), level: .change, folder: "/w/shop-fix").instructions(agent: nil)
+        let read = await toolbox(FakeNexus(), level: .read, folder: "/w/shop-fix").instructions(agent: nil)
+
+        #expect(change.contains("- Nexus stops a workspace without activity. The next page, command or database connection starts it again."))
+        #expect(change.contains("- Call stop_workspace when your work in this workspace is done."))
+        #expect(change.count <= AgentInstructions.longest)
+        #expect(!read.contains("stop_workspace"))
+    }
+
+    @Test func aWorkspaceForTheAgentHasItsRunState() {
+        let workspace = WorkspaceInfo(name: "fix", worktree: "/w/fix", folder: "/w/fix", state: .ready, lastActivity: Date(timeIntervalSince1970: 1_763_200_000), runState: .stopped)
+
+        #expect(AgentWorkspace(workspace).runState == "stopped")
+        #expect(AgentWorkspace(workspace).lastActivity == "2025-11-15T09:46:40Z")
+        #expect(AgentWorkspace(WorkspaceInfo(name: "fix", worktree: "/w/fix", folder: "/w/fix")).runState == "running")
     }
 
     @Test func eachToolHasAShortSummaryForTheAgentsScreen() {

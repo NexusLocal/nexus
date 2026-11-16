@@ -8,7 +8,8 @@ import NexusCore
 // start at a template: --sheet new-site --template wordpress. --alert update-ready shows the window
 // of an update that is ready to install. --agents-notice shows the notice of the coding agents on
 // the Overview. --notification '<userInfo as JSON>' opens the screen of a click on a notification.
-// The services of the sample data, such as the port problem of --sheet port, need --sample.
+// --sheet old-workspaces --site shop.test opens the sheet of the old workspaces. The services of
+// the sample data, such as the port problem of --sheet port, need --sample.
 enum DebugLaunch {
     // A check of the look does not get the first run on top of the screen that it checks.
     static var checksTheLook: Bool {
@@ -84,6 +85,8 @@ enum DebugLaunch {
             if let blocked = model.blockedServices.first {
                 model.sheet = .portInUse(service: blocked.service.id, holder: blocked.holder)
             }
+        case "old-workspaces":
+            model.sheet = .oldWorkspaces(host: value(of: "--site") ?? "shop.test")
         default: break
         }
     }

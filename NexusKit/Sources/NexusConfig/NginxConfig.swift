@@ -23,7 +23,7 @@ public struct NginxSettings: Sendable, Equatable {
     // The pages that nginx serves itself. nginx reads a page at each request. So a new page needs
     // no reload.
     public var pages: URL {
-        runFolder.appending(path: "nginx/pages", directoryHint: .isDirectory)
+        NexusPaths.nginxPages(inRun: runFolder)
     }
 }
 
@@ -244,6 +244,7 @@ public enum NginxConfig {
                 "    charset utf-8;",
                 "",
             ]
+            lines += try site.devServer.map(devServerLines) ?? []
             lines += try site.customLines.map { file in ["    include \(try ConfigText.quoted(file));", ""] } ?? []
             lines += [
                 "    location / {",
@@ -278,6 +279,9 @@ public enum NginxConfig {
                 "        return 301 https://$host\(httpsPort)$request_uri;",
                 "    }",
                 "",
+            ]
+            lines += try site.devServer.map(devServerLines) ?? []
+            lines += [
                 "    location ~ /\\.(?!well-known) {",
                 "        deny all;",
                 "    }",
@@ -340,6 +344,61 @@ public enum NginxConfig {
         return ["    if (!-e $request_filename) {", "        rewrite ^/[^/]+/wp-admin$ $scheme://$http_host$uri/ permanent;"]
             + (bedrock ? ["        rewrite ^/[^/]+/wp(/.*)$ /wp$1 last;"] : [])
             + ["        rewrite ^/[^/]+(/wp-.*)$ \(core)$1 last;", "        rewrite ^/[^/]+(/.*\\.php)$ \(core)$1 last;", "    }"]
+    }
+
+    // A page of a Laravel site waits for its dev server (owner, 2026-11-15). Only a request that
+    // accepts HTML gets the page, so a fetch or an API client gets the answer of PHP. An Inertia visit
+    // and an XHR request also accept HTML, but they are no page loads. Inertia would show the page in
+    // its error dialog. So they get the answer of PHP too. nginx checks the files at each request,
+    // and nexusd writes the page. So a start or a failure needs no reload. A named location starts
+    // after the if lines. So the redirect does not meet them again.
+    static func devServerLines(_ files: DevServerFiles) throws -> [String] {
+        [
+            "    set $nexus_dev_server \"\";",
+            "",
+            "    if (-f \(try ConfigText.quoted(files.page))) {",
+            "        set $nexus_dev_server \"waits\";",
+            "    }",
+            "",
+            "    if ($http_accept !~* \"text/html\") {",
+            "        set $nexus_dev_server \"\";",
+            "    }",
+            "",
+            "    if ($http_x_inertia != \"\") {",
+            "        set $nexus_dev_server \"\";",
+            "    }",
+            "",
+            "    if ($http_x_requested_with != \"\") {",
+            "        set $nexus_dev_server \"\";",
+            "    }",
+            "",
+            "    if (!-d \(try ConfigText.quoted(files.nodeModules))) {",
+            "        set $nexus_dev_server \"\";",
+            "    }",
+            "",
+            "    if (-f \(try ConfigText.quoted(files.hotFile))) {",
+            "        set $nexus_dev_server \"\";",
+            "    }",
+            "",
+            "    if (-f \(try ConfigText.quoted(files.manifest))) {",
+            "        set $nexus_dev_server \"\";",
+            "    }",
+            "",
+            "    if ($nexus_dev_server = \"waits\") {",
+            "        return 418;",
+            "    }",
+            "",
+            "    error_page 418 =503 @nexus_dev_server;",
+            "",
+            "    location @nexus_dev_server {",
+            "        root \(try ConfigText.quoted(files.page.deletingLastPathComponent()));",
+            "        default_type text/html;",
+            "        add_header Cache-Control no-store always;",
+            "        add_header Retry-After 1 always;",
+            "        rewrite ^ /\(files.page.lastPathComponent) break;",
+            "    }",
+            "",
+        ]
     }
 
     // nginx reads a $ in the text as a variable. So the text has none.

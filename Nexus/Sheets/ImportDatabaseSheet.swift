@@ -506,11 +506,7 @@ struct ImportDatabaseSheet: View {
     }
 
     private func loadTrashDays() async {
-        guard model.isLive, case .answer(.workspaceSettings(let settings)) = await model.outcome(of: .workspaceSettings) else {
-            return
-        }
-
-        trashDays = settings.dumpDays
+        trashDays = await model.dumpDays()
     }
 
     // A port and a user that the user did not change follow the kind of the instance.

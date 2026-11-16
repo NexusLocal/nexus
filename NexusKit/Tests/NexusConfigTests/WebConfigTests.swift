@@ -671,4 +671,75 @@ struct WebConfigTests {
         #expect(file.hasPrefix("# Nexus writes this file from the custom nginx lines of a site."))
         #expect(file.hasSuffix("b\n"))
     }
+
+    private func devServerFiles(root: String = "/Sites/My Shop") -> DevServerFiles {
+        DevServerFiles(
+            page: URL(filePath: "/Nexus/run/nginx/pages/dev-server-shop.test.html"),
+            nodeModules: URL(filePath: "\(root)/node_modules", directoryHint: .isDirectory),
+            hotFile: URL(filePath: "\(root)/public/hot"),
+            manifest: URL(filePath: "\(root)/public/build/manifest.json")
+        )
+    }
+
+    private func siteWithDevServer(_ server: WebServer, files: DevServerFiles? = nil) -> WebSite {
+        let base = site(server)
+        return WebSite(hosts: base.hosts, backend: base.backend, certificate: base.certificate, key: base.key, accessLog: base.accessLog, project: .laravel, devServer: files ?? devServerFiles())
+    }
+
+    @Test func aLaravelSiteOnNginxWaitsForItsDevServerWithThePageOfNexus() throws {
+        let config = try NginxConfig.render(sites: [siteWithDevServer(.nginx)], settings: nginxSettings())
+        let order = [
+            "if (-f \"/Nexus/run/nginx/pages/dev-server-shop.test.html\") {",
+            "if ($http_accept !~* \"text/html\") {",
+            "if ($http_x_inertia != \"\") {",
+            "if ($http_x_requested_with != \"\") {",
+            "if (!-d \"/Sites/My Shop/node_modules/\") {",
+            "if (-f \"/Sites/My Shop/public/hot\") {",
+            "if (-f \"/Sites/My Shop/public/build/manifest.json\") {",
+            "return 418;",
+            "try_files $uri $uri/ /index.php?$query_string;",
+        ]
+        let positions = try order.map { try #require(config.range(of: $0)).lowerBound }
+
+        #expect(positions == positions.sorted())
+        #expect(config.contains("error_page 418 =503 @nexus_dev_server;"))
+        #expect(config.contains("location @nexus_dev_server {\n            root \"/Nexus/run/nginx/pages/\";"))
+        #expect(config.contains("rewrite ^ /dev-server-shop.test.html break;"))
+    }
+
+    @Test func anApacheSiteWaitsForItsDevServerAfterTheRedirectToHTTPS() throws {
+        let config = try NginxConfig.render(sites: [siteWithDevServer(.apache)], settings: nginxSettings())
+        let redirect = try #require(config.range(of: "return 301 https://"))
+        let page = try #require(config.range(of: "if (-f \"/Nexus/run/nginx/pages/dev-server-shop.test.html\") {"))
+
+        #expect(redirect.lowerBound < page.lowerBound)
+        #expect(config.contains("error_page 418 =503 @nexus_dev_server;"))
+        #expect(config.contains("rewrite ^ /dev-server-shop.test.html break;"))
+    }
+
+    @Test func aSiteWithoutADevServerGetsNoWaitPage() throws {
+        let config = try NginxConfig.render(sites: [site(.nginx), site(.apache)], settings: nginxSettings())
+
+        #expect(!config.contains("nexus_dev_server"))
+    }
+
+    @Test func aPathOfADevServerWithAQuoteIsRefused() {
+        #expect(throws: ConfigError.unsafePath("/Sites/My \"Shop/node_modules/")) {
+            try NginxConfig.render(sites: [siteWithDevServer(.nginx, files: devServerFiles(root: "/Sites/My \"Shop"))], settings: nginxSettings())
+        }
+    }
+
+    @Test func theWaitPageOfADevServerLoadsAgainAndThePageOfAFailureHasTheTextsOfTheDesign() {
+        let waits = ErrorPages.devServerWaits(host: "<b>.test", command: "npm run dev")
+        let fails = ErrorPages.devServerFails(host: "shop.test", command: "npm run dev", buildCommand: "npm run build")
+
+        #expect(waits.contains("<meta http-equiv='refresh' content='1'>"))
+        #expect(waits.contains("<title>The dev server starts</title>"))
+        #expect(waits.contains("The dev server of &lt;b&gt;.test does not run yet. Nexus starts npm run dev."))
+        #expect(!fails.contains("refresh"))
+        #expect(fails.contains("<h1>The dev server of shop.test does not start</h1>"))
+        #expect(fails.contains("<p>Nexus started npm run dev for your request, but it stopped with an error.</p>"))
+        #expect(fails.contains("<p>The Site screen of Nexus shows the log of the dev server under Background processes.</p>"))
+        #expect(fails.contains("<p>After npm run build the site works without the dev server.</p>"))
+    }
 }

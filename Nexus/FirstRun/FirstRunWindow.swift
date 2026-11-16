@@ -934,9 +934,7 @@ private struct PermissionsStep: View {
     @State private var trusting = false
 
     private var certificateFile: String? {
-        model.rootCertificate.flatMap { info in
-            FileManager.default.fileExists(atPath: (info.file as NSString).expandingTildeInPath) ? info.file : nil
-        }
+        model.rootCertificate.flatMap { model.existingPath($0.file) }
     }
 
     // nexusd trusts the certificate.

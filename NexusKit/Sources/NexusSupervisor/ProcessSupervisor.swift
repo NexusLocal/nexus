@@ -81,7 +81,10 @@ public actor ProcessSupervisor {
         changeHandler = handler
     }
 
-    public func start(_ definition: ServiceDefinition) async throws {
+    // The gate of a stopped workspace server holds a handed-over port with its listener on all
+    // addresses. So that port is not free, and the server binds it anyway (plan item 3e). A
+    // workspace server has one port, so handedOver covers each port of the definition.
+    public func start(_ definition: ServiceDefinition, handedOver: Bool = false) async throws {
         guard !closed else {
             return
         }
@@ -90,8 +93,10 @@ public actor ProcessSupervisor {
             return
         }
 
-        for port in definition.ports where !(await PortInspector.becomesFree(port)) {
-            throw SupervisorError.portInUse(port: port, owner: PortInspector.owner(of: port))
+        for port in definition.ports where !handedOver {
+            guard await PortInspector.becomesFree(port) else {
+                throw SupervisorError.portInUse(port: port, owner: PortInspector.owner(of: port))
+            }
         }
 
         // Another start of the same service can run during the wait for the ports.
@@ -124,6 +129,15 @@ public actor ProcessSupervisor {
         }
 
         let definition = managed.definition
+        let stopTimeout = definition.stopTimeout ?? policy.stopTimeout
+        let deadline = ContinuousClock.now + stopTimeout
+
+        if let socket = definition.greetingSocket, let startedAt = managed.startedAt {
+            let startEnds = startedAt.addingTimeInterval(definition.startTimeout.timeInterval)
+            let waitEnds = Date.now.addingTimeInterval(min(Self.greetingWait, stopTimeout / 2).timeInterval)
+
+            await waitForGreeting(on: socket, of: process, until: min(startEnds, waitEnds))
+        }
 
         if definition.stopsGroup {
             ProcessGroup.signal(process, definition.stopSignal)
@@ -131,7 +145,6 @@ public actor ProcessSupervisor {
             kill(process.processIdentifier, definition.stopSignal)
         }
 
-        let deadline = ContinuousClock.now + (definition.stopTimeout ?? policy.stopTimeout)
         while definition.stopsGroup ? ProcessGroup.hasPrograms(process) : process.isRunning, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
         }
@@ -142,6 +155,25 @@ public actor ProcessSupervisor {
 
         endProcessGroup(of: process)
         markStopped(id)
+    }
+
+    // MariaDB 11.8 ignores SIGTERM between the bind of its socket and its first greeting. A stop in
+    // that time waits for the stop timeout and ends with SIGKILL. So a stop during the start of such
+    // a server first waits for its greeting (owner, 2026-11-15). That wait is part of the stop
+    // timeout, so a stop of nexusd stays within the ExitTimeOut of launchd. A normal start greets
+    // within one second, so the wait has a short limit (owner, 2026-11-15).
+    static let greetingWait: Duration = .seconds(5)
+
+    private func waitForGreeting(on socket: URL, of process: Process, until deadline: Date) async {
+        let path = socket.path(percentEncoded: false)
+
+        while process.isRunning, Date.now < deadline {
+            if await ServerReadiness.receivesGreeting(socket: path, timeout: 0.5) {
+                return
+            }
+
+            try? await Task.sleep(for: .milliseconds(20))
+        }
     }
 
     // Ends a service at once, without its stop signal and without a restart.
@@ -170,7 +202,33 @@ public actor ProcessSupervisor {
     // make the others wait. A service without a port goes first. A worker then ends its job while
     // the database server of its workspace still runs.
     public func stopAll() async {
+        await stopPrograms()
+        await stopServers()
+    }
+
+    // Several supervisors stop at the same time, in the two steps of stopAll. A worker of one
+    // supervisor can use a database of another one. So each step waits for that step in all the
+    // supervisors. The whole stop then takes one stop timeout of a program and one of a server at
+    // most, and a stop of nexusd stays within the ExitTimeOut of launchd (owner, 2026-11-16).
+    public static func stopAll(of supervisors: [ProcessSupervisor]) async {
+        await withTaskGroup { group in
+            for supervisor in supervisors {
+                group.addTask { await supervisor.stopPrograms() }
+            }
+        }
+
+        await withTaskGroup { group in
+            for supervisor in supervisors {
+                group.addTask { await supervisor.stopServers() }
+            }
+        }
+    }
+
+    private func stopPrograms() async {
         await stopAtTheSameTime(services.filter { $0.value.definition.ports.isEmpty }.map(\.key))
+    }
+
+    private func stopServers() async {
         await stopAtTheSameTime(services.filter { !$0.value.definition.ports.isEmpty }.map(\.key))
     }
 
@@ -184,8 +242,12 @@ public actor ProcessSupervisor {
 
     // A start can wait for its turn on this actor. After this call that start does nothing, so no
     // program stays after a stop of nexusd.
-    public func stopForGood() async {
+    public func closeForGood() {
         closed = true
+    }
+
+    public func stopForGood() async {
+        closeForGood()
         await stopAll()
     }
 

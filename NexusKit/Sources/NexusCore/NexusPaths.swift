@@ -71,6 +71,22 @@ public struct NexusPaths: Sendable, Equatable {
         siteLogs.appending(path: "\(host).log", directoryHint: .notDirectory)
     }
 
+    // The pages that nginx serves itself. The settings of nginx get only the run folder.
+    public static func nginxPages(inRun run: URL) -> URL {
+        run.appending(path: "nginx/pages", directoryHint: .isDirectory)
+    }
+
+    public var nginxPages: URL {
+        Self.nginxPages(inRun: run)
+    }
+
+    public static let devServerPagePrefix = "dev-server-"
+
+    // The page of nginx for a host with a dev server (owner, 2026-11-15).
+    public func devServerPage(_ host: String) -> URL {
+        nginxPages.appending(path: "\(Self.devServerPagePrefix)\(host).html", directoryHint: .notDirectory)
+    }
+
     public var nginxConfig: URL {
         config.appending(path: "nginx/nginx.conf", directoryHint: .notDirectory)
     }

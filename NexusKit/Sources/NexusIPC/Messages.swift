@@ -71,6 +71,8 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     // 2026-11-14). A PHP site uses the lines of its webserver.
     public let nginxLines: [String]?
     public let apacheLines: [String]?
+    // The dev server of the main checkout of a Laravel site (owner, 2026-11-15).
+    public let devServer: DevServerInfo?
 
     public init(
         hosts: [String],
@@ -112,8 +114,10 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         workspaceDumpCheck: WordPressDumpCheck? = nil,
         workspaceDumpChecking: WorkspaceDumpProgress? = nil,
         nginxLines: [String]? = nil,
-        apacheLines: [String]? = nil
+        apacheLines: [String]? = nil,
+        devServer: DevServerInfo? = nil
     ) {
+        self.devServer = devServer
         self.workspaceDump = workspaceDump
         self.workspaceDumpURLs = workspaceDumpURLs
         self.workspaceDumpCheck = workspaceDumpCheck
@@ -204,17 +208,20 @@ public struct WorkspaceDatabaseInfo: Codable, Sendable, Hashable {
 
 // The Node.js app of a main checkout or of a workspace (D67). state is nil while nexusd does not
 // run the app, for example while a workspace is in Preparing. log is the path of its log file.
+// startsWithPage is true while the app waits for the first page (owner, 2026-11-15).
 public struct AppProcessInfo: Codable, Sendable, Hashable {
     public let port: Int?
     public let command: String?
     public let state: ServiceState?
     public let log: String
+    public let startsWithPage: Bool?
 
-    public init(port: Int?, command: String?, state: ServiceState?, log: String) {
+    public init(port: Int?, command: String?, state: ServiceState?, log: String, startsWithPage: Bool? = nil) {
         self.port = port
         self.command = command
         self.state = state
         self.log = log
+        self.startsWithPage = startsWithPage
     }
 
     public var stateText: String {
@@ -222,12 +229,66 @@ public struct AppProcessInfo: Codable, Sendable, Hashable {
         case .running(_, let since): "Running since \(since.formatted(date: .omitted, time: .shortened))"
         case .restarting(let attempt): "Starts again, attempt \(attempt)"
         case .failed: "Does not run"
-        case .stopped, nil: "Not started"
+        case .stopped, nil: startsWithPage == true ? "Starts with the first page" : "Not started"
         }
     }
 
     public var summary: String {
-        "\(port.map { "port \($0)" } ?? "no port yet"), \(stateText.prefix(1).lowercased())\(stateText.dropFirst())"
+        "\(port.map { "port \($0)" } ?? "no port yet"), \(stateText.firstLetterLowercased)"
+    }
+}
+
+// The dev server of a main checkout or a workspace (owner, 2026-11-15). command is the short name,
+// for example npm run dev. port is the port of Nexus, or the port of a dev server outside Nexus.
+public struct DevServerInfo: Codable, Sendable, Hashable {
+    public enum State: String, Codable, Sendable {
+        case waitsForPage = "waits_for_page"
+        case runs
+        case doesNotStart = "does_not_start"
+        case outsideNexus = "outside_nexus"
+    }
+
+    public let command: String
+    public let port: Int?
+    public let state: State
+    public let log: String
+
+    public init(command: String, port: Int?, state: State, log: String) {
+        self.command = command
+        self.port = port
+        self.state = state
+        self.log = log
+    }
+
+    public var text: String {
+        switch state {
+        case .waitsForPage: "\(command) starts with the first page."
+        case .runs: "\(command) runs\(port.map { " on port \($0)" } ?? "")."
+        case .doesNotStart: "\(command) does not start. Its log is \(log)."
+        case .outsideNexus: "A dev server outside Nexus runs on port \(port.map(String.init) ?? "?"). Nexus starts no second one."
+        }
+    }
+}
+
+// A newer nexusd can send a state of a dev server, a run state of a workspace or a number of minutes
+// that this app does not know (owner, 2026-11-15). The decoders that Swift writes for SiteList,
+// SiteInfo and WorkspaceInfo call these functions. So such a value gives nil, and the rest of the
+// list still decodes.
+extension KeyedDecodingContainer {
+    func decodeIfPresent(_ type: DevServerInfo.Type, forKey key: Key) throws -> DevServerInfo? {
+        try? decode(type, forKey: key)
+    }
+
+    func decodeIfPresent(_ type: DevServerStop.Type, forKey key: Key) throws -> DevServerStop? {
+        try? decode(type, forKey: key)
+    }
+
+    func decodeIfPresent(_ type: WorkspaceRunState.Type, forKey key: Key) throws -> WorkspaceRunState? {
+        try? decode(type, forKey: key)
+    }
+
+    func decodeIfPresent(_ type: WorkspaceIdleTime.Type, forKey key: Key) throws -> WorkspaceIdleTime? {
+        try? decode(type, forKey: key)
     }
 }
 
@@ -264,6 +325,8 @@ public struct WorkspaceDumpProgress: Codable, Sendable, Hashable {
 // A workspace as the app and nexus workspace list show it. url is nil for a workspace that does
 // not run. The problem then says why. A nexusd of part 8b sends only name, worktree, folder and
 // branch. An app of part 8b cannot read the sites without worktree, so nexusd always sends it.
+// locked is the lock reason of git, empty for a lock without a reason. lastActivity is the newest
+// activity of the workspace (owner, 2026-11-15). A nexusd from before item 3b of group 3 sends none.
 public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
     public let name: String
     public let worktree: String
@@ -281,6 +344,16 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
     public let links: WorkspaceLinkInfo?
     public let dump: WorkspaceDumpProgress?
     public let documentRoot: String?
+    public let locked: String?
+    public let lastActivity: Date?
+    // The dev server of a Laravel workspace (owner, 2026-11-15).
+    public let devServer: DevServerInfo?
+    // The run state and "Stop when idle" (owner, 2026-11-15). keepAwake true is "Stop when idle" off.
+    // stoppedAfter is the setting "Stop after" at an idle stop. It is nil after a stop on request and
+    // while the workspace runs. A nexusd from before the idle stop sends none of these.
+    public let runState: WorkspaceRunState?
+    public let keepAwake: Bool?
+    public let stoppedAfter: WorkspaceIdleTime?
 
     public var id: String { name }
 
@@ -300,10 +373,22 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         app: AppProcessInfo? = nil,
         links: WorkspaceLinkInfo? = nil,
         dump: WorkspaceDumpProgress? = nil,
-        documentRoot: String? = nil
+        documentRoot: String? = nil,
+        locked: String? = nil,
+        lastActivity: Date? = nil,
+        devServer: DevServerInfo? = nil,
+        runState: WorkspaceRunState? = nil,
+        keepAwake: Bool? = nil,
+        stoppedAfter: WorkspaceIdleTime? = nil
     ) {
+        self.runState = runState
+        self.keepAwake = keepAwake
+        self.stoppedAfter = stoppedAfter
+        self.devServer = devServer
         self.dump = dump
         self.documentRoot = documentRoot
+        self.locked = locked
+        self.lastActivity = lastActivity
         self.name = name
         self.worktree = worktree
         self.folder = folder
@@ -328,6 +413,49 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         return nil
     }
 
+    // A nexusd from before the idle stop sends no run state. Its workspaces run.
+    public var resolvedRunState: WorkspaceRunState {
+        runState ?? .running
+    }
+
+    // Stopped and Starting show in place of each state except Preparing (owner, 2026-11-15). nil is
+    // Preparing, and running shows the state of the setup.
+    public var shownRunState: WorkspaceRunState? {
+        guard state != .preparing, state != nil else {
+            return nil
+        }
+
+        return resolvedRunState
+    }
+
+    // The words of the Site screen and of nexus workspace list. A dump that did not load says so in
+    // its first sentence (owner, 2026-11-09).
+    public var stateText: String {
+        switch shownRunState {
+        case .stopped?: return "Stopped"
+        case .starting?: return "Starting"
+        case .running?, nil: break
+        }
+
+        return switch state {
+        case .ready:
+            "Ready"
+        case .notIsolated(let reason) where reason.hasPrefix(WorkspaceDumpText.failed):
+            "The dump did not load"
+        case .notIsolated(let reason) where reason.hasPrefix(WorkspaceDumpText.gone):
+            "The dump file is gone"
+        case .notIsolated:
+            "Not isolated"
+        case .preparing, nil:
+            "Preparing"
+        }
+    }
+
+    // keepAwake true is "Stop when idle" off. A nexusd from before the idle stop sends no keepAwake.
+    public var stopsWhenIdle: Bool {
+        keepAwake != true
+    }
+
     public var hasDumpProblem: Bool {
         guard let isolationProblem else {
             return false
@@ -349,10 +477,36 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         }
 
         let startsWithArticle = reason.hasPrefix("The ") || reason.hasPrefix("A ")
-        let cause = startsWithArticle ? "\(reason.prefix(1).lowercased())\(reason.dropFirst())" : reason
+        let cause = startsWithArticle ? reason.firstLetterLowercased : reason
         let sentence = cause.hasSuffix(".") ? cause : "\(cause)."
 
         return "\(name) is not isolated: \(sentence) Nexus starts no background process for it."
+    }
+}
+
+// The answer of removeWorkspaces. removed holds each name that has no workspace now, also a name
+// that had no workspace before the request. kept holds each workspace that git did not remove,
+// with the reason. warnings holds the commands before removal that failed, each with the name of
+// its workspace in front.
+public struct WorkspaceRemovals: Codable, Sendable, Equatable {
+    public let removed: [String]
+    public let kept: [KeptWorkspace]
+    public let warnings: [String]
+
+    public init(removed: [String], kept: [KeptWorkspace], warnings: [String]) {
+        self.removed = removed
+        self.kept = kept
+        self.warnings = warnings
+    }
+}
+
+public struct KeptWorkspace: Codable, Sendable, Equatable {
+    public let name: String
+    public let reason: String
+
+    public init(name: String, reason: String) {
+        self.name = name
+        self.reason = reason
     }
 }
 
@@ -377,10 +531,13 @@ public struct ToolCommand: Codable, Sendable, Equatable {
     // The folder that loads Xdebug, for nexus debug only (owner, 2026-11-14). nil from an older
     // nexusd.
     public var xdebugFolder: String?
+    // The reason why a stopped workspace did not start for this command (owner, 2026-11-15). The
+    // nexus command prints it, and then the program runs.
+    public var startProblem: String?
 
     public static let xdebugSession = "nexus"
 
-    public init(executable: String, arguments: [String] = [], environment: [String: String] = [:], path: [String] = [], wordPressCore: String? = nil, coverageFolder: String? = nil, dumpsFolder: String? = nil, xdebugFolder: String? = nil) {
+    public init(executable: String, arguments: [String] = [], environment: [String: String] = [:], path: [String] = [], wordPressCore: String? = nil, coverageFolder: String? = nil, dumpsFolder: String? = nil, xdebugFolder: String? = nil, startProblem: String? = nil) {
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
@@ -389,6 +546,7 @@ public struct ToolCommand: Codable, Sendable, Equatable {
         self.coverageFolder = coverageFolder
         self.dumpsFolder = dumpsFolder
         self.xdebugFolder = xdebugFolder
+        self.startProblem = startProblem
     }
 
     // phpunit, pest, paratest and php artisan test name each coverage report with --coverage. The
@@ -441,14 +599,26 @@ public struct SiteList: Codable, Sendable, Equatable {
     public let tld: String
     // What a new workspace of a site on Default gets. nexusd from before this choice sends none.
     public let newWorkspaceDatabases: WorkspaceDatabaseKind?
+    // "Old after" of Settings > Workspaces. The Site screen counts the old workspaces with it. A
+    // nexusd from before item 3b of group 3 sends none.
+    public let oldAfterDays: Int?
+    // Settings > Sites, Stop a dev server after (owner, 2026-11-15). A nexusd from before this
+    // setting sends none. An unknown number of minutes also gives nil.
+    public let devServerStop: DevServerStop?
+    // The setting "Stop after", for the footer of the Site screen (owner, 2026-11-15). A nexusd from
+    // before this setting sends none.
+    public let stopIdleAfter: WorkspaceIdleTime?
 
-    public init(sites: [SiteInfo], layout: [SiteLayoutEntry], parkedFolders: [String], defaults: SiteDefaults, tld: String, newWorkspaceDatabases: WorkspaceDatabaseKind? = nil) {
+    public init(sites: [SiteInfo], layout: [SiteLayoutEntry], parkedFolders: [String], defaults: SiteDefaults, tld: String, newWorkspaceDatabases: WorkspaceDatabaseKind? = nil, oldAfterDays: Int? = nil, devServerStop: DevServerStop? = nil, stopIdleAfter: WorkspaceIdleTime? = nil) {
         self.sites = sites
         self.layout = layout
         self.parkedFolders = parkedFolders
         self.defaults = defaults
         self.tld = tld
         self.newWorkspaceDatabases = newWorkspaceDatabases
+        self.oldAfterDays = oldAfterDays
+        self.devServerStop = devServerStop
+        self.stopIdleAfter = stopIdleAfter
     }
 }
 
@@ -949,7 +1119,9 @@ public struct RootCertificateInfo: Codable, Sendable, Equatable {
 public enum TaskWork: Codable, Sendable, Equatable {
     case install(name: String, line: String, version: String, update: Bool)
     case copyDatabase(database: String, instance: String, name: String)
-    case dumpDatabase(name: String, instance: String)
+    // workspace names the removed workspace of the dump (owner, 2026-11-15). An older
+    // nexusd sends no workspace.
+    case dumpDatabase(name: String, instance: String, workspace: String? = nil)
     case importDump(file: String, instance: String, name: String)
     case createSite(name: String, template: SiteTemplate)
     case importSite(name: String)
@@ -1133,6 +1305,8 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case setSiteLayout([SiteLayoutEntry])
     case siteDefaults
     case setSiteDefaults(SiteDefaults)
+    // Settings > Sites, Stop a dev server after (owner, 2026-11-15).
+    case setDevServerStop(DevServerStop)
     case extensions(php: String)
     case setExtension(php: String, name: String, enabled: Bool)
     case modules(server: WebServer)
@@ -1157,8 +1331,11 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     // The command that a tool runs in this folder, with the versions of its site (D38). The
     // arguments can name the folder of another site, for example php /Sites/shop/artisan. That
     // site wins then. An older nexus command sends no argumentFolder. debug is true for nexus
-    // debug. nexusd then gives xdebugFolder, or refuses a PHP version without Xdebug.
-    case tool(ProjectTool, folder: String, argumentFolder: String? = nil, debug: Bool? = nil)
+    // debug. nexusd then gives xdebugFolder, or refuses a PHP version without Xdebug. activity is
+    // false for a link in a background process of Nexus and for php -m of the MCP server. That
+    // request is no activity and starts no workspace. An older nexus command sends no activity, so
+    // its request counts (owner, 2026-11-15).
+    case tool(ProjectTool, folder: String, argumentFolder: String? = nil, debug: Bool? = nil, activity: Bool? = nil)
     // The configuration of the Laravel application that holds this folder (D43). php is a version
     // line. Without it the PHP of the site applies.
     case probe(folder: String, php: String?)
@@ -1200,8 +1377,23 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     case createWorktree(folder: String, branch: String, databases: WorkspaceDatabaseKind? = nil)
     // Removes the worktree with git. The workspace then goes as for each removal (D53).
     case removeWorkspace(host: String, name: String, force: Bool)
+    // The removal of the app (group 3, 3a and 3b). git removes each worktree without --force. The
+    // answer comes when the records are gone, before the dumps. host is a host of a site of the
+    // project.
+    case removeWorkspaces(host: String, names: [String])
+    // Stops or starts a workspace, or sets "Stop when idle". keepAwake true turns "Stop when idle"
+    // off. nil keeps the switch. A stop and a start without keepAwake keep the switch (owner,
+    // 2026-11-15).
+    case stopWorkspace(host: String, name: String)
+    case startWorkspace(host: String, name: String, keepAwake: Bool? = nil)
+    case setKeepAwake(host: String, name: String, keepAwake: Bool)
     case workspaceSettings
     case setWorkspaceSettings(WorkspaceSettings)
+    // The old workspaces of a site with the signs of git (owner, 2026-11-15). days nil uses "Old
+    // after" of Settings > Workspaces.
+    case oldWorkspaces(host: String, days: Int? = nil)
+    // The notifications about old workspaces that are due now. nexusd notes each one as sent.
+    case oldWorkspaceNotices
     case dumps
     case emptyTrash
     // file is a path, or a name in the Nexus trash.
@@ -1506,6 +1698,9 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case wordPressCopySource(WordPressCopySource)
     case workspaceEnv([WorkspaceEnvKey])
     case workspaceSettings(WorkspaceSettings)
+    case workspaceRemovals(WorkspaceRemovals)
+    case oldWorkspaces(OldWorkspaceList)
+    case oldWorkspaceNotices([OldWorkspacesNotice])
     case dumps([DatabaseDump])
     case dumpInfo(DumpInfo)
     case backgroundPreset([String])

@@ -212,7 +212,9 @@ private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bo
     do {
         let folder = FileManager.default.currentDirectoryPath
         let argumentFolder = ToolArguments.folder(of: tool, in: arguments, currentFolder: folder)
-        response = try await NexusClient().send(.tool(tool, folder: folder, argumentFolder: argumentFolder, debug: debug ? true : nil))
+        // A link in a background process of Nexus is no activity of the user (owner, 2026-11-15).
+        let activity: Bool? = environment[BackgroundProcessMarker.name] == nil ? nil : false
+        response = try await NexusClient().send(.tool(tool, folder: folder, argumentFolder: argumentFolder, debug: debug ? true : nil, activity: activity))
     } catch let error as NexusClientError {
         guard let other = nextProgram() else {
             try fail("\(ErrorText.plain(error))")
@@ -246,6 +248,10 @@ private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bo
 
     if debug, command.xdebugFolder == nil {
         try fail("nexusd is older than this nexus command. Open the Nexus app, so that it starts the new nexusd. Then run the command again.")
+    }
+
+    if let problem = command.startProblem {
+        FileHandle.standardError.write(Data("\(problem)\n".utf8))
     }
 
     var toolEnvironment = environment.merging(command.environment(for: arguments)) { _, new in new }
@@ -511,8 +517,8 @@ struct Uninstall: AsyncParsableCommand {
 struct WorkspaceCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "workspace",
-        abstract: "Makes, shows and removes the workspaces of the sites.",
-        subcommands: [List.self, Create.self, Wait.self, Info.self, Remove.self, Env.self, Retry.self],
+        abstract: "Makes, shows, stops, starts and removes the workspaces of the sites.",
+        subcommands: [List.self, Create.self, Wait.self, Info.self, Stop.self, Start.self, Remove.self, Env.self, Retry.self],
         defaultSubcommand: List.self
     )
 
@@ -618,6 +624,9 @@ struct WorkspaceCommand: AsyncParsableCommand {
 
             print("Workspace  \(details.name) of \(details.site)")
             print("State      \(details.state)")
+            print("Run state  \(details.runState)")
+            print("Idle stop  \(details.stopWhenIdle ? "on" : "off")")
+            print("Activity   \(WorkspaceDetails.activityText(details.lastActivity))")
             print("URL        \(details.url ?? "none")")
             print("Worktree   \(details.worktree)")
 
@@ -629,21 +638,53 @@ struct WorkspaceCommand: AsyncParsableCommand {
         }
     }
 
-    struct Remove: AsyncParsableCommand {
+    // A stop or a start keeps "Stop when idle". Only --keep changes it (owner, 2026-11-15).
+    struct Stop: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Removes the workspace and keeps a dump.",
-            discussion: "Nexus first runs the commands of nexus site edit --removal-command in the workspace. Then it runs git worktree remove. git refuses a worktree with changes that are not committed. --force removes these changes too. Nexus then writes a dump of each database to the trash and removes the database server of the workspace."
+            abstract: "Stops the database servers, the background processes and the Node.js app of a workspace.",
+            discussion: "The data stays. The next page, command or database connection starts the workspace again."
         )
 
         @Argument(help: "The name of the workspace. The default is the workspace of the current folder.") var name: String?
         @Option(help: "The host of the site, when more sites have this name.") var site: String?
-        @Flag(help: "Also remove a worktree with changes that are not committed. A locked worktree stays.") var force = false
+
+        func run() async throws {
+            let target = try await WorkspaceCommand.target(name: name, site: site)
+            try finish(try await send(.stopWorkspace(host: target.site.hosts.first ?? "", name: target.workspace.name)))
+        }
+    }
+
+    struct Start: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Starts a stopped workspace and waits until its database servers take connections.",
+            discussion: "A page, a command or a database connection also starts a stopped workspace. --keep turns \"Stop when idle\" off. The workspace then runs until you stop it."
+        )
+
+        @Argument(help: "The name of the workspace. The default is the workspace of the current folder.") var name: String?
+        @Option(help: "The host of the site, when more sites have this name.") var site: String?
+        @Flag(help: "Keep the workspace running. It does not stop when idle.") var keep = false
+
+        func run() async throws {
+            let target = try await WorkspaceCommand.target(name: name, site: site)
+            try finish(try await send(.startWorkspace(host: target.site.hosts.first ?? "", name: target.workspace.name, keepAwake: keep ? true : nil)))
+        }
+    }
+
+    struct Remove: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Removes the workspace and keeps a dump.",
+            discussion: "Nexus first checks that git can remove the worktree. git refuses a locked worktree, a worktree with changes that are not committed and a worktree with submodules. --force removes a worktree with changes or submodules. A locked worktree always stays. Then Nexus runs the commands of nexus site edit --removal-command in the workspace and git worktree remove. Nexus then writes a dump of each database to the trash and removes the database server of the workspace."
+        )
+
+        @Argument(help: "The name of the workspace. The default is the workspace of the current folder.") var name: String?
+        @Option(help: "The host of the site, when more sites have this name.") var site: String?
+        @Flag(help: "Also remove a worktree with changes that are not committed or with submodules. A locked worktree stays.") var force = false
 
         func run() async throws {
             let target = try await WorkspaceCommand.target(name: name, site: site)
             let host = target.site.hosts.first ?? ""
 
-            print("Nexus removes the workspace \(target.workspace.name). A dump of a large database can take some minutes.")
+            print("Nexus starts the removal of the workspace \(target.workspace.name). A dump of a large database can take some minutes.")
             try finish(try await send(.removeWorkspace(host: host, name: target.workspace.name, force: force)))
         }
     }
@@ -678,9 +719,14 @@ struct WorkspaceCommand: AsyncParsableCommand {
     }
 
     struct List: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Lists the workspaces of the current site. Outside a site, it lists each workspace.")
+        static let configuration = CommandConfiguration(
+            abstract: "Lists the workspaces of the current site. Outside a site, it lists each workspace. --old shows the old ones.",
+            discussion: "A workspace is old when it has no activity for the days of \"Old after\" in Settings > Workspaces. Activity is a page, a command through Nexus or a git change. --old also shows the last activity and what git knows about the branch. Nexus never removes an old workspace by itself."
+        )
 
         @Flag(help: "Lists the workspaces of each site.") var all = false
+        @Flag(help: "Lists only the workspaces without activity for the days of \"Old after\", with the last activity and the signs of git.") var old = false
+        @Option(help: "The number of days without activity for --old. The default is \"Old after\" of Settings > Workspaces.") var days: Int?
 
         func run() async throws {
             let sites = try await WorkspaceCommand.sites()
@@ -694,8 +740,14 @@ struct WorkspaceCommand: AsyncParsableCommand {
                 return
             }
 
+            // --days alone also lists the old workspaces.
+            if old || days != nil {
+                try await printOld(of: (current.map { [$0] } ?? sites).filter { !($0.workspaces ?? []).isEmpty }, inCurrentSite: current != nil)
+                return
+            }
+
             for row in rows {
-                print([row.site.padding(to: 28), row.workspace.name.padding(to: 28), (row.workspace.url ?? "").padding(to: 44), row.workspace.folder].joined(separator: " "))
+                print([row.site.padding(to: 28), row.workspace.name.padding(to: 28), WorkspaceDetails.stateText(of: row.workspace).padding(to: 22), WorkspaceDetails.activityText(row.workspace.lastActivity).padding(to: 24), (row.workspace.url ?? "").padding(to: 44), row.workspace.folder].joined(separator: " "))
 
                 if let problem = row.workspace.problem {
                     print("    does not run: \(withLogHint(problem))")
@@ -709,6 +761,57 @@ struct WorkspaceCommand: AsyncParsableCommand {
                     print("    warning: \(warning)")
                 }
             }
+        }
+
+        // One request for each project, because nexusd runs git for each repository. The sites of
+        // one project share their workspaces, so only the first site asks. A site that fails gives
+        // its error, and the next sites still print. A row that git would refuse gets the reason
+        // below it.
+        private func printOld(of sites: [SiteInfo], inCurrentSite: Bool) async throws {
+            var printed = false
+            var failed = false
+            var limit = days ?? 0
+            var asked: Set<String> = []
+
+            for site in sites {
+                let worktrees = Set((site.workspaces ?? []).map(\.worktree))
+
+                guard !worktrees.isSubset(of: asked) else {
+                    continue
+                }
+
+                asked.formUnion(worktrees)
+                let host = site.hosts.first ?? ""
+                let response = try await send(.oldWorkspaces(host: host, days: days))
+
+                guard case .oldWorkspaces(let list) = response else {
+                    try? finish(response)
+                    failed = true
+                    continue
+                }
+
+                limit = list.days
+
+                for workspace in list.workspaces {
+                    printed = true
+                    let signs = workspace.signs(mainBranch: list.mainBranch).map(\.text).joined(separator: ", ")
+                    print([host.padding(to: 28), workspace.name.padding(to: 28), workspace.activity.text(now: .now).padding(to: 28), signs].joined(separator: " "))
+
+                    if let refusal = workspace.refusal {
+                        print("    \(withLogHint(refusal))")
+                    }
+                }
+            }
+
+            guard !failed else {
+                throw ExitCode.failure
+            }
+
+            guard !printed else {
+                return
+            }
+
+            print(OldWorkspaces.emptyText(host: inCurrentSite ? sites.first?.hosts.first ?? "" : nil, days: limit))
         }
     }
 }

@@ -32,7 +32,9 @@ public enum WorkspacePlanner {
         var waiting: Set<String> = []
 
         for index in kept.indices {
-            kept[index].branch = listed.first { $0.path == kept[index].worktree }?.branch
+            let entry = listed.first { $0.path == kept[index].worktree }
+            kept[index].branch = entry?.branch
+            kept[index].locked = entry?.locked
             kept[index].folder = kept[index].worktree + subfolder
         }
 
@@ -53,6 +55,7 @@ public enum WorkspacePlanner {
                 workspace.worktree = worktree.path
                 workspace.folder = worktree.path + subfolder
                 workspace.branch = worktree.branch
+                workspace.locked = worktree.locked
                 workspace.state = .preparing
                 kept.append(workspace)
                 continue
@@ -64,7 +67,7 @@ public enum WorkspacePlanner {
             }
 
             let workspaceName = Workspace.name(forFolder: name, taken: Set(kept.map(\.name) + gone.map(\.name)))
-            kept.append(Workspace(name: workspaceName, worktree: worktree.path, folder: worktree.path + subfolder, branch: worktree.branch))
+            kept.append(Workspace(name: workspaceName, worktree: worktree.path, folder: worktree.path + subfolder, branch: worktree.branch, locked: worktree.locked))
         }
 
         return SiteWorktrees(listed: known.listed.intersection(paths).union(finished.map(\.path)).subtracting(waiting), workspaces: kept)

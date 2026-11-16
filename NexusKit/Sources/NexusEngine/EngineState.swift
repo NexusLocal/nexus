@@ -60,6 +60,12 @@ public struct EngineState: Codable, Sendable, Equatable {
     // The keys that "Use Nexus" changed in the .env of each host. "Use the old mail settings"
     // leaves them as they are.
     public var useNexusKeys: [String: Set<String>] = [:]
+    // The last notification about the old workspaces of each workspace record, with the key of the
+    // record (owner, 2026-11-15). A restart of nexusd keeps it. So the next notification comes at
+    // its time and not at once.
+    public var oldWorkspaceNotices: [String: OldWorkspacesNoticeRecord] = [:]
+    // Settings > Sites, Stop a dev server after (owner, 2026-11-15).
+    public var devServerStop = DevServerStop.standard
 
     public init() {}
 
@@ -102,6 +108,9 @@ public struct EngineState: Codable, Sendable, Equatable {
         wordPressURLChanges = (try? container.decodeIfPresent([String: WordPressURLChange].self, forKey: .wordPressURLChanges)) ?? defaults.wordPressURLChanges
         declinedMailTags = try container.decodeIfPresent(Set<String>.self, forKey: .declinedMailTags) ?? defaults.declinedMailTags
         useNexusKeys = try container.decodeIfPresent([String: Set<String>].self, forKey: .useNexusKeys) ?? defaults.useNexusKeys
+        oldWorkspaceNotices = (try? container.decodeIfPresent([String: OldWorkspacesNoticeRecord].self, forKey: .oldWorkspaceNotices)) ?? defaults.oldWorkspaceNotices
+        // An unknown number of minutes gives the default.
+        devServerStop = (try? container.decodeIfPresent(DevServerStop.self, forKey: .devServerStop)) ?? defaults.devServerStop
     }
 }
 

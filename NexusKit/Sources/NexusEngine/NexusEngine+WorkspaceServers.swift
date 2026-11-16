@@ -6,12 +6,22 @@ import NexusRuntime
 import NexusSupervisor
 import NexusWorkspaces
 
+// A complete workspace server with its owner, its instance and its form for the gate of its port. A
+// removal counts as a workspace that runs, because its dump needs the server.
+struct WorkspaceServerEntry: Sendable {
+    let owner: String
+    let server: WorkspaceDatabaseServer
+    let tools: DatabaseTools
+    let gated: GatedServer
+    let isStopped: Bool
+}
+
 // The database servers of the workspaces (D66). Each workspace gets one server for each instance
 // that its application uses, on an APFS clone of the data folder of that instance. So a large
 // database costs no time and almost no disk, and the database names stay the same. These servers
 // have no place in the service list. They run as programs, because they come and go with a
 // workspace. They run in each state of a workspace, because a setup needs them and a removal needs
-// them for its dump.
+// them for its dump. They do not run while the workspace is stopped (owner, 2026-11-15).
 extension NexusEngine {
     // The instance of each port that the plan names.
     func serverInstances(of plan: WorkspaceEnvPlan) async throws -> [(tools: DatabaseTools, mainPort: Int)] {
@@ -45,8 +55,7 @@ extension NexusEngine {
     // changes them also after a stop of nexusd.
     @discardableResult
     func prepareServer(of tools: DatabaseTools, port: Int, databases: [WorkspaceDatabase], workspace: String, key: String, emptying: Bool = false, dump: WorkspaceDumpSource? = nil, owner: String = "") async throws -> WorkspaceLinks? {
-        let record = await stateStore.current().worktrees[key]?.workspaces.first { $0.name == workspace }
-        var server = record?.servers.first { $0.instance == tools.id }
+        var server = await record(workspace, key: key)?.servers.first { $0.instance == tools.id }
 
         if let known = server, !known.isComplete || !FileManager.default.fileExists(atPath: known.folder) {
             try await discard(known, workspace: workspace, key: key)
@@ -84,7 +93,7 @@ extension NexusEngine {
         defer { try? FileManager.default.removeItem(at: work) }
 
         guard !emptying else {
-            let emptied = await stateStore.current().worktrees[key]?.workspaces.first { $0.name == workspace }?.emptiedServers.contains(server.folder) == true
+            let emptied = await record(workspace, key: key)?.emptiedServers.contains(server.folder) == true
 
             guard !emptied else {
                 return nil
@@ -146,7 +155,7 @@ extension NexusEngine {
     // The record names the clone before it starts. So a stop of nexusd loses no folder.
     private func cloneInstance(_ tools: DatabaseTools, port: Int, workspace: String, key: String) async throws -> WorkspaceDatabaseServer? {
         guard !updatingServices.contains(tools.id) else {
-            throw RuntimeError.unsupported("Nexus updates \(tools.id) now. Retry after the update.")
+            throw RuntimeError.unsupported(Self.updateText(tools.id))
         }
 
         let folder = paths.workspaceData
@@ -210,11 +219,17 @@ extension NexusEngine {
     // with a wrong reason.
     func waitForServer(_ tools: DatabaseTools, port: Int) async throws {
         guard !updatingServices.contains(tools.id) else {
-            throw RuntimeError.unsupported("Nexus updates \(tools.id) now. Retry after the update.")
+            throw RuntimeError.unsupported(Self.updateText(tools.id))
         }
 
-        guard !watchingStopped, !stoppingAllServices, await !waitsForStoppedServices() else {
-            throw RuntimeError.unsupported("The services are stopped, so the database server of this workspace does not run. Start the services, and then retry.")
+        guard await !servicesAreStopped() else {
+            throw RuntimeError.unsupported(Self.servicesStoppedText)
+        }
+
+        // During a hand-over the gate listens on the port, so a probe would end at once (plan item
+        // 3e). After the hand-over the probe reaches the server itself.
+        if let problem = await serverGate.waitForHandOver(of: port) {
+            throw RuntimeError.unsupported(problem)
         }
 
         let deadline = ContinuousClock.now + ServiceCatalog.databaseStartTimeout
@@ -252,42 +267,74 @@ extension NexusEngine {
     // sync of that request starts these servers again.
     func stopWorkspaceServers(of instance: String) async {
         for (id, process) in runningProcesses where process.log == instance {
-            try? await processSupervisor.stop(id)
-            runningProcesses[id] = nil
+            guard let server = process.server else {
+                try? await processSupervisor.stop(id)
+                runningProcesses[id] = nil
+                continue
+            }
+
+            await stopServer(id, server)
+        }
+    }
+
+    // Each complete server of the workspaces and of the removals, with its clone folder on disk and an
+    // installed instance. The sync reads this list one time for each run, because databaseRuntimes
+    // reads the metadata of each installed runtime from disk. The workspaces come before the removals,
+    // so a folder in both lists runs as the server of its workspace. Without includesRunning the list
+    // has only the servers of the stopped workspaces, and it reads no runtime when it is empty.
+    func workspaceServers(_ state: EngineState, includesRunning: Bool = true) async -> [WorkspaceServerEntry] {
+        let ofWorkspaces = state.worktrees.flatMap { key, record in
+            record.workspaces.flatMap { workspace in
+                workspace.servers.map { (owner: Self.processOwner(key: key, workspace: workspace.name), server: $0, isStopped: workspace.runState == .stopped) }
+            }
+        }
+        let ofRemovals = state.databaseRemovals.map { (owner: Self.processOwner(key: $0.site, workspace: $0.workspace), server: $0.server, isStopped: false) }
+        let complete = (ofWorkspaces + ofRemovals).filter { entry in
+            (includesRunning || entry.isStopped) && entry.server.isComplete && FileManager.default.fileExists(atPath: entry.server.folder)
+        }
+
+        guard !complete.isEmpty else {
+            return []
+        }
+
+        let runtimes = await databaseRuntimes()
+
+        return complete.compactMap { owner, server, isStopped in
+            guard let tools = runtimes.first(where: { $0.id == server.instance }) else {
+                return nil
+            }
+
+            let gated = GatedServer(
+                folder: server.folder,
+                instance: server.instance,
+                kind: tools.kind,
+                port: server.port,
+                socket: paths.workspaceDatabaseSocket(tools.kind, line: tools.runtime.line, port: server.port),
+                log: paths.log(server.instance)
+            )
+
+            return WorkspaceServerEntry(owner: owner, server: server, tools: tools, gated: gated, isStopped: isStopped)
         }
     }
 
     // The servers that must run now. A removed workspace keeps its server until its dump is complete.
     // A program of an instance that Nexus updates must stop, because the update replaces its files.
-    func workspaceServerProcesses(_ state: EngineState) async -> [BackgroundProcess] {
-        let ofWorkspaces = state.worktrees.flatMap { key, record in
-            record.workspaces.flatMap { workspace in
-                workspace.servers.map { (owner: Self.processOwner(key: key, workspace: workspace.name), server: $0) }
-            }
-        }
-        let ofRemovals = state.databaseRemovals.map { (owner: Self.processOwner(key: $0.site, workspace: $0.workspace), server: $0.server) }
-        let servers = ofWorkspaces + ofRemovals
+    // A stopped workspace runs no server (owner, 2026-11-15). A removal of a stopped workspace runs
+    // its server for the dump.
+    func workspaceServerProcesses(_ servers: [WorkspaceServerEntry]) -> [BackgroundProcess] {
+        servers.compactMap { entry in
+            let server = entry.server
 
-        guard !servers.isEmpty else {
-            return []
-        }
-
-        let instances = await databaseRuntimes()
-        var processes: [BackgroundProcess] = []
-
-        for (owner, server) in servers where server.isComplete && !removingServers.contains(server.folder) && !updatingServices.contains(server.instance) {
-            guard FileManager.default.fileExists(atPath: server.folder), let tools = instances.first(where: { $0.id == server.instance }) else {
-                continue
+            guard !entry.isStopped, !removingServers.contains(server.folder), !updatingServices.contains(server.instance) else {
+                return nil
             }
 
-            guard let definition = catalog.workspaceServerDefinition(id: server.folder, instance: server.instance, runtime: tools.runtime, port: server.port, folder: URL(filePath: server.folder, directoryHint: .isDirectory), environment: [Self.processMarker: processMarkerValue]) else {
-                continue
+            guard let definition = catalog.workspaceServerDefinition(id: server.folder, instance: server.instance, runtime: entry.tools.runtime, port: server.port, folder: URL(filePath: server.folder, directoryHint: .isDirectory), environment: [Self.processMarker: processMarkerValue]) else {
+                return nil
             }
 
-            processes.append(BackgroundProcess(owner: owner, command: definition.displayName, log: server.instance, worktree: nil, definition: definition))
+            return BackgroundProcess(owner: entry.owner, command: definition.displayName, log: server.instance, worktree: nil, definition: definition, server: entry.gated)
         }
-
-        return processes
     }
 
     // The configuration can look right while the application still reaches another server, because

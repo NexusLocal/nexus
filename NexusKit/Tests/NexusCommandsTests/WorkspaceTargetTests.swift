@@ -163,6 +163,41 @@ struct WorkspaceTargetTests {
         #expect(details["branch"] is NSNull)
         #expect(details["state"] as? String == "preparing")
         #expect(database["port"] is NSNull)
+        #expect(details["lastActivity"] is NSNull)
+        #expect(details["runState"] as? String == "running")
+        #expect(details["stopWhenIdle"] as? Bool == true)
+    }
+
+    @Test func theJSONGivesTheRunStateTheIdleStopAndTheLastActivity() throws {
+        let info = WorkspaceInfo(name: "fix", worktree: "/w/fix", folder: "/w/fix", state: .ready, lastActivity: Date(timeIntervalSince1970: 1_763_200_000), runState: .stopped, keepAwake: true)
+        let target = WorkspaceTarget(site: site("shop.test", folder: "/w/shop", workspaces: [info]), workspace: info)
+        let details = try #require(try JSONSerialization.jsonObject(with: Data(WorkspaceDetails(target).json.utf8)) as? [String: Any])
+
+        #expect(details["runState"] as? String == "stopped")
+        #expect(details["stopWhenIdle"] as? Bool == false)
+        #expect(details["lastActivity"] as? String == "2025-11-15T09:46:40Z")
+    }
+
+    @Test(arguments: [
+        (WorkspaceState.ready, WorkspaceRunState.running, false, "Ready"),
+        (.ready, .stopped, false, "Stopped"),
+        (.notIsolated("The connection cms is fixed."), .starting, false, "Starting"),
+        (.preparing, .stopped, false, "Preparing"),
+        (.notIsolated("The connection cms is fixed."), .running, false, "Not isolated"),
+        (.notIsolated("\(WorkspaceDumpText.failed) The file is no SQL dump."), .running, false, "The dump did not load"),
+        (.ready, .running, true, "Ready (Stop when idle: off)"),
+    ])
+    func theListShowsTheRunStateInPlaceOfEachStateExceptPreparing(state: WorkspaceState, runState: WorkspaceRunState, keepAwake: Bool, text: String) {
+        let info = WorkspaceInfo(name: "fix", worktree: "/w/fix", folder: "/w/fix", state: state, runState: runState, keepAwake: keepAwake)
+
+        #expect(WorkspaceDetails.stateText(of: info) == text)
+    }
+
+    @Test func theListShowsTheAgeOfTheLastActivity() {
+        let now = Date(timeIntervalSince1970: 1_763_200_000)
+
+        #expect(WorkspaceDetails.activityText(now.addingTimeInterval(-7200), now: now) == "2 hours ago")
+        #expect(WorkspaceDetails.activityText(nil, now: now) == "no activity")
     }
 
     @Test func theJSONGivesTheURLTheDatabasesAndThePorts() throws {

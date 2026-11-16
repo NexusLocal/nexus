@@ -27,7 +27,7 @@ extension AppModel {
         markedRow = nil
 
         switch target {
-        case .workspace(let host, _), .site(let host):
+        case .workspace(let host, _), .site(let host), .oldWorkspaces(let host):
             guard site(host) != nil else {
                 return
             }
@@ -47,6 +47,11 @@ extension AppModel {
         switch target {
         case .workspace, .database:
             markedRow = target
+        case .oldWorkspaces(let host):
+            // The design "Notifications" in nexus.pen: the sheet of the old workspaces opens over
+            // the Site screen.
+            markedRow = target
+            sheet = .oldWorkspaces(host: host)
         case .site, .service, .mail:
             break
         }

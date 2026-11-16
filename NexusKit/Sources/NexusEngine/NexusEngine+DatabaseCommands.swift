@@ -13,7 +13,7 @@ extension NexusEngine {
             return try await mainConnections(host: host)
         }
 
-        let workspace = try await workspaceRecord(host: host, name: name)
+        let workspace = try await workspaceOfSite(host: host, name: name).workspace
         var connections: [DatabaseConnectionInfo] = []
 
         for database in workspace.databases {
@@ -82,20 +82,6 @@ extension NexusEngine {
         return [connection(nil, database: database, host: config.host ?? "", port: port, instance: instance?.id)]
     }
 
-    private func workspaceRecord(host: String, name: String) async throws -> Workspace {
-        let state = await stateStore.current()
-
-        guard let site = resolvedSites(state).map(\.site).first(where: { $0.hosts.contains(host) }) else {
-            throw RuntimeError.unsupported("Nexus has no site \(host).")
-        }
-
-        guard let workspace = state.worktrees[ProjectFolder.workspaceKey(of: site)]?.workspaces.first(where: { $0.name == name }) else {
-            throw RuntimeError.unsupported("\(host) has no workspace \(name).")
-        }
-
-        return workspace
-    }
-
     func client(for target: DatabaseTarget) async throws -> (DatabaseTools, DatabaseClient, URL) {
         switch target {
         case .instance(let id):
@@ -106,7 +92,7 @@ extension NexusEngine {
     }
 
     private func workspaceClient(host: String, name: String, instance: String) async throws -> (DatabaseTools, DatabaseClient, URL) {
-        let workspace = try await workspaceRecord(host: host, name: name)
+        let (key, workspace) = try await workspaceOfSite(host: host, name: name)
 
         guard let tools = await databaseRuntime(instance) else {
             throw RuntimeError.unsupported("Nexus has no database instance \(instance). See: nexus db list")
@@ -114,6 +100,13 @@ extension NexusEngine {
 
         guard let server = workspace.servers.first(where: { $0.instance == instance }) else {
             throw RuntimeError.unsupported("The workspace \(name) has no server of \(instance).")
+        }
+
+        // nexus db databases, create and import name the workspace. They need its server, so a
+        // stopped workspace starts after the checks (owner, 2026-11-15). The checks can wait, so the
+        // current record decides. handle notes the activity of the request.
+        if let current = await record(name, key: key), let problem = await startIfStopped(current, key: key, cause: "a request")?.ready.value {
+            throw RuntimeError.unsupported(problem)
         }
 
         guard PortInspector.acceptsConnections(server.port) else {

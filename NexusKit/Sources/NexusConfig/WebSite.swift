@@ -25,6 +25,23 @@ public enum WebBackend: Sendable, Equatable {
     case notice(title: String, text: String)
 }
 
+// The files that decide the wait page of a Laravel site with a dev server (owner, 2026-11-15).
+// page is the file of nexusd in the pages folder. nginx shows the wait page only while page exists,
+// node_modules exists and neither public/hot nor the manifest exists.
+public struct DevServerFiles: Sendable, Equatable {
+    public let page: URL
+    public let nodeModules: URL
+    public let hotFile: URL
+    public let manifest: URL
+
+    public init(page: URL, nodeModules: URL, hotFile: URL, manifest: URL) {
+        self.page = page
+        self.nodeModules = nodeModules
+        self.hotFile = hotFile
+        self.manifest = manifest
+    }
+}
+
 // A site as the web servers see it: every name, the backend and the files that it needs. A
 // WordPress site gets the rules of WordPress in nginx.
 public struct WebSite: Sendable, Equatable {
@@ -38,8 +55,9 @@ public struct WebSite: Sendable, Equatable {
     public let network: WordPressNetworkKind?
     // The file with the custom lines of a PHP site (owner, 2026-11-14). nil without lines.
     public let customLines: URL?
+    public let devServer: DevServerFiles?
 
-    public init(hosts: [String], backend: WebBackend, certificate: URL, key: URL, accessLog: URL, project: PHPProjectType = .other, network: WordPressNetworkKind? = nil, customLines: URL? = nil) {
+    public init(hosts: [String], backend: WebBackend, certificate: URL, key: URL, accessLog: URL, project: PHPProjectType = .other, network: WordPressNetworkKind? = nil, customLines: URL? = nil, devServer: DevServerFiles? = nil) {
         self.hosts = hosts
         self.backend = backend
         self.certificate = certificate
@@ -48,6 +66,7 @@ public struct WebSite: Sendable, Equatable {
         self.project = project
         self.network = network
         self.customLines = customLines
+        self.devServer = devServer
     }
 
     public var isWordPress: Bool {

@@ -130,7 +130,22 @@ struct PortInspectorTests {
         return descriptor
     }
 
-    @Test func aListeningUnixSocketAcceptsConnections() {
+    // A listener that just closed can take connections for some milliseconds while other tests run.
+    private func stopsAccepting(_ accepts: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(2)
+
+        while accepts() {
+            guard ContinuousClock.now < deadline else {
+                return false
+            }
+
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        return true
+    }
+
+    @Test func aListeningUnixSocketAcceptsConnections() async {
         let path = "/tmp/nx-\(UUID().uuidString.prefix(8)).sock"
         defer { unlink(path) }
         let descriptor = listen(onSocket: path)
@@ -139,7 +154,45 @@ struct PortInspectorTests {
         close(descriptor)
 
         #expect(accepts)
-        #expect(!PortInspector.acceptsConnections(socket: path))
+        #expect(await stopsAccepting { PortInspector.acceptsConnections(socket: path) })
+    }
+
+    @Test func theLinesOfLsofGiveThePortsOnBothSidesOfAConnection() {
+        let output = "p123\nf10\nn[::1]:20005->[::1]:51234\np456\nf11\nn127.0.0.1:51300->127.0.0.1:20007\nn127.0.0.1:3306->127.0.0.1:51400\n"
+
+        #expect(PortInspector.connectedPorts(inLsofOutput: output, among: [20005, 20007, 20009]) == [20005, 20007])
+        #expect(PortInspector.connectedPorts(inLsofOutput: output, among: [20009]).isEmpty)
+    }
+
+    private func listenOnIPv6Loopback() -> (descriptor: Int32, port: Int)? {
+        for _ in 0..<50 {
+            let port = Int.random(in: 50_001...60_000)
+            let descriptor = socket(AF_INET6, SOCK_STREAM, 0)
+            var address = sockaddr_in6()
+            address.sin6_family = sa_family_t(AF_INET6)
+            address.sin6_port = in_port_t(UInt16(port).bigEndian)
+            address.sin6_addr = in6addr_loopback
+            let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) } }
+
+            if bound == 0, Darwin.listen(descriptor, 5) == 0 {
+                return (descriptor, port)
+            }
+
+            close(descriptor)
+        }
+
+        return nil
+    }
+
+    @Test func aListenerOnlyOnTheLoopbackOfIPv6AcceptsLoopbackConnections() async throws {
+        let listener = try #require(listenOnIPv6Loopback())
+        let accepts = PortInspector.acceptsLoopbackConnections(listener.port)
+        let acceptsOnIPv4 = PortInspector.acceptsConnections(listener.port)
+        close(listener.descriptor)
+
+        #expect(accepts)
+        #expect(!acceptsOnIPv4)
+        #expect(await stopsAccepting { PortInspector.acceptsLoopbackConnections(listener.port) })
     }
 
     @Test func aMissingSocketAcceptsNoConnection() {

@@ -137,6 +137,8 @@ public struct NexusToolbox: MCPHandler {
         case "set_php_extension": try await setExtension(arguments, agent: agent)
         case "create_database": try await createDatabase(arguments, agent: agent)
         case "create_workspace": try await createWorkspace(arguments, agent: agent)
+        case "stop_workspace": try await stopWorkspace(arguments, agent: agent)
+        case "start_workspace": try await startWorkspace(arguments, agent: agent)
         case "add_site": try await addSite(arguments, agent: agent)
         case "remove_workspace": try await removeWorkspace(arguments, agent: agent)
         case "remove_site": try await removeSite(arguments, agent: agent)
@@ -196,9 +198,10 @@ public struct NexusToolbox: MCPHandler {
 
     // php -m with the PHP of the site, as the site runs it. A php.ini that makes PHP wait at its
     // start must not hold the call. So PHP gets 10 seconds. A cancel of the call stops PHP. This is
-    // a PHP run of Nexus. So it gets no folder of the dump viewer.
+    // a PHP run of Nexus. So it gets no folder of the dump viewer, and it is no activity of a
+    // workspace (owner, 2026-11-15).
     private func loadedModules(of target: SiteTarget) async throws -> Set<String> {
-        let response = try await send(.tool(.php, folder: target.folder, argumentFolder: nil))
+        let response = try await send(.tool(.php, folder: target.folder, argumentFolder: nil, activity: false))
 
         guard case .tool(let tool) = response else {
             throw failure(response)
@@ -654,16 +657,36 @@ public struct NexusToolbox: MCPHandler {
     }
 
     private func removeWorkspace(_ arguments: CallArguments, agent: String) async throws -> MCPToolResult {
+        let target = try await workspaceTarget(arguments)
+
+        return try .message(try await done(.removeWorkspace(host: target.site.hosts.first ?? "", name: target.workspace.name, force: false), agent: agent))
+    }
+
+    // A stop and a start keep "Stop when idle". Only keep true turns it off (owner, 2026-11-15).
+    private func stopWorkspace(_ arguments: CallArguments, agent: String) async throws -> MCPToolResult {
+        let target = try await workspaceTarget(arguments)
+
+        return try .message(try await done(.stopWorkspace(host: target.site.hosts.first ?? "", name: target.workspace.name), agent: agent))
+    }
+
+    private func startWorkspace(_ arguments: CallArguments, agent: String) async throws -> MCPToolResult {
+        let target = try await workspaceTarget(arguments)
+        let keepAwake: Bool? = arguments.bool("keep") == true ? true : nil
+
+        return try .message(try await done(.startWorkspace(host: target.site.hosts.first ?? "", name: target.workspace.name, keepAwake: keepAwake), agent: agent))
+    }
+
+    // The arguments workspace and site of remove_workspace, stop_workspace and start_workspace.
+    private func workspaceTarget(_ arguments: CallArguments) async throws -> WorkspaceTarget {
         let value = arguments.string("workspace")
         let sites = try await sites()
-        let target: WorkspaceTarget
 
         do {
             if let value, !Self.isFolder(value) {
-                target = try WorkspaceTarget.find(name: value, site: arguments.string("site"), folder: folder, in: sites)
-            } else {
-                target = try WorkspaceTarget.find(name: nil, site: nil, folder: value.map(resolvedFolder) ?? folder, in: sites)
+                return try WorkspaceTarget.find(name: value, site: arguments.string("site"), folder: folder, in: sites)
             }
+
+            return try WorkspaceTarget.find(name: nil, site: nil, folder: value.map(resolvedFolder) ?? folder, in: sites)
         } catch let error as WorkspaceTargetError {
             let text = switch error.reason {
             case .noSite(let host): "Nexus has no site \(host). Call list_sites to see the sites."
@@ -674,8 +697,6 @@ public struct NexusToolbox: MCPHandler {
 
             throw ToolFailure(text)
         }
-
-        return try .message(try await done(.removeWorkspace(host: target.site.hosts.first ?? "", name: target.workspace.name, force: false), agent: agent))
     }
 
     private func removeSite(_ arguments: CallArguments, agent: String) async throws -> MCPToolResult {
@@ -959,7 +980,7 @@ struct TaskRow: Encodable {
         task = switch info.work {
         case .install(let name, let line, let version, let update): "\(update ? "Updates" : "Installs") \(name) \(line) (\(version))"
         case .copyDatabase(let database, let instance, let name): "Copies the database \(database) to \(instance) as \(name)"
-        case .dumpDatabase(let name, let instance): "Writes a dump of \(name) on \(instance)"
+        case .dumpDatabase(let name, let instance, let workspace): "Writes a dump of \(name)\(workspace.map { " of the workspace \($0)" } ?? "") on \(instance)"
         case .importDump(let file, let instance, let name): "Loads \(file) into \(name) on \(instance)"
         case .createSite(let name, let template): "Makes the site \(name) from the template \(template.rawValue)"
         case .importSite(let name): "Imports the site \(name)"

@@ -1,5 +1,6 @@
 import AppKit
 import NexusCore
+import NexusIPC
 import SwiftUI
 
 struct MainWindow: View {
@@ -73,6 +74,8 @@ struct MainWindow: View {
                     Color.clear
                         .onAppear { model.sheet = nil }
                 }
+            case .oldWorkspaces(let host):
+                OldWorkspacesSheet(host: host)
             }
         }
         .alert(model.windowFailure?.title ?? "", isPresented: showsFailure, presenting: model.windowFailure) { failure in
@@ -107,6 +110,8 @@ struct MainWindow: View {
                 Text(parkedFolderRemoval(folder))
             case .package(let package):
                 Text(packageRemoval(package))
+            case .workspace(let workspace, let site, let days):
+                Text(workspaceRemoval(workspace, of: site, dumpDays: days))
             }
         }
         .onChange(of: model.groupNaming?.id) {
@@ -199,6 +204,7 @@ struct MainWindow: View {
         case .site(let site): "Remove \(site.host)?"
         case .parkedFolder(let folder): "Remove the folder of projects \(folder.name)?"
         case .package(let package): "Remove \(package.name)?"
+        case .workspace(let workspace, _, _): "Remove the workspace \(workspace.name)?"
         case nil: ""
         }
     }
@@ -226,6 +232,38 @@ struct MainWindow: View {
         let names = EnglishList.joined(kept)
         let settings = kept.count == 1 ? "has settings of its own, so it stays a site" : "have settings of their own, so they stay sites"
         return "\(message) \(names) \(settings)."
+    }
+
+    // The design is "Alert Remove Workspace" in nexus.pen (owner, 2026-11-15). git deletes the whole
+    // folder, also the files that git ignores. The branch keeps the commits. The other sites of the
+    // project lose the workspace too. A name on two servers gives two dumps with one name.
+    private func workspaceRemoval(_ workspace: WorkspaceInfo, of site: SiteItem, dumpDays: Int) -> String {
+        let folder = (workspace.worktree as NSString).abbreviatingWithTildeInPath
+        let dumps = Array(Set((workspace.databases ?? []).map { Workspace.databaseName($0.name, workspace: workspace.name) })).sorted()
+        let preparing = workspace.state == nil || workspace.state == .preparing
+        let others = model.allSites.filter { other in other.host != site.host && other.workspaces.contains { $0.worktree == workspace.worktree } }.map(\.host)
+        var sentences = ["git removes the folder \(folder) with all its files."]
+
+        if let branch = workspace.branch {
+            sentences.append("The branch \(branch) stays.")
+        }
+
+        if !dumps.isEmpty {
+            sentences.append("Nexus keeps a dump of \(EnglishList.joined(dumps)) in the trash for \(Count.text(dumpDays, "day")).")
+        } else if !preparing {
+            sentences.append("This workspace has no databases. So the trash gets no dump.")
+        }
+
+        if preparing {
+            sentences.append("The setup of the workspace stops. A database copy that did not end gets no dump.")
+        }
+
+        if !others.isEmpty {
+            let (verb, owner) = others.count == 1 ? ("uses", "Its") : ("use", "Their")
+            sentences.append("\(EnglishList.joined(others)) \(verb) the same project. \(owner) workspace \(workspace.name) goes too.")
+        }
+
+        return sentences.joined(separator: " ")
     }
 
     private var showsRemoval: Binding<Bool> {

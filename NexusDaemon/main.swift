@@ -15,6 +15,7 @@ CrashReports.apply(process: "nexusd")
 
 let paths = NexusPaths.standard
 try? paths.createFolders()
+DescriptorLimit.raise()
 
 // nexusd is in Contents/MacOS of the app. The nexus command is in Contents/Helpers. A start from
 // a moved app gives the links the new place. The name of the folder must match exactly: the file
@@ -39,6 +40,7 @@ let engine = NexusEngine(
     paths: paths,
     helper: HelperClient(),
     certificateAuthority: CertificateAuthority(paths: paths),
+    serverGate: WorkspacePortGate(activity: activity),
     dumpLibrarySource: contents?.appending(path: "Resources/php/dumps", directoryHint: .isDirectory),
     servesDumpPage: true,
     activity: activity,

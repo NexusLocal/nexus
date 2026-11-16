@@ -4,7 +4,7 @@ import Testing
 import NexusCore
 
 struct CommandListTests {
-    private static let examples = CommandSection.all.flatMap(\.commands).map(\.command)
+    private static let examples = CommandSection.all.flatMap(\.commands).flatMap(\.examples)
 
     @Test(arguments: examples)
     func eachExampleIsAValidCommand(_ example: String) throws {

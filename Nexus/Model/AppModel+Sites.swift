@@ -63,6 +63,16 @@ extension Health {
         case .stopped, nil: .stopped
         }
     }
+
+    // A Node.js app that waits for its first page shows "Starts with the first page", and its dot
+    // stays green (owner, 2026-11-15).
+    init(app: AppProcessInfo?) {
+        self.init(app?.state)
+
+        if self == .stopped, app?.startsWithPage == true {
+            self = .running
+        }
+    }
 }
 
 // The terminal apps and code editors that a site can open in (D61). Nexus suggests the first one
@@ -121,6 +131,21 @@ extension AppModel {
         }
 
         send(.setSiteDefaults(defaults), failure: "The defaults for new sites did not change", place: .window)
+    }
+
+    // One setting for the dev servers of all sites (owner, 2026-11-15). The sample data keeps it in
+    // the settings.
+    var devServerStop: DevServerStop {
+        siteList?.devServerStop ?? settings.devServerStop
+    }
+
+    func setDevServerStop(_ stop: DevServerStop) {
+        guard isLive else {
+            settings.devServerStop = stop
+            return
+        }
+
+        send(.setDevServerStop(stop), failure: "The setting of the dev servers did not change", place: .settings)
     }
 
     // A PHP version of nil in the defaults is the newest installed version. A default that is not
@@ -184,7 +209,7 @@ extension AppModel {
         let php = site.kind == .php ? [ServiceID.php(line: site.php)] : []
         let apache = site.kind == .php && site.webServer == .apache ? [ServiceID.apache] : []
         let needed = [ServiceID.nginx] + php + apache
-        let app = site.kind == .node ? [Health(site.app?.state)] : []
+        let app = site.kind == .node ? [Health(app: site.app)] : []
         let healths = needed.map { service($0)?.health ?? .stopped } + app
 
         if healths.allSatisfy({ $0 == .running }) {
@@ -252,8 +277,98 @@ extension AppModel {
         _ = await perform(.retryWorkspace(host: site.host, name: workspace.name), failure: "\(workspace.name) did not start again", place: .window)
     }
 
+    // The alert names the days of the trash. So it opens after one read of the settings.
+    func askToRemove(_ workspace: WorkspaceInfo, of site: SiteItem) {
+        Task {
+            removal = .workspace(workspace, of: site, dumpDays: await dumpDays())
+        }
+    }
+
+    // The setting "Keep database dumps for". Without an answer of nexusd it is the default.
+    func dumpDays() async -> Int {
+        guard isLive, case .answer(.workspaceSettings(let settings)) = await outcome(of: .workspaceSettings) else {
+            return WorkspaceSettings().dumpDays
+        }
+
+        return settings.dumpDays
+    }
+
+    func isRemoving(_ workspace: WorkspaceInfo) -> Bool {
+        removingWorktrees.contains(workspace.worktree)
+    }
+
+    // No text after a removal that worked. The row goes (owner, 2026-11-15). A refusal of git shows
+    // its reason with Show in Finder.
+    func removeWorkspace(_ workspace: WorkspaceInfo, of site: SiteItem) {
+        removeAndShowRefusals([workspace], of: site)
+    }
+
+    // One refusal of git gets the alert "<name> was not removed" with Show in Finder. More refusals
+    // share one alert with the reason of each workspace (owner, 2026-11-15).
+    func removeAndShowRefusals(_ workspaces: [WorkspaceInfo], of site: SiteItem) {
+        Task {
+            switch await removeWorkspaces(workspaces, of: site) {
+            case .answer(.workspaceRemovals(let result)) where !result.kept.isEmpty:
+                failure = removalFailure(of: result.kept.map(\.name), message: result.kept.map(\.reason).joined(separator: "\n"), in: workspaces)
+            case .failure(let message):
+                failure = removalFailure(of: workspaces.map(\.name), message: message, in: workspaces)
+            case .answer, .portInUse, nil:
+                break
+            }
+        }
+    }
+
+    private func removalFailure(of names: [String], message: String, in workspaces: [WorkspaceInfo]) -> ActionFailure {
+        guard names.count == 1, let name = names.first else {
+            return ActionFailure(title: "\(Count.text(names.count, "workspace")) were not removed", message: message, place: .window)
+        }
+
+        let folder = workspaces.first { $0.name == name }.flatMap { existingPath($0.worktree) }
+        return ActionFailure(title: "\(name) was not removed", message: message, place: .window, folder: folder)
+    }
+
+    // One request for all names (3a and 3b). The rows show "Removing" until the answer. A row that
+    // git removed keeps it until the next site list of nexusd. The warnings of the commands before
+    // removal go to activity.log only (owner, 2026-11-15). The --sample app has no nexusd. Its rows
+    // stay "Removing", so a check of the look shows that state.
+    func removeWorkspaces(_ workspaces: [WorkspaceInfo], of site: SiteItem) async -> RequestOutcome? {
+        let worktrees = Set(workspaces.map(\.worktree))
+
+        removingWorktrees.formUnion(worktrees)
+
+        let reply = await outcome(of: .removeWorkspaces(host: site.host, names: workspaces.map(\.name)))
+
+        switch reply {
+        case .answer(.workspaceRemovals(let result)):
+            result.warnings.forEach { ActivityTracker.log.write("removal", $0) }
+
+            let kept = Set(result.kept.map(\.name))
+            removingWorktrees.subtract(workspaces.filter { kept.contains($0.name) }.map(\.worktree))
+        case nil where !isLive:
+            break
+        default:
+            removingWorktrees.subtract(worktrees)
+        }
+
+        return reply
+    }
+
     func restartApp(of site: SiteItem, workspace: String? = nil) async {
         _ = await perform(.restartApp(host: site.host, workspace: workspace), failure: "The app of \(workspace ?? site.host) did not start again", place: .window)
+    }
+
+    // "Stop Now" and "Start" of the menu of a workspace row keep "Stop when idle" (owner,
+    // 2026-11-15). The next site list of nexusd shows the new state.
+    func stopWorkspace(_ workspace: WorkspaceInfo, of site: SiteItem) async {
+        _ = await perform(.stopWorkspace(host: site.host, name: workspace.name), failure: "\(workspace.name) did not stop", place: .window)
+    }
+
+    func startWorkspace(_ workspace: WorkspaceInfo, of site: SiteItem) async {
+        _ = await perform(.startWorkspace(host: site.host, name: workspace.name), failure: "\(workspace.name) did not start", place: .window)
+    }
+
+    func setKeepAwake(_ keepAwake: Bool, _ workspace: WorkspaceInfo, of site: SiteItem) async {
+        _ = await perform(.setKeepAwake(host: site.host, name: workspace.name, keepAwake: keepAwake), failure: "\"Stop when idle\" of \(workspace.name) did not change", place: .window)
     }
 
     // The keys that Nexus sets in the .env of each workspace. A site that is no Laravel application,
@@ -349,6 +464,8 @@ extension AppModel {
             send(.unpark(folder: path), failure: "Nexus still uses \(folder.name)", place: .window)
         case .package(let package):
             remove(package)
+        case .workspace(let workspace, let site, _):
+            removeWorkspace(workspace, of: site)
         }
     }
 

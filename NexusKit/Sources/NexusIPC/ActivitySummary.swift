@@ -16,6 +16,10 @@ extension NexusRequest {
         case .setAccount(let instance, _): "setAccount \(instance)"
         case .retryWorkspace(let host, let name): "retryWorkspace \(host) \(name)"
         case .removeWorkspace(let host, let name, _): "removeWorkspace \(host) \(name)"
+        case .removeWorkspaces(let host, let names): "removeWorkspaces \(host) \(names.joined(separator: " "))"
+        case .stopWorkspace(let host, let name): "stopWorkspace \(host) \(name)"
+        case .startWorkspace(let host, let name, let keepAwake): "startWorkspace \(host) \(name)\(keepAwake == true ? " --keep" : "")"
+        case .setKeepAwake(let host, let name, let keepAwake): "setKeepAwake \(host) \(name) \(keepAwake)"
         case .stopTask(let id): "stopTask \(id)"
         case .createSite(let site): "createSite \(site.template.rawValue) \(site.name)"
         case .removeSiteLeftovers(let id): "removeSiteLeftovers \(id)"
@@ -28,12 +32,40 @@ extension NexusRequest {
         }
     }
 
+    // The host and the workspace of a request of nexus, MCP or the app that names a workspace. Such
+    // a request counts as activity (owner, 2026-11-15). A stop and a removal are no activity, so
+    // they give nil.
+    public var namedWorkspace: (host: String, name: String)? {
+        switch self {
+        case .databaseConnections(let host, let name?), .restartApp(let host, let name?), .retryWorkspace(let host, let name), .startWorkspace(let host, let name, _), .setKeepAwake(let host, let name, _):
+            (host, name)
+        case .serverDatabases(let target), .createDatabase(let target, _):
+            Self.workspace(of: target)
+        case .importDump(let request):
+            Self.workspace(of: request.target)
+        case .inspectDump(let inspection):
+            Self.workspace(of: inspection.target)
+        case .fromAgent(_, let request):
+            request.namedWorkspace
+        default:
+            nil
+        }
+    }
+
+    private static func workspace(of target: DatabaseTarget?) -> (host: String, name: String)? {
+        guard case .workspace(let host, let name, _) = target else {
+            return nil
+        }
+
+        return (host, name)
+    }
+
     // nexusd answers these questions many times a minute. They only matter when they fail.
     public var onlyReads: Bool {
         switch self {
         case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules,
              .customSettings, .siteLines, .databases, .databaseSizes, .sourceDatabases, .workspaceEnv, .siteDatabases, .databaseConnections, .serverDatabases, .wordPressSite, .backgroundPreset,
-             .workspaceSettings, .dumps, .probe, .tool, .inspectBackup, .inspectDump, .serviceList, .tasks, .mailStatus, .siteMail, .useNexusInfo, .dumpList,
+             .workspaceSettings, .oldWorkspaces, .dumps, .probe, .tool, .inspectBackup, .inspectDump, .serviceList, .tasks, .mailStatus, .siteMail, .useNexusInfo, .dumpList,
              .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps, .requestEntries:
             true
         case .fromAgent(_, let request):

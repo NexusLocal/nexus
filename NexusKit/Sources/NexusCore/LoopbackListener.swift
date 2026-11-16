@@ -32,27 +32,7 @@ package final class LoopbackListener: Sendable {
     }
 
     package func start() throws {
-        let descriptor = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
-
-        guard descriptor >= 0 else {
-            throw SocketError.system("socket", errno)
-        }
-
-        var on: Int32 = 1
-        setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
-        var address = LineSocket.loopback(port: requestedPort)
-
-        let bound = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-
-        guard bound == 0, listen(descriptor, 64) == 0 else {
-            let code = errno
-            close(descriptor)
-            throw SocketError.system("bind", code)
-        }
+        let descriptor = try IPv4Socket.listener(on: requestedPort, host: IPv4Socket.loopback, backlog: 64)
 
         boundPort.withLock { $0 = Self.localPort(of: descriptor) }
 

@@ -4,6 +4,7 @@ import NexusConfig
 import NexusCore
 import NexusDNS
 import NexusIPC
+import NexusLaravel
 import NexusRuntime
 import NexusSupervisor
 import NexusTLS
@@ -205,10 +206,7 @@ extension NexusEngine {
     // ports come from their own range, below the ports of the workspaces.
     private func assignAppPorts(_ state: EngineState, sites: [Site]) async throws -> EngineState {
         let keys = Set(sites.filter { $0.kind == .node }.map(ProjectFolder.workspaceKey(of:)))
-        let taken = takenPorts(state)
-        let assigned = Self.numbers(for: keys.sorted(), keeping: state.appPorts, from: Self.firstAppPort) {
-            !taken.contains($0) && PortInspector.isFree($0)
-        }
+        let assigned = freePorts(for: keys.sorted(), keeping: state.appPorts, from: Self.firstAppPort, in: state)
 
         guard assigned != state.appPorts else {
             return state
@@ -312,7 +310,8 @@ extension NexusEngine {
                 accessLog: paths.siteLog(site.host),
                 project: layout.projectType,
                 network: layout.network,
-                customLines: linesFile
+                customLines: linesFile,
+                devServer: runsNoPHP ? nil : devServerFiles(of: site, layout: layout)
             ))
 
             if site.kind == .php, !runsNoPHP {
@@ -358,8 +357,10 @@ extension NexusEngine {
             modules: NginxConfig.dependencies.loadOrder(state.nginxModules, available: Self.nginxModules(of: nginx))
         )
 
-        for folder in ["client_body", "proxy", "fastcgi", "uwsgi", "scgi", "pages"] {
-            try FileManager.default.createDirectory(at: paths.run.appending(path: "nginx/\(folder)"), withIntermediateDirectories: true)
+        let temporaryFolders = ["client_body", "proxy", "fastcgi", "uwsgi", "scgi"].map { paths.run.appending(path: "nginx/\($0)") }
+
+        for folder in temporaryFolders + [settings.pages] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         }
 
         let unknownSitePage = ErrorPages.unknownSite(hosts: plan.sites.compactMap(\.hosts.first), httpsPort: settings.httpsPort)
@@ -369,6 +370,7 @@ extension NexusEngine {
             try checkNginx(nginx)
         }
 
+        watchAccessLogs(state, sitesOfRecord: workspaces.sitesOfRecord, conflicts: workspaces.conflicts)
         return plan
     }
 
@@ -780,8 +782,10 @@ extension NexusEngine {
 
         for (site, parked) in resolved {
             let key = ProjectFolder.workspaceKey(of: site)
+            let owner = Self.processOwner(key: key, workspace: nil)
             let nodeProject = site.kind == .node ? site.nodeProject : nil
             let siteLayout = layouts[site.host] ?? SiteLayout(of: site)
+            let problems = (processProblems[owner] ?? []) + devServerProblems(ofKey: key)
 
             sites.append(SiteInfo(
                 hosts: site.hosts,
@@ -804,13 +808,13 @@ extension NexusEngine {
                 backgroundCommands: site.backgroundCommands,
                 workspaceProcesses: site.runsWorkspaceProcesses,
                 mainProcesses: site.runsMainProcesses,
-                processProblems: processProblems[Self.processOwner(key: key, workspace: nil)],
+                processProblems: problems.isEmpty ? nil : problems,
                 runsAs: site.kind,
                 command: site.command,
                 address: site.address,
                 projectCommand: nodeProject?.command,
                 framework: nodeProject?.framework,
-                app: site.kind == .node ? appInfo(owner: Self.processOwner(key: key, workspace: nil), port: state.appPorts[key], host: site.host) : nil,
+                app: site.kind == .node ? appInfo(owner: owner, port: state.appPorts[key], host: site.host) : nil,
                 projectType: site.kind == .php ? siteLayout.projectType : nil,
                 workspaceDatabases: site.workspaceDatabases,
                 workspaceSeeders: site.runsWorkspaceSeeders,
@@ -823,11 +827,12 @@ extension NexusEngine {
                 workspaceDumpCheck: shownDumpCheck(of: site),
                 workspaceDumpChecking: dumpCheckProgress[site.host],
                 nginxLines: site.nginxLines,
-                apacheLines: site.apacheLines
+                apacheLines: site.apacheLines,
+                devServer: site.kind == .php ? devServerInfo(owner: owner) : nil
             ))
         }
 
-        return SiteList(sites: sites, layout: layout, parkedFolders: state.parked.map { Self.displayPath($0.folder) }, defaults: state.siteDefaults, tld: state.tld, newWorkspaceDatabases: state.workspaceSettings.newWorkspaceDatabases)
+        return SiteList(sites: sites, layout: layout, parkedFolders: state.parked.map { Self.displayPath($0.folder) }, defaults: state.siteDefaults, tld: state.tld, newWorkspaceDatabases: state.workspaceSettings.newWorkspaceDatabases, oldAfterDays: state.workspaceSettings.oldAfterDays, devServerStop: state.devServerStop, stopIdleAfter: state.workspaceSettings.stopIdleAfter)
     }
 
     // A site that the layout does not name yet comes at the end, in the order that the user added
@@ -1124,6 +1129,7 @@ extension NexusEngine {
         // The plan of the main checkout comes from a probe with the PHP of a PHP site.
         if change.php != nil || changesKind {
             mainProcessPlans[ProjectFolder.workspaceKey(of: edited)] = nil
+            mainDevServerPlans[ProjectFolder.workspaceKey(of: edited)] = nil
         }
 
         if change.php != nil || change.mainProcesses != nil || changesKind {

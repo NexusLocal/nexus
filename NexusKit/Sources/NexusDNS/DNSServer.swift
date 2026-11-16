@@ -86,11 +86,7 @@ public final class DNSServer: Sendable {
             throw DNSServerError.socketFailed(String(cString: strerror(errno)))
         }
 
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = in_port_t(UInt16(port).bigEndian)
-        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        var address = IPv4Socket.address(IPv4Socket.loopback, port: port)
 
         let result = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {

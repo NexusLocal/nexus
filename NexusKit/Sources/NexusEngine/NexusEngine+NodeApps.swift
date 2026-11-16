@@ -19,11 +19,21 @@ extension NexusEngine {
         "\(owner)\n\t\(NodeAppLaunch.portName)"
     }
 
+    static func appLog(host: String) -> String {
+        "app-\(host)"
+    }
+
     // Returns nil when the app cannot start now. The reason then goes to the problems of its owner.
-    // The caller checks that list has the port of the app. hosts are the names that nginx sends to
-    // the app.
+    // The app also waits for the first page (owner, 2026-11-15). The caller checks that list has
+    // the port of the app. hosts are the names that nginx sends to the app.
     func appProcess(of site: Site, in list: BackgroundList, hosts: [String], tld: String) async -> BackgroundProcess? {
         guard let port = list.ports[NodeAppLaunch.portName] else {
+            return nil
+        }
+
+        let log = Self.appLog(host: list.host)
+
+        guard planOnDemand(list.owner, port: port, log: log) else {
             return nil
         }
 
@@ -57,7 +67,6 @@ extension NexusEngine {
         let programEnvironment = environment(of: ToolCommand(executable: node.executable, path: node.path + extraPath))
             .merging(launch.environment) { _, app in app }
             .merging(added) { _, new in new }
-        let log = "app-\(list.host)"
 
         return BackgroundProcess(owner: list.owner, command: launch.command, log: log, worktree: list.worktree, definition: ServiceDefinition(
             id: Self.appProcessID(owner: list.owner),
@@ -164,11 +173,12 @@ extension NexusEngine {
     func appInfo(owner: String, port: Int?, host: String) -> AppProcessInfo {
         let id = Self.appProcessID(owner: owner)
 
-        return AppProcessInfo(port: port, command: runningProcesses[id]?.command, state: appStates[id], log: paths.log("app-\(host)").path(percentEncoded: false))
+        return AppProcessInfo(port: port, command: runningProcesses[id]?.command, state: appStates[id], log: paths.log(Self.appLog(host: host)).path(percentEncoded: false), startsWithPage: !startedOnDemand.contains(owner))
     }
 
     // A stop and a sync start the app again. A failed app also starts again, and a failed install of
-    // corepack tries again.
+    // corepack tries again. A restart counts as a page, and it also starts a stopped workspace with
+    // all its parts (owner, 2026-11-15).
     func restartApp(host: String, workspace: String?) async throws -> String {
         let state = await stateStore.current()
 
@@ -181,12 +191,20 @@ extension NexusEngine {
         }
 
         let key = ProjectFolder.workspaceKey(of: site)
+        let record = workspace.flatMap { name in state.worktrees[key]?.workspaces.first { $0.name == name } }
 
-        if let workspace, state.worktrees[key]?.workspaces.contains(where: { $0.name == workspace }) != true {
+        if let workspace, record == nil {
             throw RuntimeError.unsupported("\(host) has no workspace \(workspace).")
         }
 
-        let id = Self.appProcessID(owner: Self.processOwner(key: key, workspace: workspace))
+        let owner = Self.processOwner(key: key, workspace: workspace)
+        let id = Self.appProcessID(owner: owner)
+
+        markPage(of: owner, now: .now)
+
+        if let record {
+            _ = await startIfStopped(record, key: key, cause: "a restart of the app")?.begun.value
+        }
 
         if runningProcesses[id] != nil {
             try? await processSupervisor.stop(id)

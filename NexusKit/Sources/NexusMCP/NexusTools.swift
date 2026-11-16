@@ -230,6 +230,31 @@ public enum NexusTools {
             required: ["branch"]
         ),
         NexusToolSpec(
+            name: "stop_workspace",
+            title: "Stop a workspace",
+            summary: "Stops a workspace. \(WorkspaceIdleText.startsAgain)",
+            level: .change,
+            description: "Stops the database server, the background processes and the Node.js app of a workspace. Use it when your work in the workspace is done. Its data stays. \(WorkspaceIdleText.startsAgain)",
+            properties: [
+                "workspace": ["type": "string", "description": "The name or the folder of the workspace. The default is the workspace of the project folder of this session."],
+                "site": ["type": "string", "description": "The host of the site, when more sites have a workspace with this name."],
+            ],
+            required: []
+        ),
+        NexusToolSpec(
+            name: "start_workspace",
+            title: "Start a workspace",
+            summary: "Starts a stopped workspace with its database server and its processes.",
+            level: .change,
+            description: "Starts a stopped workspace with its database server, background processes and Node.js app. It waits until the database server takes connections. A page, a command or a database connection also starts it. With `keep: true` it does not stop when idle.",
+            properties: [
+                "workspace": ["type": "string", "description": "The name or the folder of the workspace. The default is the workspace of the project folder of this session."],
+                "site": ["type": "string", "description": "The host of the site, when more sites have a workspace with this name."],
+                "keep": ["type": "boolean", "description": "true: the workspace does not stop when idle. The user can change this in Nexus."],
+            ],
+            required: []
+        ),
+        NexusToolSpec(
             name: "add_site",
             title: "Add a site",
             summary: "Serves a project folder as a site of Nexus.",
@@ -247,7 +272,7 @@ public enum NexusTools {
             title: "Remove a workspace",
             summary: "Removes a workspace and its git worktree. Its database stays in the trash.",
             level: .remove,
-            description: "Removes a workspace and its git worktree. Git refuses when the worktree has changes that are not committed. Nexus keeps a dump of its database in the trash for 7 days.",
+            description: "Removes a workspace and its git worktree. git refuses a worktree with changes that are not committed, a worktree with submodules and a locked worktree. Ask the user before you commit or discard changes in a worktree. Nexus keeps a dump of each database of the workspace in the trash. The setting \"Keep database dumps for\" of Nexus decides how long.",
             properties: [
                 "workspace": ["type": "string", "description": "The name or the folder of the workspace. The default is the workspace of the project folder of this session."],
                 "site": ["type": "string", "description": "The host of the site, when more sites have a workspace with this name."],

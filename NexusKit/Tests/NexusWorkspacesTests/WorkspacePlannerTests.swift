@@ -156,4 +156,20 @@ struct WorkspacePlannerTests {
 
         #expect(update(known, [Worktree(path: "/w/new", branch: "two")]).workspaces == [workspace("new", at: "/w/new", branch: "two")])
     }
+
+    @Test func aKnownWorkspaceGetsTheLockOfTheListAndLosesItAfterTheUnlock() {
+        let known = SiteWorktrees(listed: ["/w/new"], workspaces: [workspace("new", at: "/w/new")])
+
+        let locked = update(known, [Worktree(path: "/w/new", locked: "claude agent")])
+        let unlocked = update(locked, [Worktree(path: "/w/new")])
+
+        #expect(locked.workspaces.first?.locked == "claude agent")
+        #expect(unlocked.workspaces.first?.locked == nil)
+    }
+
+    @Test func aNewWorkspaceOfALockedWorktreeWithACheckoutGetsTheLock() {
+        let result = update(SiteWorktrees(), [Worktree(path: "/w/new", locked: "")])
+
+        #expect(result.workspaces.first?.locked == "")
+    }
 }

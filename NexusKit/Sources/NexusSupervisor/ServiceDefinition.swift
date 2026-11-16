@@ -20,6 +20,9 @@ public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
     // must end its job. The stop signal then goes to the whole group, and each program in that
     // group gets the stop timeout.
     public let stopsGroup: Bool
+    // The Unix socket of a server that ignores its stop signal until its first greeting, as MariaDB
+    // does. A stop during its start waits for that greeting.
+    public let greetingSocket: URL?
 
     public init(
         id: String,
@@ -33,7 +36,8 @@ public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
         stopSignal: Int32 = SIGTERM,
         startTimeout: Duration = .seconds(3),
         stopTimeout: Duration? = nil,
-        stopsGroup: Bool = false
+        stopsGroup: Bool = false,
+        greetingSocket: URL? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -47,6 +51,7 @@ public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
         self.startTimeout = startTimeout
         self.stopTimeout = stopTimeout
         self.stopsGroup = stopsGroup
+        self.greetingSocket = greetingSocket
     }
 }
 

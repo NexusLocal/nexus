@@ -120,15 +120,24 @@ public enum PortInspector {
     // 1024 to a normal user, and that refusal does not count. SO_REUSEADDR is set as the servers
     // set it. So closed connections that wait on the port after a restart do not count either.
     public static func isFree(_ port: Int) -> Bool {
-        !isInUse(port, address: INADDR_ANY) && !isInUse(port, address: inet_addr("127.0.0.1"))
+        !isInUse(port, address: INADDR_ANY) && !isInUse(port, address: IPv4Socket.loopback)
     }
 
     // A listener that just closed can keep its port for some milliseconds, for example when a
     // connection still waited in its queue. A start right after a stop waits for that.
     public static func becomesFree(_ port: Int, within timeout: Duration = .seconds(1)) async -> Bool {
+        await waitUntil(within: timeout) { isFree(port) }
+    }
+
+    // The same wait for one address, for a server that binds only that address.
+    public static func becomesFree(_ port: Int, on address: in_addr_t, within timeout: Duration = .seconds(1)) async -> Bool {
+        await waitUntil(within: timeout) { !isInUse(port, address: address) }
+    }
+
+    private static func waitUntil(within timeout: Duration, _ portIsFree: () -> Bool) async -> Bool {
         let deadline = ContinuousClock.now + timeout
 
-        while !isFree(port) {
+        while !portIsFree() {
             guard ContinuousClock.now < deadline else {
                 return false
             }
@@ -140,45 +149,88 @@ public enum PortInspector {
     }
 
     public static func acceptsConnections(_ port: Int) -> Bool {
-        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        connects(to: IPv4Socket.address(IPv4Socket.loopback, port: port), family: AF_INET)
+    }
+
+    // The dev server of Vite listens only on [::1]. Another server can listen only on 127.0.0.1.
+    public static func acceptsLoopbackConnections(_ port: Int) -> Bool {
+        if acceptsConnections(port) {
+            return true
+        }
+
+        var address = sockaddr_in6()
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_port = in_port_t(UInt16(port).bigEndian)
+        address.sin6_addr = in6addr_loopback
+
+        return connects(to: address, family: AF_INET6)
+    }
+
+    // Address is sockaddr_in, sockaddr_in6 or sockaddr_un. So its size is the size that connect needs.
+    private static func connects<Address>(to address: Address, family: Int32) -> Bool {
+        let descriptor = socket(family, SOCK_STREAM, 0)
         guard descriptor >= 0 else {
             return false
         }
         defer { close(descriptor) }
 
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = in_port_t(UInt16(port).bigEndian)
-        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        var address = address
 
         let result = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(descriptor, $0, socklen_t(MemoryLayout<Address>.size)) }
         }
 
         return result == 0
+    }
+
+    // The ports of the list with an open TCP connection. nil when lsof fails. lsof ends with exit
+    // status 1 when it finds no connection, and that gives an empty set.
+    public static func portsWithOpenConnections(_ ports: Set<Int>) async -> Set<Int>? {
+        guard !ports.isEmpty else {
+            return []
+        }
+
+        let list = ports.sorted().map(String.init).joined(separator: ",")
+        let command = Command(executable: URL(filePath: "/usr/sbin/lsof"), arguments: ["-nP", "-iTCP:\(list)", "-sTCP:ESTABLISHED", "-Fn"])
+
+        do {
+            let output = try await CommandRunner.run(command)
+            return connectedPorts(inLsofOutput: output.standardOutput, among: ports)
+        } catch CommandError.failed(_, 1, _) {
+            return []
+        } catch {
+            return nil
+        }
+    }
+
+    // Each line n<local>-><remote> of lsof -Fn gives two ports.
+    static func connectedPorts(inLsofOutput output: String, among ports: Set<Int>) -> Set<Int> {
+        var found: Set<Int> = []
+
+        for line in output.split(separator: "\n") where line.hasPrefix("n") {
+            for end in line.dropFirst().split(separator: "->") {
+                guard let colon = end.lastIndex(of: ":"), let port = Int(end[end.index(after: colon)...]), ports.contains(port) else {
+                    continue
+                }
+
+                found.insert(port)
+            }
+        }
+
+        return found
     }
 
     // A Unix socket of a server on this Mac, for example the MySQL of MAMP PRO. A path that is too
     // long for a socket accepts no connection.
     public static func acceptsConnections(socket path: String) -> Bool {
-        guard var address = try? UnixSocket.address(of: path) else {
+        guard let address = try? UnixSocket.address(of: path) else {
             return false
         }
 
-        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard descriptor >= 0 else {
-            return false
-        }
-        defer { close(descriptor) }
-
-        let result = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
-        }
-
-        return result == 0
+        return connects(to: address, family: AF_UNIX)
     }
 
-    private static func isInUse(_ port: Int, address bindAddress: in_addr_t) -> Bool {
+    static func isInUse(_ port: Int, address bindAddress: in_addr_t) -> Bool {
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)
         guard descriptor >= 0 else {
             return false
@@ -188,10 +240,7 @@ public enum PortInspector {
         var reuse: Int32 = 1
         setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
 
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = in_port_t(UInt16(port).bigEndian)
-        address.sin_addr = in_addr(s_addr: bindAddress)
+        var address = IPv4Socket.address(bindAddress, port: port)
 
         let result = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }

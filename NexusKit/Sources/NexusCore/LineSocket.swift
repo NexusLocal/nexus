@@ -3,7 +3,8 @@ import Foundation
 
 // A TCP socket that reads and writes lines that end in CRLF. A bare LF also ends a line. The
 // timeout ends a read or a write that waits too long, so a client that stops cannot keep a thread.
-// The SMTP server and the web page of the dumps use it.
+// The SMTP server, the web page of the dumps and the answers of the gate of the database ports use
+// it.
 package final class LineSocket {
     let descriptor: Int32
     private var buffer = Data()
@@ -68,6 +69,10 @@ package final class LineSocket {
                 Darwin.write(descriptor, bytes.baseAddress! + offset, data.count - offset)
             }
 
+            if written < 0, errno == EINTR {
+                continue
+            }
+
             guard written > 0 else {
                 throw SocketError.system("write", errno)
             }
@@ -85,10 +90,15 @@ package final class LineSocket {
         _ = Darwin.shutdown(descriptor, SHUT_RDWR)
     }
 
-    // Returns false when the other side closed the connection.
+    // Returns false when the other side closed the connection. A signal can end a read before it
+    // gets a byte, and that is no error of the connection.
     private func fill() throws -> Bool {
         var chunk = [UInt8](repeating: 0, count: 65_536)
-        let count = Darwin.read(descriptor, &chunk, chunk.count)
+        var count = Darwin.read(descriptor, &chunk, chunk.count)
+
+        while count < 0, errno == EINTR {
+            count = Darwin.read(descriptor, &chunk, chunk.count)
+        }
 
         guard count >= 0 else {
             throw SocketError.system("read", errno)
@@ -103,34 +113,6 @@ package final class LineSocket {
     }
 
     package static func connect(port: Int, timeout: TimeInterval) throws -> LineSocket {
-        let descriptor = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
-
-        guard descriptor >= 0 else {
-            throw SocketError.system("socket", errno)
-        }
-
-        var address = loopback(port: port)
-        let result = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-
-        guard result == 0 else {
-            let code = errno
-            Darwin.close(descriptor)
-            throw SocketError.system("connect", code)
-        }
-
-        return LineSocket(descriptor: descriptor, timeout: timeout)
-    }
-
-    static func loopback(port: Int) -> sockaddr_in {
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = in_port_t(UInt16(port)).bigEndian
-        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
-        return address
+        LineSocket(descriptor: try IPv4Socket.connectToLoopback(port: port), timeout: timeout)
     }
 }

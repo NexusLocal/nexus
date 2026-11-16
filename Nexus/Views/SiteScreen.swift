@@ -71,6 +71,17 @@ struct SiteScreen: View {
         model.siteList?.newWorkspaceDatabases ?? .copy
     }
 
+    // The old workspaces of this site (owner, 2026-11-15). The design is "Row Old workspaces" of
+    // "Site Workspaces Section · Rows and menu" in nexus.pen. A workspace that nexusd removes now
+    // does not count.
+    private var oldAfterDays: Int {
+        model.siteList?.oldAfterDays ?? WorkspaceSettings().oldAfterDays
+    }
+
+    private var oldWorkspaceCount: Int {
+        site.workspaces.filter { !model.isRemoving($0) && OldWorkspaces.isOld($0.lastActivity, days: oldAfterDays, now: .now) }.count
+    }
+
     // WordPress has no migrations. So it gets a copy or a dump, whatever Settings > Workspaces says.
     private var newWorkspaceDatabases: WorkspaceDatabaseKind {
         guard !isWordPress else {
@@ -117,15 +128,26 @@ struct SiteScreen: View {
         }
     }
 
-    // A click on the notification of a ready workspace shows its row (owner, 2026-11-14). The form
-    // needs its first layout before the scroll.
+    // A click on a notification of a workspace or of the old workspaces shows its row (owner,
+    // 2026-11-14 and 2026-11-15). The form needs its first layout before the scroll.
     private func showMarkedWorkspace(with reader: ScrollViewProxy) async {
-        guard case .workspace(let host, let name)? = model.markedRow, host == site.host else {
+        guard let target = model.markedRow else {
             return
         }
 
-        if site.workspaces.contains(where: { $0.name == name }) {
-            await reader.scrollAfterLayout(to: NotificationTarget.workspace(site: host, name: name), anchor: .center)
+        let found: Bool
+
+        switch target {
+        case .workspace(let host, let name) where host == site.host:
+            found = site.workspaces.contains { $0.name == name }
+        case .oldWorkspaces(let host) where host == site.host:
+            found = oldWorkspaceCount > 0
+        default:
+            return
+        }
+
+        if found {
+            await reader.scrollAfterLayout(to: target, anchor: .center)
         } else {
             await reader.scrollAfterLayout(to: Self.workspacesAnchor, anchor: .top)
         }
@@ -370,7 +392,7 @@ struct SiteScreen: View {
 
             LabeledContent("State") {
                 HStack {
-                    StatusDot(health: Health(site.app?.state))
+                    StatusDot(health: Health(app: site.app))
                     Text(site.app?.stateText ?? "Not started")
                         .foregroundStyle(.secondary)
                         .fixedSize()
@@ -398,7 +420,7 @@ struct SiteScreen: View {
 
                 missingNodeLine
 
-                Text("Nexus starts the command with a free port in PORT. nginx sends \(site.url) to that port with HTTPS. Hot reload also works on this address.")
+                Text("Nexus starts the command when you open a page of the site, with a free port in PORT. nginx sends \(site.url) to that port with HTTPS. Hot reload also works on this address. When nobody uses the site, Nexus stops the app (Settings > Sites).")
             }
         }
     }
@@ -489,41 +511,62 @@ struct SiteScreen: View {
             }
 
             ForEach(site.workspaces) { workspace in
+                let removing = model.isRemoving(workspace)
+
                 LabeledContent {
                     HStack {
                         Text(workspace.hosts?.first ?? workspace.folder)
                             .foregroundStyle(.secondary)
                             .rowValue(.middle)
 
-                        if let dump = workspace.dump {
+                        if removing {
+                            removingState
+                        } else if let dump = workspace.dump {
                             dumpProgress(dump)
                         } else if let links = workspace.links, workspace.isolationProblem == nil {
                             linkProgress(links)
                         } else {
-                            Text(stateText(of: workspace))
-                                .foregroundStyle(workspace.isolationProblem == nil ? Color.secondary : Color.orangeText)
-                                .fixedSize(horizontal: true, vertical: false)
-                                .id(stateText(of: workspace))
+                            workspaceState(workspace)
                         }
 
-                        if workspace.isolationProblem != nil || !(workspace.warnings ?? []).isEmpty {
-                            Button("Retry") {
-                                Task { await model.retry(workspace, of: site) }
+                        Group {
+                            if workspace.isolationProblem != nil || !(workspace.warnings ?? []).isEmpty {
+                                Button("Retry") {
+                                    Task { await model.retry(workspace, of: site) }
+                                }
                             }
-                        }
 
-                        if let url = workspace.url {
-                            Button("Open") {
-                                model.openInBrowser(url)
+                            if let url = workspace.url {
+                                Button("Open") {
+                                    model.openInBrowser(url)
+                                }
                             }
+
+                            WorkspaceMenuButton(workspace: workspace, site: site)
                         }
+                        .disabled(removing)
                     }
                 } label: {
                     Label(workspace.name, systemImage: "arrow.triangle.branch")
                 }
                 .labeledContentStyle(.rowValue)
                 .help((workspace.folder as NSString).abbreviatingWithTildeInPath)
+                .contextMenu {
+                    WorkspaceRowMenu(workspace: workspace, site: site)
+                }
                 .rowMark(.workspace(site: site.host, name: workspace.name), marked: model.markedRow)
+            }
+
+            if oldWorkspaceCount > 0 {
+                LabeledContent {
+                    Button("Review…") {
+                        model.sheet = .oldWorkspaces(host: site.host)
+                    }
+                } label: {
+                    Label(OldWorkspaces.lineText(count: oldWorkspaceCount, days: oldAfterDays), systemImage: "clock.arrow.circlepath")
+                }
+                .labeledContentStyle(.rowValue)
+                .rowMark(.oldWorkspaces(site: site.host), marked: model.markedRow)
             }
 
             HStack {
@@ -583,6 +626,10 @@ struct SiteScreen: View {
                 }
 
                 Text(workspacesNote)
+
+                if !site.workspaces.isEmpty, let idleNote {
+                    Text(idleNote)
+                }
             }
         }
         .sheet(isPresented: $asksToAddWorkspaceLines) {
@@ -774,7 +821,7 @@ struct SiteScreen: View {
             Toggle("Run for the main checkout", isOn: $mainProcesses)
                 .toggleStyle(.switch)
 
-            CommandRows(commands: $backgroundCommands, saved: site.backgroundCommands ?? preset, focusedRow: $focusedBackgroundCommand, prompt: isWordPress ? "npm run dev" : "php artisan horizon", save: saveBackgroundCommands)
+            CommandRows(commands: $backgroundCommands, saved: site.backgroundCommands ?? preset, focusedRow: $focusedBackgroundCommand, prompt: isWordPress ? "npm run dev" : "php artisan horizon", marksDevServers: true, save: saveBackgroundCommands)
         } header: {
             Text("Background processes")
         } footer: {
@@ -786,7 +833,7 @@ struct SiteScreen: View {
                 if isWordPress {
                     Text("A WordPress site has no background processes of its own. Add a command, for example npm run dev for the build of a theme.")
                 } else {
-                    Text("Each workspace runs its own copy of these commands. {port:vite} gets a free port in each workspace. A change saves when you press Return or click outside the field. Existing workspaces then use the new list.")
+                    Text("Each workspace runs its own copy of these commands. {port:vite} gets a free port in each workspace. Vite (npm run dev) does not run all the time. It starts when you open a page of the site or a workspace, and it stops when nobody uses the site (Settings > Sites). A change saves when you press Return or click outside the field.")
                 }
             }
         }
@@ -1197,24 +1244,91 @@ struct SiteScreen: View {
         return [chosen] + installed
     }
 
-    // A dump that did not load says so in its first sentence (owner, 2026-11-09).
-    private func stateText(of workspace: WorkspaceInfo) -> String {
-        switch workspace.state {
-        case .ready:
-            "Ready"
-        case .notIsolated(let reason) where reason.hasPrefix(WorkspaceDumpText.failed):
-            "The dump did not load"
-        case .notIsolated(let reason) where reason.hasPrefix(WorkspaceDumpText.gone):
-            "The dump file is gone"
-        case .notIsolated:
-            "Not isolated"
-        case .preparing, nil:
-            "Preparing"
+    // The state of a workspace row (owner, 2026-11-15). The design is "Site Workspaces Section · Rows
+    // and menu" in nexus.pen: a pin while "Stop when idle" is off, the dot or the spinner of
+    // Starting, and the text. Preparing has no dot. Only a stopped row has its own help. The other
+    // rows keep the help of the row.
+    @ViewBuilder
+    private func workspaceState(_ workspace: WorkspaceInfo) -> some View {
+        let runState = workspace.shownRunState
+        let text = workspace.stateText
+        let state = HStack(spacing: 6) {
+            if !workspace.stopsWhenIdle {
+                Image(systemName: "pin")
+                    .imageScale(.small)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Stop when idle is off")
+            }
+
+            if runState == .starting {
+                ProgressView()
+                    .controlSize(.mini)
+            } else if let health = workspaceHealth(of: workspace, runState: runState) {
+                StatusDot(health: health)
+            }
+
+            Text(text)
+                .foregroundStyle(runState == .running && workspace.isolationProblem != nil ? Color.orangeText : Color.secondary)
+                .id(text)
         }
+        .fixedSize()
+
+        if runState == .stopped {
+            state.help(stoppedHelp(of: workspace))
+        } else {
+            state
+        }
+    }
+
+    private func workspaceHealth(of workspace: WorkspaceInfo, runState: WorkspaceRunState?) -> Health? {
+        if runState == .stopped {
+            return .stopped
+        }
+
+        switch workspace.state {
+        case .ready: return .running
+        case .notIsolated: return .attention
+        case .preparing, nil: return nil
+        }
+    }
+
+    // The tooltip of "Site Workspaces Section · Rows and menu" in nexus.pen. A stop on request has
+    // its own text (owner, 2026-11-15).
+    private func stoppedHelp(of workspace: WorkspaceInfo) -> String {
+        guard let after = workspace.stoppedAfter else {
+            return "Nexus stopped its database server and background processes on request. \(WorkspaceIdleText.startsAgain)"
+        }
+
+        return "No activity for \(after.title), so Nexus stopped its database server and background processes. \(WorkspaceIdleText.startsAgain)"
+    }
+
+    // The second paragraph of the footer of that frame. The setting Never stops no workspace. A
+    // nexusd from before the idle stop sends no setting and stops no workspace.
+    private var idleNote: String? {
+        guard let after = model.siteList?.stopIdleAfter, after != .never else {
+            return nil
+        }
+
+        return "A workspace without activity for \(after.title) stops (Settings > Workspaces). \(WorkspaceIdleText.startsAgain) The pin shows a workspace with \"Stop when idle\" off."
     }
 
     private func dumpProgress(_ dump: WorkspaceDumpProgress) -> some View {
         progressRow("Loading the dump", dump)
+    }
+
+    // The row of a workspace that nexusd removes now (owner, 2026-11-15). It has no
+    // percentage, because the dumps come after the answer. The id lets VoiceOver read the new text,
+    // as for the state text.
+    private var removingState: some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(.mini)
+
+            Text("Removing")
+                .foregroundStyle(.secondary)
+        }
+        .fixedSize()
+        .id("Removing")
     }
 
     private func progressRow(_ title: String, _ dump: WorkspaceDumpProgress) -> some View {
@@ -1370,6 +1484,8 @@ private struct CommandRows: View {
     let saved: [String]
     let focusedRow: FocusState<Int?>.Binding
     let prompt: String
+    // A command with {port:vite} starts with the first page (owner, 2026-11-15).
+    var marksDevServers = false
     let save: () -> Void
 
     static func complete(_ commands: [String]) -> [String] {
@@ -1387,6 +1503,11 @@ private struct CommandRows: View {
                     .plainTextInput()
                     .focused(focusedRow, equals: index)
                     .onSubmit { save() }
+
+                if marksDevServers, DevServer.isDevServer(command(at: index).wrappedValue) {
+                    SiteTag(text: "Starts with the first page", tint: .neutral)
+                        .fixedSize()
+                }
 
                 RowSaveState(isSaved: isSaved(command(at: index).wrappedValue))
 

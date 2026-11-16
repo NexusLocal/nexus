@@ -17,6 +17,8 @@ extension NexusEngine {
         configurationWatcher = nil
         wordPressWatcher?.stop()
         wordPressWatcher = nil
+        idleCheck?.cancel()
+        idleCheck = nil
         stopDumps()
     }
 
@@ -35,6 +37,7 @@ extension NexusEngine {
 
         watchWordPressSettings(of: sites)
         startTrashChecks()
+        startIdleChecks()
         await reconcileWorkspaces()
     }
 
@@ -125,15 +128,10 @@ extension NexusEngine {
         let fileManager = FileManager.default
 
         return repositories.sorted().flatMap { repository in
-            let folder = "\(repository)/.git/worktrees"
-            let names = (try? fileManager.contentsOfDirectory(atPath: folder)) ?? []
-
-            return names.sorted().map { name in
-                let admin = "\(folder)/\(name)"
-                let gitdir = (try? String(contentsOfFile: "\(admin)/gitdir", encoding: .utf8)) ?? ""
+            ProjectFolder.adminFolders(ofRepository: repository).map { admin, gitdir in
                 let head = (try? String(contentsOfFile: "\(admin)/HEAD", encoding: .utf8)) ?? ""
 
-                return "\(admin) \(fileManager.fileExists(atPath: "\(admin)/index")) \(fileManager.fileExists(atPath: "\(admin)/locked")) \(gitdir) \(head)"
+                return "\(admin) \(fileManager.fileExists(atPath: "\(admin)/index")) \(fileManager.fileExists(atPath: "\(admin)/locked")) \(gitdir ?? "") \(head)"
             }
         }
     }
@@ -270,9 +268,9 @@ extension NexusEngine {
 
     func workspaceInfo(key: String, sitesOfRecord: [String: [Site]], conflicts: [Workspace: String], noticeHosts: Set<String>, layouts: [String: SiteLayout], installed: [InstalledRuntime], state: EngineState, appPorts: [String: Int]) -> [WorkspaceInfo] {
         let sites = sitesOfRecord[key] ?? []
-        let workspaces = state.worktrees[key]?.workspaces ?? []
 
-        return workspaces.map { workspace in
+        return trackedWorkspaces(key: key, sites: sites, state: state).map { tracked in
+            let workspace = tracked.workspace
             let site = workspace.site(of: sites, tld: state.tld)
             let layout = site.map { SiteLayout(of: $0) }
             let owner = Self.processOwner(key: key, workspace: workspace.name)
@@ -304,9 +302,21 @@ extension NexusEngine {
                 app: app,
                 links: links,
                 dump: dumpProgress[owner],
-                documentRoot: layout.map { Self.displayPath($0.documentRoot) }
+                documentRoot: layout.map { Self.displayPath($0.documentRoot) },
+                locked: workspace.locked,
+                lastActivity: Self.wholeMinute(of: lastActivity(of: tracked)?.date),
+                devServer: devServerInfo(owner: owner),
+                runState: workspaceStarts[owner] != nil ? .starting : workspace.runState,
+                keepAwake: workspace.keepAwake,
+                stoppedAfter: workspace.runState == .stopped ? workspace.stoppedAfter : nil
             )
         }
+    }
+
+    // The time of the access log changes at each request. Without the whole minute almost each site
+    // list is new. Then nexusd sends it again.
+    static func wholeMinute(of date: Date?) -> Date? {
+        date.map { Date(timeIntervalSince1970: ($0.timeIntervalSince1970 / 60).rounded(.down) * 60) }
     }
 
     // A workspace of a WordPress site from before Phase 4, 3e has no digest. It was Not isolated, or

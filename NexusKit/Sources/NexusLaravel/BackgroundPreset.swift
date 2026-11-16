@@ -1,3 +1,4 @@
+import Foundation
 import NexusCore
 
 // The list of background processes that a Laravel site starts with (D52). A queue with one of these
@@ -6,6 +7,7 @@ public enum BackgroundPreset {
     private static let driversWithoutWorker: Set<String> = ["sync", "null", "deferred", "background"]
 
     public static let hotFile = "public/hot"
+    public static let viteCommand = "npm run dev -- --port \(DevServer.placeholder) --strictPort"
 
     // runsVite says that the site has a vite.config file and that git ignores what Vite writes.
     public static func commands(for configuration: LaravelConfiguration, runsVite: Bool) -> [String] {
@@ -18,7 +20,7 @@ public enum BackgroundPreset {
         }
 
         if runsVite {
-            commands.append("npm run dev -- --port {port:vite} --strictPort")
+            commands.append(viteCommand)
         }
 
         return commands
@@ -64,6 +66,32 @@ public enum BackgroundPreset {
         }
 
         return "public/build/"
+    }
+
+    // The output folder of Vite in a root with a vite.config file. A root without such a file gives nil.
+    public static func viteOutput(inRoot root: URL) -> String? {
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: root.path(percentEncoded: false))) ?? []
+
+        guard let configuration = files.first(where: { $0.hasPrefix("vite.config.") }) else {
+            return nil
+        }
+
+        let source = (try? String(contentsOf: root.appending(path: configuration), encoding: .utf8)) ?? ""
+
+        return viteOutput(inConfiguration: source)
+    }
+
+    // The files of the wait page of a Laravel root with a vite.config file (owner, 2026-11-15).
+    public static func viteFiles(inRoot root: URL) -> (nodeModules: URL, hotFile: URL, manifest: URL)? {
+        guard let output = viteOutput(inRoot: root) else {
+            return nil
+        }
+
+        return (
+            root.appending(path: "node_modules", directoryHint: .isDirectory),
+            root.appending(path: hotFile),
+            root.appending(path: "\(output)manifest.json")
+        )
     }
 
     private static func needsWorker(_ configuration: LaravelConfiguration) -> Bool {

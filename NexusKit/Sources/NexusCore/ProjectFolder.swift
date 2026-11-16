@@ -144,6 +144,36 @@ public enum ProjectFolder {
         gitDir(in: (path as NSString).appendingPathComponent(".git"), base: path)
     }
 
+    // git keeps the admin folder of a worktree after its folder is gone, and lists it as prunable.
+    // The gitdir file in the admin folder names the .git file of the worktree.
+    public static func adminFolder(ofWorktree worktree: String, repository: String?) -> String? {
+        if let folder = adminFolder(ofWorktree: worktree) {
+            return folder
+        }
+
+        guard let repository else {
+            return nil
+        }
+
+        let gitFile = (worktree as NSString).appendingPathComponent(".git")
+
+        return adminFolders(ofRepository: repository).first { admin in
+            admin.gitdir?.trimmingCharacters(in: .whitespacesAndNewlines) == gitFile
+        }?.path
+    }
+
+    // The admin folders in .git/worktrees of a main checkout in the order of their names. gitdir is
+    // the text of the gitdir file, as git wrote it.
+    public static func adminFolders(ofRepository repository: String) -> [(path: String, gitdir: String?)] {
+        let folder = "\(repository)/.git/worktrees"
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []
+
+        return names.sorted().map { name in
+            let admin = "\(folder)/\(name)"
+            return (admin, try? String(contentsOfFile: "\(admin)/gitdir", encoding: .utf8))
+        }
+    }
+
     // A git worktree has a .git file with the line "gitdir: <folder>". That folder is in
     // .git/worktrees of the main checkout and has a commondir file. A submodule also has a .git
     // file, but its folder has no commondir file. A folder with a .git folder is a main checkout.

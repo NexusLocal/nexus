@@ -147,6 +147,28 @@ public actor NexusEngine {
     var mainProbeFailures: [String: MainProbeFailure] = [:]
     // The state of each Node.js app by its process id, so a crash or a restart reaches the app.
     var appStates: [String: ServiceState] = [:]
+    // The dev servers and Node.js apps that run on demand (owner, 2026-11-15). The key of each map is
+    // the owner of the processes. nexusd keeps these in memory. After its start nothing runs until a
+    // page opens. A sync fills the planned maps and then replaces the other two. So a check during a
+    // sync reads complete maps.
+    var accessLogWatch: AccessLogWatch?
+    var accessLogHosts: [String: String] = [:]
+    var lastPageRequest: [String: Date] = [:]
+    // The last idle check that found an open tab of the owner. An open tab is no page. So it does
+    // not change lastPageRequest.
+    var lastOpenTab: [String: Date] = [:]
+    var startedOnDemand: Set<String> = []
+    var devServerPlans: [String: DevServerPlan] = [:]
+    var plannedDevServers: [String: DevServerPlan] = [:]
+    var devServerFailures: [String: DevServerFailure] = [:]
+    var runningDevServers: Set<String> = []
+    var onDemandPrograms: [String: OnDemandPrograms] = [:]
+    var plannedOnDemandPrograms: [String: OnDemandPrograms] = [:]
+    var mainDevServerPlans: [String: MainProcessPlan] = [:]
+    // The pages of the last write, by their host. Each sync and each page asks for a write. So the
+    // files change only when a page changes (owner, 2026-11-15).
+    var writtenDevServerPages: [String: String]?
+    var devServerCheck: Task<Void, Never>?
     var corepackInstall: Task<Void, Never>?
     var corepackFailure: (nextTry: ContinuousClock.Instant, reason: String)?
     var restartFailedProcesses = false
@@ -157,6 +179,29 @@ public actor NexusEngine {
     var databaseRemovalRetry: Task<Void, Never>?
     var trashCheck: Task<Void, Never>?
     var trashCheckWait: Duration = .seconds(86_400)
+    // The idle stop of workspaces (owner, 2026-11-15). The key of each map is the owner of the
+    // processes of a workspace. activityTimes holds the last command or request, and lastStarts the
+    // last start. Both are in memory only. activityBaseline is the start of this nexusd, so a
+    // workspace that ran at that moment gets the whole idle time. workspaceStarts holds each start
+    // until the servers of that workspace take connections. heldServers is the list that the gate got
+    // last. After the first page, stoppedOwners holds each owner of a stopped workspace. The stop adds
+    // an owner and the start removes it. An extra owner costs only a read of the state.
+    var activityTimes: [String: Date] = [:]
+    var lastStarts: [String: Date] = [:]
+    var activityBaseline = Date.now
+    var workspaceStarts: [String: WorkspaceStart] = [:]
+    var stoppedOwners: Set<String> = []
+    var knowsStoppedOwners = false
+    var idleCheck: Task<Void, Never>?
+    var idleCheckWait: Duration = .seconds(60)
+    var heldServers: Set<GatedServer> = []
+    let serverGate: any WorkspaceServerGate
+    // The number of the hand-over of each server program that started through the gate, with its id
+    // as the key (plan item 3e). The number comes after the start in the supervisor. So each state
+    // of that program in the supervisor belongs to that start.
+    var serverHandOvers: [String: Int] = [:]
+    // A client that waits for a server when nexusd stops gets this reason (plan item 3e).
+    static let gateEndText = "nexusd stops now. Connect again in a few seconds."
     // The problem of each server of a removed workspace, with its folder as the key.
     var databaseRemovalProblems: [String: DatabaseRemovalProblem] = [:]
     // The complete dumps of a server that Nexus did not remove yet, with the folder of that server
@@ -175,6 +220,11 @@ public actor NexusEngine {
     var checkingWorktrees: Set<String> = []
     var recheckWorktrees: Set<String> = []
     var worktreeRemovalCheck: @Sendable (String) async -> Bool = { await NexusEngine.gitRemoves($0) }
+    // A test gives its own answer. nil keeps each program, because nexusd does not know the tabs.
+    var openConnectionPorts: @Sendable (Set<Int>) async -> Set<Int>? = { await PortInspector.portsWithOpenConnections($0) }
+    // A test gives its own answer for the port of a public/hot. So it needs no listener in the ports
+    // of Nexus.
+    var hotFilePortAnswers: @Sendable (Int) -> Bool = { PortInspector.acceptsLoopbackConnections($0) }
     // The Redis indexes that nexusd empties now.
     var emptyingRedisIndexes: Set<WorkspaceRedisIndex> = []
     // The downloads and database copies that run now, and the last task list of the watchers.
@@ -261,6 +311,7 @@ public actor NexusEngine {
         systemFiles: SystemDNSFiles = SystemDNSFiles(),
         helperRetryDelay: Duration = .seconds(5),
         workspaceFolderQuiet: Duration = .seconds(6),
+        serverGate: any WorkspaceServerGate = NoServerGate(),
         dumpLibrarySource: URL? = nil,
         servesDumpPage: Bool = false,
         activity: ActivityLog? = nil,
@@ -286,6 +337,7 @@ public actor NexusEngine {
         self.systemFiles = systemFiles
         self.helperRetryDelay = helperRetryDelay
         self.workspaceFolderQuiet = workspaceFolderQuiet
+        self.serverGate = serverGate
         self.dumpLibrarySource = dumpLibrarySource
         self.unregister = unregister
     }
@@ -305,6 +357,11 @@ public actor NexusEngine {
             if request.mayChangeSites {
                 sitesChanged()
             }
+        }
+
+        // A request that names a workspace counts as activity (owner, 2026-11-15).
+        if let named = request.namedWorkspace {
+            await noteActivity(host: named.host, workspace: named.name)
         }
 
         do {
@@ -378,6 +435,8 @@ public actor NexusEngine {
                 return .siteDefaults(await stateStore.current().siteDefaults)
             case .setSiteDefaults(let defaults):
                 return .done(message: try await setSiteDefaults(defaults))
+            case .setDevServerStop(let stop):
+                return .done(message: try await setDevServerStop(stop))
             case .extensions(let php):
                 return .toggles(try await extensionToggles(line: php))
             case .setExtension(let php, let name, let enabled):
@@ -415,8 +474,8 @@ public actor NexusEngine {
                 return .databaseSizes(try await sourceDatabases(source, instance: instance))
             case .stopTask(let id):
                 return .done(message: stopTask(id))
-            case .tool(let tool, let folder, let argumentFolder, let debug):
-                return .tool(try await toolCommand(tool, folder: folder, argumentFolder: argumentFolder, debug: debug == true))
+            case .tool(let tool, let folder, let argumentFolder, let debug, let activity):
+                return .tool(try await toolRequest(tool, folder: folder, argumentFolder: argumentFolder, debug: debug == true, activity: activity != false))
             case .probe(let folder, let php):
                 return .configuration(try await probeConfiguration(folder: folder, php: php))
             case .workspaceEnv(let host):
@@ -424,6 +483,7 @@ public actor NexusEngine {
             case .siteDatabases(let host):
                 return .siteDatabases(try await siteDatabases(host: host))
             case .databaseConnections(let host, let workspace):
+                // This request starts no workspace. The database connection that follows starts it.
                 return .databaseConnections(try await databaseConnections(host: host, workspace: workspace))
             case .serverDatabases(let target):
                 return .databaseSizes(try await serverDatabases(target))
@@ -458,10 +518,24 @@ public actor NexusEngine {
             case .removeWorkspace(let host, let name, let force):
                 // A dump can take minutes. So it does not wait in the queue of the changes.
                 return .done(message: try await removeWorkspace(host: host, name: name, force: force))
+            case .removeWorkspaces(let host, let names):
+                // git and the commands before removal can take minutes. So this does not wait in the
+                // queue of the changes.
+                return .workspaceRemovals(try await removeWorkspaces(host: host, names: names))
+            case .stopWorkspace(let host, let name):
+                return .done(message: try await stopWorkspace(host: host, name: name))
+            case .startWorkspace(let host, let name, let keepAwake):
+                return .done(message: try await startWorkspace(host: host, name: name, keepAwake: keepAwake))
+            case .setKeepAwake(let host, let name, let keepAwake):
+                return .done(message: try await setKeepAwake(host: host, name: name, keepAwake: keepAwake))
             case .workspaceSettings:
                 return .workspaceSettings(await stateStore.current().workspaceSettings)
             case .setWorkspaceSettings(let settings):
                 return .done(message: try await setWorkspaceSettings(settings))
+            case .oldWorkspaces(let host, let days):
+                return .oldWorkspaces(try await oldWorkspaces(host: host, days: days))
+            case .oldWorkspaceNotices:
+                return .oldWorkspaceNotices(try await dueOldWorkspaceNotices())
             case .dumps:
                 return .dumps(dumps())
             case .emptyTrash:
@@ -566,6 +640,7 @@ public actor NexusEngine {
         // the services also reaches it, before the background processes get SIGKILL.
         await endServicesOfEarlierRun()
         await endProcessesOfEarlierRun()
+        await beginIdleStops()
         _ = try? await startDNS()
         applyMailSettings(await stateStore.current().mailSettings)
         try? await startMailReceiver()
@@ -581,27 +656,38 @@ public actor NexusEngine {
         }
 
         sitesChanged()
+        startDevServerChecks()
         // A watcher from before the start has the list without the receiver and the library.
         await publishDumpList()
     }
 
     public func shutdown() async {
         updateWatch?.cancel()
-        parkedWatcher?.stop()
-        parkedWatcher = nil
-        stopWatchingWorktrees()
+        devServerCheck?.cancel()
+        accessLogWatch?.stop()
         helperRetry?.cancel()
-        await processSupervisor.stopForGood()
-        await supervisor.stopAll()
-        stopDNS()
-        stopMailReceiver()
-        stopDumpReceiver()
-        mailRetry?.cancel()
+        await stopAllForGood()
 
         for watcher in watchers.values {
             watcher.finish()
         }
         watchers = [:]
+    }
+
+    // The stop of nexusd and the end of the removal of Nexus. Each client that waits at the gate of
+    // the database ports gets the reason first. The background processes and the services stop at
+    // the same time. The background processes start nothing new after this point.
+    private func stopAllForGood() async {
+        parkedWatcher?.stop()
+        parkedWatcher = nil
+        stopWatchingWorktrees()
+        await serverGate.end(reason: Self.gateEndText)
+        await processSupervisor.closeForGood()
+        await ProcessSupervisor.stopAll(of: [processSupervisor, supervisor])
+        stopDNS()
+        stopMailReceiver()
+        stopDumpReceiver()
+        mailRetry?.cancel()
     }
 
     // nexus status shows a running DNS server as failed while macOS does not send it the names,
@@ -642,6 +728,16 @@ public actor NexusEngine {
         }
 
         return all.sorted { $0.status.id < $1.status.id }
+    }
+
+    // True while nexusd stops, while "Stop all services" runs and while its services do not run.
+    // No program of a workspace starts then.
+    func servicesAreStopped() async -> Bool {
+        if watchingStopped || stoppingAllServices {
+            return true
+        }
+
+        return await waitsForStoppedServices()
     }
 
     // True while a service of the list of "Stop all services" does not run. DNS runs again after a new
@@ -1448,6 +1544,18 @@ extension NexusEngine {
         updateSiteMap()
     }
 
+    // The idle check each minute sends the site list for the last activity and the run state of
+    // the workspaces (owner, 2026-11-15). The site map holds no activity, so this publish does not
+    // build it again. A new watcher gets a new site list.
+    func publishSiteList() {
+        guard !watchers.isEmpty else {
+            return
+        }
+
+        sitesMayHaveChanged = true
+        servicesChanged()
+    }
+
     // A change during a build makes the loop run once more. So a burst of changes resolves the
     // sites few times.
     private func updateSiteMap() {
@@ -1541,7 +1649,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var mayChangeSites: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .siteLines, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .useNexusInfo, .useNexus, .siteDatabases, .databaseConnections, .serverDatabases, .createDatabase, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines, .serviceList, .tasks, .dumpList, .clearCaughtDumps, .removeCaughtDump, .removeDumpedRequest, .openCaughtDumpFile, .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps, .requestEntries: false
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .siteLines, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .oldWorkspaces, .oldWorkspaceNotices, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .useNexusInfo, .useNexus, .siteDatabases, .databaseConnections, .serverDatabases, .createDatabase, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines, .serviceList, .tasks, .dumpList, .clearCaughtDumps, .removeCaughtDump, .removeDumpedRequest, .openCaughtDumpFile, .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps, .requestEntries: false
         case .fromAgent(_, let inner): inner.mayChangeSites
         default: true
         }
@@ -1909,15 +2017,7 @@ extension NexusEngine {
             throw RuntimeError.unsupported("Nexus removed \(removedFiles), but not its root CA. Run nexus uninstall again. \(ErrorText.plain(error))")
         }
 
-        parkedWatcher?.stop()
-        parkedWatcher = nil
-        stopWatchingWorktrees()
-        await processSupervisor.stopForGood()
-        await supervisor.stopAll()
-        stopDNS()
-        stopMailReceiver()
-        stopDumpReceiver()
-        mailRetry?.cancel()
+        await stopAllForGood()
 
         let unregister = unregister
         Task {

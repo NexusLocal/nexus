@@ -113,6 +113,11 @@ private struct GeneralSettings: View {
     @AppStorage(AppPreference.notifyServiceStops) private var notifyServiceStops = true
     @AppStorage(AppPreference.notifyImportDone) private var notifyImportDone = true
     @AppStorage(AppPreference.notifyWorkspaceReady) private var notifyWorkspaceReady = true
+    @AppStorage(AppPreference.notifyOldWorkspaces) private var notifyOldWorkspaces = true
+
+    private var notifiesOfSomething: Bool {
+        notifyServiceStops || notifyImportDone || notifyWorkspaceReady || notifyOldWorkspaces
+    }
 
     var body: some View {
         Form {
@@ -162,6 +167,9 @@ private struct GeneralSettings: View {
                 Toggle("When a service stops or fails", isOn: $notifyServiceStops)
                 Toggle("When a workspace is ready", isOn: $notifyWorkspaceReady)
                 Toggle("When an import is done", isOn: $notifyImportDone)
+                // The old workspaces of a site (owner, 2026-11-15). Settings > Workspaces has the
+                // days of this notification.
+                Toggle("When workspaces are old", isOn: $notifyOldWorkspaces)
             } header: {
                 Text("Notifications")
             } footer: {
@@ -171,8 +179,8 @@ private struct GeneralSettings: View {
         .formStyle(.grouped)
         .toggleStyle(.switch)
         .settingsTabHeight()
-        .onChange(of: notifyServiceStops || notifyImportDone || notifyWorkspaceReady) {
-            if notifyServiceStops || notifyImportDone || notifyWorkspaceReady {
+        .onChange(of: notifiesOfSomething) {
+            if notifiesOfSomething {
                 Task { await model.requestNotificationPermission() }
             }
         }
@@ -324,9 +332,29 @@ private struct SitesSettings: View {
             } footer: {
                 Text("A new WordPress site starts with these values. WordPress runs on nginx and on Apache. Only Apache reads the rules that plugins write into .htaccess. Many plugins are not tested on PHP 8.5 yet.")
             }
+
+            Section {
+                Picker("Stop a dev server after", selection: devServerStop) {
+                    ForEach(DevServerStop.allCases, id: \.self) { stop in
+                        Text(stop.title).tag(stop)
+                    }
+                }
+            } header: {
+                Text("Dev servers")
+            } footer: {
+                Text("A dev server runs while you work on a site: Vite (npm run dev) for a Laravel site, or the app itself for a Node.js site such as Next.js or Nuxt. Nexus starts it when you open a page of the site or a workspace. That page waits a few seconds. When no page loads for this time and no tab with the site is open, Nexus stops it. So it uses no memory while you do not work on the site. With Never, Nexus does not stop it after its start.")
+            }
         }
         .formStyle(.grouped)
         .settingsTabHeight()
+    }
+
+    // One setting for each dev server and each Node.js app at once (owner, 2026-11-15).
+    private var devServerStop: Binding<DevServerStop> {
+        Binding(
+            get: { model.devServerStop },
+            set: { model.setDevServerStop($0) }
+        )
     }
 
     // A new WordPress site gets its own webserver and PHP version (owner, 2026-11-06). A PHP version
@@ -363,6 +391,7 @@ private struct WorkspacesSettings: View {
     private static let dayChoices = [1, 3, 7, 14, 30]
 
     @Environment(AppModel.self) private var model
+    @AppStorage(AppPreference.notifyOldWorkspaces) private var notifyOldWorkspaces = true
     @State private var settings = WorkspaceSettings()
     @State private var dumps: [DatabaseDump] = []
     @State private var confirmsEmptyTrash = false
@@ -371,6 +400,11 @@ private struct WorkspacesSettings: View {
         let size = ByteCountFormatter.string(fromByteCount: dumps.reduce(0) { $0 + $1.bytes }, countStyle: .file)
 
         return "\(Count.text(dumps.count, "dump")) · \(size)"
+    }
+
+    // The state of nexusd can hold a value that is not a choice. The picker shows that value too.
+    private static func choices(_ choices: [Int], with current: Int) -> [Int] {
+        Array(Set(choices + [current])).sorted()
     }
 
     private func setting<Value>(_ path: WritableKeyPath<WorkspaceSettings, Value>) -> Binding<Value> {
@@ -412,9 +446,45 @@ private struct WorkspacesSettings: View {
 
     var body: some View {
         Form {
+            // The design is the section "Idle workspaces" of "Settings Workspaces" in nexus.pen
+            // (owner, 2026-11-15).
+            Section {
+                Picker("Stop after", selection: setting(\.stopIdleAfter)) {
+                    ForEach(WorkspaceIdleTime.allCases, id: \.self) { time in
+                        Text(time.title).tag(time)
+                    }
+                }
+            } header: {
+                Text("Idle workspaces")
+            } footer: {
+                Text("Nexus stops the database servers and the background processes of a workspace without activity. \(WorkspaceIdleText.startsAgain) Activity is a page, a command through Nexus or a git change. The menu of a workspace row turns this off for one workspace.")
+            }
+
+            // Old workspaces (owner, 2026-11-15). The design is the section "Old workspaces" of
+            // "Settings Workspaces" in nexus.pen. The switch of the notification is in Settings >
+            // General.
+            Section {
+                Picker("Old after", selection: setting(\.oldAfterDays)) {
+                    ForEach(Self.choices(OldWorkspaces.dayChoices, with: settings.oldAfterDays), id: \.self) { days in
+                        Text(Count.text(days, "day")).tag(days)
+                    }
+                }
+
+                Picker("Notify again", selection: setting(\.notifyOldEvery)) {
+                    ForEach(Self.choices(OldWorkspaces.reminderChoices, with: settings.notifyOldEvery), id: \.self) { days in
+                        Text(OldWorkspaces.reminderText(days: days)).tag(days)
+                    }
+                }
+                .disabled(!notifyOldWorkspaces)
+            } header: {
+                Text("Old workspaces")
+            } footer: {
+                Text("The button Review… on the Site screen shows the old workspaces of a site. A notification names them until they get activity or you remove them. Settings > General turns this notification on or off. Nexus never removes a workspace by itself.")
+            }
+
             Section {
                 Picker("Keep database dumps for", selection: setting(\.dumpDays)) {
-                    ForEach(Array(Set(Self.dayChoices + [settings.dumpDays])).sorted(), id: \.self) { days in
+                    ForEach(Self.choices(Self.dayChoices, with: settings.dumpDays), id: \.self) { days in
                         Text(Count.text(days, "day")).tag(days)
                     }
                 }
@@ -748,9 +818,7 @@ private struct CertificatesSettings: View {
     @Environment(AppModel.self) private var model
 
     private var certificateFile: String? {
-        model.rootCertificate.flatMap { info in
-            FileManager.default.fileExists(atPath: (info.file as NSString).expandingTildeInPath) ? info.file : nil
-        }
+        model.rootCertificate.flatMap { model.existingPath($0.file) }
     }
 
     var body: some View {

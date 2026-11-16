@@ -9,6 +9,10 @@ struct ActivitySummaryTests {
         #expect(NexusRequest.install(name: "php", line: "8.5").activitySummary == "install php 8.5")
     }
 
+    @Test func theRemovalOfWorkspacesNamesTheSiteAndEachWorkspace() {
+        #expect(NexusRequest.removeWorkspaces(host: "shop.test", names: ["a", "b"]).activitySummary == "removeWorkspaces shop.test a b")
+    }
+
     @Test func aRequestWithoutValuesShowsItsName() {
         #expect(NexusRequest.stopAll.activitySummary == "stopAll")
     }
@@ -40,6 +44,8 @@ struct ActivitySummaryTests {
         #expect(NexusRequest.tld(nil).onlyReads)
         #expect(!NexusRequest.tld("test").onlyReads)
         #expect(!NexusRequest.start(service: "nginx").onlyReads)
+        #expect(NexusRequest.oldWorkspaces(host: "shop.test").onlyReads)
+        #expect(!NexusRequest.oldWorkspaceNotices.onlyReads)
     }
 
     @Test func aResponseSaysHowItEnded() {

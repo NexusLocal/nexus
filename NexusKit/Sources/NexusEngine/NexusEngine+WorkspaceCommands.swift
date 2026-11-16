@@ -86,12 +86,10 @@ extension NexusEngine {
     private static let removalCommandTimeLimit: Duration = .seconds(5 * 60)
 
     // The commands of a site that run before Nexus removes a workspace, for example php artisan
-    // queue:clear (owner, 2026-11-09, Herd item 26). They run only in a Ready workspace, because a
-    // command in a workspace that is not isolated can reach the database of the main site (D48). A
-    // command that fails gives a warning, and the removal goes on. A worktree that git removes
-    // without Nexus runs none, because its folder is gone. The answer holds the warnings. git
-    // refuses a worktree with changes that are not committed. A refusal after the commands would
-    // keep a workspace that the commands cleaned up, so that check comes first.
+    // queue:clear (owner, 2026-11-09, Herd item 26). They run only in a Ready workspace. A command
+    // that fails gives a warning, and the removal goes on. A worktree that git removes without Nexus
+    // runs none, because its folder is gone. The answer holds the warnings. A worktree that git
+    // refuses throws its refusal before the first command. Without a command git refuses itself.
     func runRemovalCommands(of workspace: Workspace, key: String, git: URL, force: Bool) async throws -> [String] {
         let state = await stateStore.current()
         let sites = resolvedSites(state).map(\.site).filter { ProjectFolder.workspaceKey(of: $0) == key }
@@ -101,14 +99,29 @@ extension NexusEngine {
             return []
         }
 
-        let changes = try? await CommandRunner.run(Command(executable: git, arguments: ["-C", workspace.worktree, "status", "--porcelain"]))
-
-        if !force, changes?.trimmed.isEmpty == false {
-            throw RuntimeError.unsupported("The worktree of \(workspace.name) has changes that are not committed, so git would not remove it. Nexus ran no commands, and the workspace stays. Commit the changes, or remove the workspace with --force.")
+        // A command in a workspace that is not isolated can reach the database of the main site
+        // (D48). A workspace in its setup can have a database copy that did not end.
+        switch workspace.state {
+        case .preparing:
+            return ["Nexus ran no commands before the removal, because the setup of the workspace did not end."]
+        case .notIsolated:
+            return ["Nexus ran no commands before the removal, because the workspace is not isolated."]
+        case .ready:
+            break
         }
 
-        guard workspace.state == .ready, let folder = await fileFolders(of: workspace, key: key)?.worktree else {
-            return ["Nexus ran no commands before the removal, because the workspace is not isolated."]
+        guard let folder = await fileFolders(of: workspace, key: key)?.worktree else {
+            return []
+        }
+
+        if let refusal = await Self.removalRefusal(of: workspace, git: git, force: force) {
+            throw RuntimeError.unsupported(refusal)
+        }
+
+        // A command before the removal can need the database of a stopped workspace (owner,
+        // 2026-11-15). The record can be older than the waits above.
+        if let current = await record(workspace.name, key: key) {
+            _ = await startIfStopped(current, key: key, cause: "the commands before the removal")?.ready.value
         }
 
         // The log of the workspace goes away with the workspace. So the output goes to a log of the

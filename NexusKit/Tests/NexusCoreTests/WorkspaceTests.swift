@@ -147,6 +147,22 @@ struct WorkspaceTests {
         #expect(workspace.commandsEnded)
     }
 
+    @Test func aRecordWithoutALockHasNoLock() throws {
+        let stored = #"{"name":"fix","worktree":"/w/fix","folder":"/w/fix","state":{"ready":{}}}"#
+
+        let workspace = try JSONDecoder().decode(Workspace.self, from: Data(stored.utf8))
+
+        #expect(workspace.locked == nil)
+    }
+
+    @Test func aRecordKeepsItsLockAfterAnEncodeAndADecode() throws {
+        let workspace = Workspace(name: "fix", worktree: "/w/fix", folder: "/w/fix", locked: "claude agent")
+
+        let decoded = try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(workspace))
+
+        #expect(decoded.locked == "claude agent")
+    }
+
     @Test func aRecordInItsSetupStillGetsTheCommandsOfItsSite() throws {
         let stored = #"{"name":"fix","worktree":"/w/fix","folder":"/w/fix","state":{"preparing":{}}}"#
 
@@ -213,5 +229,19 @@ struct WorkspaceHostPairTests {
 
         #expect(settings.worktreePlace == .inProject)
         #expect(settings.worktreeFolder == nil)
+    }
+
+    @Test func settingsFromBeforeOldWorkspacesGetTheDefaults() throws {
+        let settings = try JSONDecoder().decode(WorkspaceSettings.self, from: Data(#"{"dumpDays": 3}"#.utf8))
+
+        #expect(settings.oldAfterDays == 5)
+        #expect(settings.notifyOldEvery == 1)
+    }
+
+    @Test func theOldWorkspaceSettingsSurviveTheTrip() throws {
+        let settings = WorkspaceSettings(oldAfterDays: 14, notifyOldEvery: 7)
+        let decoded = try JSONDecoder().decode(WorkspaceSettings.self, from: JSONEncoder().encode(settings))
+
+        #expect(decoded == settings)
     }
 }

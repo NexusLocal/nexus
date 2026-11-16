@@ -449,7 +449,9 @@ extension AppModel {
         site.projectType = .wordpress
         site.backgroundCommands = []
         site.workspaces = [
-            WorkspaceInfo(name: "fix", worktree: "~/Development/blog-fix", folder: "~/Development/blog-fix", branch: "fix", hosts: ["blog-fix.test"], url: "https://blog-fix.test", state: .ready),
+            WorkspaceInfo(name: "fix", worktree: "~/Development/blog-fix", folder: "~/Development/blog-fix", branch: "fix", hosts: ["blog-fix.test"], url: "https://blog-fix.test", state: .ready, databases: [WorkspaceDatabaseInfo(name: "blog", instance: "mysql-8.0", port: 20001)], runState: .running, keepAwake: true),
+            WorkspaceInfo(name: "ticket-118", worktree: "~/Development/blog/.claude/worktrees/ticket-118", folder: "~/Development/blog/.claude/worktrees/ticket-118", branch: "ticket-118", hosts: ["blog-ticket-118.test"], url: "https://blog-ticket-118.test", state: .ready, runState: .stopped, keepAwake: false, stoppedAfter: .oneHour),
+            WorkspaceInfo(name: "ticket-160", worktree: "~/Development/blog/.claude/worktrees/ticket-160", folder: "~/Development/blog/.claude/worktrees/ticket-160", branch: "ticket-160", hosts: ["blog-ticket-160.test"], url: "https://blog-ticket-160.test", state: .ready, locked: "claude agent agent-a1b2"),
         ]
         site.apacheLines = ["LimitRequestBody 104857600", "Header set X-Robots-Tag \"noindex\""]
         return site
@@ -458,7 +460,49 @@ extension AppModel {
     private static var sampleShop: SiteItem {
         var site = site("shop.test", folder: "~/Development/shop", aliases: ["www.shop.test"])
         site.nginxLines = ["client_max_body_size 100m;", "location /storage/ {", "    add_header Cache-Control \"public, max-age=3600\";", "}"]
+        site.workspaces = sampleShopWorkspaces
         return site
+    }
+
+    // The old workspaces are the rows of "Sheet Old Workspaces" in nexus.pen. ticket-123 had a page
+    // 2 hours ago, so it is not old. The Site screen and the sheet use this one list.
+    private static let sampleShopRows = [
+        SampleWorkspace(name: "ticket-101", hours: 9 * 24, source: .page, merged: true, branchGone: true),
+        SampleWorkspace(name: "ticket-104", hours: 8 * 24, source: .commit, merged: true),
+        SampleWorkspace(name: "ticket-109", hours: 6 * 24, source: .commit, commitsNotPushed: 2),
+        SampleWorkspace(name: "ticket-112", hours: 6 * 24, source: .created, changesNotCommitted: 3),
+        SampleWorkspace(name: "ticket-115", hours: 5 * 24, source: .commit, locked: "claude agent-a1b2"),
+        SampleWorkspace(name: "ticket-123", hours: 2, source: .page),
+    ]
+
+    private static var sampleShopWorkspaces: [WorkspaceInfo] {
+        let now = Date.now
+
+        return sampleShopRows.map { row in
+            WorkspaceInfo(name: row.name, worktree: row.folder, folder: row.folder, branch: row.name, hosts: ["shop-\(row.name).test"], url: "https://shop-\(row.name).test", state: .ready, locked: row.locked, lastActivity: row.date(now: now))
+        }
+    }
+
+    // The sheet of the old workspaces for --sample. It names the host of the sheet.
+    static func sampleOldWorkspaceList(host: String) -> OldWorkspaceList {
+        let settings = WorkspaceSettings()
+        let now = Date.now
+        let old = sampleShopRows.filter { OldWorkspaces.isOld($0.date(now: now), days: settings.oldAfterDays, now: now) }
+
+        return OldWorkspaceList(host: host, days: settings.oldAfterDays, dumpDays: settings.dumpDays, mainBranch: "development", workspaces: old.map { row in
+            OldWorkspace(
+                name: row.name,
+                branch: row.name,
+                worktree: row.folder,
+                activity: WorkspaceActivity(date: row.date(now: now), source: row.source),
+                hasDatabases: true,
+                merged: row.merged,
+                branchGone: row.branchGone,
+                commitsNotPushed: row.commitsNotPushed,
+                changesNotCommitted: row.changesNotCommitted,
+                locked: row.locked
+            )
+        })
     }
 
     private static var sampleProxy: SiteItem {
@@ -787,5 +831,26 @@ extension AppModel {
     private static var sampleRootCertificate: RootCertificateInfo {
         let validUntil = DateComponents(calendar: .current, year: 2036, month: 10, day: 26).date
         return RootCertificateInfo(trusted: true, validUntil: validUntil, file: "~/Library/Application Support/Nexus/certs/nexus-root-ca.pem")
+    }
+}
+
+// A workspace of shop.test for --sample. The sheet of the old workspaces also shows its signs of
+// git.
+private struct SampleWorkspace {
+    let name: String
+    let hours: Double
+    let source: WorkspaceActivity.Source
+    var locked: String?
+    var merged = false
+    var branchGone = false
+    var commitsNotPushed = 0
+    var changesNotCommitted = 0
+
+    var folder: String {
+        "~/Development/shop/.claude/worktrees/\(name)"
+    }
+
+    func date(now: Date) -> Date {
+        now.addingTimeInterval(-hours * 3600)
     }
 }

@@ -471,9 +471,7 @@ extension NexusEngine {
     // site of a subdomain network keeps its own URL in its options. So it needs its own change of
     // the links.
     private func moveNetwork(_ network: (from: String, to: String), database: String, prefix: String, tools: DatabaseTools, of workspace: String, key: String) async throws -> [WorkspaceLinks.Move] {
-        let record = await stateStore.current().worktrees[key]?.workspaces.first { $0.name == workspace }
-
-        guard let server = record?.servers.first(where: { $0.instance == tools.id }) else {
+        guard let server = await record(workspace, key: key)?.servers.first(where: { $0.instance == tools.id }) else {
             throw RuntimeError.unsupported("The workspace \(workspace) has no database server of \(tools.id).")
         }
 
@@ -639,8 +637,9 @@ extension NexusEngine {
         let state = await stateStore.current()
         let sites = resolvedSites(state).map(\.site)
 
+        // A stopped workspace has no server. Its start calls this function again (owner, 2026-11-15).
         for (key, list) in state.worktrees {
-            for workspace in list.workspaces where workspace.state == .ready {
+            for workspace in list.workspaces where workspace.state == .ready && workspace.runState != .stopped {
                 let owner = Self.processOwner(key: key, workspace: workspace.name)
 
                 guard !watchingStopped,

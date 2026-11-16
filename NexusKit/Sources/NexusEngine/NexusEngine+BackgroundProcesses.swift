@@ -9,23 +9,34 @@ import NexusWorkspaces
 
 // One program of the list of a site. owner names the workspace or the main checkout. worktree is the
 // root of the linked worktree of this program. git removes only such a worktree. So a program in a
-// real main checkout has none. A site can have its folder in a linked worktree.
+// real main checkout has none. A site can have its folder in a linked worktree. devServerCommand is
+// the command of the plan of a dev server, with {port:vite}. A failure records that command. The
+// next sync compares the failure with the plan (owner, 2026-11-15). server names a database server
+// of a workspace, for the gate of its port.
 struct BackgroundProcess: Sendable, Equatable {
     let owner: String
     let command: String
     let log: String
     let worktree: String?
     let definition: ServiceDefinition
+    var devServerCommand: String?
+    var server: GatedServer?
+
+    var isDevServer: Bool {
+        devServerCommand != nil
+    }
 }
 
 // What the main checkout needs for its list. These values come from a probe. A workspace keeps them
-// in its record, but the main checkout has no record.
+// in its record, but the main checkout has no record. viteFileDates is only in the plan of the dev
+// server. A change of these dates reads the folder again (owner, 2026-11-15).
 struct MainProcessPlan: Sendable {
     let folder: String
     let preset: [String]
     let database: String?
     let reverbPort: Int?
     var ports: [String: Int] = [:]
+    var viteFileDates: [String: Date] = [:]
 }
 
 struct MainProbeFailure: Sendable {
@@ -39,7 +50,7 @@ struct MainProbeFailure: Sendable {
 // decides what must run, so a change only asks for a sync. Each request that can change something
 // ends with a sync, through reconcileWorkspaces.
 extension NexusEngine {
-    static let processMarker = "NEXUS_BACKGROUND_PROCESS"
+    static let processMarker = BackgroundProcessMarker.name
     static let nodeLineKey = "NEXUS_SITE_NODE"
     private static let mainProbeWait: Duration = .seconds(60)
     private static let worktreeWatchLatency: TimeInterval = 0.05
@@ -70,21 +81,60 @@ extension NexusEngine {
         repeat {
             processSyncAgain = false
 
-            let wanted = await wantedProcesses()
+            // One read of the state and of the installed runtimes for each run. The list of the
+            // processes and the list for the gate both come from it. After "Stop all services" only
+            // the list for the gate needs servers, and only those of the stopped workspaces.
+            let state = await stateStore.current()
+            let servicesStopped = await servicesAreStopped()
+            let servers = await workspaceServers(state, includesRunning: !servicesStopped)
+            let wanted = await wantedProcesses(state, servers: servers, servicesStopped: servicesStopped)
             let restartsFailed = restartFailedProcesses
 
             restartFailedProcesses = false
 
+            // The gate of the database ports gets the servers that stop in this run before their
+            // stop, and keeps the servers that start in this run until after their start (owner,
+            // 2026-11-15).
+            let hold = Self.serversToHold(servers)
+            let gate = serverGate
+
+            await gate.hold(heldServers.union(hold))
+
+            // A start of a stopped workspace starts its servers past the sync. That start can come
+            // after the list of this run, so its servers are not outdated.
             let failed = restartsFailed ? await failedProcesses() : []
-            let outdated = Array(runningProcesses.filter { wanted[$0.key] != $0.value || failed.contains($0.key) }.keys)
+            let outdated = Array(runningProcesses.filter { id, process in
+                (wanted[id] != process || failed.contains(id)) && !(workspaceStarts[process.owner] != nil && wanted[id] == nil)
+            }.keys)
 
             await withTaskGroup { group in
                 for id in outdated {
-                    group.addTask { try? await self.processSupervisor.stop(id) }
+                    let server = runningProcesses[id]?.server
+
+                    group.addTask {
+                        guard let server else {
+                            try? await self.processSupervisor.stop(id)
+                            return
+                        }
+
+                        await self.stopServer(id, server)
+                    }
                 }
             }
 
-            outdated.forEach { runningProcesses[$0] = nil }
+            // A dev server that got SIGKILL after the stop timeout leaves public/hot (owner,
+            // 2026-11-15).
+            for id in outdated {
+                if let process = runningProcesses[id], process.isDevServer, let folder = process.definition.workingDirectory {
+                    checkHotFile(in: folder.path(percentEncoded: false), log: process.log)
+                }
+            }
+
+            // stopServer removed each server already. A connection during its stop can start it
+            // again before this line.
+            for id in outdated where runningProcesses[id]?.server == nil {
+                runningProcesses[id] = nil
+            }
 
             // The list can come from before a "Stop all services" that ended during the probe of this
             // run or during the stops above.
@@ -107,28 +157,86 @@ extension NexusEngine {
                     watch(worktree)
                 }
 
-                writeToLog(of: process.log, "$ \(process.command)\n")
-                runningProcesses[id] = process
-
-                do {
-                    try await processSupervisor.start(process.definition)
-
-                    // An end or a stop can reach the supervisor before this start. Then nothing
-                    // else ends this program.
-                    if runningProcesses[id] == nil {
-                        await processSupervisor.end(id)
-                    }
-                } catch {
-                    runningProcesses[id] = nil
-                    plannedProcessProblems[process.owner, default: []].append("The background process \(process.command) does not run. \(ErrorText.plain(error))")
+                guard let reason = await startProcess(process) else {
+                    continue
                 }
+
+                guard let command = process.devServerCommand else {
+                    plannedProcessProblems[process.owner, default: []].append("The background process \(process.command) does not run. \(reason)")
+                    continue
+                }
+
+                // A dev server without a failure keeps the wait page of nginx (owner, 2026-11-15).
+                // The page of the failure sends the user to this log.
+                writeToLog(of: process.log, "\(reason)\n")
+                recordDevServerFailure(of: process.owner, command: command, reason: reason)
             }
 
+            // A start past the sync can run a server of the list of this run already.
+            let running = runningProcesses.values.compactMap(\.server)
+            let held = hold.filter { server in !running.contains { $0.isSame(as: server) } }
+
+            await gate.hold(held)
+            heldServers = held
             watchWorktrees()
             await backgroundProcessesChanged()
         } while processSyncAgain
 
         processSync = nil
+    }
+
+    // The start of one program of the list, for the sync and for the start of a stopped workspace.
+    // The entry in runningProcesses comes before the first wait. So no second start of the same
+    // program begins in that time. A server that starts leaves the list of hold, as in the gate.
+    // Returns the reason of a failure.
+    func startProcess(_ process: BackgroundProcess) async -> String? {
+        let id = process.definition.id
+
+        writeToLog(of: process.log, "$ \(process.command)\n")
+        runningProcesses[id] = process
+        serverHandOvers[id] = nil
+
+        var handOver: Int?
+
+        if let server = process.server {
+            heldServers = heldServers.filter { !$0.isSame(as: server) }
+            handOver = await serverGate.serverWillStart(server)
+        }
+
+        do {
+            try await processSupervisor.start(process.definition, handedOver: handOver != nil)
+
+            // An end or a stop can reach the supervisor before this start. Then nothing else ends
+            // this program.
+            guard runningProcesses[id] != nil else {
+                await processSupervisor.end(id)
+                return nil
+            }
+
+            serverHandOvers[id] = handOver
+            return nil
+        } catch {
+            let reason = ErrorText.plain(error)
+
+            runningProcesses[id] = nil
+
+            if let server = process.server {
+                await serverGate.serverDidNotStart(server, handOver: handOver, reason: reason)
+            }
+
+            return reason
+        }
+    }
+
+    // The stop of one workspace server. The gate takes the port back after serverDidStop, and a
+    // connection that waited in the stop can start the workspace at once. That start must not find
+    // the server that just stopped. So its entry in runningProcesses goes first (plan item 3e).
+    func stopServer(_ id: String, _ server: GatedServer) async {
+        await serverGate.serverWillStop(server)
+        try? await processSupervisor.stop(id)
+        runningProcesses[id] = nil
+        serverHandOvers[id] = nil
+        await serverGate.serverDidStop(server)
     }
 
     // git has no hook for a removal. It tells nothing until it deleted the files. A program that
@@ -242,11 +350,29 @@ extension NexusEngine {
     }
 
     // "Stop all services" runs in the queue of the changes, and a sync can wait for that queue. So
-    // this stop does not wait for a sync.
+    // this stop does not wait for a sync. A server during the hand-over of its port belongs to a
+    // workspace that starts. The gate then gives the clients of that start the reason (plan item 3e).
     func stopBackgroundProcesses() async {
+        let servers = runningProcesses.values.compactMap(\.server)
+        let gate = serverGate
+
+        for server in servers {
+            await gate.serverWillStop(server)
+        }
+
         await processSupervisor.stopAll()
         runningProcesses = [:]
+        serverHandOvers = [:]
         worktreeWatchers = [:]
+
+        // Each call can wait up to 1 second for the bind of its port, as in the stops of the sync.
+        await withTaskGroup { group in
+            for server in servers {
+                group.addTask {
+                    await gate.serverDidStop(server)
+                }
+            }
+        }
     }
 
     // A service that starts again can end the cause, for example a database that a worker needs.
@@ -261,14 +387,30 @@ extension NexusEngine {
     }
 
     // A program that stopped too often has its reason in the supervisor. It stays failed until the
-    // next setup or the next start of a service. So the Retry of its workspace starts it again.
+    // next setup or the next start of a service. So the Retry of its workspace starts it again. A dev
+    // server fails at its first end that nobody asked for (owner, 2026-11-15). The sync then stops
+    // it, and its page says why.
     func backgroundProcessesChanged() async {
         var problems = plannedProcessProblems
         var states: [String: ServiceState] = [:]
+        var running: Set<String> = []
+        var failed: [(owner: String, command: String)] = []
+        var failedServers: [(server: GatedServer, handOver: Int, reason: String)] = []
+        let handOversBefore = serverHandOvers
 
         for status in await processSupervisor.status() {
             guard let process = runningProcesses[status.id] else {
                 continue
+            }
+
+            // A server that fails during the hand-over of its port gives the clients of that start
+            // the reason (plan item 3e). The supervisor starts a server again after an exit. That
+            // new start gets the same hand-over, so only a failed state counts. A start during the
+            // read of the states changes the number, and the state then can belong to an earlier
+            // start. The gate ignores the number of an earlier hand-over.
+            if let server = process.server, case .failed(let reason) = status.state, let handOver = serverHandOvers[status.id], handOversBefore[status.id] == handOver {
+                failedServers.append((server, handOver, reason))
+                serverHandOvers[status.id] = nil
             }
 
             let isApp = status.id == Self.appProcessID(owner: process.owner)
@@ -277,60 +419,108 @@ extension NexusEngine {
                 states[status.id] = status.state
             }
 
+            if let command = process.devServerCommand {
+                switch status.state {
+                case .running: running.insert(process.owner)
+                case .restarting, .failed: failed.append((process.owner, command))
+                case .stopped: break
+                }
+
+                continue
+            }
+
             if case .failed(let reason) = status.state {
                 let name = isApp ? "The Node.js app" : "The background process \(process.command)"
                 problems[process.owner, default: []].append("\(name) does not run. \(reason)")
             }
         }
 
-        guard problems != processProblems || states != appStates else {
+        for (owner, command) in failed {
+            recordDevServerFailure(of: owner, command: command)
+        }
+
+        if !failedServers.isEmpty {
+            let gate = serverGate
+
+            Task { [failedServers] in
+                for (server, handOver, reason) in failedServers {
+                    await gate.serverDidNotStart(server, handOver: handOver, reason: reason)
+                }
+            }
+        }
+
+        if !failed.isEmpty {
+            _ = syncBackgroundProcesses()
+        }
+
+        guard problems != processProblems || states != appStates || running != runningDevServers || !failed.isEmpty else {
             return
         }
 
         processProblems = problems
         appStates = states
+        runningDevServers = running
         publishSites()
     }
 
     // After "Stop all services" the programs have no database, so they wait for the services.
-    private func wantedProcesses() async -> [String: BackgroundProcess] {
-        let state = await stateStore.current()
-
+    private func wantedProcesses(_ state: EngineState, servers: [WorkspaceServerEntry], servicesStopped: Bool) async -> [String: BackgroundProcess] {
         plannedProcessProblems = [:]
+        plannedDevServers = [:]
+        plannedOnDemandPrograms = [:]
 
-        guard !watchingStopped, !stoppingAllServices, await !waitsForStoppedServices() else {
+        guard !servicesStopped else {
+            usePlannedDevServers()
             return [:]
         }
 
         let (_, conflicts, sitesOfRecord, _, _) = workspaceSites(state)
-        var wanted = await workspaceServerProcesses(state)
+        var wanted = workspaceServerProcesses(servers)
 
         let hasMainSwitch = { (key: String) in sitesOfRecord[key]?.contains(where: \.runsMainProcesses) == true }
 
         mainProcessPlans = mainProcessPlans.filter { hasMainSwitch($0.key) }
         mainProbeFailures = mainProbeFailures.filter { hasMainSwitch($0.key) }
+        mainDevServerPlans = mainDevServerPlans.filter { sitesOfRecord[$0.key] != nil }
+        forgetGoneOwners(keeping: Set(sitesOfRecord.keys.flatMap { key in
+            [Self.processOwner(key: key, workspace: nil)] + (state.worktrees[key]?.workspaces ?? []).map { Self.processOwner(key: key, workspace: $0.name) }
+        }))
 
         // A Node.js app is the site itself (D67). So it runs without the switches of the background
-        // processes.
+        // processes. A dev server also runs without the switch of the workspaces (owner, 2026-11-15).
+        // A stopped workspace runs neither. The plan of its dev server stays, so its first page gets
+        // the wait page and not the error of Vite.
         for (key, sites) in sitesOfRecord {
             let running = sites.filter(\.runsWorkspaceProcesses)
 
             for workspace in state.worktrees[key]?.workspaces ?? [] where conflicts[workspace] == nil {
-                if !running.isEmpty {
-                    wanted += await backgroundProcesses(of: workspace, sites: sites, running: running, key: key, tld: state.tld)
+                guard workspace.runState != .stopped else {
+                    _ = await backgroundProcesses(of: workspace, sites: sites, running: [], key: key, tld: state.tld)
+                    continue
                 }
 
+                wanted += await backgroundProcesses(of: workspace, sites: sites, running: running, key: key, tld: state.tld)
                 wanted += await appProcesses(of: workspace, sites: sites, key: key, tld: state.tld)
             }
 
             wanted += await mainProcesses(of: sites, key: key, state: state)
         }
 
+        usePlannedDevServers()
         return Dictionary(wanted.map { ($0.definition.id, $0) }) { first, _ in first }
     }
 
+    // The plans of this sync replace the plans of the last sync at once. A page or an idle check
+    // during the sync reads the complete plans of the last sync.
+    private func usePlannedDevServers() {
+        devServerPlans = plannedDevServers
+        onDemandPrograms = plannedOnDemandPrograms
+        writeDevServerPages()
+    }
+
     // sites holds each site of the project, so {host} and the log are the same as in the setup.
-    // running holds the sites with their switch on.
+    // running holds the sites with their switch on. The dev server runs with the first page, also
+    // while the switch is off.
     private func backgroundProcesses(of workspace: Workspace, sites: [Site], running: [Site], key: String, tld: String) async -> [BackgroundProcess] {
         guard workspace.state == .ready, let preset = workspace.backgroundPreset, FileManager.default.fileExists(atPath: "\(workspace.worktree)/.git") else {
             return []
@@ -343,17 +533,20 @@ extension NexusEngine {
         let host = workspace.hosts(of: sites, tld: tld).first ?? ""
         let list = BackgroundList(
             owner: Self.processOwner(key: key, workspace: workspace.name),
-            name: workspace.name,
+            workspace: workspace.name,
             host: host,
             log: "workspace-\(host)",
             folder: folder,
             worktree: workspace.worktree,
-            node: running[0].node,
+            node: (running.first ?? sites[0]).node,
             database: workspace.database,
             ports: workspace.ports
         )
 
-        return await backgroundProcesses(of: Self.backgroundCommands(of: running, preset: preset), in: list)
+        let others = Self.backgroundCommandGroups(of: running, preset: preset).others
+        let devServers = Self.backgroundCommandGroups(of: sites, preset: preset).devServers
+
+        return await backgroundProcesses(of: others, in: list) + devServerProcesses(of: devServers, in: list)
     }
 
     private func appProcesses(of workspace: Workspace, sites: [Site], key: String, tld: String) async -> [BackgroundProcess] {
@@ -376,7 +569,7 @@ extension NexusEngine {
         let host = workspace.hosts(of: sites, tld: tld).first ?? ""
         let list = BackgroundList(
             owner: owner,
-            name: workspace.name,
+            workspace: workspace.name,
             host: host,
             log: "workspace-\(host)",
             folder: folder,
@@ -389,8 +582,8 @@ extension NexusEngine {
         return await appProcess(of: app, in: list, hosts: [host], tld: tld).map { [$0] } ?? []
     }
 
-    // The main checkout runs its background processes when its switch is on, and its Node.js app
-    // always.
+    // The main checkout runs its background processes when its switch is on. Its Node.js app and its
+    // dev server start with the first page, also while the switch is off (owner, 2026-11-15).
     private func mainProcesses(of sites: [Site], key: String, state: EngineState) async -> [BackgroundProcess] {
         let switched = sites.filter(\.runsMainProcesses)
         var apps: [BackgroundProcess] = []
@@ -399,20 +592,23 @@ extension NexusEngine {
             apps = await mainApp(app, key: key, state: state)
         }
 
+        let devServers = await mainDevServerProcesses(of: sites, key: key)
+
         guard let site = switched.first, FileManager.default.fileExists(atPath: ProjectFolder.projectFolder(of: site)) else {
-            return apps
+            return apps + devServers
         }
 
         let owner = Self.processOwner(key: key, workspace: nil)
 
         do {
             let plan = try await mainProcessPlan(of: switched, key: key)
-            let list = BackgroundList(owner: owner, name: "main", host: site.host, log: "main-\(site.host)", folder: plan.folder, worktree: ProjectFolder.worktree(holding: plan.folder)?.root, node: site.node, database: plan.database, ports: plan.ports)
+            let list = BackgroundList(owner: owner, workspace: nil, host: site.host, log: "main-\(site.host)", folder: plan.folder, worktree: ProjectFolder.worktree(holding: plan.folder)?.root, node: site.node, database: plan.database, ports: plan.ports)
+            let commands = Self.backgroundCommandGroups(of: switched, preset: plan.preset).others
 
-            return await backgroundProcesses(of: Self.backgroundCommands(of: switched, preset: plan.preset), in: list) + apps
+            return await backgroundProcesses(of: commands, in: list) + apps + devServers
         } catch {
             plannedProcessProblems[owner, default: []].append("Nexus cannot start the background processes of the main checkout. \(ErrorText.plain(error))")
-            return apps
+            return apps + devServers
         }
     }
 
@@ -430,7 +626,7 @@ extension NexusEngine {
             return []
         }
 
-        let list = BackgroundList(owner: owner, name: "main", host: app.host, log: "main-\(app.host)", folder: folder, worktree: ProjectFolder.worktree(holding: folder)?.root, node: app.node, database: nil, ports: [NodeAppLaunch.portName: port])
+        let list = BackgroundList(owner: owner, workspace: nil, host: app.host, log: "main-\(app.host)", folder: folder, worktree: ProjectFolder.worktree(holding: folder)?.root, node: app.node, database: nil, ports: [NodeAppLaunch.portName: port])
 
         return await appProcess(of: app, in: list, hosts: app.hosts, tld: state.tld).map { [$0] } ?? []
     }
@@ -447,13 +643,12 @@ extension NexusEngine {
             plan = try await probedMainProcessPlan(of: sites, key: key)
         }
 
-        let names = WorkspaceKeys.portNames(in: Self.backgroundCommands(of: sites, preset: plan.preset))
-
-        // A probe can take 30 seconds, and a setup can record a port in that time.
-        let taken = takenPorts(await stateStore.current())
+        // The dev server has its port in mainDevServerPlans.
+        let names = WorkspaceKeys.portNames(in: Self.backgroundCommandGroups(of: sites, preset: plan.preset).others)
         let kept = plan.ports.merging(plan.reverbPort.map { ["reverb": $0] } ?? [:]) { _, fixed in fixed }
 
-        plan.ports = Self.numbers(for: names, keeping: kept, from: Self.firstWorkspacePort) { !taken.contains($0) && PortInspector.isFree($0) }
+        // A probe can take 30 seconds, and a setup can record a port in that time.
+        plan.ports = freePorts(for: names, keeping: kept, in: await stateStore.current())
         mainProcessPlans[key] = plan
         return plan
     }
@@ -492,9 +687,10 @@ extension NexusEngine {
         )
     }
 
+    // workspace is nil for the main checkout.
     struct BackgroundList {
         let owner: String
-        let name: String
+        let workspace: String?
         let host: String
         let log: String
         let folder: String
@@ -502,6 +698,11 @@ extension NexusEngine {
         let node: String?
         let database: String?
         let ports: [String: Int]
+
+        // The value of {workspace} and the name in a problem.
+        var name: String {
+            workspace ?? "main"
+        }
     }
 
     // Programs of one owner share a log. A site without its PHP version can still run a command that
@@ -509,7 +710,13 @@ extension NexusEngine {
     // program starts. The line goes into the environment, so a new line of the site restarts that
     // program. The folder of the dump viewer is in the environment too. So a change of that setting
     // restarts a queue worker.
-    private func backgroundProcesses(of commands: [String], in list: BackgroundList) async -> [BackgroundProcess] {
+    func backgroundProcesses(of commands: [String], in list: BackgroundList) async -> [BackgroundProcess] {
+        // toolCommand scans the parked folders and the installed runtimes. Each sync gets here for
+        // each workspace that is ready, also without commands.
+        guard !commands.isEmpty else {
+            return []
+        }
+
         let tool = try? await toolCommand(.php, folder: list.folder)
         let added = [Self.processMarker: processMarkerValue, Self.nodeLineKey: list.node ?? ""]
         let programEnvironment = environment(of: tool).merging(added) { _, new in new }
@@ -539,8 +746,21 @@ extension NexusEngine {
         distinct(sites.flatMap { $0.backgroundCommands ?? preset })
     }
 
+    // A dev server starts with the first page (owner, 2026-11-15). The other commands follow the
+    // switches of the site.
+    static func backgroundCommandGroups(of sites: [Site], preset: [String]) -> (others: [String], devServers: [String]) {
+        let commands = backgroundCommands(of: sites, preset: preset)
+
+        return (commands.filter { !DevServer.isDevServer($0) }, commands.filter(DevServer.isDevServer))
+    }
+
     static func processOwner(key: String, workspace: String?) -> String {
         "\(key)\n\(workspace ?? "")"
+    }
+
+    // The owner of the main checkout is the start of the owner of each workspace of its project.
+    static func isOwner(_ owner: String, ofProject key: String) -> Bool {
+        owner.hasPrefix(processOwner(key: key, workspace: nil))
     }
 
     func presetCommands(_ configuration: LaravelConfiguration, in folder: String) async -> [String] {
@@ -549,10 +769,8 @@ extension NexusEngine {
 
     // A build writes the output folder, and a dev server writes the hot file. A file that git sees
     // would change in the worktree (D52). A folder without git has no such file.
-    private func runsVite(in folder: String) async -> Bool {
-        let files = (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []
-
-        guard let configuration = files.first(where: { $0.hasPrefix("vite.config.") }) else {
+    func runsVite(in folder: String) async -> Bool {
+        guard let output = BackgroundPreset.viteOutput(inRoot: URL(filePath: folder, directoryHint: .isDirectory)) else {
             return false
         }
 
@@ -560,9 +778,7 @@ extension NexusEngine {
             return true
         }
 
-        let source = (try? String(contentsOfFile: "\(folder)/\(configuration)", encoding: .utf8)) ?? ""
-
-        for path in [BackgroundPreset.viteOutput(inConfiguration: source), BackgroundPreset.hotFile] {
+        for path in [output, BackgroundPreset.hotFile] {
             if let ignored = try? await GitTool.ignores(path, in: folder, git: git), !ignored {
                 return false
             }

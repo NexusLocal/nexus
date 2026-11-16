@@ -273,7 +273,8 @@ public struct ServiceCatalog: Sendable {
             ports: [port],
             logFile: logFile,
             startTimeout: Self.databaseStartTimeout,
-            stopTimeout: Self.databaseStopTimeout
+            stopTimeout: Self.databaseStopTimeout,
+            greetingSocket: kind == .mariadb ? socket : nil
         )
     }
 }

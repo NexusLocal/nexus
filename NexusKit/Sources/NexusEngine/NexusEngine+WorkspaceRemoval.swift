@@ -10,6 +10,12 @@ struct DatabaseRemovalProblem {
     let nextTry: ContinuousClock.Instant
 }
 
+private struct RemovalTarget {
+    let key: String
+    let repository: String
+    let git: URL
+}
+
 // The end of a workspace (D53). The state names each server that must go, so a stop of nexusd loses
 // none. A dump can take minutes, so this work runs next to the watch of the worktrees. A clone
 // without a complete dump stays. Nexus tries it again after an hour and at the next start of nexusd.
@@ -22,59 +28,23 @@ extension NexusEngine {
     // git. git also refuses a worktree with changes. Those are the work of the user. The answer comes
     // after the dump. So a script can go on with the trash.
     func removeWorkspace(host: String, name: String, force: Bool) async throws -> String {
-        let state = await stateStore.current()
+        let target = try await removalTarget(host: host)
 
-        guard let site = resolvedSites(state).first(where: { $0.site.hosts.contains(host) })?.site else {
-            throw RuntimeError.unsupported("Nexus has no site \(host).")
-        }
-
-        let key = ProjectFolder.workspaceKey(of: site)
-
-        guard var workspace = state.worktrees[key]?.workspaces.first(where: { $0.name == name }) else {
+        guard let workspace = await record(name, key: target.key) else {
             throw RuntimeError.unsupported("\(host) has no workspace \(name).")
         }
 
-        guard let repository = ProjectFolder.repository(of: site) else {
-            throw RuntimeError.unsupported("\(host) has no git repository. So git cannot remove the worktree of \(name).")
-        }
-
-        guard let git = await GitTool.executable() else {
-            throw RuntimeError.unsupported(GitTool.missing)
-        }
-
-        let warnings = try await runRemovalCommands(of: workspace, key: key, git: git, force: force)
         let earlierDumps = Set(dumps().map(\.name))
-        let arguments = ["-C", repository.root, "worktree", "remove"] + (force ? ["--force"] : []) + [workspace.worktree]
+        let warnings = try await removeWorktree(of: workspace, in: target, force: force)
+        let (records, staying) = await waitUntilGone([workspace], key: target.key)
 
-        do {
-            _ = try await CommandRunner.run(Command(executable: git, arguments: arguments))
-        } catch let failure as CommandError {
-            throw RuntimeError.unsupported("git did not remove the worktree. So the workspace stays. \(failure)")
-        }
-
-        // A check that runs now gets one more run. That check can wait for the checks of other
-        // workspaces. So this request waits until the record is gone. A setup can start a clone while
-        // git runs. So the last record names the servers and not the first one.
-        let deadline = ContinuousClock.now + Self.workspaceRemovalWait
-        let worktree = workspace.worktree
-
-        func listedRecord() async -> Workspace? {
-            await stateStore.current().worktrees[key]?.workspaces.first { $0.name == name && $0.worktree == worktree }
-        }
-
-        while !watchingStopped, ContinuousClock.now < deadline, let record = await listedRecord() {
-            workspace = record
-            await reconcileWorkspaces()
-            try? await Task.sleep(for: .milliseconds(50))
-        }
-
-        guard await listedRecord() == nil else {
-            return (warnings + ["git removed the worktree of \(name). Nexus removes the workspace and its databases later."]).joined(separator: "\n")
+        guard staying.isEmpty, let last = records.first else {
+            return (warnings + [WorkspaceRemovalText.removedLater(name)]).joined(separator: "\n")
         }
 
         await startDatabaseRemovals().value
 
-        let removals = workspace.databaseRemovals(site: key)
+        let removals = last.databaseRemovals(site: target.key)
         let dumpNames = removals.flatMap { removal in
             removal.databases.map { "-\(removal.server.instance)-\(Workspace.databaseName($0, workspace: name))." }
         }
@@ -84,11 +54,142 @@ extension NexusEngine {
         let answer = (warnings + ["The workspace \(name) is removed."] + newDumps.map { "The trash keeps \($0)." }).joined(separator: "\n")
 
         // The workspace is gone, but a script must not count on a dump that does not exist.
-        if let problem = databaseRemovalProblem(ofSite: key, in: await stateStore.current(), of: Set(removals.map(\.server.folder))) {
+        if let problem = databaseRemovalProblem(ofSite: target.key, in: await stateStore.current(), of: Set(removals.map(\.server.folder))) {
             throw RuntimeError.unsupported("\(answer)\n\(problem)")
         }
 
         return answer
+    }
+
+    // The removal of the app (group 3, 3a and 3b). It answers when git removed the worktrees and the
+    // records are gone. The dumps come after the answer (owner, 2026-11-15: questions 7 and 14). They
+    // show in the activity list. The app never sends --force (owner, 2026-11-15). git removes the
+    // worktrees one after the other.
+    func removeWorkspaces(host: String, names: [String]) async throws -> WorkspaceRemovals {
+        let target = try await removalTarget(host: host)
+        var removed: [String] = []
+        var kept: [KeptWorkspace] = []
+        var warnings: [String] = []
+        var going: [Workspace] = []
+
+        for name in Self.distinct(names) {
+            guard let workspace = await record(name, key: target.key) else {
+                removed.append(name)
+                continue
+            }
+
+            do {
+                warnings += try await removeWorktree(of: workspace, in: target, force: false).map { "\(name): \($0)" }
+                going.append(workspace)
+            } catch {
+                kept.append(KeptWorkspace(name: name, reason: ErrorText.plain(error)))
+            }
+        }
+
+        let staying = await waitUntilGone(going, key: target.key).staying
+
+        removed += going.map(\.name)
+        warnings += staying.map(WorkspaceRemovalText.removedLater)
+
+        // reconcileWorkspaces started the run already. This call only makes sure of it.
+        _ = startDatabaseRemovals()
+
+        return WorkspaceRemovals(removed: removed, kept: kept, warnings: warnings)
+    }
+
+    private func removalTarget(host: String) async throws -> RemovalTarget {
+        let state = await stateStore.current()
+
+        guard let site = resolvedSites(state).first(where: { $0.site.hosts.contains(host) })?.site else {
+            throw RuntimeError.unsupported("Nexus has no site \(host).")
+        }
+
+        guard let repository = ProjectFolder.repository(of: site) else {
+            throw RuntimeError.unsupported("\(host) has no git repository. So git cannot remove its worktrees.")
+        }
+
+        guard let git = await GitTool.executable() else {
+            throw RuntimeError.unsupported(GitTool.missing)
+        }
+
+        return RemovalTarget(key: ProjectFolder.workspaceKey(of: site), repository: repository.root, git: git)
+    }
+
+    func record(_ name: String, key: String) async -> Workspace? {
+        await stateStore.current().worktrees[key]?.workspaces.first { $0.name == name }
+    }
+
+    // The refusal of git before git runs (group 3, 3a). A command such as php artisan queue:clear
+    // must not run in a workspace that stays. So runRemovalCommands asks this first. git keeps a
+    // locked worktree also with one --force.
+    static func removalRefusal(of workspace: Workspace, git: URL, force: Bool) async -> String? {
+        if let reason = WorktreeList.lockReason(ofWorktree: workspace.worktree) {
+            return WorkspaceRemovalText.locked(workspace.name, reason: reason)
+        }
+
+        // git removes only the admin folder of a worktree whose folder is gone.
+        guard !force, FileManager.default.fileExists(atPath: workspace.worktree) else {
+            return nil
+        }
+
+        async let changes = try? GitTool.changeCount(in: workspace.worktree, git: git)
+        async let submodules = GitTool.hasSubmodules(worktree: workspace.worktree, git: git)
+
+        if let count = await changes, count > 0 {
+            return WorkspaceRemovalText.changes(workspace.name)
+        }
+
+        guard await submodules else {
+            return nil
+        }
+
+        return WorkspaceRemovalText.submodules(workspace.name)
+    }
+
+    // A refusal throws its text, and the workspace stays. Returns the warnings of the commands before
+    // removal. A known refusal of git writes no entry to errors.log. git worktree remove runs git
+    // status in the worktree. Without noOptionalLocks that run can write the index, and a workspace
+    // that git refuses then gets a new last activity.
+    private func removeWorktree(of workspace: Workspace, in target: RemovalTarget, force: Bool) async throws -> [String] {
+        let warnings = try await runRemovalCommands(of: workspace, key: target.key, git: target.git, force: force)
+        let arguments = ["-C", target.repository, "worktree", "remove"] + (force ? ["--force"] : []) + [workspace.worktree]
+
+        do {
+            _ = try await CommandRunner.run(Command(executable: target.git, arguments: arguments, environment: GitTool.noOptionalLocks))
+        } catch let failure as CommandError {
+            guard case .failed(_, _, let output) = failure, let refusal = WorkspaceRemovalText.refusal(ofGit: output, workspace: workspace.name) else {
+                throw RuntimeError.unsupported("git did not remove the worktree of \(workspace.name). So the workspace stays. \(failure)")
+            }
+
+            throw RuntimeError.unsupported(refusal)
+        }
+
+        return warnings
+    }
+
+    // A check that runs now gets one more run. That check can wait for the checks of other
+    // workspaces. So this request waits until the record is gone. A setup can start a clone while
+    // git runs. So the last record names the servers and not the first one. Returns the last record
+    // of each workspace and the names whose record stays after the wait.
+    private func waitUntilGone(_ workspaces: [Workspace], key: String) async -> (last: [Workspace], staying: [String]) {
+        let deadline = ContinuousClock.now + Self.workspaceRemovalWait
+        var last = workspaces
+
+        func listed() async -> [Workspace] {
+            let records = await stateStore.current().worktrees[key]?.workspaces ?? []
+            return records.filter { record in workspaces.contains { $0.name == record.name && $0.worktree == record.worktree } }
+        }
+
+        var current = await listed()
+
+        while !watchingStopped, ContinuousClock.now < deadline, !current.isEmpty {
+            last = last.map { old in current.first { $0.name == old.name } ?? old }
+            await reconcileWorkspaces()
+            try? await Task.sleep(for: .milliseconds(50))
+            current = await listed()
+        }
+
+        return (last, current.map(\.name))
     }
 
     // A request during a run gives one more pass, because the run can have passed the removal that
@@ -220,7 +321,7 @@ extension NexusEngine {
                 continue
             }
 
-            dumpsOfRemovals[key] = try await writeDump(of: name, as: Workspace.databaseName(database, workspace: removal.workspace), with: copier, instance: server.instance, kind: tools.kind)
+            dumpsOfRemovals[key] = try await writeDump(of: name, as: Workspace.databaseName(database, workspace: removal.workspace), with: copier, instance: server.instance, kind: tools.kind, workspace: removal.workspace)
         }
     }
 
@@ -229,7 +330,7 @@ extension NexusEngine {
         dumpsOfRemovals[key].map { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) } ?? false
     }
 
-    func writeDump(of name: String, as fileName: String, with copier: DatabaseCopier, instance: String, kind: DatabaseKind) async throws -> URL {
+    func writeDump(of name: String, as fileName: String, with copier: DatabaseCopier, instance: String, kind: DatabaseKind, workspace: String? = nil) async throws -> URL {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd-HHmmss"
@@ -238,7 +339,7 @@ extension NexusEngine {
 
         try FileManager.default.createDirectory(at: paths.trash, withIntermediateDirectories: true)
 
-        try await runTask(.dumpDatabase(name: name, instance: instance), stopped: { "The dump of \(name) stopped. \(instance) keeps the database." }) { progress in
+        try await runTask(.dumpDatabase(name: name, instance: instance, workspace: workspace), stopped: { "The dump of \(name) stopped. \(instance) keeps the database." }) { progress in
             let estimating = copier.estimate(name, into: progress)
             defer { estimating.cancel() }
 
@@ -383,6 +484,14 @@ extension NexusEngine {
             throw RuntimeError.unsupported("The trash keeps a dump for at least 1 day.")
         }
 
+        guard settings.oldAfterDays >= OldWorkspaces.minimumDays else {
+            throw RuntimeError.unsupported(OldWorkspaces.tooFewDaysText)
+        }
+
+        guard settings.notifyOldEvery >= 1 else {
+            throw RuntimeError.unsupported("Nexus notifies again after at least 1 day.")
+        }
+
         guard settings.newWorkspaceDatabases != .dump else {
             throw RuntimeError.unsupported("Only a site has a dump file. Choose it on the Site screen, or with: nexus site edit <host> --workspace-databases dump --workspace-dump <file>")
         }
@@ -390,7 +499,8 @@ extension NexusEngine {
         try await stateStore.update { $0.workspaceSettings = settings }
         removeOldDumps(after: settings.dumpDays)
 
-        // The Site screen shows the value of this setting for each site on Default.
+        // The Site screen shows the value of this setting for each site on Default. It also counts
+        // the old workspaces with "Old after".
         publishSites()
         return "The settings of the workspaces are changed."
     }

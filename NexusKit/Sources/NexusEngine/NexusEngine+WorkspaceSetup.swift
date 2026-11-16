@@ -37,6 +37,10 @@ extension NexusEngine {
                 runningSetupKey = next.key
                 runningSetupWorktree = next.workspace.worktree
 
+                // A setup needs the servers of its workspace. So it starts a stopped workspace as a
+                // normal start. The workspace stops again after the idle time (owner, 2026-11-15).
+                let startProblem = await startForSetup(next.workspace, key: next.key)
+
                 // A worker reads the .env one time. So a worker that runs during a setup keeps the old
                 // values. The workspace is in Preparing now, so the sync stops its programs.
                 await syncBackgroundProcesses().value
@@ -49,7 +53,7 @@ extension NexusEngine {
                     continue
                 }
 
-                let finished = await setUp(workspace, key: next.key)
+                let finished = await setUp(workspace, key: next.key, startProblem: startProblem)
                 runningSetupKey = nil
                 runningSetupWorktree = nil
 
@@ -90,6 +94,16 @@ extension NexusEngine {
         }
 
         return nil
+    }
+
+    // The record of the search can be older than the state. So the current record decides about
+    // the start. Returns the reason why the servers do not run.
+    private func startForSetup(_ workspace: Workspace, key: String) async -> String? {
+        guard let current = await preparingRecord(like: workspace, key: key) else {
+            return nil
+        }
+
+        return await startIfStopped(current, key: key, cause: "a setup")?.begun.value
     }
 
     private func preparingRecord(like workspace: Workspace, key: String) async -> Workspace? {
@@ -262,7 +276,10 @@ extension NexusEngine {
         return "Nexus sets up the workspace \(name) again."
     }
 
-    private func setUp(_ workspace: Workspace, key: String) async -> Workspace {
+    // startProblem is the reason why a start of the stopped workspace did not start its servers, for
+    // example an update of an instance. The setup then ends with that reason, as after each other
+    // refusal.
+    private func setUp(_ workspace: Workspace, key: String, startProblem: String?) async -> Workspace {
         var workspace = workspace
         workspace.warnings = []
         await chooseDatabaseKind(of: &workspace, key: key)
@@ -273,6 +290,10 @@ extension NexusEngine {
         }
 
         do {
+            if let startProblem {
+                throw RuntimeError.unsupported(startProblem)
+            }
+
             let written = try await writeEnvAndCopyData(of: &workspace, key: key)
 
             // A script of an install can use the database of the main site. The branch can need the
@@ -814,12 +835,9 @@ extension NexusEngine {
     // A workspace keeps a port that its list lost, because its .env can still name that port. Another
     // workspace with that port would then get the connections of this workspace.
     func workspacePorts(for texts: [String], servers: [String] = [], of workspace: Workspace, state: EngineState) -> [String: Int] {
-        let taken = takenPorts(state)
         let names = WorkspaceKeys.portNames(in: texts) + servers + workspace.ports.keys.sorted()
 
-        return Self.numbers(for: names, keeping: workspace.ports, from: Self.firstWorkspacePort) {
-            !taken.contains($0) && PortInspector.isFree($0)
-        }
+        return freePorts(for: names, keeping: workspace.ports, in: state)
     }
 
     func takenPorts(_ state: EngineState) -> Set<Int> {
@@ -827,7 +845,15 @@ extension NexusEngine {
             .union(state.appPorts.values)
             .union(state.worktrees.values.flatMap(\.workspaces).flatMap(\.ports.values))
             .union(mainProcessPlans.values.flatMap(\.ports.values))
+            .union(mainDevServerPlans.values.flatMap(\.ports.values))
             .union(state.databaseRemovals.map(\.server.port))
+    }
+
+    // A new name gets a port that no record of Nexus holds and that no program on this Mac uses.
+    func freePorts(for names: [String], keeping kept: [String: Int], from first: Int = NexusEngine.firstWorkspacePort, in state: EngineState) -> [String: Int] {
+        let taken = takenPorts(state)
+
+        return Self.numbers(for: names, keeping: kept, from: first) { !taken.contains($0) && PortInspector.isFree($0) }
     }
 
     // Each name keeps its number. A new name gets the lowest free number.

@@ -105,6 +105,12 @@ struct FailureAlertButtons: View {
                 model.errorReport = ErrorReport(message: failure.message, title: failure.title, place: place)
             }
         }
+
+        if let folder = failure.folder {
+            Button("Show in Finder") {
+                model.showInFinder(folder)
+            }
+        }
     }
 }
 

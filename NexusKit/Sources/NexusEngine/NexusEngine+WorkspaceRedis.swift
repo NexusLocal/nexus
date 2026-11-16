@@ -49,7 +49,7 @@ extension NexusEngine {
     // the services that run at that moment, so a start after it would leave a process behind.
     func startForSetup(_ id: String) async throws {
         guard !updatingServices.contains(id) else {
-            throw RuntimeError.unsupported("Nexus updates \(id) now. Retry after the update.")
+            throw RuntimeError.unsupported(Self.updateText(id))
         }
 
         try await serialWeb {

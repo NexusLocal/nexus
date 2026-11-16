@@ -16,4 +16,9 @@ extension String {
     public var firstLetterUppercased: String {
         prefix(1).uppercased() + dropFirst()
     }
+
+    // The text with a lower case first letter, for example a sentence in the middle of a line.
+    public var firstLetterLowercased: String {
+        prefix(1).lowercased() + dropFirst()
+    }
 }

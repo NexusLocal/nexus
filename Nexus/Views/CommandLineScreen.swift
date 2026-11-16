@@ -82,7 +82,7 @@ struct CommandLineScreen: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer()
                             CopyButton(help: "Copy") {
-                                command.command
+                                command.examples[0]
                             }
                         }
                     }

@@ -2,16 +2,22 @@ import Foundation
 import NexusCore
 import NexusSupervisor
 
-// A linked worktree, as git lists it. adding is true while git adds the worktree.
+// A linked worktree, as git lists it. adding is true while git adds the worktree. locked is the
+// reason of a lock. It is empty for a lock without a reason, and nil without a lock. prunable is
+// true when the folder of the worktree is gone.
 public struct Worktree: Sendable, Equatable {
     public let path: String
     public let branch: String?
     public let adding: Bool
+    public let locked: String?
+    public let prunable: Bool
 
-    public init(path: String, branch: String? = nil, adding: Bool = false) {
+    public init(path: String, branch: String? = nil, adding: Bool = false, locked: String? = nil, prunable: Bool = false) {
         self.path = path
         self.branch = branch
         self.adding = adding
+        self.locked = locked
+        self.prunable = prunable
     }
 }
 
@@ -32,6 +38,14 @@ public enum WorktreeList {
         } ?? false
     }
 
+    // git keeps the reason of a lock in the file locked of the admin folder. The file is empty for a
+    // lock without a reason. One read of that file needs no run of git.
+    public static func lockReason(ofWorktree path: String) -> String? {
+        ProjectFolder.adminFolder(ofWorktree: path).flatMap { folder in
+            try? String(contentsOfFile: (folder as NSString).appendingPathComponent("locked"), encoding: .utf8)
+        }?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // A blank line ends a record. The first record is the main checkout. It is no worktree of
     // the site.
     static func parse(_ porcelain: String, hasCheckout: (String) -> Bool) -> [Worktree] {
@@ -42,10 +56,11 @@ public enum WorktreeList {
                 return nil
             }
 
-            let branch = value(of: "branch", in: lines).map { $0.replacing("refs/heads/", with: "", maxReplacements: 1) }
-            let locked = lines.contains { $0 == "locked" || $0.hasPrefix("locked ") }
+            let branch = value(of: "branch", in: lines).map(GitTool.branchName)
+            let locked = value(of: "locked", in: lines) ?? (lines.contains("locked") ? "" : nil)
+            let prunable = lines.contains { $0 == "prunable" || $0.hasPrefix("prunable ") }
 
-            return Worktree(path: path, branch: branch, adding: locked && !hasCheckout(path))
+            return Worktree(path: path, branch: branch, adding: locked != nil && !hasCheckout(path), locked: locked, prunable: prunable)
         }
     }
 

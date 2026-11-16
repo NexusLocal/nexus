@@ -30,6 +30,34 @@ public enum ErrorPages {
         "<!doctype html><meta charset='utf-8'><meta http-equiv='refresh' content='1'><title>\(title)</title><p style='font-family: -apple-system, sans-serif'>\(text)</p>"
     }
 
+    // The page of a Laravel site while its dev server starts (owner, 2026-11-15). nexusd writes it
+    // as a file. So it can have quotes.
+    public static func devServerWaits(host: String, command: String) -> String {
+        waitPage(
+            title: "The dev server starts",
+            text: "The dev server of \(HTMLText.escaped(host)) does not run yet. Nexus starts \(HTMLText.escaped(command)). This page tries again each second. When this page stays, the Site screen of Nexus shows the log under Background processes."
+        )
+    }
+
+    // The design "Error Page · Dev Server Does Not Start" in nexus.pen (owner, 2026-11-15). It does not
+    // load again by itself. A page at least 10 seconds later tries a new start.
+    public static func devServerFails(host: String, command: String, buildCommand: String) -> String {
+        let host = HTMLText.escaped(host)
+        let command = HTMLText.escaped(command)
+        let build = HTMLText.escaped(buildCommand)
+
+        return page(
+            title: "The dev server of \(host) does not start",
+            bodyStyle: "font-family: -apple-system, sans-serif; font-size: 15px; margin: 40px auto; max-width: 640px; padding: 0 16px; line-height: 1.5;",
+            body: """
+            <h1>The dev server of \(host) does not start</h1>
+            <p>Nexus started \(command) for your request, but it stopped with an error.</p>
+            <p>The Site screen of Nexus shows the log of the dev server under Background processes.</p>
+            <p>After \(build) the site works without the dev server.</p>
+            """
+        )
+    }
+
     // nginx shows this page for a name that has no site. Only HTTP gets it, because Nexus has no
     // certificate for an unknown name. A script puts the name of the request in the page as text.
     // So a name with HTML in it does nothing.
@@ -40,22 +68,33 @@ public enum ErrorPages {
             ? "<p>Nexus has no sites yet. Add one in Nexus, or run <code>nexus site add &lt;folder&gt;</code> in a terminal.</p>"
             : "<p>These are the sites of Nexus:</p>\n<ul>\n" + names.map { "<li><a href='https://\(HTMLText.escaped($0))\(port)/'>\(HTMLText.escaped($0))</a></li>" }.joined(separator: "\n") + "\n</ul>"
 
+        return page(
+            title: "No site with this name",
+            bodyStyle: "font-family: -apple-system, sans-serif; margin: 40px auto; max-width: 640px; padding: 0 16px; line-height: 1.5;",
+            styles: ["li { margin: 4px 0; }"],
+            body: """
+            <h1>Nexus has no site with this name</h1>
+            <p>No site of Nexus has the name <b id='host'>of this request</b>.</p>
+            \(list)
+            <script>document.getElementById('host').textContent = location.hostname</script>
+            """
+        )
+    }
+
+    // The frame of a page with a heading. styles come after the style of the heading.
+    private static func page(title: String, bodyStyle: String, styles: [String] = [], body: String) -> String {
+        let style = [":root { color-scheme: light dark; }", "body { \(bodyStyle) }", "h1 { font-size: 20px; }"] + styles
+
         return """
         <!doctype html>
         <html lang='en'>
         <meta charset='utf-8'>
         <meta name='viewport' content='width=device-width, initial-scale=1'>
-        <title>No site with this name</title>
+        <title>\(title)</title>
         <style>
-        :root { color-scheme: light dark; }
-        body { font-family: -apple-system, sans-serif; margin: 40px auto; max-width: 640px; padding: 0 16px; line-height: 1.5; }
-        h1 { font-size: 20px; }
-        li { margin: 4px 0; }
+        \(style.joined(separator: "\n"))
         </style>
-        <h1>Nexus has no site with this name</h1>
-        <p>No site of Nexus has the name <b id='host'>of this request</b>.</p>
-        \(list)
-        <script>document.getElementById('host').textContent = location.hostname</script>
+        \(body)
         </html>
 
         """

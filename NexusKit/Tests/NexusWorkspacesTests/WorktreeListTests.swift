@@ -24,17 +24,41 @@ struct WorktreeListTests {
         #expect(WorktreeList.parse(porcelain) { _ in true } == [Worktree(path: "/work/old")])
     }
 
-    @Test(arguments: ["locked", "locked initializing", "locked claude agent"])
-    func aLockWithoutACheckoutIsAWorktreeThatGitStillAdds(line: String) {
+    @Test(arguments: [("locked", ""), ("locked initializing", "initializing"), ("locked claude agent", "claude agent")])
+    func aLockWithoutACheckoutIsAWorktreeThatGitStillAdds(line: String, reason: String) {
         let porcelain = "worktree /work/shop\nHEAD aaa\n\nworktree /work/new\nHEAD bbb\nbranch refs/heads/new\n\(line)\n\n"
 
-        #expect(WorktreeList.parse(porcelain) { _ in false } == [Worktree(path: "/work/new", branch: "new", adding: true)])
+        #expect(WorktreeList.parse(porcelain) { _ in false } == [Worktree(path: "/work/new", branch: "new", adding: true, locked: reason)])
     }
 
     @Test func aLockWithACheckoutIsAFinishedWorktree() {
         let porcelain = "worktree /work/shop\nHEAD aaa\n\nworktree /work/new\nHEAD bbb\nlocked claude agent\n\n"
 
-        #expect(WorktreeList.parse(porcelain) { _ in true } == [Worktree(path: "/work/new")])
+        #expect(WorktreeList.parse(porcelain) { _ in true } == [Worktree(path: "/work/new", locked: "claude agent")])
+    }
+
+    @Test func aWorktreeWithoutALockLineHasNoLock() {
+        let porcelain = "worktree /work/shop\nHEAD aaa\n\nworktree /work/new\nHEAD bbb\nbranch refs/heads/new\n\n"
+
+        #expect(WorktreeList.parse(porcelain) { _ in true }.first?.locked == nil)
+    }
+
+    @Test func aLockGivesItsReason() {
+        let porcelain = "worktree /work/shop\nHEAD aaa\n\nworktree /work/new\nHEAD bbb\nbranch refs/heads/new\nlocked claude agent-a1b2\n\n"
+
+        #expect(WorktreeList.parse(porcelain) { _ in true }.first?.locked == "claude agent-a1b2")
+    }
+
+    @Test func aWorktreeWithoutItsFolderIsPrunable() {
+        let porcelain = "worktree /work/shop\nHEAD aaa\n\nworktree /work/gone\nHEAD bbb\nbranch refs/heads/gone\nprunable gitdir file points to non-existent location\n\n"
+
+        #expect(WorktreeList.parse(porcelain) { _ in false } == [Worktree(path: "/work/gone", branch: "gone", prunable: true)])
+    }
+
+    @Test func aWorktreeWithItsFolderIsNotPrunable() {
+        let porcelain = "worktree /work/shop\nHEAD aaa\n\nworktree /work/new\nHEAD bbb\nbranch refs/heads/new\n\n"
+
+        #expect(WorktreeList.parse(porcelain) { _ in true }.first?.prunable == false)
     }
 
     @Test func aWorktreeWithoutACheckoutHasNoIndex() {

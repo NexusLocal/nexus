@@ -10,6 +10,7 @@ struct NotificationTargetTests {
         .mail(id: "sample-3", tag: "blog.test"),
         .mail(id: "sample-5", tag: nil),
         .site(host: "shop.test"),
+        .oldWorkspaces(site: "shop.test"),
     ]
 
     @Test(arguments: targets)
@@ -37,6 +38,7 @@ struct NotificationTargetTests {
         #expect(NotificationTarget.database(instance: "mysql-8.0", name: "shop").userInfo == ["target": "database", "service": "mysql-8.0", "database": "shop"])
         #expect(NotificationTarget.mail(id: "sample-3", tag: "blog.test").userInfo == ["target": "mail", "mail": "sample-3", "tag": "blog.test"])
         #expect(NotificationTarget.site(host: "shop.test").userInfo == ["target": "site", "site": "shop.test"])
+        #expect(NotificationTarget.oldWorkspaces(site: "shop.test").userInfo == ["target": "oldWorkspaces", "site": "shop.test"])
     }
 
     @Test
@@ -57,6 +59,7 @@ struct NotificationTargetTests {
         ["target": "database", "service": "mysql-8.0"],
         ["target": "mail", "tag": "blog.test"],
         ["target": "site"],
+        ["target": "oldWorkspaces"],
     ])
     func aMissingRequiredKeyGivesNoTarget(userInfo: [String: String]) {
         #expect(NotificationTarget(userInfo: userInfo) == nil)

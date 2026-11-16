@@ -1,4 +1,5 @@
 import Foundation
+import NexusCore
 
 // Another program can prepare a new worktree at the same time as Nexus. A script that runs after
 // git worktree add can copy vendor or run composer install there. A probe or an install of Nexus
@@ -53,7 +54,7 @@ public enum FolderActivity {
     ) async {
         let clock = ContinuousClock()
         let start = clock.now
-        let quietSeconds = Double(quiet.components.seconds) + Double(quiet.components.attoseconds) / 1e18
+        let quietSeconds = quiet.timeInterval
 
         while clock.now - start < limit, !Task.isCancelled {
             let last = await Task.detached { lastChange(in: folders) }.value

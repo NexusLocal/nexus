@@ -339,8 +339,8 @@ extension AppModel {
         case .copyDatabase(let database, let instance, let name):
             let into = service(instance)?.name ?? instance
             return name == database ? "Importing \(database) into \(into)" : "Importing \(database) into \(into) as \(name)"
-        case .dumpDatabase(let name, _):
-            return "Saving a dump of \(name)"
+        case .dumpDatabase(let name, _, let workspace):
+            return "Saving a dump of \(name)\(workspace.map { " of \($0)" } ?? "")"
         case .importDump(let file, let instance, let name):
             return "Loading \(file) into \(name) on \(service(instance)?.name ?? instance)"
         case .createSite(let name, let template):

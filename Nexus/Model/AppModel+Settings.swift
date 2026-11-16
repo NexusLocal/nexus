@@ -540,6 +540,11 @@ extension AppModel {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    // The path for showInFinder, or nil when nothing is there.
+    func existingPath(_ path: String) -> String? {
+        FileManager.default.fileExists(atPath: (path as NSString).expandingTildeInPath) ? path : nil
+    }
+
     // nexusd removes the system files, the root CA and its background items. The login item of
     // the app goes too. The packages and the databases stay.
     func uninstall() {

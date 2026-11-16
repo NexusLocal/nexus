@@ -10,14 +10,14 @@ import Testing
 @testable import NexusEngine
 
 extension NexusEngineTests {
-    private func git(_ arguments: String..., in folder: URL) async throws {
+    func git(_ arguments: String..., in folder: URL) async throws {
         _ = try await CommandRunner.run(Command(
             executable: URL(filePath: "/usr/bin/git"),
             arguments: ["-c", "user.name=Nexus", "-c", "user.email=nexus@example.test", "-C", folder.path(percentEncoded: false)] + arguments
         ))
     }
 
-    private func repository(in root: URL) async throws -> URL {
+    func repository(in root: URL) async throws -> URL {
         let shop = root.appending(path: "shop", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: shop, withIntermediateDirectories: true)
         try await git("init", "-q", "-b", "main", in: shop)
@@ -25,7 +25,7 @@ extension NexusEngineTests {
         return shop
     }
 
-    private func settle(_ engine: NexusEngine) async throws {
+    func settle(_ engine: NexusEngine) async throws {
         await engine.reconcileWorkspaces()
 
         while await engine.workspaceWorkRuns {
@@ -61,7 +61,9 @@ extension NexusEngineTests {
 
         let path = RealPath.of(worktree)
         let documentRoot = RealPath.trimmed(URL(filePath: path, directoryHint: .isDirectory).standardizedFileURL.path(percentEncoded: false))
-        #expect(await workspaces(engine) == [WorkspaceInfo(name: "ticket-123", worktree: path, folder: path, branch: "ticket", hosts: ["shop-ticket-123.test"], problem: "Every site needs nginx, and nginx is not installed. Run: nexus install nginx 1.30", state: .ready, warnings: [], databases: [], redisIndexes: [:], ports: [:], documentRoot: documentRoot)])
+        let shown = await workspaces(engine)
+        #expect(shown.first?.lastActivity != nil)
+        #expect(shown == [WorkspaceInfo(name: "ticket-123", worktree: path, folder: path, branch: "ticket", hosts: ["shop-ticket-123.test"], problem: "Every site needs nginx, and nginx is not installed. Run: nexus install nginx 1.30", state: .ready, warnings: [], databases: [], redisIndexes: [:], ports: [:], documentRoot: documentRoot, lastActivity: shown.first?.lastActivity, runState: .running, keepAwake: false)])
 
         try await git("worktree", "remove", worktree.path(percentEncoded: false), in: shop)
         try await settle(engine)
@@ -1117,18 +1119,18 @@ extension NexusEngineTests {
         }
     }
 
-    private func databaseApplication(in root: URL, driver: String, runtime: (name: String, line: String)) async throws -> (shop: URL, engine: NexusEngine, worktree: URL, port: Int) {
+    func databaseApplication(in root: URL, driver: String, runtime: (name: String, line: String), serverGate: any WorkspaceServerGate = NoServerGate()) async throws -> (shop: URL, engine: NexusEngine, worktree: URL, port: Int) {
         let shop = try await committedLaravelApplication(in: root, ignoring: ".env\nvendor\n")
         try writeFile(databaseConfig(driver: driver), to: "config/database.php", in: shop)
         try await git("add", "-A", in: shop)
         try await git("commit", "-q", "-m", "connections", in: shop)
         let port = freePort()
         try writeFile("DB_PORT=\(port)\nDB_DATABASE=shop\n", to: ".env", in: shop)
-        let engine = try await engineWithDatabase(root: root, shop: shop, runtime: runtime, port: port)
+        let engine = try await engineWithDatabase(root: root, shop: shop, runtime: runtime, port: port, serverGate: serverGate)
         return (shop, engine, root.appending(path: "fix", directoryHint: .isDirectory), port)
     }
 
-    private func mainDatabase(_ client: DatabaseClient, options: String = "") async throws {
+    func mainDatabase(_ client: DatabaseClient, options: String = "") async throws {
         try await client.query("CREATE DATABASE shop\(options)")
         try await client.query("CREATE TABLE items (id INT PRIMARY KEY, name VARCHAR(20))", database: "shop")
         try await client.query("INSERT INTO items VALUES (1, 'one')", database: "shop")
@@ -1446,7 +1448,8 @@ extension NexusEngineTests {
             return
         }
 
-        #expect(refused.hasPrefix("git did not remove the worktree. So the workspace stays."))
+        #expect(refused == WorkspaceRemovalText.changes("fix"))
+        #expect(!refused.contains("--force"))
         #expect(await workspaces(engine).map(\.name) == ["fix"])
         #expect(FileManager.default.fileExists(atPath: worktree.appending(path: "new.txt").path(percentEncoded: false)))
 
@@ -1524,7 +1527,7 @@ extension NexusEngineTests {
             return
         }
 
-        #expect(refused.contains("Nexus ran no commands, and the workspace stays."))
+        #expect(refused == WorkspaceRemovalText.changes("fix"))
         #expect(!FileManager.default.fileExists(atPath: marker))
 
         guard case .done(let message) = await engine.handle(.removeWorkspace(host: "shop.test", name: "fix", force: true)) else {
@@ -1546,6 +1549,136 @@ extension NexusEngineTests {
 
         #expect(await engine.handle(.removeWorkspace(host: "shop.test", name: "none", force: false)) == .failure(message: "shop.test has no workspace none."))
         #expect(await engine.handle(.removeWorkspace(host: "none.test", name: "fix", force: false)) == .failure(message: "Nexus has no site none.test."))
+    }
+
+    @Test func aLockedWorktreeKeepsItsWorkspaceAndRunsNoCommandAlsoWithForce() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        let marker = root.appending(path: "ran-fix.txt").path(percentEncoded: false)
+
+        _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(removalCommands: ["touch \(root.path(percentEncoded: false))/ran-{workspace}.txt"])))
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await git("worktree", "lock", "--reason", "claude agent", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        let answer = await engine.handle(.removeWorkspace(host: "shop.test", name: "fix", force: true))
+
+        #expect(answer == .failure(message: WorkspaceRemovalText.locked("fix", reason: "claude agent")))
+        #expect(!FileManager.default.fileExists(atPath: marker))
+        #expect(await workspaces(engine).map(\.name) == ["fix"])
+        #expect(FileManager.default.fileExists(atPath: worktree.path(percentEncoded: false)))
+    }
+
+    @Test func aWorktreeWithModulesInItsAdminFolderStaysWithoutForce() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+        let admin = try #require(ProjectFolder.adminFolder(ofWorktree: worktree.path(percentEncoded: false)))
+        try FileManager.default.createDirectory(atPath: (admin as NSString).appendingPathComponent("modules"), withIntermediateDirectories: true)
+
+        let refused = await engine.handle(.removeWorkspace(host: "shop.test", name: "fix", force: false))
+        let forced = await engine.handle(.removeWorkspace(host: "shop.test", name: "fix", force: true))
+
+        #expect(refused == .failure(message: WorkspaceRemovalText.submodules("fix")))
+        #expect(forced == .done(message: "The workspace fix is removed."))
+        #expect(await workspaces(engine).isEmpty)
+    }
+
+    @Test func theRemovalOfTheAppRemovesEachWorktreeThatGitAcceptsAndKeepsTheOthers() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let first = root.appending(path: "a", directoryHint: .isDirectory)
+        let second = root.appending(path: "b", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "a", first.path(percentEncoded: false), in: shop)
+        try await git("worktree", "add", "-q", "-b", "b", second.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+        try writeFile("work", to: "new.txt", in: second)
+
+        let answer = await engine.handle(.removeWorkspaces(host: "shop.test", names: ["a", "b"]))
+
+        #expect(answer == .workspaceRemovals(WorkspaceRemovals(removed: ["a"], kept: [KeptWorkspace(name: "b", reason: WorkspaceRemovalText.changes("b"))], warnings: [])))
+        #expect(await workspaces(engine).map(\.name) == ["b"])
+        #expect(!FileManager.default.fileExists(atPath: first.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: second.path(percentEncoded: false)))
+    }
+
+    @Test func theRemovalOfTheAppCountsANameWithoutAWorkspaceAsRemoved() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+
+        let answer = await engine.handle(.removeWorkspaces(host: "shop.test", names: ["none"]))
+
+        #expect(answer == .workspaceRemovals(WorkspaceRemovals(removed: ["none"], kept: [], warnings: [])))
+    }
+
+    @Test func aFailedCommandBeforeTheRemovalOfTheAppIsAWarningWithTheName() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "a", directoryHint: .isDirectory)
+
+        _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(removalCommands: ["false"])))
+        try await git("worktree", "add", "-q", "-b", "a", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+
+        guard case .workspaceRemovals(let result) = await engine.handle(.removeWorkspaces(host: "shop.test", names: ["a"])) else {
+            Issue.record("Nexus did not answer with the removals")
+            return
+        }
+
+        #expect(result.removed == ["a"])
+        #expect(result.warnings.count == 1)
+        #expect(result.warnings.first?.hasPrefix("a: The command false failed before the removal.") == true)
+    }
+
+    @Test func theLockOfAWorktreeShowsInTheSitesUntilTheUnlock() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+
+        try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+        try await git("worktree", "lock", "--reason", "claude agent", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+        let locked = await workspaces(engine).first?.locked
+        try await git("worktree", "unlock", worktree.path(percentEncoded: false), in: shop)
+        try await settle(engine)
+        let unlocked = await workspaces(engine).first
+
+        #expect(locked == "claude agent")
+        #expect(unlocked?.name == "fix")
+        #expect(unlocked?.locked == nil)
+    }
+
+    @Test func noCommandRunsBeforeTheRemovalOfAWorkspaceInItsSetup() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try await repository(in: root)
+        let engine = try await worktreeEngine(root: root, shop: shop)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory).path(percentEncoded: false)
+
+        _ = await engine.handle(.editSite(host: "shop.test", change: SiteChange(removalCommands: ["touch \(root.path(percentEncoded: false))/ran-{workspace}.txt"])))
+        let key = ProjectFolder.workspaceKey(of: Site(host: "shop.test", folder: shop, php: "8.4"))
+
+        let warnings = try await engine.runRemovalCommands(of: Workspace(name: "fix", worktree: worktree, folder: worktree, state: .preparing), key: key, git: URL(filePath: "/usr/bin/git"), force: false)
+
+        #expect(warnings == ["Nexus ran no commands before the removal, because the setup of the workspace did not end."])
     }
 
     @Test func aRemovedSiteAlsoRemovesTheServerOfAWorktreeThatStillExists() async throws {
@@ -1656,6 +1789,17 @@ extension NexusEngineTests {
         #expect(await engine.handle(.setWorkspaceSettings(WorkspaceSettings(dumpDays: 0))) == .failure(message: "The trash keeps a dump for at least 1 day."))
         #expect(await engine.handle(.setWorkspaceSettings(WorkspaceSettings(dumpDays: 30))) == .done(message: "The settings of the workspaces are changed."))
         #expect(await engine.handle(.workspaceSettings) == .workspaceSettings(WorkspaceSettings(dumpDays: 30)))
+    }
+
+    @Test func theSettingsOfOldWorkspacesRefuseZeroDays() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try makeSiteEngine(root: root)
+
+        #expect(await engine.handle(.setWorkspaceSettings(WorkspaceSettings(oldAfterDays: 0))) == .failure(message: "A workspace is old after at least 1 day."))
+        #expect(await engine.handle(.setWorkspaceSettings(WorkspaceSettings(notifyOldEvery: 0))) == .failure(message: "Nexus notifies again after at least 1 day."))
+        #expect(await engine.handle(.setWorkspaceSettings(WorkspaceSettings(oldAfterDays: 14, notifyOldEvery: 3))) == .done(message: "The settings of the workspaces are changed."))
+        #expect(await engine.handle(.workspaceSettings) == .workspaceSettings(WorkspaceSettings(oldAfterDays: 14, notifyOldEvery: 3)))
     }
 
     @Test func aGoneHostLeavesItsLogsAndCertificates() async throws {
@@ -1807,7 +1951,7 @@ extension NexusEngineTests {
         }
     }
 
-    private func engineWithProcesses(_ commands: [String], root: URL, shop: URL, supervisor: ProcessSupervisor = ProcessSupervisor()) async throws -> NexusEngine {
+    func engineWithProcesses(_ commands: [String], root: URL, shop: URL, supervisor: ProcessSupervisor = ProcessSupervisor()) async throws -> NexusEngine {
         var state = EngineState()
         state.sites = [Site(host: "shop.test", folder: shop, php: "8.4", backgroundCommands: commands)]
         let engine = try makeSiteEngine(root: root, state: state, processSupervisor: supervisor)
@@ -1815,7 +1959,7 @@ extension NexusEngineTests {
         return engine
     }
 
-    private func runningProcesses(_ engine: NexusEngine) async -> [String] {
+    func runningProcesses(_ engine: NexusEngine) async -> [String] {
         await engine.processSupervisor.status()
             .filter { $0.state.isActive && !$0.displayName.hasSuffix("of a workspace") }
             .map(\.displayName)
@@ -1866,7 +2010,7 @@ extension NexusEngineTests {
         let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try await repository(in: root)
-        let engine = try await engineWithProcesses(["echo {port:vite} > port.txt; exec sleep 300"], root: root, shop: shop)
+        let engine = try await engineWithProcesses(["echo {port:web} > port.txt; exec sleep 300"], root: root, shop: shop)
         let first = root.appending(path: "one", directoryHint: .isDirectory)
         let second = root.appending(path: "two", directoryHint: .isDirectory)
 
@@ -2595,6 +2739,36 @@ extension NexusEngineTests {
         #expect(await runningProcesses(engine).isEmpty)
     }
 
+    @Test func aStopOfNexusdStopsTheServersOfTheServicesAndOfTheWorkspacesAtTheSameTime() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let policy = RestartPolicy(firstDelay: .milliseconds(50), maximumDelay: .milliseconds(200), stableAfter: .seconds(60), maximumQuickRestarts: 2, stopTimeout: .seconds(2))
+        let services = ProcessSupervisor(policy: policy)
+        let processes = ProcessSupervisor(policy: policy)
+        let engine = try makeSiteEngine(root: root, supervisor: services, processSupervisor: processes)
+        let ports = try (0..<2).map { _ in try #require((0..<50).lazy.map { _ in self.freePort() }.first { $0 > 50_000 }) }
+
+        for (supervisor, id, port) in [(services, "service", ports[0]), (processes, "workspace", ports[1])] {
+            try await supervisor.start(ServiceDefinition(
+                id: id,
+                displayName: id,
+                executable: URL(filePath: "/bin/sh"),
+                arguments: ["-c", "trap '' TERM; touch \"$0\"; exec /bin/sleep 60", root.appending(path: "\(id).ready").path(percentEncoded: false)],
+                ports: [port],
+                logFile: root.appending(path: "\(id).log")
+            ))
+        }
+
+        #expect(await eventually { exists(root.appending(path: "service.ready")) && exists(root.appending(path: "workspace.ready")) })
+
+        let start = ContinuousClock.now
+        await engine.shutdown()
+
+        #expect(ContinuousClock.now - start < .milliseconds(3500))
+        #expect(await services.state(of: "service") == .stopped)
+        #expect(await processes.state(of: "workspace") == .stopped)
+    }
+
     @Test func aNewStartEndsTheProcessesThatACrashLeft() async throws {
         let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -3080,13 +3254,14 @@ extension NexusEngineTests {
         port: Int,
         host: String = "shop.test",
         keys: [WorkspaceEnvKey]? = nil,
-        redisPort: Int? = nil
+        redisPort: Int? = nil,
+        serverGate: any WorkspaceServerGate = NoServerGate()
     ) async throws -> NexusEngine {
         var state = EngineState()
         state.sites = [Site(host: host, folder: shop, php: "8.5", workspaceKeys: keys)]
         state.ports["\(runtime.name)-\(runtime.line)"] = port
         state.ports["redis-8.2"] = redisPort
-        let engine = try makeSiteEngine(root: root, state: state)
+        let engine = try makeSiteEngine(root: root, state: state, serverGate: serverGate)
         try await linkRealRuntimes(in: engine.paths)
         try await link(runtime, in: engine)
 
@@ -3139,7 +3314,7 @@ extension NexusEngineTests {
         return try await CommandRunner.run(command).trimmed
     }
 
-    private func record(_ engine: NexusEngine, of shop: URL) async throws -> Workspace {
+    func record(_ engine: NexusEngine, of shop: URL) async throws -> Workspace {
         try #require(await engine.stateStore.current().worktrees[RealPath.of(shop)]?.workspaces.first)
     }
 
@@ -3410,7 +3585,7 @@ extension NexusEngineTests {
             try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
             try await settle(engine)
 
-            #expect(try await record(engine, of: shop).state == .notIsolated("Nexus updates redis-8.2 now. Retry after the update."))
+            #expect(try await record(engine, of: shop).state == .notIsolated("Nexus updates redis-8.2 now. Try again after the update."))
         }
     }
 
@@ -3798,7 +3973,7 @@ extension NexusEngineTests {
         #expect(change.removed == ["/w": [leaving], "/o": [otherSite]])
     }
 
-    private func databaseClient(_ engine: NexusEngine, id: String, port: Int) async throws -> DatabaseClient {
+    func databaseClient(_ engine: NexusEngine, id: String, port: Int) async throws -> DatabaseClient {
         let tools = try #require(await engine.databaseRuntime(id))
         let work = await engine.paths.run.appending(path: "test", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
@@ -3807,13 +3982,13 @@ extension NexusEngineTests {
         return client
     }
 
-    private func workspaceClient(_ engine: NexusEngine, id: String, of shop: URL) async throws -> DatabaseClient {
+    func workspaceClient(_ engine: NexusEngine, id: String, of shop: URL) async throws -> DatabaseClient {
         let server = try #require(try await record(engine, of: shop).servers.first { $0.instance == id })
 
         return try await databaseClient(engine, id: id, port: server.port)
     }
 
-    private func digest(_ client: DatabaseClient, _ database: String) async throws -> String {
+    func digest(_ client: DatabaseClient, _ database: String) async throws -> String {
         let sql = client.tools.kind.usesMySQLProtocol
             ? "SELECT GROUP_CONCAT(id, name ORDER BY id) FROM items"
             : "SELECT string_agg(id::text || name, ',' ORDER BY id) FROM items"
@@ -3828,7 +4003,7 @@ extension NexusEngineTests {
     ]
 
     // A Mac or a CI run has only some of these versions.
-    private func isInstalled(_ name: String, _ line: String) -> Bool {
+    func isInstalled(_ name: String, _ line: String) -> Bool {
         FileManager.default.fileExists(atPath: "\(Self.realRuntimes ?? "")/\(name)/\(line)")
     }
 
@@ -5203,6 +5378,8 @@ extension NexusEngineTests {
         try await whileRunning(engine) {
             try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
             try await settle(engine)
+            await openPage(engine, shop: shop)
+            await openPage(engine, shop: shop, workspace: "fix")
 
             let workspacePort = try #require(await workspaces(engine).first?.ports?[NodeAppLaunch.portName])
 
@@ -5220,7 +5397,7 @@ extension NexusEngineTests {
         let (engine, port) = try await nodeAppEngine(root: root, shop: shop, command: "exec sleep 300")
 
         try await whileRunning(engine) {
-            await engine.syncBackgroundProcesses().value
+            await openPage(engine, shop: shop)
             let first = try #require(await appPID(engine, workspace: nil, shop: shop))
 
             kill(first, SIGKILL)
@@ -5251,7 +5428,7 @@ extension NexusEngineTests {
         let engine = try makeSiteEngine(root: root, state: state, runtimes: [("node", "24"), ("nginx", "1.30")])
 
         try await whileRunning(engine) {
-            await engine.syncBackgroundProcesses().value
+            await openPage(engine, shop: shop)
             let site = await engine.siteInfo().first
 
             #expect(site?.problem?.hasPrefix("package.json has no dev or start script.") == true)

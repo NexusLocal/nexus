@@ -26,6 +26,8 @@ enum SheetKind: Identifiable {
     // dumpInto holds the database of a row on the Site screen for "Import dump…".
     case importDatabase(instance: String, source: WordPressCopySource? = nil, dumpInto: String? = nil)
     case portInUse(service: String, holder: PortHolder)
+    // The old workspaces of a site (owner, 2026-11-15). A click on their notification opens it too.
+    case oldWorkspaces(host: String)
 
     var id: String {
         switch self {
@@ -35,6 +37,7 @@ enum SheetKind: Identifiable {
         case .editAliases(let host): "aliases-\(host)"
         case .importDatabase(let instance, _, let dumpInto): "import-\(instance)\(dumpInto.map { "-\($0)" } ?? "")"
         case .portInUse(let service, _): "port-\(service)"
+        case .oldWorkspaces(let host): "old-workspaces-\(host)"
         }
     }
 }
@@ -58,12 +61,15 @@ enum Removal: Identifiable {
     case site(SiteItem)
     case parkedFolder(ParkedFolder)
     case package(PackageItem)
+    // dumpDays is the setting "Keep database dumps for" at the moment that the alert opened.
+    case workspace(WorkspaceInfo, of: SiteItem, dumpDays: Int)
 
     var id: String {
         switch self {
         case .site(let site): "site \(site.host)"
         case .parkedFolder(let folder): folder.id
         case .package(let package): "package \(package.id)"
+        case .workspace(let workspace, _, _): "workspace \(workspace.worktree)"
         }
     }
 }
@@ -93,6 +99,7 @@ enum AppPreference {
     static let notifyServiceStops = "notifyServiceStops"
     static let notifyImportDone = "notifyImportDone"
     static let notifyWorkspaceReady = "notifyWorkspaceReady"
+    static let notifyOldWorkspaces = "notifyOldWorkspaces"
     static let notifyNewMail = "notifyNewMail"
     static let checkPackageUpdates = "checkPackageUpdates"
     static let installPackageUpdates = "installPackageUpdates"
@@ -116,6 +123,7 @@ enum AppPreference {
             notifyServiceStops: true,
             notifyImportDone: true,
             notifyWorkspaceReady: true,
+            notifyOldWorkspaces: true,
             checkPackageUpdates: true,
             installPackageUpdates: true,
         ])
@@ -149,12 +157,14 @@ enum RequestOutcome {
 }
 
 // A request to nexusd that failed. The place decides where the app shows it: an alert in the
-// window, in the settings or in the first run, or a row in the menu bar panel.
+// window, in the settings or in the first run, or a row in the menu bar panel. folder gives the
+// alert the button Show in Finder.
 struct ActionFailure: Identifiable {
     let id = UUID()
     let title: String
     let message: String
     let place: ActionPlace
+    var folder: String? = nil
 }
 
 struct AppSettings {
@@ -175,6 +185,7 @@ struct AppSettings {
     var postgresqlApp = ""
     var tld = NexusVariant.current.tld
     var lanAccess = false
+    var devServerStop = DevServerStop.standard
 }
 
 // Everything that the screens show. Sample data fills it until each area is connected to nexusd.
@@ -203,6 +214,8 @@ final class AppModel {
     }
     var groupNaming: GroupNaming?
     var removal: Removal?
+    // The worktrees of the workspaces that nexusd removes now. Their rows show "Removing".
+    var removingWorktrees: Set<String> = []
     var search = ""
     var siteEntries: [SiteEntry] = []
     // The last site list of nexusd, and the order that the sidebar shows. A change of the order
@@ -397,6 +410,7 @@ final class AppModel {
             model.watchNexusd()
             model.watchPackageUpdates()
             model.watchNewMail()
+            model.watchOldWorkspaces()
         }
 
         return model
@@ -964,6 +978,9 @@ final class AppModel {
             sitesSinceConnection = true
             siteList = list
             show(list)
+            // A row that git removed shows "Removing" until this list no longer has its worktree. So
+            // the row does not show its old state for a moment.
+            removingWorktrees.formIntersection(list.sites.flatMap { $0.workspaces ?? [] }.map(\.worktree))
         case .event(.tasks(let list)):
             show(list)
             restartOldNexusd()

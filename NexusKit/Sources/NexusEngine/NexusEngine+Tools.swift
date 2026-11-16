@@ -4,6 +4,25 @@ import NexusCore
 import NexusIPC
 import NexusRuntime
 
+// The folder of a tool command, with the state, the sites and the workspace that holds the folder.
+// A .tool request uses one place for its command and for its activity (owner, 2026-11-15). Each
+// tool command through a link of Nexus is a request, and resolvedSites reads each parked folder.
+struct ToolPlace {
+    let state: EngineState
+    let sites: [Site]
+    let folder: URL
+    let location: ProjectLocation?
+    let workspace: (key: String, workspace: Workspace)?
+
+    var wordPressWorkspace: Workspace? {
+        guard let workspace, NexusEngine.isWordPress(sites.filter { ProjectFolder.workspaceKey(of: $0) == workspace.key }) else {
+            return nil
+        }
+
+        return workspace.workspace
+    }
+}
+
 // nexus php, composer, node, npm and wp (D38). Each one uses the versions of the site that holds
 // the folder. Outside a site, the defaults for a new site apply. nexusd only says what to run. The
 // nexus command runs it in the terminal. The program then gets the terminal and the exit code.
@@ -13,17 +32,50 @@ import NexusRuntime
 // load WordPress. The setup of that workspace runs these tools after it wrote the values of the
 // workspace (Phase 4, 3e).
 extension NexusEngine {
+    func toolPlace(_ path: String, argumentFolder: String? = nil) async -> ToolPlace {
+        let state = await stateStore.current()
+        let sites = resolvedSites(state).map(\.site)
+        let (folder, location) = Self.toolFolder(path, argumentFolder: argumentFolder, sites: sites)
+
+        return ToolPlace(state: state, sites: sites, folder: folder, location: location, workspace: Self.workspace(holding: folder, location: location, state: state))
+    }
+
+    // The checks of the command come before the start of a stopped workspace. So a refused command
+    // starts nothing. Without the package of the tool, the link runs the next program on the PATH.
+    // That program also needs the servers of the workspace.
+    func toolRequest(_ tool: ProjectTool, folder: String, argumentFolder: String?, debug: Bool, activity: Bool) async throws -> ToolCommand {
+        let place = await toolPlace(folder, argumentFolder: argumentFolder)
+        var command: ToolCommand
+
+        do {
+            command = try await toolCommand(tool, in: place, debug: debug)
+        } catch let missing as ToolNotInstalled {
+            if activity {
+                _ = await toolActivity(in: place)
+            }
+
+            throw missing
+        }
+
+        if activity {
+            command.startProblem = await toolActivity(in: place)
+        }
+
+        return command
+    }
+
     func toolCommand(_ tool: ProjectTool, folder path: String, argumentFolder: String? = nil, inSetup: Bool = false, debug: Bool = false) async throws -> ToolCommand {
+        try await toolCommand(tool, in: await toolPlace(path, argumentFolder: argumentFolder), inSetup: inSetup, debug: debug)
+    }
+
+    func toolCommand(_ tool: ProjectTool, in place: ToolPlace, inSetup: Bool = false, debug: Bool = false) async throws -> ToolCommand {
         if debug, !tool.runsPHP {
             throw RuntimeError.unsupported(DebugCommand.onlyPHP(tool))
         }
 
-        let state = await stateStore.current()
-        let sites = resolvedSites(state).map(\.site)
-        let (folder, location) = Self.toolFolder(path, argumentFolder: argumentFolder, sites: sites)
         let installed = await installer.installedRuntimes()
 
-        if !inSetup, tool.runsPHP, let workspace = Self.wordPressWorkspace(holding: folder, location: location, sites: sites, state: state), workspace.worktree != runningSetupWorktree {
+        if !inSetup, tool.runsPHP, let workspace = place.wordPressWorkspace, workspace.worktree != runningSetupWorktree {
             // A Ready record without a digest comes from before 3e. It waits for its setup.
             switch workspace.state {
             case .ready where workspace.configurationDigest != nil:
@@ -36,7 +88,7 @@ extension NexusEngine {
         }
 
         do {
-            return try await toolCommand(tool, folder: folder, location: location, state: state, installed: installed, inSetup: inSetup, debug: debug)
+            return try await toolCommand(tool, folder: place.folder, location: place.location, state: place.state, installed: installed, inSetup: inSetup, debug: debug)
         } catch where !installed.contains(where: { $0.name == tool.package }) {
             throw ToolNotInstalled(description: ErrorText.plain(error))
         }
@@ -134,10 +186,10 @@ extension NexusEngine {
         return runtime.pharFile
     }
 
-    // The workspace of WordPress whose worktree holds the folder. A worktree can be inside the
-    // main checkout, for example in .claude/worktrees. ProjectFolder.locate then gives the main
-    // site. So the folder decides, and not the root of the location.
-    static func wordPressWorkspace(holding folder: URL, location: ProjectLocation?, sites: [Site], state: EngineState) -> Workspace? {
+    // The workspace whose worktree holds the folder, with the key of its record. A worktree can be
+    // inside the main checkout, for example in .claude/worktrees. ProjectFolder.locate then gives the
+    // main site. So the folder decides, and not the root of the location.
+    static func workspace(holding folder: URL, location: ProjectLocation?, state: EngineState) -> (key: String, workspace: Workspace)? {
         guard let location else {
             return nil
         }
@@ -148,11 +200,7 @@ extension NexusEngine {
             RealPath.contains(RealPath.of(URL(filePath: workspace.worktree, directoryHint: .isDirectory)), path)
         }
 
-        guard let workspace, isWordPress(sites.filter { ProjectFolder.workspaceKey(of: $0) == key }) else {
-            return nil
-        }
-
-        return workspace
+        return workspace.map { (key, $0) }
     }
 
     // WP-CLI 2.12 starts itself again for some commands, for example wp rewrite structure. It puts

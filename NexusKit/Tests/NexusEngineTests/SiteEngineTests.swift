@@ -24,7 +24,7 @@ extension NexusEngineTests {
     }
 
     // A page of the dumps takes a free port. So it never meets a Nexus that runs on this Mac.
-    func makeSiteEngine(root: URL, state: EngineState = EngineState(), runtimes: [(name: String, line: String)] = [], processSupervisor: ProcessSupervisor = ProcessSupervisor(), dumpLibrarySource: URL? = nil, servesDumpPage: Bool = false, activity: ActivityLog? = nil) throws -> NexusEngine {
+    func makeSiteEngine(root: URL, state: EngineState = EngineState(), runtimes: [(name: String, line: String)] = [], supervisor: ProcessSupervisor = ProcessSupervisor(), processSupervisor: ProcessSupervisor = ProcessSupervisor(), dumpLibrarySource: URL? = nil, servesDumpPage: Bool = false, activity: ActivityLog? = nil, serverGate: any WorkspaceServerGate = NoServerGate()) throws -> NexusEngine {
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory), pharLinks: root)
         try paths.createFolders()
         var state = state
@@ -48,12 +48,14 @@ extension NexusEngineTests {
             paths: paths,
             helper: helper,
             certificateAuthority: CertificateAuthority(paths: paths, store: keyStore),
+            supervisor: supervisor,
             processSupervisor: processSupervisor,
             systemFiles: SystemDNSFiles(
                 resolverFolder: root.appending(path: "etc/resolver", directoryHint: .isDirectory),
                 hostsFile: root.appending(path: "etc/hosts", directoryHint: .notDirectory)
             ),
             workspaceFolderQuiet: .zero,
+            serverGate: serverGate,
             dumpLibrarySource: dumpLibrarySource,
             servesDumpPage: servesDumpPage,
             activity: activity
@@ -494,6 +496,7 @@ extension NexusEngineTests {
             added = await engine.handle(.addSite(folder: shop.path(percentEncoded: false), host: nil, aliases: [], php: nil, server: nil))
 
             port = try #require(await engine.siteInfo().first { $0.hosts.first == "shop.test" }?.app?.port)
+            await openPage(engine, shop: shop)
             _ = await engine.handle(.addSite(folder: api.path(percentEncoded: false), host: nil, aliases: [], php: nil, server: nil, runsAs: .proxy, address: "http://[::1]:\(port)"))
 
             app = await page("shop.test", port: httpsPort, expecting: "app shop.test:\(httpsPort) ")
@@ -600,6 +603,10 @@ extension NexusEngineTests {
 
             for name in ["next", "nuxt", "vite"] {
                 _ = await engine.handle(.addSite(folder: apps.appending(path: name).path(percentEncoded: false), host: nil, aliases: [], php: nil, server: nil))
+            }
+
+            for name in ["next", "nuxt", "vite"] {
+                await openPage(engine, shop: apps.appending(path: name, directoryHint: .isDirectory))
             }
 
             for name in ["next", "nuxt", "vite"] {

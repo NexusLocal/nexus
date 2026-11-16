@@ -24,6 +24,46 @@ public enum WorkspaceState: Codable, Sendable, Hashable {
     }
 }
 
+// A record keeps running or stopped (owner, 2026-11-15). starting shows only in WorkspaceInfo, while
+// nexusd starts the servers of the workspace.
+public enum WorkspaceRunState: String, Codable, Sendable, Hashable {
+    case running
+    case starting
+    case stopped
+}
+
+// The choices of "Stop after" in Settings > Workspaces (owner, 2026-11-15). The value is the
+// number of minutes. never stops no workspace. The order of the cases is the order of the picker.
+public enum WorkspaceIdleTime: Int, Codable, Sendable, Hashable, CaseIterable {
+    case fifteenMinutes = 15
+    case thirtyMinutes = 30
+    case oneHour = 60
+    case twoHours = 120
+    case fourHours = 240
+    case oneDay = 1440
+    case never = 0
+
+    public var title: String {
+        guard self != .never else {
+            return "Never"
+        }
+
+        if rawValue.isMultiple(of: 1440) {
+            return Count.text(rawValue / 1440, "day")
+        }
+
+        if rawValue.isMultiple(of: 60) {
+            return Count.text(rawValue / 60, "hour")
+        }
+
+        return Count.text(rawValue, "minute")
+    }
+
+    public var duration: TimeInterval? {
+        self == .never ? nil : TimeInterval(rawValue * 60)
+    }
+}
+
 // A key that a site adds to the .env of each workspace (D45). The value can use {workspace}, {host},
 // {database} and {port:<name>}.
 public struct WorkspaceEnvKey: Codable, Sendable, Hashable {
@@ -102,6 +142,13 @@ public struct WorkspaceSettings: Codable, Sendable, Equatable {
     // worktreeFolder is the folder of the place folder.
     public var worktreePlace: WorktreePlace
     public var worktreeFolder: String?
+    // Old workspaces (owner, 2026-11-15). A workspace without activity for oldAfterDays is old.
+    // notifyOldEvery is the number of days until the next notification of a site. The switch of
+    // that notification is a setting of the app in Settings > General.
+    public var oldAfterDays: Int
+    public var notifyOldEvery: Int
+    // "Stop after" of the idle workspaces (owner, 2026-11-15).
+    public var stopIdleAfter: WorkspaceIdleTime
 
     public init(
         dumpDays: Int = 7,
@@ -109,7 +156,10 @@ public struct WorkspaceSettings: Codable, Sendable, Equatable {
         runsNpmInstall: Bool = true,
         newWorkspaceDatabases: WorkspaceDatabaseKind = .copy,
         worktreePlace: WorktreePlace = .inProject,
-        worktreeFolder: String? = nil
+        worktreeFolder: String? = nil,
+        oldAfterDays: Int = 5,
+        notifyOldEvery: Int = 1,
+        stopIdleAfter: WorkspaceIdleTime = .oneHour
     ) {
         self.dumpDays = dumpDays
         self.runsComposerInstall = runsComposerInstall
@@ -117,15 +167,22 @@ public struct WorkspaceSettings: Codable, Sendable, Equatable {
         self.newWorkspaceDatabases = newWorkspaceDatabases
         self.worktreePlace = worktreePlace
         self.worktreeFolder = worktreeFolder
+        self.oldAfterDays = oldAfterDays
+        self.notifyOldEvery = notifyOldEvery
+        self.stopIdleAfter = stopIdleAfter
     }
 
     private enum CodingKeys: String, CodingKey {
-        case dumpDays, runsComposerInstall, runsNpmInstall, newWorkspaceDatabases, worktreePlace, worktreeFolder
+        case dumpDays, runsComposerInstall, runsNpmInstall, newWorkspaceDatabases, worktreePlace, worktreeFolder, oldAfterDays, notifyOldEvery, stopIdleAfter
     }
 
     // The settings of an older nexusd have no choice of the databases. Their workspaces got a copy.
+    // Settings from before item 3b of group 3 have no limit for old workspaces. Settings from before
+    // the idle stop have no "Stop after". A value of a later version that this version does not know
+    // also gives the default.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = WorkspaceSettings()
 
         dumpDays = try container.decodeIfPresent(Int.self, forKey: .dumpDays) ?? 7
         runsComposerInstall = try container.decodeIfPresent(Bool.self, forKey: .runsComposerInstall) ?? true
@@ -133,6 +190,9 @@ public struct WorkspaceSettings: Codable, Sendable, Equatable {
         newWorkspaceDatabases = try container.decodeIfPresent(WorkspaceDatabaseKind.self, forKey: .newWorkspaceDatabases) ?? .copy
         worktreePlace = try container.decodeIfPresent(WorktreePlace.self, forKey: .worktreePlace) ?? .inProject
         worktreeFolder = try container.decodeIfPresent(String.self, forKey: .worktreeFolder)
+        oldAfterDays = try container.decodeIfPresent(Int.self, forKey: .oldAfterDays) ?? defaults.oldAfterDays
+        notifyOldEvery = try container.decodeIfPresent(Int.self, forKey: .notifyOldEvery) ?? defaults.notifyOldEvery
+        stopIdleAfter = (try? container.decodeIfPresent(WorkspaceIdleTime.self, forKey: .stopIdleAfter)) ?? defaults.stopIdleAfter
     }
 }
 
@@ -207,6 +267,71 @@ public enum WorkspaceDatabaseKind: String, Codable, Sendable, CaseIterable {
 public enum WorkspaceDumpText {
     public static let failed = "The dump did not load."
     public static let gone = "The dump file is gone."
+}
+
+// The text of a stopped workspace (owner, 2026-11-15). The app, nexusd and the MCP server show it.
+public enum WorkspaceIdleText {
+    public static let startsAgain = "The next page, command or database connection starts it again."
+}
+
+// The texts of a worktree that git does not remove (group 3, 3a). The app, the MCP server and
+// nexus workspace remove show them. The app and the MCP server have no --force. So no text names
+// it (owner, 2026-11-15). Claude Code gives its lock a reason that starts with "claude". Another
+// lock gets the advice of git to unlock it.
+public enum WorkspaceRemovalText {
+    public static let claudeCodeLock = "Claude Code locks its worktree while its session runs."
+    public static let unlock = "Remove the lock with git worktree unlock."
+
+    public static func lockedHelp(reason: String) -> String {
+        isClaudeCodeLock(reason) ? "git locked this worktree. \(claudeCodeLock)" : "\(lockSentence("this worktree", reason: reason)) \(unlock)"
+    }
+
+    public static func changes(_ name: String) -> String {
+        "The worktree of \(name) has changes that are not committed. Commit or discard them in the worktree. Then try again."
+    }
+
+    public static func locked(_ name: String, reason: String) -> String {
+        let advice = isClaudeCodeLock(reason) ? "\(claudeCodeLock) Try again after the end of that session." : "\(unlock) Then try again."
+        return "\(lockSentence("the worktree of \(name)", reason: reason)) \(advice)"
+    }
+
+    private static func isClaudeCodeLock(_ reason: String) -> Bool {
+        reason.hasPrefix("claude")
+    }
+
+    private static func lockSentence(_ worktree: String, reason: String) -> String {
+        reason.isEmpty ? "git locked \(worktree)." : "git locked \(worktree) with the reason \"\(reason)\"."
+    }
+
+    public static func submodules(_ name: String) -> String {
+        "The worktree of \(name) has submodules. git does not remove a worktree with submodules."
+    }
+
+    public static func removedLater(_ name: String) -> String {
+        "git removed the worktree of \(name). Nexus removes the workspace and its databases later."
+    }
+
+    // A change can come after the check of Nexus. git then refuses with its own text, and that
+    // text names --force. git runs with LANG=en_US.UTF-8, so its text is English.
+    public static func refusal(ofGit output: String, workspace name: String) -> String? {
+        if output.contains("contains modified or untracked files") {
+            return changes(name)
+        }
+
+        if output.contains("cannot remove a locked working tree") {
+            let reason = output.range(of: "lock reason: ").map { found in
+                output[found.upperBound...].prefix { !$0.isNewline }.trimmingCharacters(in: .whitespaces)
+            }
+
+            return locked(name, reason: reason ?? "")
+        }
+
+        guard output.contains("containing submodules") else {
+            return nil
+        }
+
+        return submodules(name)
+    }
 }
 
 // The choice of a site. default follows Settings > Workspaces, also after a change of that setting.
@@ -313,11 +438,15 @@ public struct WorkspaceRedisIndex: Sendable, Hashable {
 // databaseKind is what the first setup chose, and the workspace keeps it. A record without it comes
 // from before the choice and has a copy. emptiedServers holds the folder of each server whose
 // databases Nexus made again without tables. So a retry keeps the tables that the commands made.
+// locked is the lock reason that git lists for the worktree (group 3, 3a). runState and keepAwake
+// hold the idle stop (owner, 2026-11-15). keepAwake true is "Stop when idle" off. stoppedAfter tells
+// why the workspace stopped. It is the setting at an idle stop, and nil after a stop on request.
 public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     public let name: String
     public var worktree: String
     public var folder: String
     public var branch: String?
+    public var locked: String?
     public var state: WorkspaceState
     public var redisIndexes: [String: Int]
     public var redisInstances: [String]
@@ -336,6 +465,9 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
     public var links: WorkspaceLinks?
     public var databaseKind: WorkspaceDatabaseKind?
     public var emptiedServers: [String]
+    public var runState: WorkspaceRunState
+    public var keepAwake: Bool
+    public var stoppedAfter: WorkspaceIdleTime?
 
     public var id: String { name }
 
@@ -350,6 +482,7 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         worktree: String,
         folder: String,
         branch: String? = nil,
+        locked: String? = nil,
         state: WorkspaceState = .preparing,
         redisIndexes: [String: Int] = [:],
         redisInstances: [String] = [],
@@ -366,12 +499,16 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         mainConfigurationDigest: String? = nil,
         links: WorkspaceLinks? = nil,
         databaseKind: WorkspaceDatabaseKind? = nil,
-        emptiedServers: [String] = []
+        emptiedServers: [String] = [],
+        runState: WorkspaceRunState = .running,
+        keepAwake: Bool = false,
+        stoppedAfter: WorkspaceIdleTime? = nil
     ) {
         self.name = name
         self.worktree = worktree
         self.folder = folder
         self.branch = branch
+        self.locked = locked
         self.state = state
         self.redisIndexes = redisIndexes
         self.redisInstances = redisInstances
@@ -389,17 +526,22 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         self.links = links
         self.databaseKind = databaseKind
         self.emptiedServers = emptiedServers
+        self.runState = runState
+        self.keepAwake = keepAwake
+        self.stoppedAfter = stoppedAfter
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, worktree, folder, branch, state, redisIndexes, redisInstances, ports, servers, databases, installedLockFiles, warnings, finishedCommands, commandsEnded, backgroundPreset, database, configurationDigest, mainConfigurationDigest, links, databaseKind, emptiedServers
+        case name, worktree, folder, branch, locked, state, redisIndexes, redisInstances, ports, servers, databases, installedLockFiles, warnings, finishedCommands, commandsEnded, backgroundPreset, database, configurationDigest, mainConfigurationDigest, links, databaseKind, emptiedServers, runState, keepAwake, stoppedAfter
     }
 
     // A record of part 8b has no state. A record from before part 8f has Redis indexes without their
     // instances, and only a setup can add these. Such a workspace needs its setup. A Ready record
     // without commands comes from before part 8h, so that workspace exists and gets no commands. A
     // record without a preset comes from before part 8i. That workspace starts no process until its
-    // next setup, because the scheduler of an old workspace must not start without a request.
+    // next setup, because the scheduler of an old workspace must not start without a request. A
+    // record from before the idle stop runs. A record keeps only running or stopped, and an unknown
+    // run state or idle time of a later version gives running or nil.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
@@ -407,6 +549,7 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         worktree = try container.decode(String.self, forKey: .worktree)
         folder = try container.decode(String.self, forKey: .folder)
         branch = try container.decodeIfPresent(String.self, forKey: .branch)
+        locked = try container.decodeIfPresent(String.self, forKey: .locked)
         redisIndexes = try container.decodeIfPresent([String: Int].self, forKey: .redisIndexes) ?? [:]
         redisInstances = try container.decodeIfPresent([String].self, forKey: .redisInstances) ?? []
         let storedState = try container.decodeIfPresent(WorkspaceState.self, forKey: .state) ?? .preparing
@@ -425,6 +568,10 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         links = try container.decodeIfPresent(WorkspaceLinks.self, forKey: .links)
         databaseKind = try container.decodeIfPresent(WorkspaceDatabaseKind.self, forKey: .databaseKind)
         emptiedServers = try container.decodeIfPresent([String].self, forKey: .emptiedServers) ?? []
+        let storedRunState = (try? container.decodeIfPresent(WorkspaceRunState.self, forKey: .runState)) ?? .running
+        runState = storedRunState == .stopped ? .stopped : .running
+        keepAwake = try container.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? false
+        stoppedAfter = try? container.decodeIfPresent(WorkspaceIdleTime.self, forKey: .stoppedAfter)
     }
 
     public func databaseRemovals(site: String) -> [DatabaseRemoval] {

@@ -23,7 +23,19 @@ public enum AgentInstructions {
                 "- Nexus always serves this site. Do not run `php artisan serve` or another web server.",
                 "- `php`, `composer`, `node`, `npm` and `wp` in this folder use the versions of this site.",
                 "- Each git worktree of this site gets its own workspace with its own URL and database. In a worktree, pass the worktree folder as `site` and call site_info for its URL.",
+                "- Nexus stops a workspace without activity. \(WorkspaceIdleText.startsAgain)",
             ]
+
+            // An agent can stop its own workspace when its work is done (owner, 2026-11-15).
+            if target.workspace != nil, level >= .change {
+                rules.append("- Call stop_workspace when your work in this workspace is done.")
+            }
+
+            // An agent that runs npm run dev itself holds back the dev server of Nexus (owner,
+            // 2026-11-15).
+            if target.site.kind == .node || (target.workspace.map { $0.devServer } ?? target.site.devServer) != nil {
+                rules.append("- Nexus starts the dev server of this site with the first page and stops it when nobody uses the site. Do not run npm run dev yourself. The first page can show a wait page for a few seconds.")
+            }
 
             if let tests, tests.usesDevelopmentDatabase {
                 rules.append("- Warning: the tests of this project use \(tests.developmentDatabaseLabel), the development database. A test that resets the database removes all development data. Do not run such tests until the user chooses a test database in Nexus.")

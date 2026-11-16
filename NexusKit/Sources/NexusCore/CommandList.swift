@@ -1,15 +1,19 @@
 // The nexus commands that the Command line page of the app lists, each with an example (D64).
 // A test parses every example with the nexus command, and checks that the list has every
 // command of nexus.
+// examples are the commands that the test parses. The copy button copies the first one. A row of
+// the design can show two commands, for example nexus workspace stop | start.
 public struct CommandItem: Sendable, Identifiable {
     public let command: String
     public let help: String
+    public let examples: [String]
 
     public var id: String { command }
 
-    public init(command: String, help: String) {
+    public init(command: String, help: String, examples: [String]? = nil) {
         self.command = command
         self.help = help
+        self.examples = examples ?? [command]
     }
 }
 
@@ -50,7 +54,8 @@ extension CommandSection {
             CommandItem(command: "nexus workspace create fix-login", help: "Makes a git worktree for a branch and its workspace, in the place of Settings > Workspaces."),
             CommandItem(command: "nexus workspace wait", help: "Waits until the workspace is ready."),
             CommandItem(command: "nexus workspace info --json", help: "Gives the URL, the databases and the ports."),
-            CommandItem(command: "nexus workspace list", help: "Lists the workspaces of the current site."),
+            CommandItem(command: "nexus workspace list", help: "Lists the workspaces of the current site. --old shows the old ones."),
+            CommandItem(command: "nexus workspace stop | start", help: "Stops or starts a workspace. --keep keeps it running.", examples: ["nexus workspace stop", "nexus workspace start --keep"]),
             CommandItem(command: "nexus workspace remove", help: "Removes the workspace and keeps a dump."),
             CommandItem(command: "nexus workspace env shop.test", help: "Shows which keys Nexus changes in the .env of a workspace."),
             CommandItem(command: "nexus workspace retry shop.test ticket-123", help: "Sets up a workspace again, for example after you fix why it is not isolated."),

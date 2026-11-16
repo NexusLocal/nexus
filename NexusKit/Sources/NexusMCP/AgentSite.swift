@@ -36,6 +36,11 @@ public struct AgentWorkspace: Codable, Sendable, Equatable {
     public let folder: String
     public let state: String
     public let problem: String?
+    public let devServer: String?
+    // running, starting or stopped (owner, 2026-11-15). The next page or command starts a stopped
+    // workspace. lastActivity is an ISO 8601 time.
+    public let runState: String
+    public let lastActivity: String?
 
     public init(_ workspace: WorkspaceInfo) {
         name = workspace.name
@@ -45,6 +50,9 @@ public struct AgentWorkspace: Codable, Sendable, Equatable {
         folder = workspace.folder
         problem = workspace.isolationMessage ?? workspace.problem
         state = (workspace.state ?? .preparing).name
+        devServer = AgentSite.devServerText(workspace.devServer, app: workspace.app)
+        runState = workspace.resolvedRunState.rawValue
+        lastActivity = workspace.lastActivity?.formatted(.iso8601)
     }
 }
 
@@ -96,6 +104,7 @@ public struct AgentSite: Codable, Sendable, Equatable {
     public let testDatabase: AgentTestDatabase?
     public let workspaces: [AgentWorkspace]
     public let problem: String?
+    public let devServer: String?
 
     public init(target: SiteTarget, connections: [DatabaseConnectionInfo], mail: SiteMail?, testDatabase: TestDatabaseCheck?) {
         let site = target.site
@@ -116,6 +125,16 @@ public struct AgentSite: Codable, Sendable, Equatable {
         self.testDatabase = testDatabase.map(AgentTestDatabase.init)
         workspaces = target.workspace == nil ? (site.workspaces ?? []).map(AgentWorkspace.init) : []
         problem = target.workspace.flatMap { $0.isolationMessage ?? $0.problem } ?? site.problem
+        devServer = target.workspace.map { Self.devServerText($0.devServer, app: $0.app) } ?? Self.devServerText(site.devServer, app: site.kind == .node ? site.app : nil)
+    }
+
+    // The dev server of a Laravel site or the Node.js app (owner, 2026-11-15).
+    static func devServerText(_ devServer: DevServerInfo?, app: AppProcessInfo?) -> String? {
+        if let devServer {
+            return devServer.text
+        }
+
+        return app.map { "The Node.js app: \($0.stateText.firstLetterLowercased)." }
     }
 
     public static func type(of site: SiteInfo) -> String {
@@ -145,6 +164,7 @@ public struct AgentSiteRow: Codable, Sendable, Equatable {
     public let php: String?
     public let node: String?
     public let problem: String?
+    public let devServer: String?
     public let workspaces: [AgentWorkspace]
 
     public init(_ site: SiteInfo) {
@@ -155,6 +175,7 @@ public struct AgentSiteRow: Codable, Sendable, Equatable {
         php = site.kind == .php ? site.php : nil
         node = site.kind == .node ? site.node : nil
         problem = site.problem
+        devServer = AgentSite.devServerText(site.devServer, app: site.kind == .node ? site.app : nil)
         workspaces = (site.workspaces ?? []).map(AgentWorkspace.init)
     }
 }

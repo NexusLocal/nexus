@@ -26,6 +26,19 @@ struct ProcessSupervisorTests {
         )
     }
 
+    private static func freePort() -> Int {
+        let listener = socket(AF_INET, SOCK_STREAM, 0)
+        defer { close(listener) }
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        _ = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(listener, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        var bound = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &bound) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(listener, $0, &length) } }
+        return Int(UInt16(bigEndian: bound.sin_port))
+    }
+
     private func waitFor(_ timeout: Duration = .seconds(5), _ condition: () async -> Bool) async -> Bool {
         let deadline = ContinuousClock.now + timeout
         while ContinuousClock.now < deadline {
@@ -52,7 +65,7 @@ struct ProcessSupervisorTests {
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition("master", executable: "/bin/sh", arguments: ["-c", script]))
         let main = try #require(pid(await supervisor.state(of: "master")))
-        let written = await waitFor { (try? String(contentsOf: childFile, encoding: .utf8)) != nil }
+        let written = await waitFor { (try? String(contentsOf: childFile, encoding: .utf8))?.hasSuffix("\n") == true }
         let child = try #require(Int32((try String(contentsOf: childFile, encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines)))
 
         if stoppedByTheSupervisor {
@@ -353,6 +366,106 @@ struct ProcessSupervisorTests {
             #expect(failedPort == port)
             #expect(owner?.pid == getpid())
         }
+    }
+
+    @Test func aHandedOverPortDoesNotStopTheStart() async throws {
+        let listener = socket(AF_INET, SOCK_STREAM, 0)
+        defer { close(listener) }
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: INADDR_ANY)
+        _ = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(listener, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        listen(listener, 1)
+        var bound = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &bound) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(listener, $0, &length) } }
+        let port = Int(UInt16(bigEndian: bound.sin_port))
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        let sleeper = definition("handed-over", executable: "/bin/sleep", arguments: ["30"], ports: [port])
+
+        await #expect(throws: SupervisorError.self) {
+            try await supervisor.start(sleeper)
+        }
+
+        try await supervisor.start(sleeper, handedOver: true)
+
+        #expect(pid(await supervisor.state(of: "handed-over")) != nil)
+        await supervisor.stopAll()
+    }
+
+    @Test func aStopDuringTheStartOfAServerThatIgnoresItsSignalWaitsForItsGreeting() async throws {
+        let folder = URL(filePath: "/tmp/nx-greet-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let socket = folder.appending(path: "s.sock")
+        let script = "trap '' TERM; sleep 1; trap 'exit 0' TERM; printf x | /usr/bin/nc -lU \"$0\" & wait"
+        let server = ServiceDefinition(
+            id: "greets",
+            displayName: "greets",
+            executable: URL(filePath: "/bin/sh"),
+            arguments: ["-c", script, socket.path(percentEncoded: false)],
+            logFile: logs.appending(path: "greets.log"),
+            startTimeout: .seconds(20),
+            stopTimeout: .seconds(20),
+            greetingSocket: socket
+        )
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+
+        try await supervisor.start(server)
+        let start = ContinuousClock.now
+        try await supervisor.stop("greets")
+
+        #expect(ContinuousClock.now - start < .seconds(10))
+        #expect(await supervisor.state(of: "greets") == .stopped)
+    }
+
+    @Test func severalSupervisorsStopEachProgramBeforeTheFirstServer() async throws {
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let order = logs.appending(path: "order.txt")
+        let servers = ProcessSupervisor(policy: fastPolicy)
+        let programs = ProcessSupervisor(policy: fastPolicy)
+        let port = try #require((0..<50).lazy.map { _ in Self.freePort() }.first { $0 > 50_000 })
+        let program = definition("program", executable: "/bin/sh", arguments: ["-c", "trap 'sleep 1; echo program >> \"$0\"; exit 0' TERM; echo ready >> \"$0.ready\"; while :; do sleep 0.1; done", order.path(percentEncoded: false)])
+        let server = definition("server", executable: "/bin/sh", arguments: ["-c", "trap 'echo server >> \"$0\"; exit 0' TERM; echo ready >> \"$0.ready\"; while :; do sleep 0.1; done", order.path(percentEncoded: false)], ports: [port])
+        let ready = logs.appending(path: "order.txt.ready")
+
+        try await servers.start(server)
+        try await programs.start(program)
+
+        #expect(await waitFor { (try? String(contentsOf: ready, encoding: .utf8)) == "ready\nready\n" })
+
+        await ProcessSupervisor.stopAll(of: [servers, programs])
+
+        #expect(try String(contentsOf: order, encoding: .utf8) == "program\nserver\n")
+        #expect(await servers.state(of: "server") == .stopped)
+        #expect(await programs.state(of: "program") == .stopped)
+    }
+
+    @Test func theWaitForAGreetingThatNeverComesStaysWithinTheStopTimeout() async throws {
+        let folder = URL(filePath: "/tmp/nx-silent-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let server = ServiceDefinition(
+            id: "silent",
+            displayName: "silent",
+            executable: URL(filePath: "/bin/sh"),
+            arguments: ["-c", "trap '' TERM; exec /bin/sleep 60"],
+            logFile: logs.appending(path: "silent.log"),
+            startTimeout: .seconds(60),
+            stopTimeout: .seconds(2),
+            greetingSocket: folder.appending(path: "s.sock")
+        )
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+
+        try await supervisor.start(server)
+        let start = ContinuousClock.now
+        try await supervisor.stop("silent")
+
+        #expect(ContinuousClock.now - start < .seconds(4))
+        #expect(await supervisor.state(of: "silent") == .stopped)
     }
 
     @Test func theOwnerNamesKnownApplications() {
