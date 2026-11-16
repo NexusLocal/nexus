@@ -660,20 +660,13 @@ extension AppModel {
                 version: "8.4.7",
                 health: .attention,
                 ports: [ServicePort(name: "Port", number: 3306)],
-                problem: ServiceProblem(
-                    summary: "Port in use",
-                    detail: "Port 3306 is in use by MAMP PRO (mysqld, process 812). Stop that app, or give the service another port.",
-                    portHolder: PortHolder(
-                        port: 3306,
-                        app: "MAMP PRO",
-                        process: "mysqld",
-                        processNumber: 812,
-                        path: "/Applications/MAMP/Library/bin/mysql80/bin/mysqld",
-                        suggestedPort: 13307,
-                        managerApp: "de.appsolute.mamppro",
-                        canStop: false
-                    )
-                ),
+                problem: ServiceProblem(PortConflict(
+                    service: "mysql-8.4",
+                    port: 3306,
+                    owner: PortOwner(pid: 812, command: "mysqld", executable: "/opt/homebrew/Cellar/mysql@8.4/8.4.7/bin/mysqld", mainPID: 812, mainProcessIsOwn: true),
+                    suggestedPort: 13307,
+                    portKey: "mysql-8.4"
+                )),
                 dataFolder: "~/Library/Application Support/Nexus/data/mysql-8.4",
                 account: DatabaseAccount(user: "root", password: ""),
                 log: [

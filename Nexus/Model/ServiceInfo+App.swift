@@ -28,6 +28,12 @@ extension ServiceKind {
     }
 }
 
+extension ServiceProblem {
+    init(_ conflict: PortConflict) {
+        self.init(summary: "Port in use", detail: conflict.description, portHolder: PortHolder(conflict))
+    }
+}
+
 extension PortHolder {
     // nexusd cannot see a program of another user. So it has no owner then.
     init(_ conflict: PortConflict) {
@@ -101,7 +107,7 @@ extension ServiceVersion {
         case .stopped:
             if let conflict = info.portConflict {
                 health = .attention
-                problem = ServiceProblem(summary: "Port in use", detail: conflict.description, portHolder: PortHolder(conflict))
+                problem = ServiceProblem(conflict)
             }
         case .running(_, let since):
             health = .running

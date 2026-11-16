@@ -816,6 +816,11 @@ final class AppModel {
     // A server that an earlier nexusd left behind belongs to "Nexus". This app must not quit itself
     // then.
     func stop(_ holder: PortHolder, andStart service: ServiceVersion) {
+        guard client != nil else {
+            setSampleRunning(true, service: service.id)
+            return
+        }
+
         Task {
             if let app = runningApp(of: holder) {
                 app.terminate()

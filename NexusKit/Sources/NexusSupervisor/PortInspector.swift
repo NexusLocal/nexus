@@ -12,6 +12,14 @@ public struct PortOwner: Codable, Sendable, Equatable {
     public var mainPID: Int32?
     public var mainProcessIsOwn: Bool?
 
+    public init(pid: Int32, command: String, executable: String?, mainPID: Int32? = nil, mainProcessIsOwn: Bool? = nil) {
+        self.pid = pid
+        self.command = command
+        self.executable = executable
+        self.mainPID = mainPID
+        self.mainProcessIsOwn = mainProcessIsOwn
+    }
+
     // These apps start their servers again. So only the app itself can stop them.
     public var managerBundleIdentifier: String? {
         switch application {

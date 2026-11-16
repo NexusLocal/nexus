@@ -47,7 +47,7 @@
 
 ## 🌳 A workspace for each branch
 
-![The Site screen of a WordPress site with its database, its mail and the workspace of the branch fix](.github/wordpress-workspaces.png)
+![The Site screen of a WordPress site with its database, its mail and the workspaces of three branches](.github/wordpress-workspaces.png)
 
 In the folder of a site, make a workspace for a branch:
 
@@ -181,7 +181,7 @@ sent it. Read your mails in Nexus, or open the web inbox of Mailpit.
 
 ## 📦 The versions that you need
 
-![The Packages screen with the versions of nginx, Apache, PHP, MySQL and MariaDB](.github/packages.png)
+![The Packages screen with the automatic updates and the versions of nginx, Apache, PHP, MySQL and MariaDB](.github/packages.png)
 
 Install a version of PHP, Node or a database with one click. Updates in the same version line install
 by themselves, for example a security fix of PHP. Nexus also tells you when a version gets no more
