@@ -176,6 +176,7 @@ private struct OtherWebServersNotice: View {
             HideNoticeButton {
                 model.hideWebServerNotice()
             }
+            .disabled(moving)
         }
     }
 }

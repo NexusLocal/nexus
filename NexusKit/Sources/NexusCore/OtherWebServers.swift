@@ -71,6 +71,6 @@ public enum OtherWebServers {
 
     public static func movedMessage(_ names: [String], exampleHost: String?) -> String {
         let sites = exampleHost.map { "Your sites open at https://\($0):\(movedWebPorts.https)." } ?? "Your sites open with port \(movedWebPorts.https) in the URL."
-        return "\(sites) \(EnglishList.joined(names)) can use ports \(webPorts.http) and \(webPorts.https) again. Change APP_URL in the .env file of each site yourself."
+        return "\(sites) \(EnglishList.joined(names)) can use ports \(webPorts.http) and \(webPorts.https) again. Change APP_URL in the .env file of each site yourself. The screen of a WordPress site has a button that changes its URL."
     }
 }

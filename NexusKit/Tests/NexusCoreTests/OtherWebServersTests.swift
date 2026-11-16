@@ -51,7 +51,7 @@ struct OtherWebServersTests {
     }
 
     @Test func theMovedMessageGivesTheNewURL() {
-        #expect(OtherWebServers.movedMessage(["Local"], exampleHost: "shop.test") == "Your sites open at https://shop.test:8443. Local can use ports 80 and 443 again. Change APP_URL in the .env file of each site yourself.")
+        #expect(OtherWebServers.movedMessage(["Local"], exampleHost: "shop.test") == "Your sites open at https://shop.test:8443. Local can use ports 80 and 443 again. Change APP_URL in the .env file of each site yourself. The screen of a WordPress site has a button that changes its URL.")
         #expect(OtherWebServers.movedMessage(["Local", "Herd"], exampleHost: nil).hasPrefix("Your sites open with port 8443 in the URL. Local and Herd can use"))
     }
 }
