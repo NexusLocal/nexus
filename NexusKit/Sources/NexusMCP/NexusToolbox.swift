@@ -772,7 +772,7 @@ public struct NexusToolbox: MCPHandler {
         }
 
         guard response != .unreadableRequest else {
-            throw ToolFailure("nexusd is older than this nexus command. Ask the user to quit Nexus and open it again.")
+            throw ToolFailure(NexusResponse.olderNexusdText)
         }
 
         return response

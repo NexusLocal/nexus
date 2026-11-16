@@ -149,7 +149,7 @@ struct NexusEventFeedTests {
     @Test func anAddSiteRequestWithoutAGroupStillReads() throws {
         let old = #"{"addSite":{"folder":"/Sites/shop","aliases":[],"php":"8.5"}}"#
 
-        let request = try NexusMessageCoding.decode(NexusRequest.self, from: Data(old.utf8))
+        let request = try NexusMessageCoding.decodeWithoutLoss(NexusRequest.self, from: Data(old.utf8))
 
         #expect(request == .addSite(folder: "/Sites/shop", host: nil, aliases: [], php: "8.5", server: nil, group: nil))
     }

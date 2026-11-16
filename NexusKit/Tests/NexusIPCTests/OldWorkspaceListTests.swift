@@ -109,7 +109,7 @@ struct OldWorkspaceListTests {
 
     @Test func theRequestsSurviveTheWire() throws {
         for request in [NexusRequest.oldWorkspaces(host: "shop.test", days: 3), .oldWorkspaces(host: "shop.test"), .oldWorkspaceNotices] {
-            #expect(try NexusMessageCoding.decode(NexusRequest.self, from: NexusMessageCoding.encode(request)) == request)
+            #expect(try NexusMessageCoding.decodeWithoutLoss(NexusRequest.self, from: NexusMessageCoding.encode(request)) == request)
         }
     }
 

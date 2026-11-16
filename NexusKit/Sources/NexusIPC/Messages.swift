@@ -1861,9 +1861,24 @@ public struct WordPressCopySource: Codable, Sendable, Equatable {
 }
 
 extension NexusResponse {
-    // nexusd sends this when it cannot read a request. An example is nexus wp to the nexusd of
-    // 0.1.1 after an update, until the app starts the new nexusd. Keep the text the same.
+    // nexusd sends this when it cannot read a request, or when the request has a field or a value
+    // that nexusd does not know. An example is nexus wp to the nexusd of 0.1.1 after an update,
+    // until the app starts the new nexusd. Keep the text the same, because the nexus command and
+    // the MCP server of each release compare it.
     public static let unreadableRequest = NexusResponse.failure(message: "nexusd could not read the request.")
+
+    // What the nexus command and the MCP server show for unreadableRequest.
+    public static let olderNexusdText = "The background service of Nexus (nexusd) still runs the previous version. It starts the new version when its current work ends. Run the command again in a minute. If you see this message again, open the Nexus app."
+}
+
+// The request has a field or a value that this build does not know. path names that field, for
+// example startWorkspace.keepAwake. It holds no value, so no password goes to a log.
+public struct UnknownRequestFields: Error, CustomStringConvertible {
+    public let path: String
+
+    public var description: String {
+        "The request has a field or a value that this build does not know: \(path)."
+    }
 }
 
 public enum NexusMessageCoding {
@@ -1877,5 +1892,58 @@ public enum NexusMessageCoding {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode(type, from: data)
+    }
+
+    // The decoder drops each field that it does not know. A settings type can also replace a value
+    // that it does not know with its default. Then a newer nexus command or MCP server gets a change
+    // that nexusd did not make. So the value is encoded again. Each field that the sender sent must
+    // come back with the same value. A field that the sender left out is no problem. An older nexus
+    // command sends fewer fields.
+    public static func decodeWithoutLoss<Value: Codable>(_ type: Value.Type, from data: Data) throws -> Value {
+        let value = try decode(type, from: data)
+        let sent = try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)
+        let kept = try JSONSerialization.jsonObject(with: encode(value), options: .fragmentsAllowed)
+
+        if let path = lostField(sent, in: kept, at: "") {
+            throw UnknownRequestFields(path: path)
+        }
+
+        return value
+    }
+
+    // Returns the path of the first field of sent that kept does not hold. A null holds no value, so
+    // it cannot get lost. A Set gives an array without a fixed order. So an element of sent can
+    // match any element of kept when the order differs. Each element of kept matches only one time.
+    private static func lostField(_ sent: Any, in kept: Any?, at path: String) -> String? {
+        switch (sent, kept) {
+        case (is NSNull, _):
+            return nil
+        case let (sent as [String: Any], kept as [String: Any]):
+            return sent.sorted { $0.key < $1.key }.firstNonNil { key, value in
+                lostField(value, in: kept[key], at: path.isEmpty ? key : "\(path).\(key)")
+            }
+        case let (sent as [Any], kept as [Any]):
+            guard sent.count == kept.count else {
+                return path
+            }
+
+            if zip(sent, kept).allSatisfy({ lostField($0, in: $1, at: path) == nil }) {
+                return nil
+            }
+
+            var unmatched = kept
+
+            for element in sent {
+                guard let index = unmatched.firstIndex(where: { lostField(element, in: $0, at: path) == nil }) else {
+                    return path
+                }
+
+                unmatched.remove(at: index)
+            }
+
+            return nil
+        default:
+            return (sent as? NSObject)?.isEqual(kept) == true ? nil : path
+        }
     }
 }

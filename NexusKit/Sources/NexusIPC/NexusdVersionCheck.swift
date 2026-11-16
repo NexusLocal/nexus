@@ -38,8 +38,8 @@ public struct NexusdVersionCheck: Sendable, Equatable {
         nexusdIsOld && restartEnded && !nexusdStartsThisBuild
     }
 
-    // An older nexusd drops the fields of a newer app without an error. A newer nexusd reads each
-    // change of an older app.
+    // A nexusd up to 0.6.3 drops the fields of a newer app without an error. A later nexusd refuses
+    // them with unreadableRequest. A newer nexusd reads each change of an older app.
     public var waitsForNewNexusd: Bool {
         nexusdIsOlder && !restartDidNotHelp
     }

@@ -49,6 +49,9 @@ extension NexusEngine {
 
         let log = "workspace-\(host)"
 
+        runsWorkspaceCommands = true
+        defer { runsWorkspaceCommands = false }
+
         for command in pending {
             guard database != nil || !command.contains(WorkspaceKeys.databasePlaceholder) else {
                 workspace.warnings.append("The command \(command) needs a database, and this workspace has none. A retry goes on with this command.")

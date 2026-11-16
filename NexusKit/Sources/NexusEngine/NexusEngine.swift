@@ -120,6 +120,9 @@ public actor NexusEngine {
     // links in bin/. nexusd must not refuse them (Phase 4, 3e).
     var runningSetupWorktree: String?
     var setupIsOutdated = false
+    // A stop can end a command of a setup halfway, for example a migration. The next setup then runs
+    // that command again.
+    var runsWorkspaceCommands = false
     // The change of the links in the posts of a WordPress workspace after Ready, with its progress
     // from 0 to 1. The key is the owner of the processes of that workspace (Phase 4, 3e).
     var linkChanges: [String: Task<Void, Never>] = [:]

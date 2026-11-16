@@ -79,7 +79,7 @@ struct ToolCommandTests {
         let encoded = String(decoding: try JSONEncoder().encode(NexusRequest.tool(.php, folder: "/Sites/shop", debug: true)), as: UTF8.self)
         let old = Data(#"{"tool":{"_0":"php","folder":"/Sites/shop"}}"#.utf8)
 
-        let decoded = try JSONDecoder().decode(NexusRequest.self, from: old)
+        let decoded = try NexusMessageCoding.decodeWithoutLoss(NexusRequest.self, from: old)
 
         #expect(encoded.contains(#""debug":true"#))
         #expect(encoded.contains(#""_0":"php""#))

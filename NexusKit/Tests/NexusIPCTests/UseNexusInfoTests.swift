@@ -103,7 +103,7 @@ struct UseNexusInfoTests {
         let answer = NexusResponse.useNexusInfo(nil)
         let full = NexusResponse.useNexusInfo(info())
 
-        #expect(try NexusMessageCoding.decode(NexusRequest.self, from: NexusMessageCoding.encode(request)) == request)
+        #expect(try NexusMessageCoding.decodeWithoutLoss(NexusRequest.self, from: NexusMessageCoding.encode(request)) == request)
         #expect(try NexusMessageCoding.decode(NexusResponse.self, from: NexusMessageCoding.encode(answer)) == answer)
         #expect(try NexusMessageCoding.decode(NexusResponse.self, from: NexusMessageCoding.encode(full)) == full)
     }

@@ -14,26 +14,20 @@ struct UpdateCheck: Sendable {
 // changes, nexusd stops at the first moment that no work runs. launchd then starts the new build,
 // because the plist of nexusd has KeepAlive.
 extension NexusEngine {
-    // The work that a stop would end or break. A write of the web configuration is no work here:
-    // the next start writes it again.
+    // The work that a stop would break. A workspace setup goes on after the next start, because its
+    // record stays in Preparing. Only the commands of a setup cannot run two times. A write of the
+    // web configuration is no work here: the next start writes it again.
     var isBusy: Bool {
-        guard runningTasks.isEmpty, openRequests == 0 else {
-            return true
-        }
-
-        guard !settingUpWorkspaces, runningCommand == nil, cloningServers.isEmpty else {
-            return true
-        }
-
-        guard removingServers.isEmpty, removingWorktrees.isEmpty, databaseRemovalRun == nil else {
-            return true
-        }
-
-        guard copyTargets.isEmpty, installTargets.isEmpty, updatingServices.isEmpty else {
-            return true
-        }
-
-        return !emptyingRedisIndexes.isEmpty || corepackInstall != nil
+        openRequests > 0
+            || !runningTasks.isEmpty
+            || runsWorkspaceCommands
+            || databaseRemovalRun != nil
+            || !removingWorktrees.isEmpty
+            || !copyTargets.isEmpty
+            || !installTargets.isEmpty
+            || !updatingServices.isEmpty
+            || !emptyingRedisIndexes.isEmpty
+            || corepackInstall != nil
     }
 
     // restart gets the new build. It must stop the services and end the process. runningBuild is

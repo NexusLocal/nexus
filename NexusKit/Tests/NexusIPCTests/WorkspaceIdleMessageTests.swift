@@ -62,7 +62,7 @@ struct WorkspaceIdleMessageTests {
         let old = Data(#"{"tool":{"_0":"php","folder":"/Sites/shop"}}"#.utf8)
         let encoded = String(decoding: try JSONEncoder().encode(NexusRequest.tool(.php, folder: "/Sites/shop", activity: false)), as: UTF8.self)
 
-        let decoded = try JSONDecoder().decode(NexusRequest.self, from: old)
+        let decoded = try NexusMessageCoding.decodeWithoutLoss(NexusRequest.self, from: old)
 
         #expect(decoded == .tool(.php, folder: "/Sites/shop", argumentFolder: nil, debug: nil, activity: nil))
         #expect(encoded.contains(#""activity":false"#))

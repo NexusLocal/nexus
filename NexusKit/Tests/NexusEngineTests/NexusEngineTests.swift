@@ -1152,6 +1152,45 @@ extension NexusEngineTests {
         }
     }
 
+    @Test func nexusdDoesNotWaitForWorkThatGoesOnAfterItsStop() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        let app = try makeApp(build: "5")
+        let restarts = Mutex<[String]>([])
+
+        try await whileRunning(engine) {
+            await engine.startWorkThatGoesOnAfterAStop()
+
+            await engine.restartAfterUpdates(of: app, every: .milliseconds(20), runningBuild: identity("4")) { build in
+                restarts.withLock { $0.append(build) }
+            }
+
+            #expect(await waitFor { restarts.withLock { $0 } == [identity("5")] })
+        }
+    }
+
+    @Test func nexusdWaitsForTheCommandsOfAWorkspaceSetup() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        let app = try makeApp(build: "5")
+        let restarts = Mutex<[String]>([])
+
+        try await whileRunning(engine) {
+            await engine.startWorkThatGoesOnAfterAStop()
+            await engine.setRunsWorkspaceCommands(true)
+
+            await engine.restartAfterUpdates(of: app, every: .milliseconds(20), runningBuild: identity("4")) { build in
+                restarts.withLock { $0.append(build) }
+            }
+            try await Task.sleep(for: .milliseconds(150))
+            let whileTheCommandsRun = restarts.withLock { $0 }
+
+            await engine.setRunsWorkspaceCommands(false)
+            let afterTheCommands = await waitFor { restarts.withLock { $0 } == [identity("5")] }
+
+            #expect(whileTheCommandsRun.isEmpty)
+            #expect(afterTheCommands)
+        }
+    }
+
     @Test func aNewConnectionOfTheAppChecksTheBuildAtOnce() async throws {
         let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
         let app = try makeApp(build: "6")
@@ -1185,6 +1224,16 @@ extension NexusEngineTests {
 private extension NexusEngine {
     func startCopy(into target: String) {
         copyTargets.insert(target)
+    }
+
+    func startWorkThatGoesOnAfterAStop() {
+        settingUpWorkspaces = true
+        runningCommand = ("/worktree", Task { throw CancellationError() })
+        cloningServers.insert("/clone")
+    }
+
+    func setRunsWorkspaceCommands(_ runs: Bool) {
+        runsWorkspaceCommands = runs
     }
 }
 

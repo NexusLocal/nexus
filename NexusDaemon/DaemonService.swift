@@ -36,13 +36,18 @@ final class DaemonService: NSObject, NSXPCListenerDelegate, NexusDaemonXPCServic
 
         Task {
             let response: NexusResponse
-            if let decoded = try? NexusMessageCoding.decode(NexusRequest.self, from: request) {
+
+            do {
+                let decoded = try NexusMessageCoding.decodeWithoutLoss(NexusRequest.self, from: request)
                 response = await engine.handle(decoded)
 
                 if !decoded.onlyReads || response.failed {
                     activity.write("request", "\(decoded.activitySummary): \(response.activitySummary)")
                 }
-            } else {
+            } catch let unknown as UnknownRequestFields {
+                activity.write("request", "refused: \(unknown)")
+                response = .unreadableRequest
+            } catch {
                 response = .unreadableRequest
             }
 

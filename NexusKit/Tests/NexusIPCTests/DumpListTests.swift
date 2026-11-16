@@ -60,7 +60,7 @@ struct DumpListTests {
     }
 
     private func roundTrip<Value: Codable>(_ value: Value) throws -> Value {
-        try NexusMessageCoding.decode(Value.self, from: NexusMessageCoding.encode(value))
+        try NexusMessageCoding.decodeWithoutLoss(Value.self, from: NexusMessageCoding.encode(value))
     }
 
     @Test func theRequestsOfTheDumpViewerGoThroughTheCoding() throws {

@@ -204,11 +204,6 @@ private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bo
         try execute(other.file, [other.file] + arguments, environment: otherEnvironment)
     }
 
-    func fail(_ message: String) throws -> Never {
-        FileHandle.standardError.write(Data("\(message)\n".utf8))
-        throw ExitCode.failure
-    }
-
     do {
         let folder = FileManager.default.currentDirectoryPath
         let argumentFolder = ToolArguments.folder(of: tool, in: arguments, currentFolder: folder)
@@ -235,6 +230,7 @@ private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bo
         try run(other)
     case NexusResponse.unreadableRequest:
         if let other = nextProgram() {
+            FileHandle.standardError.write(Data("The background service of Nexus (nexusd) still runs the previous version. This \(tool.rawValue) is \(other.file), the next \(tool.rawValue) on the PATH.\n".utf8))
             try run(other)
         }
     default:
@@ -247,7 +243,7 @@ private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bo
     }
 
     if debug, command.xdebugFolder == nil {
-        try fail("nexusd is older than this nexus command. Open the Nexus app, so that it starts the new nexusd. Then run the command again.")
+        try fail(NexusResponse.olderNexusdText)
     }
 
     if let problem = command.startProblem {
@@ -1807,10 +1803,17 @@ func send(_ request: NexusRequest) async throws -> NexusResponse {
     }
 }
 
+func fail(_ message: String) throws -> Never {
+    FileHandle.standardError.write(Data("\(message)\n".utf8))
+    throw ExitCode.failure
+}
+
 func finish(_ response: NexusResponse) throws {
     switch response {
     case .done(let message):
         print(message)
+    case NexusResponse.unreadableRequest:
+        try fail(NexusResponse.olderNexusdText)
     case .failure(let message), .toolNotInstalled(let message):
         FileHandle.standardError.write(Data("\(withLogHint(message))\n".utf8))
         throw ExitCode.failure

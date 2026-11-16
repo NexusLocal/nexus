@@ -897,6 +897,8 @@ final class AppModel {
 
         do {
             switch try await client.send(request) {
+            case NexusResponse.unreadableRequest where waitsForNewNexusd:
+                return .failure(waitsForNewNexusdText)
             case .failure(let message), .toolNotInstalled(let message):
                 return .failure(message)
             case .portInUse(let conflict):

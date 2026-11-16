@@ -61,7 +61,7 @@ final class HelperService: NSObject, NSXPCListenerDelegate, NexusXPCService, @un
             let response: HelperResponse
 
             do {
-                let decoded = try NexusMessageCoding.decode(HelperRequest.self, from: request)
+                let decoded = try NexusMessageCoding.decodeWithoutLoss(HelperRequest.self, from: request)
                 if try Self.perform(decoded, with: files) {
                     Self.flushDNSCaches()
                 }
