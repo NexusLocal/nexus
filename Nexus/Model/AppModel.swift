@@ -61,8 +61,9 @@ enum Removal: Identifiable {
     case site(SiteItem)
     case parkedFolder(ParkedFolder)
     case package(PackageItem)
-    // dumpDays is the setting "Keep database dumps for" at the moment that the alert opened.
-    case workspace(WorkspaceInfo, of: SiteItem, dumpDays: Int)
+    // dumpDays is the setting "Keep database dumps for" at the moment that the alert opened. It is
+    // nil when the removal writes no dump.
+    case workspace(WorkspaceInfo, of: SiteItem, dumpDays: Int?)
 
     var id: String {
         switch self {

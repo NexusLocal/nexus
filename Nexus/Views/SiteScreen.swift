@@ -804,7 +804,7 @@ struct SiteScreen: View {
 
     private var workspacesNote: String {
         guard kind == .node else {
-            let note = "When git adds a worktree to this site, Nexus makes a workspace for it. This works for every tool that uses git worktrees. When git no longer lists the worktree, Nexus removes the workspace and keeps a dump of its databases in the trash."
+            let note = "When git adds a worktree to this site, Nexus makes a workspace for it. This works for every tool that uses git worktrees. When git no longer lists the worktree, Nexus removes the workspace. Settings > Workspaces decides if Nexus keeps a dump of its databases."
 
             return isWordPress ? "\(note) Each workspace gets its own copy of the database server and its own domain in WordPress. Its plugins and WP-Cron write only into that copy." : note
         }

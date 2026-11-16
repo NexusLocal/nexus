@@ -176,7 +176,8 @@ public actor EngineStateStore {
         // clone. A removed site also ends its records, and git then still lists its worktrees. A
         // server needs a record to run, so its data goes to the trash as a dump.
         state.worktrees = updated
-        state.databaseRemovals += removed.flatMap { site, workspaces in workspaces.flatMap { $0.databaseRemovals(site: site) } }
+        let writesDump = state.workspaceSettings.dumpsBeforeRemoval
+        state.databaseRemovals += removed.flatMap { site, workspaces in workspaces.flatMap { $0.databaseRemovals(site: site, writesDump: writesDump) } }
         try save()
         return WorktreeChange(changed: true, removed: removed)
     }

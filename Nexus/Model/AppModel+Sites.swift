@@ -280,17 +280,22 @@ extension AppModel {
     // The alert names the days of the trash. So it opens after one read of the settings.
     func askToRemove(_ workspace: WorkspaceInfo, of site: SiteItem) {
         Task {
-            removal = .workspace(workspace, of: site, dumpDays: await dumpDays())
+            removal = .workspace(workspace, of: site, dumpDays: await workspaceSettings().keptDumpDays)
         }
     }
 
-    // The setting "Keep database dumps for". Without an answer of nexusd it is the default.
+    // The setting "Keep database dumps for".
     func dumpDays() async -> Int {
+        await workspaceSettings().dumpDays
+    }
+
+    // Without an answer of nexusd the settings are the defaults.
+    private func workspaceSettings() async -> WorkspaceSettings {
         guard isLive, case .answer(.workspaceSettings(let settings)) = await outcome(of: .workspaceSettings) else {
-            return WorkspaceSettings().dumpDays
+            return WorkspaceSettings()
         }
 
-        return settings.dumpDays
+        return settings
     }
 
     func isRemoving(_ workspace: WorkspaceInfo) -> Bool {

@@ -482,7 +482,11 @@ private struct WorkspacesSettings: View {
                 Text("The button Review… on the Site screen shows the old workspaces of a site. A notification names them until they get activity or you remove them. Settings > General turns this notification on or off. Nexus never removes a workspace by itself.")
             }
 
+            // The design is the section "Removed workspaces" of "Settings Workspaces" in nexus.pen
+            // (owner, 2026-11-16).
             Section {
+                Toggle("Write a dump of each database first", isOn: setting(\.dumpsBeforeRemoval))
+
                 Picker("Keep database dumps for", selection: setting(\.dumpDays)) {
                     ForEach(Self.choices(Self.dayChoices, with: settings.dumpDays), id: \.self) { days in
                         Text(Count.text(days, "day")).tag(days)
@@ -509,7 +513,7 @@ private struct WorkspacesSettings: View {
             } header: {
                 Text("Removed workspaces")
             } footer: {
-                Text("When git no longer lists a worktree, Nexus removes its workspace. Before Nexus drops a database, it writes a dump to the trash.")
+                Text("When git no longer lists a worktree, Nexus removes its workspace. With the switch on, Nexus writes a dump of each database to the trash first. Without the dumps a removal is faster, but Nexus cannot give the data back.")
             }
 
             Section {

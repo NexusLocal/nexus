@@ -31,7 +31,7 @@ extension NexusEngine {
         publishSites()
 
         guard !old.isEmpty else {
-            return OldWorkspaceList(host: host, days: days, dumpDays: state.workspaceSettings.dumpDays, mainBranch: nil, workspaces: [])
+            return OldWorkspaceList(host: host, days: days, settings: state.workspaceSettings, mainBranch: nil, workspaces: [])
         }
 
         guard let repository = ProjectFolder.repository(of: site)?.root else {
@@ -52,7 +52,7 @@ extension NexusEngine {
         return OldWorkspaceList(
             host: host,
             days: days,
-            dumpDays: state.workspaceSettings.dumpDays,
+            settings: state.workspaceSettings,
             mainBranch: await mainBranch,
             workspaces: workspaces
         )

@@ -44,7 +44,7 @@ extension NexusEngine {
 
         await startDatabaseRemovals().value
 
-        let removals = last.databaseRemovals(site: target.key)
+        let removals = last.databaseRemovals(site: target.key, writesDump: await stateStore.current().workspaceSettings.dumpsBeforeRemoval)
         let dumpNames = removals.flatMap { removal in
             removal.databases.map { "-\(removal.server.instance)-\(Workspace.databaseName($0, workspace: name))." }
         }

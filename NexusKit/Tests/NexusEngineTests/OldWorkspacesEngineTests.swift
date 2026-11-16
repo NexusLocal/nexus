@@ -306,7 +306,7 @@ extension NexusEngineTests {
 
         #expect(await engine.handle(.oldWorkspaces(host: "shop.test", days: 0)) == .failure(message: "A workspace is old after at least 1 day."))
         #expect(await engine.handle(.oldWorkspaces(host: "nope.test")) == .failure(message: "Nexus has no site nope.test."))
-        #expect(await engine.handle(.oldWorkspaces(host: "shop.test")) == .oldWorkspaces(OldWorkspaceList(host: "shop.test", days: 5, dumpDays: 7, mainBranch: nil, workspaces: [])))
+        #expect(await engine.handle(.oldWorkspaces(host: "shop.test")) == .oldWorkspaces(OldWorkspaceList(host: "shop.test", days: 5, settings: WorkspaceSettings(), mainBranch: nil, workspaces: [])))
     }
 
     @Test func theSiteListNamesTheLimitOfOldWorkspaces() async throws {

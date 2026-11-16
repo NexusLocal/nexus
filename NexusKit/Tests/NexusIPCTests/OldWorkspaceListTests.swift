@@ -84,7 +84,7 @@ struct OldWorkspaceListTests {
     }
 
     @Test func theListSurvivesTheWire() throws {
-        let list = OldWorkspaceList(host: "shop.test", days: 5, dumpDays: 7, mainBranch: "development", workspaces: [
+        let list = OldWorkspaceList(host: "shop.test", days: 5, settings: WorkspaceSettings(), mainBranch: "development", workspaces: [
             workspace("ticket-101", daysAgo: 9, source: .page, merged: true, branchGone: true),
             workspace("ticket-115", daysAgo: 5, locked: "claude agent-a1b2"),
         ])
@@ -93,6 +93,18 @@ struct OldWorkspaceListTests {
         for response in [NexusResponse.oldWorkspaces(list), .oldWorkspaceNotices(notices)] {
             #expect(try NexusMessageCoding.decode(NexusResponse.self, from: NexusMessageCoding.encode(response)) == response)
         }
+    }
+
+    @Test func aListFromAnOlderNexusdKeepsTheDumps() throws {
+        let list = try NexusMessageCoding.decode(OldWorkspaceList.self, from: Data(#"{"host":"shop.test","days":5,"dumpDays":7,"workspaces":[]}"#.utf8))
+
+        #expect(list.keptDumpDays == 7)
+    }
+
+    @Test func aListWithoutTheDumpsKeepsNoDays() {
+        let list = OldWorkspaceList(host: "shop.test", days: 5, settings: WorkspaceSettings(dumpsBeforeRemoval: false), mainBranch: nil, workspaces: [])
+
+        #expect(list.keptDumpDays == nil)
     }
 
     @Test func theRequestsSurviveTheWire() throws {

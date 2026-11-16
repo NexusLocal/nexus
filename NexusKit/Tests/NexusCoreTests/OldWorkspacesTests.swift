@@ -63,6 +63,11 @@ struct OldWorkspacesTests {
         #expect(OldWorkspaces.confirmationMessage(names: ["ticket-101"], dumpDays: 1, hasDatabases: true) == "git removes the folder of ticket-101 with all its files. The branch stays. Nexus keeps a dump of its databases in the trash for 1 day.")
     }
 
+    @Test func withoutTheDumpsTheTextsSayThatTheDatabasesGo() {
+        #expect(OldWorkspaces.introText(days: 5, dumpDays: nil) == "These workspaces have no activity for 5 days or more. git removes the folder of each workspace that you choose, with all its files. The branches stay. Nexus drops the databases without a dump.")
+        #expect(OldWorkspaces.confirmationMessage(names: ["ticket-101"], dumpDays: nil, hasDatabases: true) == "git removes the folder of ticket-101 with all its files. The branch stays. Nexus drops its databases without a dump.")
+    }
+
     @Test func withoutDatabasesTheConfirmationNamesNoDump() {
         #expect(OldWorkspaces.confirmationMessage(names: ["ticket-101", "ticket-104"], dumpDays: 7, hasDatabases: false) == "git removes the folders of ticket-101 and ticket-104 with all their files. The branches stay.")
     }

@@ -67,7 +67,7 @@ Each workspace gets:
   uses them.
 
 A new worktree is ready within seconds, also with a large database. When you remove the worktree,
-Nexus removes the workspace. It keeps a dump of its databases in the trash for 7 days.
+Nexus removes the workspace. By default it keeps a dump of its databases in the trash for 7 days.
 
 <details>
 <summary><b>How a workspace works</b></summary>

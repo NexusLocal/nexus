@@ -56,7 +56,7 @@ extension CommandSection {
             CommandItem(command: "nexus workspace info --json", help: "Gives the URL, the databases and the ports."),
             CommandItem(command: "nexus workspace list", help: "Lists the workspaces of the current site. --old shows the old ones."),
             CommandItem(command: "nexus workspace stop | start", help: "Stops or starts a workspace. --keep keeps it running.", examples: ["nexus workspace stop", "nexus workspace start --keep"]),
-            CommandItem(command: "nexus workspace remove", help: "Removes the workspace and keeps a dump."),
+            CommandItem(command: "nexus workspace remove", help: "Removes the workspace. By default Nexus keeps a dump."),
             CommandItem(command: "nexus workspace env shop.test", help: "Shows which keys Nexus changes in the .env of a workspace."),
             CommandItem(command: "nexus workspace retry shop.test ticket-123", help: "Sets up a workspace again, for example after you fix why it is not isolated."),
         ]),

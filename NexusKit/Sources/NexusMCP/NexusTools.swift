@@ -270,9 +270,9 @@ public enum NexusTools {
         NexusToolSpec(
             name: "remove_workspace",
             title: "Remove a workspace",
-            summary: "Removes a workspace and its git worktree. Its database stays in the trash.",
+            summary: "Removes a workspace and its git worktree. By default a dump stays in the trash.",
             level: .remove,
-            description: "Removes a workspace and its git worktree. git refuses a worktree with changes that are not committed, a worktree with submodules and a locked worktree. Ask the user before you commit or discard changes in a worktree. Nexus keeps a dump of each database of the workspace in the trash. The setting \"Keep database dumps for\" of Nexus decides how long.",
+            description: "Removes a workspace and its git worktree. git refuses a worktree with changes that are not committed, a worktree with submodules and a locked worktree. Ask the user before you commit or discard changes in a worktree. By default Nexus keeps a dump of each database of the workspace in the trash. The settings \"Write a dump of each database first\" and \"Keep database dumps for\" of Nexus decide if and how long.",
             properties: [
                 "workspace": ["type": "string", "description": "The name or the folder of the workspace. The default is the workspace of the project folder of this session."],
                 "site": ["type": "string", "description": "The host of the site, when more sites have a workspace with this name."],

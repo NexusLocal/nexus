@@ -672,8 +672,8 @@ struct WorkspaceCommand: AsyncParsableCommand {
 
     struct Remove: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Removes the workspace and keeps a dump.",
-            discussion: "Nexus first checks that git can remove the worktree. git refuses a locked worktree, a worktree with changes that are not committed and a worktree with submodules. --force removes a worktree with changes or submodules. A locked worktree always stays. Then Nexus runs the commands of nexus site edit --removal-command in the workspace and git worktree remove. Nexus then writes a dump of each database to the trash and removes the database server of the workspace."
+            abstract: "Removes the workspace. By default Nexus keeps a dump.",
+            discussion: "Nexus first checks that git can remove the worktree. git refuses a locked worktree, a worktree with changes that are not committed and a worktree with submodules. --force removes a worktree with changes or submodules. A locked worktree always stays. Then Nexus runs the commands of nexus site edit --removal-command in the workspace and git worktree remove. By default Nexus then writes a dump of each database to the trash. The switch \"Write a dump of each database first\" in Settings > Workspaces turns the dumps off. Then Nexus removes the database server of the workspace."
         )
 
         @Argument(help: "The name of the workspace. The default is the workspace of the current folder.") var name: String?
@@ -684,7 +684,7 @@ struct WorkspaceCommand: AsyncParsableCommand {
             let target = try await WorkspaceCommand.target(name: name, site: site)
             let host = target.site.hosts.first ?? ""
 
-            print("Nexus starts the removal of the workspace \(target.workspace.name). A dump of a large database can take some minutes.")
+            print("Nexus starts the removal of the workspace \(target.workspace.name). With the dumps on, a dump of a large database can take some minutes.")
             try finish(try await send(.removeWorkspace(host: host, name: target.workspace.name, force: force)))
         }
     }

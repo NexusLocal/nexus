@@ -77,8 +77,18 @@ public enum OldWorkspaces {
         }
     }
 
-    public static func introText(days: Int, dumpDays: Int) -> String {
-        "These workspaces have no activity for \(Count.text(days, "day")) or more. git removes the folder of each workspace that you choose, with all its files. The branches stay. Nexus keeps a dump of the databases in the trash for \(Count.text(dumpDays, "day"))."
+    // dumpDays is nil when a removal writes no dump.
+    public static func introText(days: Int, dumpDays: Int?) -> String {
+        "These workspaces have no activity for \(Count.text(days, "day")) or more. git removes the folder of each workspace that you choose, with all its files. The branches stay. \(dumpSentence(of: "the databases", dumpDays: dumpDays))"
+    }
+
+    // The one promise of each removal text. databases is a name or a group, such as "its databases".
+    public static func dumpSentence(of databases: String, dumpDays: Int?) -> String {
+        guard let dumpDays else {
+            return "Nexus drops \(databases) without a dump."
+        }
+
+        return "Nexus keeps a dump of \(databases) in the trash for \(Count.text(dumpDays, "day"))."
     }
 
     // Without a host the text is about each site, as nexus workspace list --old outside a site.
@@ -101,11 +111,11 @@ public enum OldWorkspaces {
 
     // A workspace without databases gets no dump. So that sentence goes when no chosen workspace
     // has a database.
-    public static func confirmationMessage(names: [String], dumpDays: Int, hasDatabases: Bool) -> String {
+    public static func confirmationMessage(names: [String], dumpDays: Int?, hasDatabases: Bool) -> String {
         let one = names.count == 1
         let folders = one ? "the folder of \(names[0]) with all its files" : "the folders of \(EnglishList.joined(names)) with all their files"
         let branches = one ? "The branch stays." : "The branches stay."
-        let dump = hasDatabases ? " Nexus keeps a dump of \(one ? "its" : "their") databases in the trash for \(Count.text(dumpDays, "day"))." : ""
+        let dump = hasDatabases ? " \(dumpSentence(of: one ? "its databases" : "their databases", dumpDays: dumpDays))" : ""
 
         return "git removes \(folders). \(branches)\(dump)"
     }

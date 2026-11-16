@@ -231,9 +231,26 @@ struct WorkspaceHostPairTests {
         #expect(settings.worktreeFolder == nil)
     }
 
-    @Test func settingsFromBeforeOldWorkspacesGetTheDefaults() throws {
+    @Test func withoutTheDumpsAWorkspaceKeepsNoDays() {
+        #expect(WorkspaceSettings(dumpDays: 3, dumpsBeforeRemoval: false).keptDumpDays == nil)
+    }
+
+    @Test func aRemovalFromBeforeTheSwitchOfTheDumpsKeepsADump() throws {
+        let server = WorkspaceDatabaseServer(instance: "mysql-8.4", folder: "/clones/one/mysql-8.4/", port: 20000, account: .standard, isComplete: true)
+        let old = try JSONEncoder().encode(DatabaseRemoval(server: server, databases: ["shop"], workspace: "fix", site: "/w"))
+        var fields = try #require(try JSONSerialization.jsonObject(with: old) as? [String: Any])
+        fields["writesDump"] = nil
+
+        let removal = try JSONDecoder().decode(DatabaseRemoval.self, from: JSONSerialization.data(withJSONObject: fields))
+
+        #expect(removal.keepsDump)
+    }
+
+    @Test func settingsFromBeforeOldWorkspacesAndTheSwitchOfTheDumpsGetTheDefaults() throws {
         let settings = try JSONDecoder().decode(WorkspaceSettings.self, from: Data(#"{"dumpDays": 3}"#.utf8))
 
+        #expect(settings.dumpsBeforeRemoval)
+        #expect(settings.keptDumpDays == 3)
         #expect(settings.oldAfterDays == 5)
         #expect(settings.notifyOldEvery == 1)
     }

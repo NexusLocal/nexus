@@ -120,20 +120,38 @@ public struct DatabaseRemoval: Codable, Sendable, Hashable {
     public let databases: [String]
     public let workspace: String
     public let site: String
+    // The switch of Settings > Workspaces when the removal began. A later change of the switch
+    // does not change what the removal promised.
+    public let writesDump: Bool
 
-    public var keepsDump: Bool { server.isComplete }
+    public var keepsDump: Bool { writesDump && server.isComplete }
 
-    public init(server: WorkspaceDatabaseServer, databases: [String], workspace: String, site: String) {
+    public init(server: WorkspaceDatabaseServer, databases: [String], workspace: String, site: String, writesDump: Bool = true) {
         self.server = server
         self.databases = databases
         self.workspace = workspace
         self.site = site
+        self.writesDump = writesDump
+    }
+
+    // A removal of a nexusd before 0.6.2 has no switch and writes a dump.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        server = try container.decode(WorkspaceDatabaseServer.self, forKey: .server)
+        databases = try container.decode([String].self, forKey: .databases)
+        workspace = try container.decode(String.self, forKey: .workspace)
+        site = try container.decode(String.self, forKey: .site)
+        writesDump = try container.decodeIfPresent(Bool.self, forKey: .writesDump) ?? true
     }
 }
 
 // The settings of the Workspaces tab (D53, D49).
 public struct WorkspaceSettings: Codable, Sendable, Equatable {
     public var dumpDays: Int
+    // Without the dumps a removal is faster, but the data of the workspace is gone (owner,
+    // 2026-11-16).
+    public var dumpsBeforeRemoval: Bool
     public var runsComposerInstall: Bool
     public var runsNpmInstall: Bool
     // What a new workspace of a site on Default gets (step 3 of the order of the work).
@@ -152,6 +170,7 @@ public struct WorkspaceSettings: Codable, Sendable, Equatable {
 
     public init(
         dumpDays: Int = 7,
+        dumpsBeforeRemoval: Bool = true,
         runsComposerInstall: Bool = true,
         runsNpmInstall: Bool = true,
         newWorkspaceDatabases: WorkspaceDatabaseKind = .copy,
@@ -162,6 +181,7 @@ public struct WorkspaceSettings: Codable, Sendable, Equatable {
         stopIdleAfter: WorkspaceIdleTime = .oneHour
     ) {
         self.dumpDays = dumpDays
+        self.dumpsBeforeRemoval = dumpsBeforeRemoval
         self.runsComposerInstall = runsComposerInstall
         self.runsNpmInstall = runsNpmInstall
         self.newWorkspaceDatabases = newWorkspaceDatabases
@@ -173,7 +193,7 @@ public struct WorkspaceSettings: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case dumpDays, runsComposerInstall, runsNpmInstall, newWorkspaceDatabases, worktreePlace, worktreeFolder, oldAfterDays, notifyOldEvery, stopIdleAfter
+        case dumpDays, dumpsBeforeRemoval, runsComposerInstall, runsNpmInstall, newWorkspaceDatabases, worktreePlace, worktreeFolder, oldAfterDays, notifyOldEvery, stopIdleAfter
     }
 
     // The settings of an older nexusd have no choice of the databases. Their workspaces got a copy.
@@ -185,6 +205,7 @@ public struct WorkspaceSettings: Codable, Sendable, Equatable {
         let defaults = WorkspaceSettings()
 
         dumpDays = try container.decodeIfPresent(Int.self, forKey: .dumpDays) ?? 7
+        dumpsBeforeRemoval = try container.decodeIfPresent(Bool.self, forKey: .dumpsBeforeRemoval) ?? defaults.dumpsBeforeRemoval
         runsComposerInstall = try container.decodeIfPresent(Bool.self, forKey: .runsComposerInstall) ?? true
         runsNpmInstall = try container.decodeIfPresent(Bool.self, forKey: .runsNpmInstall) ?? true
         newWorkspaceDatabases = try container.decodeIfPresent(WorkspaceDatabaseKind.self, forKey: .newWorkspaceDatabases) ?? .copy
@@ -193,6 +214,11 @@ public struct WorkspaceSettings: Codable, Sendable, Equatable {
         oldAfterDays = try container.decodeIfPresent(Int.self, forKey: .oldAfterDays) ?? defaults.oldAfterDays
         notifyOldEvery = try container.decodeIfPresent(Int.self, forKey: .notifyOldEvery) ?? defaults.notifyOldEvery
         stopIdleAfter = (try? container.decodeIfPresent(WorkspaceIdleTime.self, forKey: .stopIdleAfter)) ?? defaults.stopIdleAfter
+    }
+
+    // The days of the trash for the texts of a removal. nil when a removal writes no dump.
+    public var keptDumpDays: Int? {
+        dumpsBeforeRemoval ? dumpDays : nil
     }
 }
 
@@ -574,9 +600,9 @@ public struct Workspace: Codable, Sendable, Hashable, Identifiable {
         stoppedAfter = try? container.decodeIfPresent(WorkspaceIdleTime.self, forKey: .stoppedAfter)
     }
 
-    public func databaseRemovals(site: String) -> [DatabaseRemoval] {
+    public func databaseRemovals(site: String, writesDump: Bool) -> [DatabaseRemoval] {
         servers.map { server in
-            DatabaseRemoval(server: server, databases: databases.filter { $0.instance == server.instance }.map(\.name), workspace: name, site: site)
+            DatabaseRemoval(server: server, databases: databases.filter { $0.instance == server.instance }.map(\.name), workspace: name, site: site, writesDump: writesDump)
         }
     }
 

@@ -36,7 +36,7 @@ struct OldWorkspacesSheet: View {
                 .font(.headline)
 
             if let list {
-                Text(OldWorkspaces.introText(days: list.days, dumpDays: list.dumpDays))
+                Text(OldWorkspaces.introText(days: list.days, dumpDays: list.keptDumpDays))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -84,7 +84,7 @@ struct OldWorkspacesSheet: View {
 
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(OldWorkspaces.confirmationMessage(names: chosenRows.map(\.name), dumpDays: list?.dumpDays ?? WorkspaceSettings().dumpDays, hasDatabases: chosenRows.contains(where: \.hasDatabases)))
+            Text(OldWorkspaces.confirmationMessage(names: chosenRows.map(\.name), dumpDays: list?.keptDumpDays, hasDatabases: chosenRows.contains(where: \.hasDatabases)))
         }
         .sheet(item: $errorReport) { report in
             ErrorDetailsSheet(report: report)

@@ -237,9 +237,10 @@ struct MainWindow: View {
     // The design is "Alert Remove Workspace" in nexus.pen (owner, 2026-11-15). git deletes the whole
     // folder, also the files that git ignores. The branch keeps the commits. The other sites of the
     // project lose the workspace too. A name on two servers gives two dumps with one name.
-    private func workspaceRemoval(_ workspace: WorkspaceInfo, of site: SiteItem, dumpDays: Int) -> String {
+    private func workspaceRemoval(_ workspace: WorkspaceInfo, of site: SiteItem, dumpDays: Int?) -> String {
         let folder = (workspace.worktree as NSString).abbreviatingWithTildeInPath
-        let dumps = Array(Set((workspace.databases ?? []).map { Workspace.databaseName($0.name, workspace: workspace.name) })).sorted()
+        let databases = Array(Set((workspace.databases ?? []).map(\.name))).sorted()
+        let dumps = databases.map { Workspace.databaseName($0, workspace: workspace.name) }.sorted()
         let preparing = workspace.state == nil || workspace.state == .preparing
         let others = model.allSites.filter { other in other.host != site.host && other.workspaces.contains { $0.worktree == workspace.worktree } }.map(\.host)
         var sentences = ["git removes the folder \(folder) with all its files."]
@@ -248,14 +249,14 @@ struct MainWindow: View {
             sentences.append("The branch \(branch) stays.")
         }
 
-        if !dumps.isEmpty {
-            sentences.append("Nexus keeps a dump of \(EnglishList.joined(dumps)) in the trash for \(Count.text(dumpDays, "day")).")
+        if !databases.isEmpty {
+            sentences.append(OldWorkspaces.dumpSentence(of: EnglishList.joined(dumpDays == nil ? databases : dumps), dumpDays: dumpDays))
         } else if !preparing {
             sentences.append("This workspace has no databases. So the trash gets no dump.")
         }
 
         if preparing {
-            sentences.append("The setup of the workspace stops. A database copy that did not end gets no dump.")
+            sentences.append(dumpDays == nil ? "The setup of the workspace stops." : "The setup of the workspace stops. A database copy that did not end gets no dump.")
         }
 
         if !others.isEmpty {

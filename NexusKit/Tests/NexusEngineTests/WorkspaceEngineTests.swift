@@ -1276,6 +1276,22 @@ extension NexusEngineTests {
         #expect(await engine.stateStore.current().databaseRemovals.isEmpty)
     }
 
+    @Test func aRemovalWithoutADumpDropsACompleteCloneAlsoWhenTheSwitchIsOnAgain() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = try makeSiteEngine(root: root)
+        let clone = root.appending(path: "clones/one/mysql-8.4", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: clone, withIntermediateDirectories: true)
+        let server = WorkspaceDatabaseServer(instance: "mysql-8.4", folder: clone.path(percentEncoded: false), port: 20000, account: .standard, isComplete: true)
+
+        try await engine.stateStore.update { $0.databaseRemovals = [DatabaseRemoval(server: server, databases: ["shop"], workspace: "fix", site: "/w", writesDump: false)] }
+        await engine.startDatabaseRemovals().value
+
+        #expect(!FileManager.default.fileExists(atPath: clone.deletingLastPathComponent().path(percentEncoded: false)))
+        #expect(await engine.dumps().isEmpty)
+        #expect(await engine.stateStore.current().databaseRemovals.isEmpty)
+    }
+
     @Test func aPackageWithTheServerOfAWorkspaceStays() async throws {
         let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -3662,6 +3678,21 @@ extension NexusEngineTests {
             #expect(try await record(engine, of: shop).state == .ready)
             #expect(try await workspaceClient(engine, id: "mysql-8.4", of: shop).exists("shop"))
         }
+    }
+
+    @Test func aRemovalTakesTheSwitchOfTheDumpsWhenItBegins() async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = EngineStateStore(paths: NexusPaths(root: root))
+        var workspace = Workspace(name: "fix", worktree: "/w/fix", folder: "/w/fix")
+        workspace.servers = [WorkspaceDatabaseServer(instance: "mysql-8.4", folder: "/clones/one/mysql-8.4/", port: 20000, account: .standard, isComplete: true)]
+        try await store.update { $0.workspaceSettings.dumpsBeforeRemoval = false }
+        _ = try await store.updateWorktrees { _ in ["/w": SiteWorktrees(workspaces: [workspace])] }
+
+        _ = try await store.updateWorktrees { _ in ["/w": SiteWorktrees()] }
+        try await store.update { $0.workspaceSettings.dumpsBeforeRemoval = true }
+
+        #expect(await store.current().databaseRemovals.map(\.keepsDump) == [false])
     }
 
     @Test func aChangeOfTheWorktreesKeepsWhatASetupWroteDuringTheRunOfGit() async throws {

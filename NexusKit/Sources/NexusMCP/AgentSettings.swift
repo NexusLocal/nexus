@@ -49,7 +49,7 @@ public enum AgentLevel: String, Codable, Sendable, CaseIterable, Comparable {
         switch self {
         case .read: ""
         case .change: "No agent can delete a database or your files."
-        case .remove: "No agent can delete a database or your files. A removed workspace keeps a copy of its database in the trash for the time in Settings > Workspaces."
+        case .remove: "No agent can delete a database or your files. By default a removed workspace keeps a copy of its database in the trash for the time in Settings > Workspaces."
         }
     }
 }

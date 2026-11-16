@@ -489,7 +489,7 @@ extension AppModel {
         let now = Date.now
         let old = sampleShopRows.filter { OldWorkspaces.isOld($0.date(now: now), days: settings.oldAfterDays, now: now) }
 
-        return OldWorkspaceList(host: host, days: settings.oldAfterDays, dumpDays: settings.dumpDays, mainBranch: "development", workspaces: old.map { row in
+        return OldWorkspaceList(host: host, days: settings.oldAfterDays, settings: settings, mainBranch: "development", workspaces: old.map { row in
             OldWorkspace(
                 name: row.name,
                 branch: row.name,

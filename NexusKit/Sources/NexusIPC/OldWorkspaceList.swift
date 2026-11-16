@@ -8,15 +8,22 @@ public struct OldWorkspaceList: Codable, Sendable, Equatable {
     public let host: String
     public let days: Int
     public let dumpDays: Int
+    // nil from a nexusd before 0.6.2, which writes a dump at each removal.
+    public let dumpsBeforeRemoval: Bool?
     public let mainBranch: String?
     public let workspaces: [OldWorkspace]
 
-    public init(host: String, days: Int, dumpDays: Int, mainBranch: String?, workspaces: [OldWorkspace]) {
+    public init(host: String, days: Int, settings: WorkspaceSettings, mainBranch: String?, workspaces: [OldWorkspace]) {
         self.host = host
         self.days = days
-        self.dumpDays = dumpDays
+        self.dumpDays = settings.dumpDays
+        self.dumpsBeforeRemoval = settings.dumpsBeforeRemoval
         self.mainBranch = mainBranch
         self.workspaces = workspaces
+    }
+
+    public var keptDumpDays: Int? {
+        WorkspaceSettings(dumpDays: dumpDays, dumpsBeforeRemoval: dumpsBeforeRemoval ?? true).keptDumpDays
     }
 }
 
