@@ -239,6 +239,7 @@ final class AppModel {
     var restartsForNewBuild: Bool {
         versionCheck.restartRuns
     }
+    @ObservationIgnored private var deadlineRestart: (time: Date, timer: Task<Void, Never>)?
     @ObservationIgnored private var pendingStarts: Set<String> = []
     // Read once at the launch. A later read could see the nexusd file of a newer build.
     private static let appIdentity = NexusVersion.identity()
@@ -883,7 +884,7 @@ final class AppModel {
 
         if waitsForNewNexusd, !request.isSafeForAnOlderNexusd {
             ActivityTracker.log.write("request", "\(request.activitySummary) waits for the new nexusd")
-            return .failure(Self.waitsForNewNexusdText)
+            return .failure(waitsForNewNexusdText)
         }
 
         do {
@@ -901,9 +902,48 @@ final class AppModel {
         }
     }
 
-    private static let newNexusdText = "Nexus starts version \(NexusVersion.current()) when its current work ends."
-    static let newNexusdBannerText = "\(newNexusdText) Until then you can start and stop services and workspaces, but you cannot make other changes."
-    static let waitsForNewNexusdText = "\(newNexusdText) Until then nexusd cannot take this change. Try again then, or click Restart Now on the Overview."
+    private static let appVersion = NexusVersion.current()
+
+    private var newNexusdText: String {
+        let latest = versionCheck.restartDeadline.map { ", at the latest at \($0.clockTime)" } ?? ""
+        return "Nexus starts version \(Self.appVersion) when its current work ends\(latest)."
+    }
+
+    var newNexusdBannerText: String {
+        "\(newNexusdText) Until then you can start and stop services and workspaces, but you cannot make other changes."
+    }
+
+    private var waitsForNewNexusdText: String {
+        "\(newNexusdText) Until then nexusd cannot take this change. Try again then, or click Restart Now on the Overview."
+    }
+
+    // An older nexusd sends no event while it waits for its work. A task that hangs sends none
+    // either. So the deadline has a timer of its own.
+    private func planRestartAtTheDeadline() {
+        let deadline = isLive ? versionCheck.restartDeadline : nil
+
+        guard deadline != deadlineRestart?.time else {
+            return
+        }
+
+        deadlineRestart?.timer.cancel()
+        deadlineRestart = deadline.map { time in (time, restartTimer(at: time)) }
+    }
+
+    // The check uses the planned time. So a change of the clock of the Mac during the sleep does
+    // not skip the restart.
+    private func restartTimer(at time: Date) -> Task<Void, Never> {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(0, time.timeIntervalSinceNow)))
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            self?.deadlineRestart = nil
+            self?.restartOldNexusd(at: time)
+        }
+    }
 
     func restartForNewBuild(from place: ActionPlace) {
         guard versionCheck.beginRestart() else {
@@ -977,6 +1017,7 @@ final class AppModel {
             versionCheck.received(build: list.build, updateBuild: list.updateBuild)
             nexusdProblem = versionProblem
             restartOldNexusd()
+            planRestartAtTheDeadline()
             let previous = services
             let versions = Set(services.map { "\($0.id) \($0.version)" })
             // The launch loads the installed packages already. So the first list only gets noted.
@@ -1024,6 +1065,7 @@ final class AppModel {
             sitesSinceConnection = false
             nexusdProblem = .unreachable(reason)
             versionCheck.connectionEnded()
+            planRestartAtTheDeadline()
             show(TaskList(tasks: []))
         case .unreadable(let reason):
             nexusdProblem = .otherVersion(reason)
@@ -1036,8 +1078,12 @@ final class AppModel {
 
     // A restart also ends the requests that nexusd still works on. The update check runs at each
     // launch, and it can start downloads at its end. So the restart waits for these too.
-    func restartOldNexusd() {
-        guard versionCheck.takeRestart(tasksRun: !tasks.isEmpty || checkingPackages || !startingDownloads.isEmpty) else {
+    func restartOldNexusd(at now: Date = .now) {
+        guard isLive else {
+            return
+        }
+
+        guard versionCheck.takeRestart(tasksRun: !tasks.isEmpty || checkingPackages || !startingDownloads.isEmpty, at: now) else {
             return
         }
 

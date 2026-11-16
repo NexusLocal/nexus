@@ -153,13 +153,68 @@ struct NexusdVersionCheckTests {
         #expect(restarts)
     }
 
-    @Test func aNexusdThatStartsTheBuildOfTheAppGetsNoRestartFromTheApp() {
+    @Test func anOlderNexusdThatStartsTheBuildOfTheAppGetsTheRestartOfTheAppOnlyAtTheDeadline() {
         var check = NexusdVersionCheck(appBuild: "13")
+        let start = Date(timeIntervalSince1970: 1_000_000)
+
+        check.received(build: "12", updateBuild: "13", at: start)
+        let beforeTheDeadline = check.takeRestart(tasksRun: false, at: start.addingTimeInterval(599))
+        let atTheDeadline = check.takeRestart(tasksRun: false, at: start.addingTimeInterval(NexusdVersionCheck.longestWait))
+
+        #expect(!beforeTheDeadline)
+        #expect(atTheDeadline)
+    }
+
+    @Test func aNewConnectionToTheSameOlderNexusdKeepsTheDeadline() {
+        var check = NexusdVersionCheck(appBuild: "12")
+        let start = Date(timeIntervalSince1970: 1_000_000)
+
+        check.received(build: "11", at: start)
+        check.connectionEnded()
+        check.received(build: "11", at: start.addingTimeInterval(60))
+
+        #expect(check.restartDeadline == start.addingTimeInterval(NexusdVersionCheck.longestWait))
+    }
+
+    @Test func aRestartThatAlreadyCountsShowsNoDeadline() {
+        var check = NexusdVersionCheck(appBuild: "13", lastRestartBuild: "13")
 
         check.received(build: "12", updateBuild: "13")
+
+        #expect(check.waitsForNewNexusd)
+        #expect(check.restartDeadline == nil)
+    }
+
+    @Test func aNewerNexusdThatStartsTheBuildOfTheAppGetsNoRestartFromTheApp() {
+        var check = NexusdVersionCheck(appBuild: "13")
+
+        check.received(build: "14", updateBuild: "13")
         let restarts = check.takeRestart(tasksRun: false)
 
         #expect(!restarts)
+    }
+
+    @Test func aTaskOfAnOlderNexusdGetsAtMostTheLongestWait() {
+        var check = NexusdVersionCheck(appBuild: "12")
+        let start = Date(timeIntervalSince1970: 1_000_000)
+
+        check.received(build: "11", updateBuild: "12", at: start)
+        check.received(build: "11", updateBuild: "12", at: start.addingTimeInterval(300))
+        let deadline = check.restartDeadline
+        let beforeTheEnd = check.takeRestart(tasksRun: true, at: start.addingTimeInterval(599))
+        let atTheEnd = check.takeRestart(tasksRun: true, at: start.addingTimeInterval(600))
+
+        #expect(deadline == start.addingTimeInterval(NexusdVersionCheck.longestWait))
+        #expect(!beforeTheEnd)
+        #expect(atTheEnd)
+    }
+
+    @Test func aNewerNexusdHasNoDeadline() {
+        var check = NexusdVersionCheck(appBuild: "12")
+
+        check.received(build: "13")
+
+        #expect(check.restartDeadline == nil)
     }
 
     @Test func aNexusdThatStartsTheBuildOfTheAppShowsNoProblemWhileItsWorkRuns() {

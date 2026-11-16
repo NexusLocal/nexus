@@ -32,7 +32,7 @@ struct OverviewScreen: View {
                 }
 
                 if model.waitsForNewNexusd {
-                    InfoBanner(text: AppModel.newNexusdBannerText) {
+                    InfoBanner(text: model.newNexusdBannerText) {
                         Button("Restart Now") {
                             model.restartForNewBuild(from: .window)
                         }

@@ -1,19 +1,26 @@
+import Foundation
 import NexusCore
 
 // An update or a move replaces the files of the app, but a running nexusd keeps its old code. A
-// nexusd after 0.1.1 starts the new build of its app by itself when no work runs, and it names that
-// build in updateBuild. The app then waits. In every other case the app restarts nexusd one time for
-// each build of the app, also over more launches of the app. Examples are a nexusd of 0.1.1, and a
-// new app in another folder than the app of nexusd. The app waits for running tasks, because a
-// restart ends them. A second restart does not help. It only stops the services again.
+// nexusd after 0.1.1 starts the new build of its app by itself when no work runs. It names that
+// build in updateBuild. The app cannot see all the work of an older nexusd. So the app waits for
+// it, but at most longestWait (owner, 2026-11-16). Then the app restarts it. A mistake in an older
+// nexusd then cannot keep it running. Another nexusd gets the restart of the app after its tasks.
+// Examples are a nexusd of 0.1.1 and a nexusd of the app in another folder. The app restarts
+// nexusd one time for each build of the app, also over more launches of the app. A second restart
+// does not help. It only stops the services again.
 //
 // An event that the app cannot read gives no restart. The app cannot see the running tasks then.
 // The app shows the problem with a button, and ReleaseEventTests keep the events of each release
 // readable.
 public struct NexusdVersionCheck: Sendable, Equatable {
+    public static let longestWait: TimeInterval = 600
+
     private let appBuild: String
     private var nexusdIsOld = false
     private var nexusdIsOlder = false
+    // A new connection to the same older nexusd keeps the time.
+    private var olderSince: Date?
     private var nexusdStartsThisBuild = false
     private var restarted: Bool
     // The old nexusd still sends events while it stops its services. Only an event after the end
@@ -37,24 +44,41 @@ public struct NexusdVersionCheck: Sendable, Equatable {
         nexusdIsOlder && !restartDidNotHelp
     }
 
+    public var restartDeadline: Date? {
+        guard waitsForNewNexusd, !restarted else {
+            return nil
+        }
+
+        return olderSince?.addingTimeInterval(Self.longestWait)
+    }
+
     public mutating func connectionEnded() {
         restartEnded = restarted
         restartRuns = false
         nexusdIsOlder = false
     }
 
-    public mutating func received(build: String?, updateBuild: String? = nil) {
+    public mutating func received(build: String?, updateBuild: String? = nil, at now: Date = .now) {
         nexusdIsOld = build != appBuild
         nexusdIsOlder = NexusVersion.isOlder(build, than: appBuild)
         nexusdStartsThisBuild = updateBuild == appBuild
+        olderSince = nexusdIsOlder ? olderSince ?? now : nil
 
         if !nexusdIsOld {
             restartRuns = false
         }
     }
 
-    public mutating func takeRestart(tasksRun: Bool) -> Bool {
-        guard nexusdIsOld, !nexusdStartsThisBuild, !restarted, !tasksRun else {
+    public mutating func takeRestart(tasksRun: Bool, at now: Date = .now) -> Bool {
+        guard nexusdIsOld, !restarted else {
+            return false
+        }
+
+        if let restartDeadline, now >= restartDeadline {
+            return beginRestart()
+        }
+
+        guard !nexusdStartsThisBuild, !tasksRun else {
             return false
         }
 
