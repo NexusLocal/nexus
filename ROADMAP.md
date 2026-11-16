@@ -25,6 +25,8 @@ In this order:
 
 ## Done recently
 
+- **0.6.3:** a notice when Local, Herd, Valet or another app also needs ports 80 and 443, .local
+  as a choice for the domain of your sites, and a fix for the message of a failed port change.
 - **0.6.2:** a switch to remove a workspace without a dump of its databases, and a fix for a
   crash of the background service.
 - **0.6.1:** an update no longer loses a change while the background service ends its work, and
