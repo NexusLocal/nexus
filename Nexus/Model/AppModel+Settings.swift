@@ -473,7 +473,13 @@ extension AppModel {
             .map { "\($0) becomes \(HostName.movingTLD($0, from: settings.tld, to: tld))" }
             ?? "shop.\(settings.tld) becomes shop.\(tld)"
 
-        return "Every site gets a new name: \(example). The old names stop working. Change APP_URL in the .env file of each site yourself."
+        let change = "Every site gets a new name: \(example). The old names stop working. Change APP_URL in the .env file of each site yourself."
+
+        guard HostName.usesHostsFile(tld) else {
+            return change
+        }
+
+        return "\(change)\n\n\(HostName.hostsFileNote(tld)) When another app has a site with the same name, the app with ports 80 and 443 opens it."
     }
 
     func checkNotificationPermission() async {

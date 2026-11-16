@@ -170,9 +170,6 @@ struct ActionFailure: Identifiable {
 }
 
 struct AppSettings {
-    // The only endings that are safe for the dev domain (D28).
-    static let devDomains = ["test", "internal", "localhost"]
-
     var terminals: [AppChoice] = []
     var terminal = ""
     var editors: [AppChoice] = []

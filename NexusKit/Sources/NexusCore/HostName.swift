@@ -5,6 +5,7 @@ public enum HostNameError: Error, Equatable, CustomStringConvertible {
     case publicHost(String)
     case unsupportedTLD(String)
     case wildcardOutsideDevTLD(String, tld: String)
+    case wildcardInHostsFile(String, tld: String)
 
     public var description: String {
         switch self {
@@ -12,10 +13,12 @@ public enum HostNameError: Error, Equatable, CustomStringConvertible {
             "\(host) is not a valid host name. Use letters, digits, hyphens and dots, for example shop.test."
         case .wildcardOutsideDevTLD(let host, let tld):
             "\(host) starts with *. Such a name works only in the dev domain .\(tld), because /etc/hosts has no such names. Use for example *.shop.\(tld)."
+        case .wildcardInHostsFile(let host, let tld):
+            "\(host) starts with *. Such a name does not work with .\(tld). \(HostName.hostsFileReason(tld)) Add each subdomain as an alias, for example blog.shop.\(tld)."
         case .publicHost(let host):
             "\(host) can be a real name in public DNS, so Nexus does not use it. Use a name that ends in \(HostName.privateSuffixes.sorted().map { ".\($0)" }.joined(separator: ", "))."
         case .unsupportedTLD(let tld):
-            ".\(tld) cannot be the dev TLD. Nexus supports \(HostName.devTLDs.sorted().map { ".\($0)" }.joined(separator: ", "))."
+            ".\(tld) cannot be the dev TLD. Nexus supports \(HostName.devTLDList(conjunction: "and"))."
         }
     }
 }
@@ -23,12 +26,37 @@ public enum HostNameError: Error, Equatable, CustomStringConvertible {
 public enum HostName {
     // Only names that public DNS never uses. A resolver file for a real TLD, such as .com or
     // .dev, would send every lookup of that TLD on this Mac to Nexus.
-    public static let devTLDs: Set<String> = ["test", "internal", "localhost"]
+    public static let devTLDsInOrder = ["test", "internal", "localhost", "local"]
+    public static let devTLDs = Set(devTLDsInOrder)
+
+    public static func devTLDList(conjunction: String) -> String {
+        EnglishList.joined(devTLDsInOrder.map { ".\($0)" }, conjunction: conjunction)
+    }
+
+    // macOS sends .local names to Bonjour and not to a resolver file (issue #6). So each name needs
+    // its own line in /etc/hosts, and a name with *. cannot work.
+    public static func usesHostsFile(_ tld: String) -> Bool {
+        tld == "local"
+    }
+
+    // The DNS server of Nexus answers each name in the dev TLD, so these names need no line in
+    // /etc/hosts and can start with *.
+    public static func dnsAnswers(_ host: String, tld: String) -> Bool {
+        !usesHostsFile(tld) && (host == tld || host.hasSuffix(".\(tld)"))
+    }
+
+    public static func hostsFileReason(_ tld: String) -> String {
+        "macOS uses .\(tld) for Bonjour. So it finds .\(tld) names only in /etc/hosts."
+    }
+
+    public static func hostsFileNote(_ tld: String) -> String {
+        "macOS uses .\(tld) for Bonjour. So Nexus writes each site, alias and workspace into /etc/hosts. Subdomains do not work by themselves. Add each one as an alias of its site, for example blog.shop.\(tld)."
+    }
 
     // The names that Nexus signs a certificate for and writes to /etc/hosts. Any program of the
     // user can ask nexusd for both, so a public name such as github.com would let that program
     // read the HTTPS traffic of Safari and Chrome for that name.
-    public static let privateSuffixes: Set<String> = devTLDs.union(["local", "example", "invalid", "home.arpa"])
+    public static let privateSuffixes: Set<String> = devTLDs.union(["example", "invalid", "home.arpa"])
 
     // The host that a user means with Shop.test, https://shop.test/ or shop.test:443. A text that
     // is not a URL, for example *.shop.test, stays as it is in small letters.
@@ -77,8 +105,14 @@ public enum HostName {
     public static func validatedAlias(_ alias: String, tld: String) throws -> String {
         let name = try validatedAllowingWildcard(alias)
 
-        guard !name.hasPrefix("*.") || name.hasSuffix(".\(tld)") else {
-            throw HostNameError.wildcardOutsideDevTLD(name, tld: tld)
+        if name.hasPrefix("*.") {
+            guard name.hasSuffix(".\(tld)") else {
+                throw HostNameError.wildcardOutsideDevTLD(name, tld: tld)
+            }
+
+            guard !usesHostsFile(tld) else {
+                throw HostNameError.wildcardInHostsFile(name, tld: tld)
+            }
         }
 
         return name

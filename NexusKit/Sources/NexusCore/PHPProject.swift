@@ -54,7 +54,7 @@ public struct SiteLayout: Sendable, Equatable {
     public func hosts(of site: Site, tld: String) -> [String] {
         let wildcard = "*.\(site.host)"
 
-        guard subdomainNetwork, site.host.hasSuffix(".\(tld)"), !site.hosts.contains(wildcard) else {
+        guard subdomainNetwork, HostName.dnsAnswers(site.host, tld: tld), !site.hosts.contains(wildcard) else {
             return site.hosts
         }
 

@@ -216,11 +216,14 @@ extension NexusEngine {
         return await stateStore.current()
     }
 
-    // The hosts outside the dev TLD need a line in /etc/hosts. The DNS server answers the others.
+    // Each name that the DNS server does not answer needs a line in /etc/hosts. A name with *.
+    // cannot have one.
     func etcHosts(_ state: EngineState) -> [String] {
-        let tld = DNSResponder(tld: state.tld)
-        let siteHosts = resolvedSites(state).flatMap(\.site.hosts).filter { !tld.contains($0) }
-        return Set(state.hosts).union(siteHosts).sorted()
+        let sites = resolvedSites(state).map(\.site)
+        let names = (sites + workspaceSites(state, resolved: sites).sites).flatMap(\.hosts)
+            .filter { !HostName.dnsAnswers($0, tld: state.tld) && !$0.hasPrefix("*.") }
+
+        return Set(state.hosts).union(names).sorted()
     }
 
     func runtime(named name: String, line: String) async -> InstalledRuntime? {

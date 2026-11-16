@@ -773,7 +773,9 @@ public actor NexusEngine {
 
         for (runtime, status) in all {
             guard let runtime else {
-                let note = "The DNS server answers 127.0.0.1 for every name that ends in .\(state.tld). /etc/resolver/\(state.tld) sends these names to this port."
+                let note = HostName.usesHostsFile(state.tld)
+                    ? "\(HostName.hostsFileReason(state.tld)) This DNS server does not answer them."
+                    : "The DNS server answers 127.0.0.1 for every name that ends in .\(state.tld). /etc/resolver/\(state.tld) sends these names to this port."
                 services.append(ServiceInfo(id: status.id, name: Self.dnsServiceID, line: "", version: "", ports: status.ports, state: status.state, problem: dnsProblem, note: note))
                 continue
             }
@@ -1714,6 +1716,11 @@ extension NexusEngine {
         await applySystemFiles()
 
         let tld = await stateStore.current().tld
+
+        guard !HostName.usesHostsFile(tld) else {
+            return "The DNS server runs on port \(port). \(HostName.hostsFileReason(tld))"
+        }
+
         return systemFilesProblem.map { "The DNS server runs on port \(port), but macOS does not send .\(tld) names to it yet. \($0)" }
             ?? "The DNS server answers every .\(tld) name on port \(port)."
     }
@@ -1760,6 +1767,11 @@ extension NexusEngine {
         try await stateStore.update { $0.ports[Self.dnsServiceID] = port }
         await applySystemFiles()
 
+        let tld = await stateStore.current().tld
+        guard !HostName.usesHostsFile(tld) else {
+            return "The DNS server runs on port \(port). \(HostName.hostsFileReason(tld))"
+        }
+
         return systemFilesProblem.map { "The DNS server runs on port \(port), but /etc/resolver does not name it yet. \($0)" }
             ?? "The DNS server runs on port \(port), and /etc/resolver names it."
     }
@@ -1769,6 +1781,11 @@ extension NexusEngine {
         let port = state.ports[Self.dnsServiceID] ?? DNSServer.defaultPort
 
         return ServiceStatus(id: Self.dnsServiceID, displayName: "DNS for .\(state.tld)", ports: [port], state: dnsState)
+    }
+
+    // The port that /etc/resolver/<tld> names. A dev TLD in /etc/hosts gets no resolver file.
+    private func resolverPort(for tld: String) -> Int? {
+        HostName.usesHostsFile(tld) ? nil : dnsServer?.port
     }
 
     // A missing resolver file means that .test names do not work, also while the DNS server runs.
@@ -1811,7 +1828,7 @@ extension NexusEngine {
         let state = await stateStore.current()
         var problems: [any Error] = []
 
-        if let port = dnsServer?.port {
+        if let port = resolverPort(for: state.tld) {
             do {
                 try await helper.send(.setResolver(tld: state.tld, port: port))
             } catch {
@@ -1865,7 +1882,7 @@ extension NexusEngine {
         let host = try HostName.validated(name)
         let state = await stateStore.current()
 
-        if DNSResponder(tld: state.tld).contains(host) {
+        if HostName.dnsAnswers(host, tld: state.tld) {
             throw RuntimeError.unsupported("\(host) needs no line in /etc/hosts. The DNS server of Nexus answers every .\(state.tld) name.")
         }
 
@@ -1930,7 +1947,7 @@ extension NexusEngine {
         tldInChange = tld
         defer { tldInChange = nil }
 
-        if let port = dnsServer?.port {
+        if let port = resolverPort(for: tld) {
             do {
                 try await inSystemFilesTurn { try await self.helper.send(.setResolver(tld: tld, port: port)) }
             } catch {
@@ -1965,6 +1982,11 @@ extension NexusEngine {
 
         if let systemFilesProblem {
             warnings.append(systemFilesProblem)
+        }
+
+        let wildcards = sites.flatMap(\.aliases).filter { $0.hasPrefix("*.") }
+        if HostName.usesHostsFile(tld), !wildcards.isEmpty {
+            warnings.append("\(EnglishList.joined(wildcards)) \(wildcards.count == 1 ? "does" : "do") not work with .\(tld). \(HostName.hostsFileReason(tld)) Add each subdomain as an alias, for example blog.shop.\(tld).")
         }
 
         let renamed = resolvedSites(await stateStore.current()).map(\.site.host).first { $0.hasSuffix(".\(tld)") }

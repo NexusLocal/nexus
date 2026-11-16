@@ -1139,7 +1139,7 @@ private struct DomainRow: View {
             }
 
             Picker("Domain", selection: tldSelection) {
-                ForEach(AppSettings.devDomains, id: \.self) { Text(verbatim: ".\($0)").tag($0) }
+                ForEach(HostName.devTLDsInOrder, id: \.self) { Text(verbatim: ".\($0)").tag($0) }
             }
             .labelsHidden()
             .fixedSize()
@@ -1149,7 +1149,8 @@ private struct DomainRow: View {
             while model.isLive, !Task.isCancelled {
                 background.helper.refresh()
 
-                let owner = ResolverFile.owner(of: ResolverFile.folder.appending(path: tld, directoryHint: .notDirectory))
+                // A domain in /etc/hosts needs no resolver file. So it is ready as soon as the helper is.
+                let owner = HostName.usesHostsFile(tld) ? .nexus : ResolverFile.owner(of: ResolverFile.folder.appending(path: tld, directoryHint: .notDirectory))
 
                 if owner != resolverOwner {
                     resolverOwner = owner
@@ -1224,7 +1225,11 @@ private struct SettingsStep: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\"Add Nexus to PATH\" adds one line to the end of ~/.zshrc. Then php, composer, node, npm and wp in your terminal use the Nexus versions. Turn it off to remove the line.")
-                    Text("Domain: .test, .internal or .localhost. Other endings can send real traffic of this Mac to Nexus.")
+                    Text("Domain: \(HostName.devTLDList(conjunction: "or")). Other endings can send real traffic of this Mac to Nexus.")
+
+                    if HostName.usesHostsFile(model.settings.tld) {
+                        Text(HostName.hostsFileNote(model.settings.tld))
+                    }
                 }
                 .font(.callout)
                 .foregroundStyle(.secondary)

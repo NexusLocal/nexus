@@ -9,7 +9,8 @@ import NexusCore
 // of an update that is ready to install. --agents-notice shows the notice of the coding agents on
 // the Overview. --notification '<userInfo as JSON>' opens the screen of a click on a notification.
 // --sheet old-workspaces --site shop.test opens the sheet of the old workspaces.
-// --other-web-servers Local,Herd shows the notice about ports 80 and 443. --waits-for-nexusd
+// --other-web-servers Local,Herd shows the notice about ports 80 and 443. With --sample, --tld local
+// shows the screens with another domain. --waits-for-nexusd
 // with --sample shows the banner of a nexusd that still runs an older build. The services of the
 // sample data, such as the port problem of --sheet port, need --sample.
 enum DebugLaunch {
@@ -25,6 +26,10 @@ enum DebugLaunch {
 
         if !CommandLine.arguments.contains("--background") {
             NSApplication.shared.activate()
+        }
+
+        if CommandLine.arguments.contains("--sample"), let tld = value(of: "--tld").flatMap({ try? HostName.validatedTLD($0) }) {
+            model.settings.tld = tld
         }
 
         if let tab = value(of: "--settings") {

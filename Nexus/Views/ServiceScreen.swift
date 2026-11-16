@@ -108,7 +108,9 @@ struct ServiceScreen: View {
         }
 
         if kind == .dns {
-            return "Sends every .\(model.settings.tld) name to this Mac"
+            return HostName.usesHostsFile(model.settings.tld)
+                ? "Not used with .\(model.settings.tld)"
+                : "Sends every .\(model.settings.tld) name to this Mac"
         }
 
         let count = Count.text(versions.count, "version")

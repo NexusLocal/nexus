@@ -135,7 +135,9 @@ extension NexusEngine {
         let example = second.map { subdomains ? $0.domain : $0.domain + ($0.path.hasSuffix("/") ? String($0.path.dropLast()) : $0.path) }
         var problem: String?
 
-        if subdomains, !served {
+        if subdomains, HostName.usesHostsFile(tld) {
+            problem = "The sites of this network are on subdomains. \(HostName.hostsFileReason(tld)) Add each site of the network as an alias of this site\(example.map { ", for example \($0)" } ?? "")."
+        } else if subdomains, !served {
             problem = site.host.hasSuffix(".\(tld)")
                 ? "The sites of this network are on subdomains, but Nexus cannot read SUBDOMAIN_INSTALL in \(configName) as plain text. Add *.\(site.host) as an alias of this site."
                 : "The sites of this network need the names below \(site.host). Only a name in the dev domain .\(tld) can have them. Give the site a host in .\(tld)."

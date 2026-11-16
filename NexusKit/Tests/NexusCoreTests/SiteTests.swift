@@ -173,6 +173,14 @@ struct SiteTests {
         #expect(HostName.workspaceHost("*.shop.test", workspace: "fix", tld: "test") == "*.shop-fix.test")
     }
 
+    @Test func theLocalDomainUsesTheHostsFileAndHasNoAliasWithAStar() throws {
+        #expect(try HostName.validatedTLD("local") == "local")
+        #expect(HostName.usesHostsFile("local"))
+        #expect(!HostName.usesHostsFile("test"))
+        #expect(try HostName.validatedAlias("blog.shop.local", tld: "local") == "blog.shop.local")
+        #expect(throws: HostNameError.wildcardInHostsFile("*.shop.local", tld: "local")) { try HostName.validatedAlias("*.shop.local", tld: "local") }
+    }
+
     @Test func aNewTLDChangesOnlyTheNamesInTheOldTLD() {
         let site = Site(host: "shop.test", folder: root, aliases: ["www.shop.test", "shop.local", "test.local"], php: "8.5")
 

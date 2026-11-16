@@ -134,7 +134,7 @@ extension NexusEngineTests {
                 return
             }
             #expect(message.hasPrefix("Nexus did not change the dev TLD, because /etc/resolver/internal was not written. Nothing changed."))
-            #expect(invalid == .failure(message: ".dev cannot be the dev TLD. Nexus supports .internal, .localhost, .test."))
+            #expect(invalid == .failure(message: ".dev cannot be the dev TLD. Nexus supports .test, .internal, .localhost and .local."))
             #expect(after.tld == "test")
             #expect(after.sites == state.sites)
             #expect(after.siteLayout == state.siteLayout)

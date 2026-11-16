@@ -646,6 +646,20 @@ struct NexusEngineTests {
         #expect(etcHosts == ["extra.local", "shop.local"])
     }
 
+    @Test func withTheLocalDomainEachSiteNameGetsALineInTheHostsFile() async throws {
+        let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
+        let folder = workspace.appending(path: "shop", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var state = EngineState()
+        state.tld = "local"
+        state.sites = [Site(host: "shop.local", folder: folder, aliases: ["www.shop.local", "*.shop.local"], php: "8.5", server: .nginx)]
+        state.hosts = ["extra.local"]
+
+        let etcHosts = await engine.etcHosts(state)
+
+        #expect(etcHosts == ["extra.local", "shop.local", "www.shop.local"])
+    }
+
     @Test func aParkedSiteWithTheHostOfAnotherSiteIsLeftOut() async throws {
         let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
         let parked = workspace.appending(path: "parked", directoryHint: .isDirectory)

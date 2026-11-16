@@ -743,7 +743,7 @@ private struct NetworkSettings: View {
         Form {
             Section {
                 Picker("Domain for sites", selection: tld) {
-                    ForEach(AppSettings.devDomains, id: \.self) { Text(".\($0)").tag($0) }
+                    ForEach(HostName.devTLDsInOrder, id: \.self) { Text(".\($0)").tag($0) }
                 }
                 .disabled(model.changingTLD != nil)
 
@@ -752,7 +752,9 @@ private struct NetworkSettings: View {
             } header: {
                 Text("Domains")
             } footer: {
-                Text("Only .test, .internal and .localhost are possible. Other endings can send real traffic of this Mac to Nexus.")
+                Text(HostName.usesHostsFile(model.settings.tld)
+                    ? HostName.hostsFileNote(model.settings.tld)
+                    : "Only \(HostName.devTLDList(conjunction: "and")) are possible. Other endings can send real traffic of this Mac to Nexus.")
             }
 
             ForEach(portGroups()) { group in
@@ -941,7 +943,8 @@ private struct AdvancedSettings: View {
             } header: {
                 Text("Background items")
             } footer: {
-                Text("nexusd runs the services. The helper writes /etc/resolver/\(model.settings.tld) and the lines in /etc/hosts.")
+                let resolver = HostName.usesHostsFile(model.settings.tld) ? "" : "/etc/resolver/\(model.settings.tld) and "
+                Text("nexusd runs the services. The helper writes \(resolver)the lines in /etc/hosts.")
             }
 
             Section {

@@ -1590,10 +1590,10 @@ struct TLD: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "tld",
         abstract: "Shows or changes the dev TLD of the sites, for example: nexus tld internal",
-        discussion: "The dev TLD can be test, internal or localhost. A change gives every site a new name, for example shop.test becomes shop.internal."
+        discussion: "The dev TLD can be \(EnglishList.joined(HostName.devTLDsInOrder, conjunction: "or")). A change gives every site a new name, for example shop.test becomes shop.internal. \(HostName.hostsFileNote("local"))"
     )
 
-    @Argument(help: "test, internal or localhost.") var tld: String?
+    @Argument(help: "\(EnglishList.joined(HostName.devTLDsInOrder, conjunction: "or")).") var tld: String?
 
     func run() async throws {
         try finish(try await send(.tld(tld)))

@@ -210,7 +210,7 @@ struct WorkspaceHostPairTests {
     @Test func aHostInAnotherDevTLDGoesToTheCurrentTLD() {
         let pairs = Workspace.pairsFromOtherTLDs([(from: "shop.test", to: "shop-fix.internal")], tld: "internal")
 
-        #expect(pairs.map(\.from) == ["shop-fix.localhost", "shop-fix.test"])
+        #expect(pairs.map(\.from) == ["shop-fix.local", "shop-fix.localhost", "shop-fix.test"])
         #expect(pairs.allSatisfy { $0.to == "shop-fix.internal" })
     }
 
