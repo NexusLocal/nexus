@@ -127,6 +127,7 @@ public struct EngineState: Codable, Sendable, Equatable {
 public struct WorktreeChange: Sendable, Equatable {
     public var changed = false
     public var removed: [String: [Workspace]] = [:]
+    public var added: [String: [Workspace]] = [:]
 }
 
 // Keeps the state of nexusd in config/state.json: the port of each service and the services that
@@ -160,17 +161,8 @@ public actor EngineStateStore {
             return WorktreeChange()
         }
 
-        var removed: [String: [Workspace]] = [:]
-
-        for (key, record) in state.worktrees {
-            let gone = record.workspaces.filter { workspace in
-                updated[key]?.workspaces.contains { $0.name == workspace.name } != true
-            }
-
-            if !gone.isEmpty {
-                removed[key] = gone
-            }
-        }
+        let removed = Self.workspaces(in: state.worktrees, without: updated)
+        let added = Self.workspaces(in: updated, without: state.worktrees)
 
         // The records go and the list of removals grows in one save. So a stop of nexusd loses no
         // clone. A removed site also ends its records, and git then still lists its worktrees. A
@@ -179,7 +171,23 @@ public actor EngineStateStore {
         let writesDump = state.workspaceSettings.dumpsBeforeRemoval
         state.databaseRemovals += removed.flatMap { site, workspaces in workspaces.flatMap { $0.databaseRemovals(site: site, writesDump: writesDump) } }
         try save()
-        return WorktreeChange(changed: true, removed: removed)
+        return WorktreeChange(changed: true, removed: removed, added: added)
+    }
+
+    private static func workspaces(in worktrees: [String: SiteWorktrees], without other: [String: SiteWorktrees]) -> [String: [Workspace]] {
+        var found: [String: [Workspace]] = [:]
+
+        for (key, record) in worktrees {
+            let missing = record.workspaces.filter { workspace in
+                other[key]?.workspaces.contains { $0.name == workspace.name } != true
+            }
+
+            if !missing.isEmpty {
+                found[key] = missing
+            }
+        }
+
+        return found
     }
 
     // A service keeps its port once it has one. A new service gets the default port of the

@@ -56,10 +56,11 @@ Task {
     await engine.startEnabledServices()
 }
 
-// nexusd stops every service first, so no database keeps running without its supervisor.
-@Sendable func stop(_ reason: String) async {
+// nexusd stops every service first, so no database keeps running without its supervisor. The
+// cause goes into the line of each service that stops.
+@Sendable func stop(_ reason: String, cause: String) async {
     activity.write("stop", reason)
-    await engine.shutdown()
+    await engine.shutdown(cause: cause)
     activity.waitForWrites()
     exit(0)
 }
@@ -68,7 +69,7 @@ Task {
 if let app = contents?.deletingLastPathComponent(), app.pathExtension == "app" {
     Task {
         await engine.restartAfterUpdates(of: app) { newBuild in
-            await stop("nexusd stops for build \(newBuild) of the app")
+            await stop("nexusd stops for build \(newBuild) of the app", cause: "update to build \(newBuild)")
         }
     }
 }
@@ -78,7 +79,7 @@ signal(SIGTERM, SIG_IGN)
 let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 termination.setEventHandler {
     Task {
-        await stop("nexusd stops")
+        await stop("nexusd stops", cause: NexusEngine.shutdownCause)
     }
 }
 termination.resume()

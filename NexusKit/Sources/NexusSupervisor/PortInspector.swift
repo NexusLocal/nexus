@@ -11,13 +11,17 @@ public struct PortOwner: Codable, Sendable, Equatable {
     // starts a new child.
     public var mainPID: Int32?
     public var mainProcessIsOwn: Bool?
+    // A stop goes to the main process. Its path can differ from the path of pid. Only the path of
+    // that same number shows that the number still belongs to the program.
+    public var mainExecutable: String?
 
-    public init(pid: Int32, command: String, executable: String?, mainPID: Int32? = nil, mainProcessIsOwn: Bool? = nil) {
+    public init(pid: Int32, command: String, executable: String?, mainPID: Int32? = nil, mainProcessIsOwn: Bool? = nil, mainExecutable: String? = nil) {
         self.pid = pid
         self.command = command
         self.executable = executable
         self.mainPID = mainPID
         self.mainProcessIsOwn = mainProcessIsOwn
+        self.mainExecutable = mainExecutable
     }
 
     // These apps start their servers again. So only the app itself can stop them.
@@ -58,8 +62,17 @@ public struct PortOwner: Codable, Sendable, Equatable {
         return command
     }
 
+    public var mainProcess: Int32 {
+        mainPID ?? pid
+    }
+
+    // An owner of an older nexusd has no path of its main process.
+    public var mainProcessPath: String? {
+        mainProcess == pid ? executable : mainExecutable
+    }
+
     public var description: String {
-        "\(application) (\(command), process \(mainPID ?? pid))"
+        "\(application) (\(command), process \(mainProcess))"
     }
 }
 
@@ -292,7 +305,8 @@ public enum PortInspector {
             command: command,
             executable: executablePath(of: pid),
             mainPID: main?.pid,
-            mainProcessIsOwn: main.map { $0.user == getuid() }
+            mainProcessIsOwn: main.map { $0.user == getuid() },
+            mainExecutable: main.flatMap { executablePath(of: $0.pid) }
         )
     }
 
@@ -305,5 +319,25 @@ public enum PortInspector {
         }
 
         return String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+
+    public enum ProgramCheck: Sendable, Equatable {
+        case same
+        case ended
+        case other
+    }
+
+    // A program can end after a list or a sheet read its number. Another program can then get
+    // that number. So a signal goes only to a number that still has the path of before.
+    public static func program(at pid: Int32, recordedPath: String?) -> ProgramCheck {
+        guard let path = executablePath(of: pid) else {
+            return .ended
+        }
+
+        return path == recordedPath ? .same : .other
+    }
+
+    public static func runs(_ pid: Int32, path: String) -> Bool {
+        program(at: pid, recordedPath: path) == .same
     }
 }

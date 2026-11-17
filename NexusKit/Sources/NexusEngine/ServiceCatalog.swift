@@ -212,7 +212,7 @@ public struct ServiceCatalog: Sendable {
     // The server of a workspace (D66). It has a small buffer pool and no performance_schema, because
     // a Mac with 8 GB of memory must also run several workspaces. Its log goes to the log of the
     // instance.
-    public func workspaceServerDefinition(id: String, instance: String, runtime: InstalledRuntime, port: Int, folder: URL, environment: [String: String]) -> ServiceDefinition? {
+    public func workspaceServerDefinition(id: String, instance: String, workspace: String, runtime: InstalledRuntime, port: Int, folder: URL, environment: [String: String]) -> ServiceDefinition? {
         guard let kind = Self.databaseKind(of: runtime) else {
             return nil
         }
@@ -221,10 +221,10 @@ public struct ServiceCatalog: Sendable {
             ? ["--innodb-buffer-pool-size=33554432", "--performance-schema=OFF", "--key-buffer-size=8388608", "--table-open-cache=400"]
             : ["-c", "shared_buffers=32MB"]
 
-        return databaseDefinition(kind, id: id, displayName: "\(kind.displayName) \(runtime.version) of a workspace", runtime: runtime, port: port, data: folder, socket: paths.workspaceDatabaseSocket(kind, line: runtime.line, port: port), logFile: paths.log(instance), extra: extra, environment: environment)
+        return databaseDefinition(kind, id: id, displayName: "\(kind.displayName) \(runtime.version) of a workspace", runtime: runtime, port: port, data: folder, socket: paths.workspaceDatabaseSocket(kind, line: runtime.line, port: port), logFile: paths.log(instance), extra: extra, environment: environment, activityName: "\(instance) of the workspace \(workspace)")
     }
 
-    private func databaseDefinition(_ kind: DatabaseKind, id: String, displayName: String, runtime: InstalledRuntime, port: Int, data: URL, socket: URL, logFile: URL, extra: [String], environment: [String: String] = [:]) -> ServiceDefinition {
+    private func databaseDefinition(_ kind: DatabaseKind, id: String, displayName: String, runtime: InstalledRuntime, port: Int, data: URL, socket: URL, logFile: URL, extra: [String], environment: [String: String] = [:], activityName: String? = nil) -> ServiceDefinition {
         guard kind.usesMySQLProtocol else {
             return ServiceDefinition(
                 id: id,
@@ -242,7 +242,8 @@ public struct ServiceCatalog: Sendable {
                 logFile: logFile,
                 stopSignal: SIGINT,
                 startTimeout: Self.databaseStartTimeout,
-                stopTimeout: Self.databaseStopTimeout
+                stopTimeout: Self.databaseStopTimeout,
+                activityName: activityName
             )
         }
 
@@ -274,7 +275,8 @@ public struct ServiceCatalog: Sendable {
             logFile: logFile,
             startTimeout: Self.databaseStartTimeout,
             stopTimeout: Self.databaseStopTimeout,
-            greetingSocket: kind == .mariadb ? socket : nil
+            greetingSocket: kind == .mariadb ? socket : nil,
+            activityName: activityName
         )
     }
 }

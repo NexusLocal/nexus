@@ -193,7 +193,7 @@ extension NexusEngine {
         let servers = await workspaceServers(await stateStore.current())
         var start = ServerStart(servers: servers.filter { entry in record.servers.contains { $0.folder == entry.server.folder } })
 
-        for process in workspaceServerProcesses(servers) where process.owner == owner && runningProcesses[process.definition.id] == nil {
+        for process in workspaceServerProcesses(servers).processes where process.owner == owner && runningProcesses[process.definition.id] == nil {
             if let reason = await startProcess(process) {
                 start.problem = start.problem ?? reason
             }

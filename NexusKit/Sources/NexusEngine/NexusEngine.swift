@@ -343,6 +343,7 @@ public actor NexusEngine {
     }
 
     public func handle(_ request: NexusRequest) async -> NexusResponse {
+        let origin = Self.origin(of: request)
         let request = request.inner
 
         guard !stoppingForUpdate else {
@@ -371,11 +372,11 @@ public actor NexusEngine {
             case .start(let id):
                 return .done(message: try await serialWeb { try await self.start(id) })
             case .stop(let id):
-                return .done(message: try await serialWeb { try await self.stop(id) })
+                return .done(message: try await serialWeb { try await self.stop(id, cause: "request stop from \(origin)") })
             case .restart(let id):
-                return .done(message: try await serialWeb { try await self.restart(id) })
+                return .done(message: try await serialWeb { try await self.restart(id, cause: "request restart from \(origin)") })
             case .stopAll:
-                return .done(message: try await serialWeb { try await self.stopAll() })
+                return .done(message: try await serialWeb { try await self.stopAll(cause: "request Stop all services from \(origin)") })
             case .startStopped:
                 return .done(message: try await serialWeb { try await self.startStopped() })
             case .setPort(let id, let port):
@@ -664,12 +665,14 @@ public actor NexusEngine {
         await publishDumpList()
     }
 
-    public func shutdown() async {
+    public static let shutdownCause = "stop of nexusd"
+
+    public func shutdown(cause: String = shutdownCause) async {
         updateWatch?.cancel()
         devServerCheck?.cancel()
         accessLogWatch?.stop()
         helperRetry?.cancel()
-        await stopAllForGood()
+        await stopAllForGood(cause: cause)
 
         for watcher in watchers.values {
             watcher.finish()
@@ -680,13 +683,13 @@ public actor NexusEngine {
     // The stop of nexusd and the end of the removal of Nexus. Each client that waits at the gate of
     // the database ports gets the reason first. The background processes and the services stop at
     // the same time. The background processes start nothing new after this point.
-    private func stopAllForGood() async {
+    private func stopAllForGood(cause: String) async {
         parkedWatcher?.stop()
         parkedWatcher = nil
         stopWatchingWorktrees()
         await serverGate.end(reason: Self.gateEndText)
         await processSupervisor.closeForGood()
-        await ProcessSupervisor.stopAll(of: [processSupervisor, supervisor])
+        await ProcessSupervisor.stopAll(of: [processSupervisor, supervisor], cause: cause)
         stopDNS()
         stopMailReceiver()
         stopDumpReceiver()
@@ -1010,7 +1013,7 @@ public actor NexusEngine {
         }
     }
 
-    private func stop(_ id: String, disable: Bool = true) async throws -> String {
+    private func stop(_ id: String, disable: Bool = true, cause: String) async throws -> String {
         if id == Self.dnsServiceID {
             stopDNS()
             try await stateStore.update { $0.stoppedByStopAll.remove(id) }
@@ -1018,7 +1021,7 @@ public actor NexusEngine {
         }
 
         portConflicts[id] = nil
-        try await supervisor.stop(id)
+        try await supervisor.stop(id, cause: cause)
 
         if let line = ServiceID.phpLine(of: id) {
             await syncXdebug(line: line)
@@ -1054,7 +1057,7 @@ public actor NexusEngine {
         return candidate
     }
 
-    func restart(_ id: String) async throws -> String {
+    func restart(_ id: String, cause: String) async throws -> String {
         let running = id == Self.dnsServiceID
             ? dnsState.isActive
             : await supervisor.state(of: id)?.isActive == true
@@ -1063,7 +1066,7 @@ public actor NexusEngine {
             return try await start(id)
         }
 
-        _ = try await stop(id, disable: false)
+        _ = try await stop(id, disable: false, cause: cause)
         return "Nexus restarted \(id). \(try await start(id, enable: false))"
     }
 
@@ -1071,12 +1074,12 @@ public actor NexusEngine {
     // make the others wait. The services that an earlier "Stop all services" stopped stay in the
     // list (D63). Each one stays in enabledServices or out of it. So "Start stopped services" does
     // not change which services nexusd starts at its next start. Until then, nexusd skips them.
-    private func stopAll() async throws -> String {
+    private func stopAll(cause: String) async throws -> String {
         let running = try await services().map(\.status).filter(\.state.isActive).map(\.id)
 
         guard !running.isEmpty else {
             processesWaitForAService = true
-            await stopBackgroundProcesses()
+            await stopBackgroundProcesses(cause: cause)
             return "No service runs."
         }
 
@@ -1084,13 +1087,13 @@ public actor NexusEngine {
         // while its database still runs.
         stoppingAllServices = true
         defer { stoppingAllServices = false }
-        await stopBackgroundProcesses()
+        await stopBackgroundProcesses(cause: cause)
 
         let results = await withTaskGroup(of: (id: String, failure: String?).self) { group in
             for id in running {
                 group.addTask {
                     do {
-                        _ = try await self.stop(id, disable: false)
+                        _ = try await self.stop(id, disable: false, cause: cause)
                         return (id, nil)
                     } catch {
                         return (id, "\(id): \(ErrorText.plain(error))")
@@ -1316,15 +1319,17 @@ public actor NexusEngine {
         updatingServices.insert(id)
         defer { updatingServices.remove(id) }
 
+        let cause = Self.updateCause(of: id)
+
         // The servers of the workspaces run from this package, also when its instance is stopped.
-        await stopWorkspaceServers(of: id)
+        await stopWorkspaceServers(of: id, cause: cause)
 
         guard running else {
             return try await installer.commit(prepared)
         }
 
         do {
-            _ = try await stop(id, disable: false)
+            _ = try await stop(id, disable: false, cause: cause)
         } catch {
             await installer.discard(prepared)
             throw RuntimeError.unsupported("Nexus did not update \(prepared.runtime.name) \(prepared.runtime.line), because \(id) did not stop. \(ErrorText.plain(error))")
@@ -1557,6 +1562,30 @@ extension NexusEngine {
                 await self?.mailServiceChanged()
             }
         }
+
+        // The supervisor writes the line of each start, stop and end of a service. Only the
+        // database servers of the workspaces have an activity name. The other programs of the
+        // workspaces get no line.
+        let activity = activity
+
+        await supervisor.onReport { report in
+            activity?.write("service", report.text)
+        }
+
+        await processSupervisor.onReport { report in
+            if report.name != nil {
+                activity?.write("workspace", report.text)
+            }
+        }
+    }
+
+    // The app and the nexus command send the same requests. So their cause names them both.
+    static func origin(of request: NexusRequest) -> String {
+        guard case .fromAgent(let agent, _) = request else {
+            return "the app or the nexus command"
+        }
+
+        return agent
     }
 
     // A change during a publish makes the loop run once more. So many changes in a short time
@@ -1646,6 +1675,8 @@ extension NexusEngine {
         return map
     }
 
+    // The supervisor writes the line of each start, stop and end of a service. So a line here comes
+    // only for each state of DNS and for each new problem or port conflict. DNS has no supervisor.
     private func logStateChanges(in list: ServiceList) {
         for service in list.services {
             let state: String
@@ -1657,8 +1688,15 @@ extension NexusEngine {
             case .failed(let reason): state = "failed, \(reason)"
             }
 
-            if loggedStates[service.id] != state {
-                loggedStates[service.id] = state
+            let logged = service.id == Self.dnsServiceID ? state : service.portConflict?.description ?? service.problem
+
+            guard loggedStates[service.id] != logged else {
+                continue
+            }
+
+            loggedStates[service.id] = logged
+
+            if logged != nil {
                 activity?.write("service", "\(service.id) \(state)")
             }
         }
@@ -2081,7 +2119,7 @@ extension NexusEngine {
             throw RuntimeError.unsupported("Nexus removed \(removedFiles), but not its root CA. Run nexus uninstall again. \(ErrorText.plain(error))")
         }
 
-        await stopAllForGood()
+        await stopAllForGood(cause: "removal of Nexus")
 
         let unregister = unregister
         Task {

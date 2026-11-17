@@ -8,6 +8,7 @@ struct PortInUseSheet: View {
     let holder: PortHolder
 
     @State private var newPort = 0
+    @State private var programChanged = false
 
     var body: some View {
         VStack(spacing: 12) {
@@ -34,6 +35,13 @@ struct PortInUseSheet: View {
             .padding(10)
             .background(.fill.quaternary, in: .rect(cornerRadius: 8))
 
+            if programChanged {
+                Text(holder.changedText(service: service.name))
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             HStack {
                 Text("New port")
                 PortField(port: $newPort)
@@ -46,9 +54,7 @@ struct PortInUseSheet: View {
                 }
                 .keyboardShortcut(.defaultAction)
 
-                PortHolderButtons(service: service, holder: holder) {
-                    dismiss()
-                }
+                PortHolderButtons(service: service, holder: holder, beforeAction: { dismiss() }, onProgramChange: { programChanged = true })
 
                 Button("Cancel", role: .cancel) {
                     dismiss()
@@ -66,19 +72,43 @@ struct PortInUseSheet: View {
 }
 
 // A sheet closes before the action. The window of the manager app opens on top of the sheet, so
-// that action keeps the sheet open.
+// that action keeps the sheet open. A stop that finds another program on the port stops nothing.
+// The sheet then stays open with the reason. A banner shows the reason in an alert.
 struct PortHolderButtons: View {
     @Environment(AppModel.self) private var model
     let service: ServiceVersion
     let holder: PortHolder
     var beforeAction: () -> Void = {}
+    var onProgramChange: (() -> Void)?
+
+    // A second click during a stop starts no second stop.
+    @State private var stopping = false
 
     var body: some View {
         if holder.canStop {
             Button(model.stopTitle(of: holder)) {
-                beforeAction()
-                model.stop(holder, andStart: service)
+                guard !stopping else {
+                    return
+                }
+
+                stopping = true
+
+                Task {
+                    defer { stopping = false }
+
+                    guard await !model.stop(holder, andStart: service, beforeStop: beforeAction) else {
+                        return
+                    }
+
+                    guard let onProgramChange else {
+                        model.failure = ActionFailure(title: "Nexus stopped nothing", message: holder.changedText(service: service.name), place: .window)
+                        return
+                    }
+
+                    onProgramChange()
+                }
             }
+            .disabled(stopping)
         } else {
             if model.managerAppURL(of: holder) != nil {
                 Button("Open \(holder.app)") {

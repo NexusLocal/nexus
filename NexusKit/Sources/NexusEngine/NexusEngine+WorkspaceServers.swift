@@ -10,6 +10,7 @@ import NexusWorkspaces
 // removal counts as a workspace that runs, because its dump needs the server.
 struct WorkspaceServerEntry: Sendable {
     let owner: String
+    let workspace: String
     let server: WorkspaceDatabaseServer
     let tools: DatabaseTools
     let gated: GatedServer
@@ -304,16 +305,20 @@ extension NexusEngine {
 
     // An update runs in the queue, and a sync can wait for that queue. So this stop needs no sync. The
     // sync of that request starts these servers again.
-    func stopWorkspaceServers(of instance: String) async {
+    func stopWorkspaceServers(of instance: String, cause: String) async {
         for (id, process) in runningProcesses where process.log == instance {
             guard let server = process.server else {
-                try? await processSupervisor.stop(id)
+                try? await processSupervisor.stop(id, cause: cause)
                 runningProcesses[id] = nil
                 continue
             }
 
-            await stopServer(id, server)
+            await stopServer(id, server, cause: cause)
         }
+    }
+
+    static func updateCause(of instance: String) -> String {
+        "update of \(instance)"
     }
 
     // Each complete server of the workspaces and of the removals, with its clone folder on disk and an
@@ -324,10 +329,10 @@ extension NexusEngine {
     func workspaceServers(_ state: EngineState, includesRunning: Bool = true) async -> [WorkspaceServerEntry] {
         let ofWorkspaces = state.worktrees.flatMap { key, record in
             record.workspaces.flatMap { workspace in
-                workspace.servers.map { (owner: Self.processOwner(key: key, workspace: workspace.name), server: $0, isStopped: workspace.runState == .stopped) }
+                workspace.servers.map { (owner: Self.processOwner(key: key, workspace: workspace.name), workspace: workspace.name, server: $0, isStopped: workspace.runState == .stopped) }
             }
         }
-        let ofRemovals = state.databaseRemovals.map { (owner: Self.processOwner(key: $0.site, workspace: $0.workspace), server: $0.server, isStopped: false) }
+        let ofRemovals = state.databaseRemovals.map { (owner: Self.processOwner(key: $0.site, workspace: $0.workspace), workspace: $0.workspace, server: $0.server, isStopped: false) }
         let complete = (ofWorkspaces + ofRemovals).filter { entry in
             (includesRunning || entry.isStopped) && entry.server.isComplete && FileManager.default.fileExists(atPath: entry.server.folder)
         }
@@ -338,7 +343,7 @@ extension NexusEngine {
 
         let runtimes = await databaseRuntimes()
 
-        return complete.compactMap { owner, server, isStopped in
+        return complete.compactMap { owner, workspace, server, isStopped in
             guard let tools = runtimes.first(where: { $0.id == server.instance }) else {
                 return nil
             }
@@ -352,28 +357,42 @@ extension NexusEngine {
                 log: paths.log(server.instance)
             )
 
-            return WorkspaceServerEntry(owner: owner, server: server, tools: tools, gated: gated, isStopped: isStopped)
+            return WorkspaceServerEntry(owner: owner, workspace: workspace, server: server, tools: tools, gated: gated, isStopped: isStopped)
         }
     }
 
     // The servers that must run now. A removed workspace keeps its server until its dump is complete.
     // A program of an instance that Nexus updates must stop, because the update replaces its files.
     // A stopped workspace runs no server (owner, 2026-11-15). A removal of a stopped workspace runs
-    // its server for the dump.
-    func workspaceServerProcesses(_ servers: [WorkspaceServerEntry]) -> [BackgroundProcess] {
-        servers.compactMap { entry in
+    // its server for the dump. Each server that must not run gets the cause of its stop, for the
+    // activity log.
+    func workspaceServerProcesses(_ servers: [WorkspaceServerEntry]) -> (processes: [BackgroundProcess], stopCauses: [String: String]) {
+        var processes: [BackgroundProcess] = []
+        var stopCauses: [String: String] = [:]
+
+        for entry in servers {
             let server = entry.server
-
-            guard !entry.isStopped, !removingServers.contains(server.folder), !updatingServices.contains(server.instance) else {
-                return nil
+            let stopCause: String? = if entry.isStopped {
+                "the workspace stopped"
+            } else if removingServers.contains(server.folder) {
+                "removal of the workspace"
+            } else if updatingServices.contains(server.instance) {
+                Self.updateCause(of: server.instance)
+            } else {
+                nil
             }
 
-            guard let definition = catalog.workspaceServerDefinition(id: server.folder, instance: server.instance, runtime: entry.tools.runtime, port: server.port, folder: URL(filePath: server.folder, directoryHint: .isDirectory), environment: [Self.processMarker: processMarkerValue]) else {
-                return nil
+            if let stopCause {
+                stopCauses[server.folder] = stopCause
+                continue
             }
 
-            return BackgroundProcess(owner: entry.owner, command: definition.displayName, log: server.instance, worktree: nil, definition: definition, server: entry.gated)
+            if let definition = catalog.workspaceServerDefinition(id: server.folder, instance: server.instance, workspace: entry.workspace, runtime: entry.tools.runtime, port: server.port, folder: URL(filePath: server.folder, directoryHint: .isDirectory), environment: [Self.processMarker: processMarkerValue]) {
+                processes.append(BackgroundProcess(owner: entry.owner, command: definition.displayName, log: server.instance, worktree: nil, definition: definition, server: entry.gated))
+            }
         }
+
+        return (processes, stopCauses)
     }
 
     // The configuration can look right while the application still reaches another server, because

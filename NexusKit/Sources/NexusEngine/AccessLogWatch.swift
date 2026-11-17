@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import NexusCore
 
 // Each access log of nginx with its owner: the main checkout or a workspace (owner, 2026-11-15).
 // nginx keeps a log open and adds a line at the end of each request. FSEvents reports such a line
@@ -8,14 +9,9 @@ import Foundation
 final class AccessLogWatch: @unchecked Sendable {
     static let reportInterval: TimeInterval = 1
 
-    private struct FileID: Equatable {
-        let device: dev_t
-        let inode: ino_t
-    }
-
     private struct FileSource {
         let source: any DispatchSourceFileSystemObject
-        let file: FileID
+        let file: FileIdentity
     }
 
     // current watches the file at the path. A delete or a rename takes that file from the path, but
@@ -91,7 +87,7 @@ final class AccessLogWatch: @unchecked Sendable {
             return
         }
 
-        if let current = entry.current, Self.file(atPath: path) == current.file {
+        if let current = entry.current, FileIdentity(path: path) == current.file {
             return
         }
 
@@ -140,17 +136,7 @@ final class AccessLogWatch: @unchecked Sendable {
         }
 
         source.resume()
-        return FileSource(source: source, file: FileID(device: info.st_dev, inode: info.st_ino))
-    }
-
-    private static func file(atPath path: String) -> FileID? {
-        var info = stat()
-
-        guard stat(path, &info) == 0 else {
-            return nil
-        }
-
-        return FileID(device: info.st_dev, inode: info.st_ino)
+        return FileSource(source: source, file: FileIdentity(info))
     }
 
     private func handle(_ source: any DispatchSourceFileSystemObject, path: String) {

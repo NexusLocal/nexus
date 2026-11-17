@@ -1249,7 +1249,7 @@ extension NexusEngineTests {
 
             #expect(FileManager.default.fileExists(atPath: folder))
             #expect(await engine.stateStore.current().databaseRemovals.count == 1)
-            #expect(sites.first?.workspaceProblem?.contains("Nexus did not remove the database server of the removed workspace fix") == true)
+            #expect(sites.first?.workspaceProblem?.contains("Nexus did not remove the database server mysql-8.4 of the removed workspace fix") == true)
 
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: trash)
             await engine.forgetRemovalProblems()
@@ -2316,7 +2316,7 @@ extension NexusEngineTests {
             try await settle(engine)
             #expect(await engine.worktreeWatchers.count == 1)
 
-            await engine.stopBackgroundProcesses()
+            await engine.stopBackgroundProcesses(cause: "a test")
 
             #expect(await engine.worktreeWatchers.isEmpty)
         }

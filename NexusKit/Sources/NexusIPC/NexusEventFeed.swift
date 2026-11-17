@@ -16,6 +16,9 @@ public enum NexusFeedUpdate: Sendable, Equatable {
     case unreachable(String)
     // nexusd answers, but the app cannot read the event. nexusd then has another version.
     case unreadable(String)
+    // nexusd refuses each message of a program whose file changed after its start. So a new
+    // connection does not help.
+    case programChanged(ProgramChange)
 }
 
 // Keeps one connection to nexusd open and gives each event of nexusd to the app. When nexusd
@@ -115,7 +118,7 @@ public final class NexusEventFeed: NSObject, NexusEventReceiver, @unchecked Send
             return
         }
 
-        continuation.yield(.unreachable(reason))
+        continuation.yield(ExecutableFile.changeSinceStart.map(NexusFeedUpdate.programChanged) ?? .unreachable(reason))
 
         Task { [weak self, retryDelay] in
             try? await Task.sleep(for: retryDelay)

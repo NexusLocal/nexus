@@ -209,7 +209,7 @@ extension NexusEngine {
         }
 
         if !ranBefore {
-            try? await supervisor.stop(id)
+            try? await supervisor.stop(id, cause: "it ran only to empty Redis indexes that no workspace uses now")
             portConflicts[id] = earlierConflict
         }
 

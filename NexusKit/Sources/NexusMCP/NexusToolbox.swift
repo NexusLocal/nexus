@@ -24,8 +24,14 @@ public struct ToolFailure: Error, CustomStringConvertible, Equatable {
 struct NexusNotRunning: Error {}
 
 // folder is the project folder of the session: CLAUDE_PROJECT_DIR, else the working directory.
+// restart is the start of a new build by the MCP server. Its result chooses the text of an update.
 public struct NexusToolbox: MCPHandler {
     public static let notRunning = "Nexus does not run now. Ask the user to open Nexus."
+    // The MCP server starts the new build itself before the next request. A call that runs during
+    // the update gets the first text. The second text comes only when that start failed.
+    public static let updatedDuringCallText = "Nexus was updated during this call. Call the tool again."
+    public static let updatedText = "Nexus was updated while this MCP server ran. Restart the MCP server of Nexus in your agent, for example with /mcp in Claude Code."
+    public static let removedText = "Nexus was moved or removed while this MCP server ran. Open Nexus. Then restart the MCP server of Nexus in your agent, for example with /mcp in Claude Code."
 
     let connection: any NexusConnecting
     let paths: NexusPaths
@@ -34,6 +40,7 @@ public struct NexusToolbox: MCPHandler {
     let makeInbox: @Sendable (Int) -> any MailInbox
     let now: @Sendable () -> Date
     let activity: ActivityLog?
+    let restart: MCPRestart?
 
     public init(
         connection: any NexusConnecting = NexusClient(),
@@ -42,7 +49,8 @@ public struct NexusToolbox: MCPHandler {
         loadSettings: @escaping @Sendable () -> AgentSettings = { AgentSettings.load() },
         makeInbox: @escaping @Sendable (Int) -> any MailInbox = { MailpitAPI(port: $0) },
         now: @escaping @Sendable () -> Date = { .now },
-        activity: ActivityLog? = nil
+        activity: ActivityLog? = nil,
+        restart: MCPRestart? = nil
     ) {
         self.connection = connection
         self.paths = paths
@@ -51,23 +59,51 @@ public struct NexusToolbox: MCPHandler {
         self.makeInbox = makeInbox
         self.now = now
         self.activity = activity
+        self.restart = restart
+    }
+
+    private func agentText(_ change: ProgramChange) -> String {
+        switch change {
+        case .updated: restart?.startFailed == true ? Self.updatedText : Self.updatedDuringCallText
+        case .removed: Self.removedText
+        }
     }
 
     public func instructions(agent: String?) async -> String {
         let level = loadSettings().level
         let tld = NexusVariant.current.tld
 
-        guard let sites = try? await sites() else {
+        do {
+            return AgentInstructions.text(for: try await instructionPlace(), level: level, tld: tld)
+        } catch NexusClientError.programChanged(let change) {
+            return AgentInstructions.text(for: .programChanged(change), level: level, tld: tld)
+        } catch {
             return AgentInstructions.text(for: .nexusDoesNotRun, level: level, tld: tld)
         }
+    }
+
+    private func instructionPlace() async throws -> AgentInstructions.Place {
+        let sites = try await self.sites()
 
         guard let target = try? SiteTarget.find(host: nil, folder: folder, in: sites, example: "") else {
-            return AgentInstructions.text(for: .notASite(folder: folder), level: level, tld: tld)
+            return .notASite(folder: folder)
         }
 
-        let connections = (try? await databaseConnections(target)) ?? []
+        let connections = try await optional { try await databaseConnections(target) } ?? []
         let database = connections.first { $0.instance != nil && !$0.database.isEmpty } ?? connections.first
-        return AgentInstructions.text(for: .site(target, database: database, tests: testDatabase(of: target)), level: level, tld: tld)
+        return .site(target, database: database, tests: testDatabase(of: target))
+    }
+
+    // A read that only adds details can fail without a failure of the call. After a change of the
+    // program each later read fails too. So that change must reach the agent.
+    private func optional<Value>(_ read: () async throws -> Value) async throws -> Value? {
+        do {
+            return try await read()
+        } catch NexusClientError.programChanged(let change) {
+            throw NexusClientError.programChanged(change)
+        } catch {
+            return nil
+        }
     }
 
     public func tools(agent: String?) async -> [MCPTool] {
@@ -100,12 +136,16 @@ public struct NexusToolbox: MCPHandler {
             return .error("\(name) is not a tool that only reads.")
         }
 
-        return await outcome { try await run(name, CallArguments(arguments), agent: "nexus") }
+        return await outcome(forAgent: false) { try await run(name, CallArguments(arguments), agent: "nexus") }
     }
 
-    private func outcome(_ body: () async throws -> MCPToolResult) async -> MCPToolResult {
+    // A change of the program of this process has a text for the agent and one for the nexus
+    // command.
+    private func outcome(forAgent: Bool = true, _ body: () async throws -> MCPToolResult) async -> MCPToolResult {
         do {
             return try await body()
+        } catch NexusClientError.programChanged(let change) {
+            return .error(forAgent ? agentText(change) : NexusClientError.programChanged(change).description)
         } catch is NexusNotRunning {
             return .error(Self.notRunning)
         } catch let failure as ToolFailure {
@@ -152,10 +192,10 @@ public struct NexusToolbox: MCPHandler {
 
     private func siteInfo(_ arguments: CallArguments) async throws -> MCPToolResult {
         let target = try await target(arguments.string("site"))
-        async let connections = try? await databaseConnections(target)
-        async let mail = try? await siteMail(host: target.siteHost)
+        async let connections = optional { try await databaseConnections(target) }
+        async let mail = optional { try await siteMail(host: target.siteHost) }
 
-        return try .value(AgentSite(target: target, connections: await connections ?? [], mail: await mail, testDatabase: testDatabase(of: target)))
+        return try .value(AgentSite(target: target, connections: try await connections ?? [], mail: try await mail, testDatabase: testDatabase(of: target)))
     }
 
     // Only the main folder of a Laravel site, because a workspace has its own database.
@@ -175,9 +215,9 @@ public struct NexusToolbox: MCPHandler {
         }
 
         let required = ComposerExtensions.required(in: URL(filePath: target.projectFolder, directoryHint: .isDirectory))
-        async let toggleList = try? await extensionToggles(php: target.site.php)
+        async let toggleList = optional { try await extensionToggles(php: target.site.php) }
         let loaded = try await loadedModules(of: target)
-        let toggles = await toggleList ?? []
+        let toggles = try await toggleList ?? []
         let states = required.keys.sorted().map { name in
             let toggle = toggles.first { ComposerExtensions.normalized($0.name) == name }
             let on = loaded.contains(name)
@@ -258,7 +298,7 @@ public struct NexusToolbox: MCPHandler {
     }
 
     private func readLog(_ arguments: CallArguments) async throws -> MCPToolResult {
-        let sites = (try? await sites()) ?? []
+        let sites = try await optional { try await sites() } ?? []
 
         guard let name = arguments.string("log") else {
             return try .value(LogList(logs: LogReader.logs(paths: paths, sites: sites)))
@@ -651,7 +691,7 @@ public struct NexusToolbox: MCPHandler {
     private func addSite(_ arguments: CallArguments, agent: String) async throws -> MCPToolResult {
         let path = arguments.string("folder").map(resolvedFolder) ?? folder
         let message = try await done(.addSite(folder: path, host: arguments.string("host"), aliases: [], php: arguments.string("php"), server: nil), agent: agent)
-        let site = (try? await sites())?.first { RealPath.of(URL(filePath: $0.folder, directoryHint: .isDirectory)) == path || $0.folder == path }
+        let site = try await optional { try await sites() }?.first { RealPath.of(URL(filePath: $0.folder, directoryHint: .isDirectory)) == path || $0.folder == path }
 
         return try .value(AddedSite(message: message, site: site.map(AgentSiteRow.init)))
     }
@@ -767,7 +807,7 @@ public struct NexusToolbox: MCPHandler {
 
         do {
             response = try await connection.send(request)
-        } catch is NexusClientError {
+        } catch NexusClientError.daemonNotRunning {
             throw NexusNotRunning()
         }
 

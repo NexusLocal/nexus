@@ -63,11 +63,24 @@ public actor ProcessSupervisor {
         var startedAt: Date?
         var quickRestarts = 0
         var stopping = false
+        // A stop can wait for the end of its program. The report waits for the stopped state. So
+        // the line comes at the end of the stop.
+        var stopReport: (cause: String, pid: Int32?)?
+
+        // Only a stop of a program that runs or waits for its restart gets a report.
+        mutating func beginStop(cause: String) {
+            if state.isActive {
+                stopReport = (cause, state.pid)
+            }
+
+            stopping = true
+        }
     }
 
     private let policy: RestartPolicy
     private var closed = false
     private var changeHandler: (@Sendable () -> Void)?
+    private var reportHandler: (@Sendable (SupervisorReport) -> Void)?
     private var services: [String: Managed] = [:] {
         didSet { changeHandler?() }
     }
@@ -79,6 +92,19 @@ public actor ProcessSupervisor {
     // The handler runs after each change of a service, also after an exit that nobody asked for.
     public func onChange(_ handler: @escaping @Sendable () -> Void) {
         changeHandler = handler
+    }
+
+    // The handler runs inside the supervisor. So a stop of nexusd loses no report.
+    public func onReport(_ handler: @escaping @Sendable (SupervisorReport) -> Void) {
+        reportHandler = handler
+    }
+
+    private func report(_ id: String, pid: Int32?, _ event: SupervisorReport.Event) {
+        guard let managed = services[id] else {
+            return
+        }
+
+        reportHandler?(SupervisorReport(id: id, name: managed.definition.activityName, pid: pid, ports: managed.definition.ports, event: event))
     }
 
     // The gate of a stopped workspace server holds a handed-over port with its listener on all
@@ -112,12 +138,12 @@ public actor ProcessSupervisor {
         try launch(definition.id)
     }
 
-    public func stop(_ id: String) async throws {
+    public func stop(_ id: String, cause: String) async throws {
         guard var managed = services[id] else {
             throw SupervisorError.unknownService(id)
         }
 
-        managed.stopping = true
+        managed.beginStop(cause: cause)
         services[id] = managed
 
         guard let process = managed.process, process.isRunning else {
@@ -139,9 +165,11 @@ public actor ProcessSupervisor {
             await waitForGreeting(on: socket, of: process, until: min(startEnds, waitEnds))
         }
 
+        // The program can end during the wait for its greeting. Its number can then belong to
+        // another process.
         if definition.stopsGroup {
             ProcessGroup.signal(process, definition.stopSignal)
-        } else {
+        } else if process.isRunning {
             kill(process.processIdentifier, definition.stopSignal)
         }
 
@@ -177,12 +205,12 @@ public actor ProcessSupervisor {
     }
 
     // Ends a service at once, without its stop signal and without a restart.
-    public func end(_ id: String) {
+    public func end(_ id: String, cause: String) {
         guard var managed = services[id] else {
             return
         }
 
-        managed.stopping = true
+        managed.beginStop(cause: cause)
         services[id] = managed
 
         if let process = managed.latestProcess {
@@ -201,41 +229,41 @@ public actor ProcessSupervisor {
     // The services stop at the same time, so a database that writes its data to disk does not
     // make the others wait. A service without a port goes first. A worker then ends its job while
     // the database server of its workspace still runs.
-    public func stopAll() async {
-        await stopPrograms()
-        await stopServers()
+    public func stopAll(cause: String) async {
+        await stopPrograms(cause: cause)
+        await stopServers(cause: cause)
     }
 
     // Several supervisors stop at the same time, in the two steps of stopAll. A worker of one
     // supervisor can use a database of another one. So each step waits for that step in all the
     // supervisors. The whole stop then takes one stop timeout of a program and one of a server at
     // most, and a stop of nexusd stays within the ExitTimeOut of launchd (owner, 2026-11-16).
-    public static func stopAll(of supervisors: [ProcessSupervisor]) async {
+    public static func stopAll(of supervisors: [ProcessSupervisor], cause: String) async {
         await withTaskGroup { group in
             for supervisor in supervisors {
-                group.addTask { await supervisor.stopPrograms() }
+                group.addTask { await supervisor.stopPrograms(cause: cause) }
             }
         }
 
         await withTaskGroup { group in
             for supervisor in supervisors {
-                group.addTask { await supervisor.stopServers() }
+                group.addTask { await supervisor.stopServers(cause: cause) }
             }
         }
     }
 
-    private func stopPrograms() async {
-        await stopAtTheSameTime(services.filter { $0.value.definition.ports.isEmpty }.map(\.key))
+    private func stopPrograms(cause: String) async {
+        await stopAtTheSameTime(services.filter { $0.value.definition.ports.isEmpty }.map(\.key), cause: cause)
     }
 
-    private func stopServers() async {
-        await stopAtTheSameTime(services.filter { !$0.value.definition.ports.isEmpty }.map(\.key))
+    private func stopServers(cause: String) async {
+        await stopAtTheSameTime(services.filter { !$0.value.definition.ports.isEmpty }.map(\.key), cause: cause)
     }
 
-    private func stopAtTheSameTime(_ ids: [String]) async {
+    private func stopAtTheSameTime(_ ids: [String], cause: String) async {
         await withTaskGroup { group in
             for id in ids {
-                group.addTask { try? await self.stop(id) }
+                group.addTask { try? await self.stop(id, cause: cause) }
             }
         }
     }
@@ -246,9 +274,9 @@ public actor ProcessSupervisor {
         closed = true
     }
 
-    public func stopForGood() async {
+    public func stopForGood(cause: String) async {
         closeForGood()
-        await stopAll()
+        await stopAll(cause: cause)
     }
 
     public func status() -> [ServiceStatus] {
@@ -311,8 +339,8 @@ public actor ProcessSupervisor {
         process.standardError = log
         process.standardInput = FileHandle.nullDevice
         process.terminationHandler = { [weak self] finished in
-            let status = finished.terminationStatus
-            Task { await self?.handleExit(of: id, pid: finished.processIdentifier, status: status) }
+            let end = ProcessEnd(reason: finished.terminationReason, status: finished.terminationStatus)
+            Task { await self?.handleExit(of: id, pid: finished.processIdentifier, end: end) }
         }
 
         do {
@@ -320,6 +348,7 @@ public actor ProcessSupervisor {
         } catch {
             managed.state = .failed(reason: error.localizedDescription)
             services[id] = managed
+            report(id, pid: nil, .notStarted(reason: error.localizedDescription))
             throw SupervisorError.launchFailed(error.localizedDescription)
         }
 
@@ -329,9 +358,10 @@ public actor ProcessSupervisor {
         managed.stopping = false
         managed.state = .running(pid: process.processIdentifier, since: .now)
         services[id] = managed
+        report(id, pid: process.processIdentifier, .started)
     }
 
-    private func handleExit(of id: String, pid: Int32, status: Int32) async {
+    private func handleExit(of id: String, pid: Int32, end: ProcessEnd) async {
         guard var managed = services[id], let process = managed.process, process.processIdentifier == pid else {
             return
         }
@@ -344,8 +374,7 @@ public actor ProcessSupervisor {
         }
 
         if managed.stopping {
-            managed.state = .stopped
-            services[id] = managed
+            setStopped(&managed, id)
             return
         }
 
@@ -354,14 +383,16 @@ public actor ProcessSupervisor {
         managed.quickRestarts = ranFor >= stableSeconds ? 1 : managed.quickRestarts + 1
 
         if managed.quickRestarts > policy.maximumQuickRestarts {
-            managed.state = .failed(reason: "The service stopped \(policy.maximumQuickRestarts) times within a short time. The last exit status was \(status). See \(managed.definition.logFile.path(percentEncoded: false)).")
+            managed.state = .failed(reason: "The service stopped \(policy.maximumQuickRestarts) times within a short time. \(end.lastEndText) See \(managed.definition.logFile.path(percentEncoded: false)).")
             services[id] = managed
+            report(id, pid: pid, .ended(end, restartAttempt: nil))
             return
         }
 
         let attempt = managed.quickRestarts
         managed.state = .restarting(attempt: attempt)
         services[id] = managed
+        report(id, pid: pid, .ended(end, restartAttempt: attempt))
 
         try? await Task.sleep(for: policy.delay(forAttempt: attempt))
 
@@ -378,8 +409,19 @@ public actor ProcessSupervisor {
         }
 
         managed.process = nil
+        setStopped(&managed, id)
+    }
+
+    private func setStopped(_ managed: inout Managed, _ id: String) {
+        let stopReport = managed.stopReport
+
         managed.state = .stopped
+        managed.stopReport = nil
         services[id] = managed
+
+        if let stopReport {
+            report(id, pid: stopReport.pid, .stopped(cause: stopReport.cause))
+        }
     }
 
 }

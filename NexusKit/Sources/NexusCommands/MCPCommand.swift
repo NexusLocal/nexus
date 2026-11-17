@@ -108,15 +108,39 @@ struct MCPCommand: AsyncParsableCommand {
         func run() async throws {
             signal(SIGPIPE, SIG_IGN)
 
+            let environment = ProcessInfo.processInfo.environment
+            let resume = environment[MCPResume.environmentKey].flatMap(MCPResume.init(environmentValue:))
+            let activity = ActivityLog(file: NexusPaths.standard.activityLog, source: "nexus mcp")
+            let restart = ExecutableFile.atStart.map { file in
+                MCPRestart(file: file) { path, resume in
+                    Self.startNewBuild(at: path, resume: resume, environment: environment, activity: activity)
+                }
+            }
             let output = StandardOutput()
             let server = MCPServer(
-                handler: NexusToolbox(folder: Self.projectFolder(), activity: ActivityLog(file: NexusPaths.standard.activityLog, source: "nexus mcp")),
+                handler: NexusToolbox(folder: Self.projectFolder(), activity: activity, restart: restart),
                 name: NexusVariant.current.mcpServerName,
                 version: NexusVersion.current(),
+                agent: resume?.agent,
                 write: { await output.write($0) }
             )
 
-            try await server.serve(LineReader(FileHandle.standardInput.bytes))
+            await server.serve(MCPInput.standardInput(unread: resume?.input ?? Data()), restart: restart)
+        }
+
+        // The new build takes the place of this process with the same arguments. The input and the
+        // output of the agent stay open. So the agent keeps its connection. Returns only when the
+        // new build does not start.
+        static func startNewBuild(at path: String, resume: MCPResume, environment: [String: String], activity: ActivityLog) {
+            var newEnvironment = environment
+            newEnvironment[MCPResume.environmentKey] = resume.environmentValue
+
+            activity.write("update", "nexus mcp (process \(getpid())) starts the new build of \(path).")
+            activity.waitForWrites()
+
+            let reason = becomeProgram(path, CommandLine.arguments, environment: newEnvironment)
+
+            activity.write("update", "nexus mcp (process \(getpid())) could not start the new build of \(path): \(reason)")
         }
 
         // Claude Code gives the project folder in CLAUDE_PROJECT_DIR. Other agents start the server

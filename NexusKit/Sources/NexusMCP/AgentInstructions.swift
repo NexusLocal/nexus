@@ -10,6 +10,9 @@ public enum AgentInstructions {
         case site(SiteTarget, database: DatabaseConnectionInfo?, tests: TestDatabaseCheck?)
         case notASite(folder: String)
         case nexusDoesNotRun
+        // The instructions come before the first call. So an update means that the start of the
+        // new build failed.
+        case programChanged(ProgramChange)
     }
 
     public static func text(for place: Place, level: AgentLevel, tld: String) -> String {
@@ -44,6 +47,10 @@ public enum AgentInstructions {
             parts.append("This folder is not a Nexus site. Call list_sites to see the sites, or add_site to serve this folder.")
         case .nexusDoesNotRun:
             parts.append("Nexus does not run now. Most tools need it. Ask the user to open Nexus.")
+        case .programChanged(.updated):
+            parts.append(NexusToolbox.updatedText)
+        case .programChanged(.removed):
+            parts.append(NexusToolbox.removedText)
         }
 
         rules += [

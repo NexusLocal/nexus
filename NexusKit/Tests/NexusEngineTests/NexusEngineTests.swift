@@ -748,14 +748,6 @@ extension NexusEngineTests {
         list?.services.first { $0.id == id }?.state
     }
 
-    private func pid(_ state: ServiceState?) -> Int32? {
-        if case .running(let pid, _) = state {
-            return pid
-        }
-
-        return nil
-    }
-
     @Test func theEventsStartWithTheServicesAndFollowEachChange() async throws {
         let engine = try makeEngine(package: try makeFakeRedis(), port: freePort())
 
@@ -765,7 +757,7 @@ extension NexusEngineTests {
 
             let first = await events.next { _ in true }
             _ = await engine.handle(.start(service: "redis-1.0"))
-            let started = await events.next { self.pid(self.state(of: "redis-1.0", in: $0)) != nil }
+            let started = await events.next { self.state(of: "redis-1.0", in: $0)?.pid != nil }
 
             let redis = first?.services.last
             #expect(first?.services.map(\.id) == ["dns", "redis-1.0"])
@@ -784,13 +776,13 @@ extension NexusEngineTests {
             _ = await engine.handle(.install(name: "redis", line: "1.0"))
             _ = await engine.handle(.start(service: "redis-1.0"))
             let events = await recordEvents(of: engine)
-            let running = await events.next { self.pid(self.state(of: "redis-1.0", in: $0)) != nil }
-            let processNumber = pid(state(of: "redis-1.0", in: running))
+            let running = await events.next { self.state(of: "redis-1.0", in: $0)?.pid != nil }
+            let processNumber = state(of: "redis-1.0", in: running)?.pid
 
             if let processNumber {
                 kill(processNumber, SIGKILL)
             }
-            let after = await events.next { self.pid(self.state(of: "redis-1.0", in: $0)) != processNumber }
+            let after = await events.next { self.state(of: "redis-1.0", in: $0)?.pid != processNumber }
 
             #expect(processNumber != nil)
             #expect(after != nil)
@@ -803,10 +795,10 @@ extension NexusEngineTests {
         try await whileRunning(engine) {
             _ = await engine.handle(.install(name: "redis", line: "1.0"))
             _ = await engine.handle(.start(service: "redis-1.0"))
-            let before = pid(services(await engine.handle(.status))["redis-1.0"]?.state)
+            let before = services(await engine.handle(.status))["redis-1.0"]?.state.pid
 
             let restarted = await engine.handle(.restart(service: "redis-1.0"))
-            let after = pid(services(await engine.handle(.status))["redis-1.0"]?.state)
+            let after = services(await engine.handle(.status))["redis-1.0"]?.state.pid
 
             if case .done(let message) = restarted {
                 #expect(message.hasPrefix("Nexus restarted redis-1.0. "))
@@ -860,7 +852,7 @@ extension NexusEngineTests {
             await engine.startEnabledServices()
             let afterLaunch = services(await engine.handle(.status))["redis-1.0"]?.state
             let started = await engine.handle(.startStopped)
-            let afterStart = pid(services(await engine.handle(.status))["redis-1.0"]?.state)
+            let afterStart = services(await engine.handle(.status))["redis-1.0"]?.state.pid
             let state = await engine.stateStore.current()
 
             #expect(afterLaunch == .stopped)
@@ -897,7 +889,7 @@ extension NexusEngineTests {
             let list = await events.next { _ in true }
             let dns = list?.services.first { $0.id == "dns" }
 
-            #expect(pid(dns?.state) != nil)
+            #expect(dns?.state.pid != nil)
             #expect(dns?.problem?.contains("Login Items & Extensions") == true)
         }
     }
@@ -1027,11 +1019,11 @@ extension NexusEngineTests {
         try await whileRunning(engine) {
             _ = await engine.handle(.install(name: "redis", line: "1.0"))
             _ = await engine.handle(.start(service: "redis-1.0"))
-            let before = pid(services(await engine.handle(.status))["redis-1.0"]?.state)
+            let before = services(await engine.handle(.status))["redis-1.0"]?.state.pid
             manifest.change(to: try makeFakeRedis(version: "1.0.1"))
 
             let update = await engine.handle(.install(name: "redis", line: "1.0"))
-            let after = pid(services(await engine.handle(.status))["redis-1.0"]?.state)
+            let after = services(await engine.handle(.status))["redis-1.0"]?.state.pid
 
             #expect(update == .done(message: "redis 1.0 is updated from 1.0.0 to 1.0.1 in \(paths.runtime("redis", line: "1.0").path(percentEncoded: false))"))
             #expect(before != nil)

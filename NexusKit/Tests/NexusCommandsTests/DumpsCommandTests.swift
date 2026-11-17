@@ -529,6 +529,21 @@ struct DumpsCommandTests {
         )
     }
 
+    @Test(arguments: [
+        (ProgramChange.updated, "Nexus was updated while this command ran. Run the command again."),
+        (.removed, "Nexus was moved or removed while this command ran. Open Nexus. Then run the command again."),
+    ])
+    func followAfterAChangeOfNexusEndsWithItsTextAndDoesNotWait(_ change: ProgramChange, _ text: String) async {
+        let nexusd = FakeNexusd()
+        var follow = loop(nexusd)
+
+        await #expect(throws: ExitCode.failure) {
+            try await follow.run(updates([.programChanged(change), .unreachable("nexusd stopped.")]))
+        }
+        #expect(nexusd.output.errors == [text])
+        #expect(nexusd.output.lines.isEmpty)
+    }
+
     private func updates(_ updates: [NexusFeedUpdate]) -> AsyncStream<NexusFeedUpdate> {
         AsyncStream { continuation in
             updates.forEach { continuation.yield($0) }

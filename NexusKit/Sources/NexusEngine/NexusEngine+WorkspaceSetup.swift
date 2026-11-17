@@ -53,14 +53,23 @@ extension NexusEngine {
                     continue
                 }
 
+                activity?.write("workspace", "Nexus sets up the workspace \(workspace.name).")
+
                 let finished = await setUp(workspace, key: next.key, startProblem: startProblem)
                 runningSetupKey = nil
                 runningSetupWorktree = nil
 
                 // A stop of nexusd also stops the database servers of a running setup. That failure
                 // says nothing about the workspace. So the workspace stays in Preparing for the next
-                // start.
-                guard !watchingStopped, await store(finished, key: next.key) else {
+                // start. The line of the stop of nexusd tells why the setup has no end.
+                guard !watchingStopped else {
+                    return
+                }
+
+                let result = await store(finished, key: next.key)
+                activity?.write("workspace", Self.setupEndText(workspace.name, result: result))
+
+                guard result != .notSaved else {
                     return
                 }
 
@@ -112,22 +121,39 @@ extension NexusEngine {
         }
     }
 
+    enum SetupResult: Equatable {
+        case stored(WorkspaceState)
+        case workspaceRemoved
+        case notSaved
+    }
+
+    static func setupEndText(_ name: String, result: SetupResult) -> String {
+        let preparing = WorkspaceState.preparing.title
+
+        return switch result {
+        case .stored(.preparing): "The setup of the workspace \(name) ended without a result. The workspace stays in \(preparing)."
+        case .stored(let state): "The setup of the workspace \(name) ended: \(state.title).\(state.reason.map { " \($0)" } ?? "")"
+        case .workspaceRemoved: "The setup of the workspace \(name) ended. The workspace was removed during the setup."
+        case .notSaved: "Nexus could not save the result of the setup of the workspace \(name). The workspace stays in \(preparing)."
+        }
+    }
+
     // A setup can take long, and git can change the branch or move the worktree in that time. So
     // only the results of the setup go into the record. A moved worktree needs a new setup. The
     // worktree can be gone by now. The record then stays gone.
-    private func store(_ finished: Workspace, key: String) async -> Bool {
-        let needsNewRun = setupIsOutdated
+    private func store(_ finished: Workspace, key: String) async -> SetupResult {
+        let stored = setupIsOutdated ? .preparing : finished.state
         setupIsOutdated = false
 
         do {
-            try await stateStore.update { state in
+            let found = try await stateStore.update { state in
                 let records = state.worktrees[key]?.workspaces ?? []
 
                 guard let index = records.firstIndex(where: { $0.name == finished.name && $0.worktree == finished.worktree }) else {
-                    return
+                    return false
                 }
 
-                state.worktrees[key]?.workspaces[index].state = needsNewRun ? .preparing : finished.state
+                state.worktrees[key]?.workspaces[index].state = stored
                 state.worktrees[key]?.workspaces[index].redisIndexes = finished.redisIndexes
                 state.worktrees[key]?.workspaces[index].redisInstances = finished.redisInstances
                 state.worktrees[key]?.workspaces[index].ports = finished.ports
@@ -139,10 +165,12 @@ extension NexusEngine {
                 state.worktrees[key]?.workspaces[index].configurationDigest = finished.configurationDigest
                 state.worktrees[key]?.workspaces[index].mainConfigurationDigest = finished.mainConfigurationDigest
                 state.worktrees[key]?.workspaces[index].links = finished.links
+                return true
             }
-            return true
+
+            return found ? .stored(stored) : .workspaceRemoved
         } catch {
-            return false
+            return .notSaved
         }
     }
 

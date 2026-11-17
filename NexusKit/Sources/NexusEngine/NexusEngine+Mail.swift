@@ -130,7 +130,7 @@ extension NexusEngine {
             return "The settings of the mail service are changed."
         }
 
-        _ = try await restart(ServiceCatalog.mailID)
+        _ = try await restart(ServiceCatalog.mailID, cause: "a new size of the inbox")
         return "The settings of the mail service are changed. Mailpit started again. The inbox keeps the newest \(settings.inboxMails) mails."
     }
 
@@ -226,7 +226,7 @@ extension NexusEngine {
     // Mailpit gets the waiting mails after each start, also after a restart by the supervisor. The
     // route sends new mail to the outbox while Mailpit does not run.
     func mailServiceChanged() async {
-        guard case .running(let pid, _) = await supervisor.state(of: ServiceCatalog.mailID),
+        guard let pid = await supervisor.state(of: ServiceCatalog.mailID)?.pid,
               let port = await supervisor.status().first(where: { $0.id == ServiceCatalog.mailID })?.ports.last else {
             mailRouter.setInbox(port: nil)
             mailpitWithWaitingMails = nil

@@ -215,12 +215,18 @@ extension NexusEngine {
                 let folder = next.server.folder
 
                 do {
-                    try await remove(next)
+                    if let dumps = try await remove(next) {
+                        activity?.write("workspace", Self.removalText(of: next, dumps: dumps))
+                    }
+
                     try await stateStore.update { $0.databaseRemovals.removeAll { $0.server.folder == folder } }
                     databaseRemovalProblems[folder] = nil
                 } catch {
-                    databaseRemovalProblems[folder] = DatabaseRemovalProblem(reason: ErrorText.plain(error), nextTry: .now + Self.removalRetryWait)
+                    let reason = ErrorText.plain(error)
+
+                    databaseRemovalProblems[folder] = DatabaseRemovalProblem(reason: reason, nextTry: .now + Self.removalRetryWait)
                     writeToLog(of: next.server.instance, "Nexus did not remove the server of the workspace \(next.workspace). \(error)\n")
+                    activity?.write("workspace", Self.removalFailureText(of: next, reason: reason))
                 }
 
                 publishSites()
@@ -239,6 +245,23 @@ extension NexusEngine {
         databaseRemovalRun = nil
         removeOldDumps(after: dumpDays)
         scheduleDatabaseRemovalRetry()
+    }
+
+    static func removalText(of removal: DatabaseRemoval, dumps: [String]) -> String {
+        let server = "Nexus removed the database server \(removal.server.instance) of the workspace \(removal.workspace)"
+        let files = dumps.sorted()
+
+        guard !files.isEmpty else {
+            return "\(server): no dump."
+        }
+
+        return files.count == 1
+            ? "\(server): dump \(files[0])"
+            : "\(server): dumps \(files.joined(separator: ", "))"
+    }
+
+    static func removalFailureText(of removal: DatabaseRemoval, reason: String) -> String {
+        "Nexus did not remove the database server \(removal.server.instance) of the removed workspace \(removal.workspace). \(reason) Nexus tries again in an hour."
     }
 
     private func nextDatabaseRemoval() async -> DatabaseRemoval? {
@@ -266,8 +289,9 @@ extension NexusEngine {
     }
 
     // A setup can still clone for this record, and a folder that comes after this step would stay for
-    // ever. The server stops before its clone goes.
-    private func remove(_ removal: DatabaseRemoval) async throws {
+    // ever. The server stops before its clone goes. Returns the dump files of the removal, or nil
+    // when no clone was there. Only the record then goes.
+    private func remove(_ removal: DatabaseRemoval) async throws -> [String]? {
         let server = removal.server
 
         // An update can replace the package, so this check comes before the check of the package.
@@ -281,26 +305,27 @@ extension NexusEngine {
         }
 
         guard Self.hasClone(server) else {
-            return
+            return nil
         }
 
-        if removal.keepsDump, FileManager.default.fileExists(atPath: server.folder) {
-            try await writeDumps(of: removal)
-        }
+        let dumps = removal.keepsDump && FileManager.default.fileExists(atPath: server.folder) ? try await writeDumps(of: removal) : []
 
         removingServers.insert(server.folder)
         defer { removingServers.remove(server.folder) }
 
         await syncBackgroundProcesses().value
         try await Self.removeClone(of: server)
+        return dumps
     }
 
-    private func writeDumps(of removal: DatabaseRemoval) async throws {
+    // Returns the dump files of the earlier runs and of this run.
+    private func writeDumps(of removal: DatabaseRemoval) async throws -> [String] {
         let server = removal.server
         let missing = removal.databases.filter { !hasDump(of: $0, in: removal) }
+        var files = removal.databases.filter { hasDump(of: $0, in: removal) }.compactMap { removal.dumps[$0] }
 
         guard !missing.isEmpty else {
-            return
+            return files
         }
 
         guard let tools = await databaseRuntime(server.instance) else {
@@ -332,7 +357,11 @@ extension NexusEngine {
                     state.databaseRemovals[index].dumps[database] = file.path(percentEncoded: false)
                 }
             }
+
+            files.append(file.path(percentEncoded: false))
         }
+
+        return files
     }
 
     // The trash can have removed an earlier dump before a retry.
@@ -392,7 +421,7 @@ extension NexusEngine {
     func databaseRemovalProblem(ofSite site: String, in state: EngineState, of folders: Set<String>? = nil) -> String? {
         let removals = state.databaseRemovals.filter { $0.site == site && folders?.contains($0.server.folder) != false }
         let problems = removals.compactMap { removal in
-            databaseRemovalProblems[removal.server.folder].map { "Nexus did not remove the database server of the removed workspace \(removal.workspace). \($0.reason) Nexus tries again in an hour." }
+            databaseRemovalProblems[removal.server.folder].map { Self.removalFailureText(of: removal, reason: $0.reason) }
         }
 
         return problems.isEmpty ? nil : problems.joined(separator: "\n")

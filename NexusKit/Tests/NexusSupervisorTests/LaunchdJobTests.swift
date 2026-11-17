@@ -46,7 +46,7 @@ struct LaunchdJobTests {
     func aRealHomebrewServiceStopsAndLaunchdDoesNotStartItAgain() async throws {
         let port = try #require(ProcessInfo.processInfo.environment["NEXUS_STOP_HOMEBREW_SERVICE_ON_PORT"].flatMap { Int($0) })
         let owner = try #require(PortInspector.owner(of: port))
-        let job = try #require(await LaunchdJob.of(pid: owner.mainPID ?? owner.pid))
+        let job = try #require(await LaunchdJob.of(pid: owner.mainProcess))
 
         try await job.stopHomebrewService(executable: owner.executable)
         let freed = await PortInspector.becomesFree(port, within: .seconds(10))

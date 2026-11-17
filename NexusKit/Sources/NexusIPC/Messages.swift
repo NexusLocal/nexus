@@ -438,16 +438,14 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         }
 
         return switch state {
-        case .ready:
-            "Ready"
         case .notIsolated(let reason) where reason.hasPrefix(WorkspaceDumpText.failed):
             "The dump did not load"
         case .notIsolated(let reason) where reason.hasPrefix(WorkspaceDumpText.gone):
             "The dump file is gone"
-        case .notIsolated:
-            "Not isolated"
-        case .preparing, nil:
-            "Preparing"
+        case let state?:
+            state.title
+        case nil:
+            WorkspaceState.preparing.title
         }
     }
 
@@ -884,6 +882,11 @@ public struct PortConflict: Error, Codable, Sendable, Equatable, CustomStringCon
     public var description: String {
         let holder = owner.map { "\($0.description)" } ?? "a process that Nexus cannot see, probably one of another user"
         return "Port \(port) is in use by \(holder). Stop that app, or give \(service) another port, for example: nexus port \(portKey ?? service) \(suggestedPort)"
+    }
+
+    // The app reads the number again before a stop. Another program can have it by then.
+    public static func otherProgramText(port: Int, service: String) -> String {
+        "Another program uses port \(port) now. Nexus stopped nothing. Start \(service) again. Nexus then shows the program that uses the port."
     }
 }
 

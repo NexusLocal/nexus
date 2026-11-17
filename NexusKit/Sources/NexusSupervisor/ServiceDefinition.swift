@@ -23,6 +23,9 @@ public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
     // The Unix socket of a server that ignores its stop signal until its first greeting, as MariaDB
     // does. A stop during its start waits for that greeting.
     public let greetingSocket: URL?
+    // The name in the activity log, for example "mysql-8.4 of the workspace fix". A program of a
+    // workspace without this name gets no line.
+    public let activityName: String?
 
     public init(
         id: String,
@@ -37,7 +40,8 @@ public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
         startTimeout: Duration = .seconds(3),
         stopTimeout: Duration? = nil,
         stopsGroup: Bool = false,
-        greetingSocket: URL? = nil
+        greetingSocket: URL? = nil,
+        activityName: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -52,6 +56,7 @@ public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
         self.stopTimeout = stopTimeout
         self.stopsGroup = stopsGroup
         self.greetingSocket = greetingSocket
+        self.activityName = activityName
     }
 }
 
@@ -66,6 +71,14 @@ public enum ServiceState: Codable, Sendable, Hashable {
         case .running, .restarting: true
         case .stopped, .failed: false
         }
+    }
+
+    public var pid: Int32? {
+        guard case .running(let pid, _) = self else {
+            return nil
+        }
+
+        return pid
     }
 }
 

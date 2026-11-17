@@ -83,6 +83,8 @@ struct PortHolder {
     let process: String
     let processNumber: Int
     let path: String
+    // The path of processNumber. path belongs to the process on the port, which can be a child.
+    let mainPath: String?
     let suggestedPort: Int
     // The app that must stop its own servers.
     let managerApp: String?
@@ -816,38 +818,63 @@ final class AppModel {
     // because launchd starts it again after a SIGTERM (Phase 3, 3a). Another program that is not
     // an app gets SIGTERM on its main process. The start then waits up to 10 seconds for the port.
     // A server that an earlier nexusd left behind belongs to "Nexus". This app must not quit itself
-    // then.
-    func stop(_ holder: PortHolder, andStart service: ServiceVersion) {
+    // then. The program can end while the sheet is open. Another program can then get its number.
+    // So the path of the number is read again before the stop. For a process with another path
+    // nothing stops. The answer is then false. Without a process the program ended. The start then
+    // goes on. beforeStop runs before the first wait. The answer comes after the start. So a button
+    // can refuse a second click for the whole action.
+    func stop(_ holder: PortHolder, andStart service: ServiceVersion, beforeStop: () -> Void = {}) async -> Bool {
         guard client != nil else {
+            beforeStop()
             setSampleRunning(true, service: service.id)
-            return
+            return true
         }
 
-        Task {
-            if let app = runningApp(of: holder) {
-                app.terminate()
-            } else if holder.processNumber > 0 {
-                let pid = pid_t(holder.processNumber)
+        let pid = pid_t(holder.processNumber)
+        let check = PortInspector.program(at: pid, recordedPath: holder.mainPath)
 
-                if let job = await LaunchdJob.of(pid: pid), let formula = job.homebrewFormula {
-                    do {
-                        try await job.stopHomebrewService(executable: holder.path)
-                    } catch {
-                        failure = ActionFailure(title: "brew services stop \(formula) failed", message: ErrorText.plain(error), place: .window)
-                        return
-                    }
-                } else {
-                    kill(pid, SIGTERM)
-                }
-            }
-
-            let deadline = ContinuousClock.now + .seconds(10)
-            while !PortInspector.isFree(holder.port), ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(200))
-            }
-
-            await perform(.start(service: service.id), failure: "\(service.name) did not start", place: .window)
+        guard check != .other else {
+            return false
         }
+
+        beforeStop()
+
+        if check == .same, await !stopProgram(holder, pid: pid) {
+            return true
+        }
+
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !PortInspector.isFree(holder.port), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+
+        await perform(.start(service: service.id), failure: "\(service.name) did not start", place: .window)
+        return true
+    }
+
+    // Returns false after a failure. The window then shows it.
+    private func stopProgram(_ holder: PortHolder, pid: pid_t) async -> Bool {
+        if let app = runningApp(of: holder) {
+            app.terminate()
+            return true
+        }
+
+        if let job = await LaunchdJob.of(pid: pid), let formula = job.homebrewFormula {
+            do {
+                try await job.stopHomebrewService(executable: holder.path)
+                return true
+            } catch {
+                failure = ActionFailure(title: "brew services stop \(formula) failed", message: ErrorText.plain(error), place: .window)
+                return false
+            }
+        }
+
+        // The search of the job takes a moment. So the path is read again just before the signal.
+        if let mainPath = holder.mainPath, PortInspector.runs(pid, path: mainPath) {
+            kill(pid, SIGTERM)
+        }
+
+        return true
     }
 
     func send(_ request: NexusRequest, failure title: String, place: ActionPlace, finished: ((Bool) -> Void)? = nil) {
@@ -1079,6 +1106,9 @@ final class AppModel {
             show(TaskList(tasks: []))
         case .unreadable(let reason):
             nexusdProblem = .otherVersion(reason)
+        case .programChanged:
+            // Only the nexus command records its file at its start. So the app never gets this.
+            break
         }
     }
 

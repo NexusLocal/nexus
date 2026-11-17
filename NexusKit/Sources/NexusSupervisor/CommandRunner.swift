@@ -181,7 +181,7 @@ public enum CommandRunner {
 
         try Task.checkCancellation()
         let producerErrors = firstErrors.text()
-        let producerStoppedOnClosedPipe = producerEnd == Termination(status: SIGPIPE, signaled: true) || producerErrors.contains("Broken pipe") || producerErrors.contains("errno 32")
+        let producerStoppedOnClosedPipe = producerEnd == .signal(SIGPIPE) || producerErrors.contains("Broken pipe") || producerErrors.contains("errno 32")
 
         if producerEnd.failed, !producerStoppedOnClosedPipe {
             throw failure(first.name, status: producerEnd.status, output: producerErrors)
@@ -213,7 +213,7 @@ public enum CommandRunner {
 
     private static func start(_ process: Process) throws -> ExitStatus {
         let exit = ExitStatus()
-        process.terminationHandler = { exit.finish(Termination(status: $0.terminationStatus, signaled: $0.terminationReason == .uncaughtSignal)) }
+        process.terminationHandler = { exit.finish(ProcessEnd(reason: $0.terminationReason, status: $0.terminationStatus)) }
         try process.run()
         return exit
     }
@@ -267,20 +267,10 @@ public enum CommandRunner {
 
 }
 
-// For a program that a signal stopped, the status is the number of the signal.
-private struct Termination: Sendable, Equatable {
-    let status: Int32
-    let signaled: Bool
-
-    var failed: Bool {
-        signaled || status != 0
-    }
-}
-
 private final class ExitStatus: Sendable {
-    private let state = Mutex<(end: Termination?, waiter: CheckedContinuation<Termination, Never>?)>((nil, nil))
+    private let state = Mutex<(end: ProcessEnd?, waiter: CheckedContinuation<ProcessEnd, Never>?)>((nil, nil))
 
-    func finish(_ end: Termination) {
+    func finish(_ end: ProcessEnd) {
         let waiter = state.withLock { state in
             state.end = end
             return state.waiter.take()
@@ -288,7 +278,7 @@ private final class ExitStatus: Sendable {
         waiter?.resume(returning: end)
     }
 
-    func wait() async -> Termination {
+    func wait() async -> ProcessEnd {
         await withCheckedContinuation { continuation in
             let end = state.withLock { state in
                 if state.end == nil {

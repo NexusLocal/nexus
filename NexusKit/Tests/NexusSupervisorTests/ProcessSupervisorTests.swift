@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 import Testing
 @testable import NexusSupervisor
 
@@ -50,13 +51,6 @@ struct ProcessSupervisorTests {
         return false
     }
 
-    private func pid(_ state: ServiceState?) -> Int32? {
-        if case .running(let pid, _) = state {
-            return pid
-        }
-        return nil
-    }
-
     @Test(arguments: [false, true])
     func theWorkersOfAServiceEndWithItsMainProcess(stoppedByTheSupervisor: Bool) async throws {
         try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
@@ -64,12 +58,12 @@ struct ProcessSupervisorTests {
         let script = "/bin/sleep 300 & echo $! > '\(childFile.path(percentEncoded: false))'; trap '' TERM; wait"
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition("master", executable: "/bin/sh", arguments: ["-c", script]))
-        let main = try #require(pid(await supervisor.state(of: "master")))
+        let main = try #require(await supervisor.state(of: "master")?.pid)
         let written = await waitFor { (try? String(contentsOf: childFile, encoding: .utf8))?.hasSuffix("\n") == true }
         let child = try #require(Int32((try String(contentsOf: childFile, encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines)))
 
         if stoppedByTheSupervisor {
-            try await supervisor.stop("master")
+            try await supervisor.stop("master", cause: "a test")
         } else {
             kill(main, SIGKILL)
         }
@@ -77,7 +71,7 @@ struct ProcessSupervisorTests {
 
         #expect(written)
         #expect(childEnded)
-        await supervisor.stopAll()
+        await supervisor.stopAll(cause: "a test")
     }
 
     @Test func aStopOfAGroupWaitsForAChildThatEndsItsWork() async throws {
@@ -98,7 +92,7 @@ struct ProcessSupervisorTests {
         try await supervisor.start(definition)
         let started = await waitFor { FileManager.default.fileExists(atPath: ready.path(percentEncoded: false)) }
 
-        try await supervisor.stop("worker")
+        try await supervisor.stop("worker", cause: "a test")
 
         #expect(started)
         #expect(FileManager.default.fileExists(atPath: done.path(percentEncoded: false)))
@@ -111,12 +105,12 @@ struct ProcessSupervisorTests {
         let seen = logs.appending(path: "seen.txt").path(percentEncoded: false)
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition("server", executable: "/bin/sleep", arguments: ["30"], ports: [18093]))
-        let server = try #require(pid(await supervisor.state(of: "server")))
+        let server = try #require(await supervisor.state(of: "server")?.pid)
         let script = "trap 'sleep 0.3; kill -0 \(server) && touch \"\(seen)\"; exit 0' TERM; touch \"\(ready)\"; while :; do sleep 0.05; done"
         try await supervisor.start(definition("worker", executable: "/bin/sh", arguments: ["-c", script]))
         let started = await waitFor { FileManager.default.fileExists(atPath: ready) }
 
-        await supervisor.stopAll()
+        await supervisor.stopAll(cause: "a test")
 
         #expect(started)
         #expect(FileManager.default.fileExists(atPath: seen))
@@ -141,7 +135,7 @@ struct ProcessSupervisorTests {
         let written = await waitFor { (try? String(contentsOf: childFile, encoding: .utf8))?.hasSuffix("\n") == true }
         let child = try #require(Int32((try String(contentsOf: childFile, encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines)))
 
-        try await supervisor.stop("stubborn")
+        try await supervisor.stop("stubborn", cause: "a test")
         let childEnded = await waitFor { kill(child, 0) != 0 }
 
         #expect(written)
@@ -163,11 +157,11 @@ struct ProcessSupervisorTests {
         )
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition)
-        let main = try #require(pid(await supervisor.state(of: "ended")))
+        let main = try #require(await supervisor.state(of: "ended")?.pid)
         let written = await waitFor { (try? String(contentsOf: childFile, encoding: .utf8))?.hasSuffix("\n") == true }
         let child = try #require(Int32((try String(contentsOf: childFile, encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines)))
 
-        await supervisor.end("ended")
+        await supervisor.end("ended", cause: "a test")
         let ended = await waitFor { kill(main, 0) != 0 && kill(child, 0) != 0 }
         try? await Task.sleep(for: .milliseconds(150))
 
@@ -192,16 +186,16 @@ struct ProcessSupervisorTests {
         )
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition)
-        let main = try #require(pid(await supervisor.state(of: "waiting")))
+        let main = try #require(await supervisor.state(of: "waiting")?.pid)
         #expect(await waitFor { (try? String(contentsOf: childFile, encoding: .utf8))?.hasSuffix("\n") == true })
         let child = try #require(Int32((try String(contentsOf: childFile, encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines)))
         try await Task.sleep(for: .milliseconds(100))
 
-        let stop = Task { try await supervisor.stop("waiting") }
+        let stop = Task { try await supervisor.stop("waiting", cause: "a test") }
         #expect(await waitFor { kill(main, 0) != 0 })
         try await Task.sleep(for: .milliseconds(100))
 
-        await supervisor.end("waiting")
+        await supervisor.end("waiting", cause: "a test")
 
         #expect(await waitFor { kill(child, 0) != 0 })
         try await stop.value
@@ -229,7 +223,7 @@ struct ProcessSupervisorTests {
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition("first", executable: "/bin/sleep", arguments: ["30"]))
 
-        await supervisor.stopForGood()
+        await supervisor.stopForGood(cause: "a test")
         try await supervisor.start(definition("second", executable: "/bin/sleep", arguments: ["30"]))
 
         #expect(await supervisor.state(of: "first") == .stopped)
@@ -251,14 +245,14 @@ struct ProcessSupervisorTests {
     @Test func aReloadKeepsTheProcessAndShowsTheNewPorts() async throws {
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition("sleeper", executable: "/bin/sleep", arguments: ["30"]))
-        let first = try #require(pid(await supervisor.state(of: "sleeper")))
+        let first = try #require(await supervisor.state(of: "sleeper")?.pid)
 
         let reloaded = await supervisor.reload(definition("sleeper", executable: "/bin/sleep", arguments: ["30"], ports: [18091]), signal: 0)
 
         #expect(reloaded)
-        #expect(pid(await supervisor.state(of: "sleeper")) == first)
+        #expect(await supervisor.state(of: "sleeper")?.pid == first)
         #expect(await supervisor.status().first?.ports == [18091])
-        await supervisor.stopAll()
+        await supervisor.stopAll(cause: "a test")
     }
 
     @Test func aServiceThatWaitsForARestartStartsWithTheReloadedDefinition() async throws {
@@ -273,36 +267,36 @@ struct ProcessSupervisorTests {
         }
 
         let reloaded = await supervisor.reload(definition("quitter", executable: "/bin/sleep", arguments: ["30"], ports: [18092]), signal: SIGHUP)
-        let restarted = await waitFor { pid(await supervisor.state(of: "quitter")) != nil }
+        let restarted = await waitFor { await supervisor.state(of: "quitter")?.pid != nil }
 
         #expect(waiting)
         #expect(!reloaded)
         #expect(restarted)
         #expect(await supervisor.status().first?.ports == [18092])
-        await supervisor.stopAll()
+        await supervisor.stopAll(cause: "a test")
     }
 
     @Test func aKilledServiceComesBackWithANewProcess() async throws {
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition("sleeper", executable: "/bin/sleep", arguments: ["30"]))
-        let first = try #require(pid(await supervisor.state(of: "sleeper")))
+        let first = try #require(await supervisor.state(of: "sleeper")?.pid)
 
         kill(first, SIGKILL)
 
         let restarted = await waitFor {
-            let current = pid(await supervisor.state(of: "sleeper"))
+            let current = await supervisor.state(of: "sleeper")?.pid
             return current != nil && current != first
         }
         #expect(restarted)
-        await supervisor.stopAll()
+        await supervisor.stopAll(cause: "a test")
     }
 
     @Test func stopEndsTheProcessAndKeepsItStopped() async throws {
         let supervisor = ProcessSupervisor(policy: fastPolicy)
         try await supervisor.start(definition("sleeper", executable: "/bin/sleep", arguments: ["30"]))
-        let running = try #require(pid(await supervisor.state(of: "sleeper")))
+        let running = try #require(await supervisor.state(of: "sleeper")?.pid)
 
-        try await supervisor.stop("sleeper")
+        try await supervisor.stop("sleeper", cause: "a test")
         try await Task.sleep(for: .milliseconds(300))
 
         #expect(await supervisor.state(of: "sleeper") == .stopped)
@@ -325,7 +319,7 @@ struct ProcessSupervisorTests {
         try await supervisor.start(service)
         _ = await waitFor { (try? String(contentsOf: logs.appending(path: "database.log"), encoding: .utf8))?.contains("ready") == true }
 
-        try await supervisor.stop("database")
+        try await supervisor.stop("database", cause: "a test")
 
         #expect(FileManager.default.fileExists(atPath: marker.path(percentEncoded: false)))
     }
@@ -365,6 +359,7 @@ struct ProcessSupervisorTests {
         } catch let SupervisorError.portInUse(failedPort, owner) {
             #expect(failedPort == port)
             #expect(owner?.pid == getpid())
+            #expect(owner?.mainProcessPath == owner.flatMap { PortInspector.executablePath(of: $0.mainProcess) })
         }
     }
 
@@ -390,8 +385,8 @@ struct ProcessSupervisorTests {
 
         try await supervisor.start(sleeper, handedOver: true)
 
-        #expect(pid(await supervisor.state(of: "handed-over")) != nil)
-        await supervisor.stopAll()
+        #expect(await supervisor.state(of: "handed-over")?.pid != nil)
+        await supervisor.stopAll(cause: "a test")
     }
 
     @Test func aStopDuringTheStartOfAServerThatIgnoresItsSignalWaitsForItsGreeting() async throws {
@@ -415,7 +410,7 @@ struct ProcessSupervisorTests {
 
         try await supervisor.start(server)
         let start = ContinuousClock.now
-        try await supervisor.stop("greets")
+        try await supervisor.stop("greets", cause: "a test")
 
         #expect(ContinuousClock.now - start < .seconds(10))
         #expect(await supervisor.state(of: "greets") == .stopped)
@@ -436,7 +431,7 @@ struct ProcessSupervisorTests {
 
         #expect(await waitFor { (try? String(contentsOf: ready, encoding: .utf8)) == "ready\nready\n" })
 
-        await ProcessSupervisor.stopAll(of: [servers, programs])
+        await ProcessSupervisor.stopAll(of: [servers, programs], cause: "a test")
 
         #expect(try String(contentsOf: order, encoding: .utf8) == "program\nserver\n")
         #expect(await servers.state(of: "server") == .stopped)
@@ -462,7 +457,7 @@ struct ProcessSupervisorTests {
 
         try await supervisor.start(server)
         let start = ContinuousClock.now
-        try await supervisor.stop("silent")
+        try await supervisor.stop("silent", cause: "a test")
 
         #expect(ContinuousClock.now - start < .seconds(4))
         #expect(await supervisor.state(of: "silent") == .stopped)
@@ -481,9 +476,198 @@ struct ProcessSupervisorTests {
         #expect(mamp.description == "MAMP PRO (httpd, process 1)")
     }
 
+    @Test func aSignalNeedsTheSamePathAsBefore() throws {
+        let sleeper = Process()
+        sleeper.executableURL = URL(filePath: "/bin/sleep")
+        sleeper.arguments = ["30"]
+        try sleeper.run()
+        defer { sleeper.terminate() }
+        let path = try #require(PortInspector.executablePath(of: sleeper.processIdentifier))
+
+        #expect(PortInspector.runs(sleeper.processIdentifier, path: path))
+        #expect(!PortInspector.runs(sleeper.processIdentifier, path: "/opt/homebrew/bin/httpd"))
+    }
+
+    @Test func aStopGoesToTheMainProcessAndChecksThePathOfThatProcess() {
+        let child = PortOwner(pid: 12, command: "httpd", executable: "/opt/homebrew/libexec/httpd-worker", mainPID: 10, mainProcessIsOwn: true, mainExecutable: "/opt/homebrew/bin/httpd")
+        let alone = PortOwner(pid: 10, command: "httpd", executable: "/opt/homebrew/bin/httpd", mainPID: 10)
+        let ofAnOlderNexusd = PortOwner(pid: 12, command: "httpd", executable: "/opt/homebrew/libexec/httpd-worker", mainPID: 10)
+
+        #expect(child.mainProcess == 10)
+        #expect(child.mainProcessPath == "/opt/homebrew/bin/httpd")
+        #expect(alone.mainProcessPath == "/opt/homebrew/bin/httpd")
+        #expect(ofAnOlderNexusd.mainProcessPath == nil)
+    }
+
+    @Test func aMainProcessAndItsChildWithAnotherPathAreToldApart() async throws {
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let childFile = logs.appending(path: "listener.pid")
+        let main = Process()
+        main.executableURL = URL(filePath: "/bin/sh")
+        main.arguments = ["-c", "/bin/sleep 30 & echo $! > \"$0\"; wait", childFile.path(percentEncoded: false)]
+        try main.run()
+        defer { main.terminate() }
+        #expect(await waitFor { (try? String(contentsOf: childFile, encoding: .utf8))?.hasSuffix("\n") == true })
+        let child = try #require(Int32((try String(contentsOf: childFile, encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines)))
+        defer { kill(child, SIGKILL) }
+        let mainPath = try #require(PortInspector.executablePath(of: main.processIdentifier))
+        let childPath = try #require(PortInspector.executablePath(of: child))
+
+        #expect(mainPath != childPath)
+        #expect(PortInspector.program(at: main.processIdentifier, recordedPath: mainPath) == .same)
+        #expect(PortInspector.program(at: main.processIdentifier, recordedPath: childPath) == .other)
+        #expect(PortInspector.program(at: main.processIdentifier, recordedPath: nil) == .other)
+
+        kill(child, SIGKILL)
+        main.waitUntilExit()
+
+        #expect(PortInspector.program(at: main.processIdentifier, recordedPath: mainPath) == .ended)
+    }
+
     @Test func theRestartDelayDoublesUpToTheMaximum() {
         #expect(RestartPolicy.standard.delay(forAttempt: 1) == .seconds(1))
         #expect(RestartPolicy.standard.delay(forAttempt: 3) == .seconds(4))
         #expect(RestartPolicy.standard.delay(forAttempt: 10) == .seconds(60))
+    }
+
+    private func reporting(_ supervisor: ProcessSupervisor) async -> Reports {
+        let reports = Reports()
+        await supervisor.onReport { reports.add($0) }
+        return reports
+    }
+
+    @Test func aSignalThatNexusDidNotSendGivesTheEndAndTheRestart() async throws {
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        let reports = await reporting(supervisor)
+        try await supervisor.start(definition("mariadb-12.3", executable: "/bin/sleep", arguments: ["30"]))
+        let first = try #require(await supervisor.state(of: "mariadb-12.3")?.pid)
+
+        kill(first, SIGTERM)
+        let restarted = await waitFor { reports.all.count == 3 }
+
+        #expect(restarted)
+        #expect(reports.all.map(\.event) == [.started, .ended(.signal(SIGTERM), restartAttempt: 1), .started])
+        #expect(reports.all[1].text == "mariadb-12.3 (process \(first)) ended with signal 15 (SIGTERM). Nexus did not ask for this stop. Nexus starts it again, attempt 1.")
+        await supervisor.stopAll(cause: "a test")
+    }
+
+    @Test func aStopOfNexusGivesItsCauseAndNoEnd() async throws {
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        let reports = await reporting(supervisor)
+        try await supervisor.start(definition("mysql-8.4", executable: "/bin/sleep", arguments: ["30"]))
+        let running = try #require(await supervisor.state(of: "mysql-8.4")?.pid)
+
+        try await supervisor.stop("mysql-8.4", cause: "update to build 110")
+        try await supervisor.stop("mysql-8.4", cause: "a second stop")
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(reports.all.map(\.event) == [.started, .stopped(cause: "update to build 110")])
+        #expect(reports.all.last?.text == "mysql-8.4 (process \(running)) stopped: update to build 110")
+    }
+
+    @Test func anEndOfNexusGivesItsCause() async throws {
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        let reports = await reporting(supervisor)
+        try await supervisor.start(definition("worker", executable: "/bin/sleep", arguments: ["30"]))
+
+        await supervisor.end("worker", cause: "git removes the worktree")
+
+        #expect(reports.all.last?.event == .stopped(cause: "git removes the worktree"))
+    }
+
+    @Test func theStartGivesTheActivityNameThePortsAndTheProcess() async throws {
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        let reports = await reporting(supervisor)
+        let port = Self.freePort()
+        let server = ServiceDefinition(id: "/data/A/mysql-8.4", displayName: "server", executable: URL(filePath: "/bin/sleep"), arguments: ["30"], ports: [port], logFile: logs.appending(path: "server.log"), activityName: "mysql-8.4 of the workspace fix")
+        try await supervisor.start(server)
+        let running = try #require(await supervisor.state(of: server.id)?.pid)
+
+        #expect(reports.all.first?.text == "mysql-8.4 of the workspace fix started on port \(port) (process \(running)).")
+        #expect(SupervisorReport(id: "mail", pid: 7, ports: [1025, 8025], event: .started).text == "mail started on ports 1025 and 8025 (process 7).")
+        #expect(SupervisorReport(id: "php-8.4", pid: 8, ports: [], event: .started).text == "php-8.4 started (process 8).")
+        await supervisor.stopAll(cause: "a test")
+    }
+
+    @Test func aStartThatFailsGivesItsReason() async throws {
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        let reports = await reporting(supervisor)
+
+        await #expect(throws: SupervisorError.self) {
+            try await supervisor.start(definition("missing", executable: "/nexus/tests/no-program"))
+        }
+
+        #expect(reports.all.first?.text.hasPrefix("missing did not start: ") == true)
+    }
+
+    @Test func aServiceThatKeepsEndingGivesItsLastEnd() async throws {
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        let reports = await reporting(supervisor)
+        try await supervisor.start(definition("broken", executable: "/usr/bin/false"))
+
+        let failed = await waitFor {
+            if case .failed = await supervisor.state(of: "broken") {
+                return true
+            }
+            return false
+        }
+        let last = try #require(reports.all.last)
+
+        #expect(failed)
+        #expect(last.event == .ended(.exit(status: 1), restartAttempt: nil))
+        #expect(last.text.hasSuffix(" ended with exit status 1. Nexus did not ask for this stop. Nexus does not start it again, because it stopped too often within a short time."))
+        #expect(await supervisor.state(of: "broken") == .failed(reason: "The service stopped 3 times within a short time. The last time it stopped with an error (exit status 1). See \(logs.appending(path: "broken.log").path(percentEncoded: false))."))
+    }
+
+    @Test(arguments: [
+        (ProcessEnd.signal(SIGSEGV), "The last time it crashed (signal 11)."),
+        (.signal(SIGBUS), "The last time it crashed (signal 10)."),
+        (.signal(SIGABRT), "The last time it crashed (signal 6)."),
+        (.signal(SIGILL), "The last time it crashed (signal 4)."),
+        (.signal(SIGFPE), "The last time it crashed (signal 8)."),
+        (.signal(SIGTRAP), "The last time it crashed (signal 5)."),
+        (.signal(SIGSYS), "The last time it crashed (signal 12)."),
+        (.signal(SIGTERM), "The last time another program stopped it (signal 15)."),
+        (.signal(SIGINT), "The last time another program stopped it (signal 2)."),
+        (.signal(SIGHUP), "The last time another program stopped it (signal 1)."),
+        (.signal(SIGQUIT), "The last time another program stopped it (signal 3)."),
+        (.signal(SIGKILL), "The last time macOS or another program ended it (signal 9)."),
+        (.signal(SIGUSR1), "The last time it ended with signal 30."),
+        (.exit(status: 0), "The last time it stopped by itself (exit status 0)."),
+        (.exit(status: 1), "The last time it stopped with an error (exit status 1)."),
+    ])
+    func theFailedStateNamesTheLastEndInPlainWords(_ end: ProcessEnd, _ text: String) {
+        #expect(end.lastEndText == text)
+    }
+
+    @Test(arguments: [
+        (ProcessEnd.signal(SIGTERM), "signal 15 (SIGTERM)"),
+        (.signal(SIGSEGV), "signal 11 (SIGSEGV)"),
+        (.signal(SIGKILL), "signal 9 (SIGKILL)"),
+        (.signal(40), "signal 40"),
+        (.signal(SIGSTOP), "signal 17"),
+        (.exit(status: 0), "exit status 0"),
+        (.exit(status: 1), "exit status 1"),
+    ])
+    func anEndNamesItsSignalOrItsStatus(_ end: ProcessEnd, _ text: String) {
+        #expect(end.text == text)
+    }
+
+    @Test func aStopWithoutAProcessHasNoNumber() {
+        let report = SupervisorReport(id: "redis-8.2", pid: nil, ports: [], event: .stopped(cause: "request stop from the app or the nexus command"))
+
+        #expect(report.text == "redis-8.2 stopped: request stop from the app or the nexus command")
+    }
+}
+
+private final class Reports: Sendable {
+    private let reports = Mutex<[SupervisorReport]>([])
+
+    func add(_ report: SupervisorReport) {
+        reports.withLock { $0.append(report) }
+    }
+
+    var all: [SupervisorReport] {
+        reports.withLock { $0 }
     }
 }

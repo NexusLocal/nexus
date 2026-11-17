@@ -149,22 +149,74 @@ public actor MCPServer {
     private var legacyAgent: String?
     private var running: [MCPRequestID: Task<Void, Never>] = [:]
     private var cancelled: Set<MCPRequestID> = []
+    private var input: MCPInput?
+    private var restart: MCPRestart?
+    private var holdsForNewBuild = false
 
-    public init(handler: any MCPHandler, name: String, version: String, write: @escaping @Sendable (Data) async -> Void) {
+    // agent is the name of a legacy client from the initialize of an earlier process (MCPResume).
+    public init(handler: any MCPHandler, name: String, version: String, agent: String? = nil, write: @escaping @Sendable (Data) async -> Void) {
         self.handler = handler
         self.name = name
         self.version = version
+        self.legacyAgent = agent
         self.write = write
     }
 
-    // Reads messages until the input ends. A client can close the input after its last request,
-    // so the open requests still get their answer. The longest one waits 50 seconds for a mail.
-    public func serve<Lines: AsyncSequence>(_ lines: Lines) async throws where Lines.Element == String {
-        for try await line in lines {
-            await receive(line)
+    // Reads messages until the input ends. A client can close the input after its last request. So
+    // the open requests still get their answer. The longest one waits 50 seconds for a mail. A new
+    // build starts between two messages, after the answer of each running request. So the agent
+    // sees no break. In that wait each new request waits for the new build. A notification does
+    // not wait, because a cancel must reach a request that runs.
+    public func serve(_ input: MCPInput, restart: MCPRestart? = nil) async {
+        self.input = input
+        self.restart = restart
+
+        while let line = await input.nextLine() {
+            let message = Incoming(line)
+
+            // The new build must not run a request that the client cancelled.
+            if holdsForNewBuild, let id = message.cancelledRequest, input.dropHeld(where: { Incoming($0).requestID == id }) {
+                input.release()
+                continue
+            }
+
+            var waitsForNewBuild = holdsForNewBuild
+
+            if message.isRequest, !waitsForNewBuild, let restart {
+                waitsForNewBuild = await restart.isNeeded()
+            }
+
+            guard message.isRequest, waitsForNewBuild else {
+                input.release()
+                await receive(message)
+                continue
+            }
+
+            input.hold()
+            holdsForNewBuild = true
+            await startNewBuildWhenIdle()
         }
 
         await waitForRequests()
+    }
+
+    // Returns only when the new build did not start. This process then answers the held requests.
+    private func startNewBuildWhenIdle() async {
+        guard holdsForNewBuild, running.isEmpty, let input, let restart else {
+            return
+        }
+
+        let agent = legacyAgent
+
+        input.withUnread { unread in
+            restart.run(MCPResume(agent: agent, input: unread))
+        }
+
+        holdsForNewBuild = false
+
+        for line in input.takeHeld() {
+            await receive(Incoming(line))
+        }
     }
 
     public func waitForRequests() async {
@@ -173,16 +225,68 @@ public actor MCPServer {
         }
     }
 
-    public func receive(_ line: String) async {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    // A line of the client, decoded one time.
+    enum Incoming {
+        case blank
+        case unreadable
+        case message([String: JSONValue])
 
-        guard !trimmed.isEmpty else {
-            return
+        init(_ line: String) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !trimmed.isEmpty else {
+                self = .blank
+                return
+            }
+
+            guard let message = try? JSONDecoder().decode(JSONValue.self, from: Data(trimmed.utf8)), case .object(let fields) = message else {
+                self = .unreadable
+                return
+            }
+
+            self = .message(fields)
         }
 
-        guard let message = try? JSONDecoder().decode(JSONValue.self, from: Data(trimmed.utf8)), case .object(let fields) = message else {
+        var isRequest: Bool {
+            guard case .message(let fields) = self else {
+                return false
+            }
+
+            return fields["method"]?.string != nil && fields["id"] != nil
+        }
+
+        var requestID: MCPRequestID? {
+            guard case .message(let fields) = self else {
+                return nil
+            }
+
+            return MCPRequestID(fields["id"])
+        }
+
+        var cancelledRequest: MCPRequestID? {
+            guard case .message(let fields) = self, fields["method"]?.string == "notifications/cancelled", fields["id"] == nil else {
+                return nil
+            }
+
+            return MCPRequestID(fields["params"]?["requestId"])
+        }
+    }
+
+    public func receive(_ line: String) async {
+        await receive(Incoming(line))
+    }
+
+    private func receive(_ incoming: Incoming) async {
+        let fields: [String: JSONValue]
+
+        switch incoming {
+        case .blank:
+            return
+        case .unreadable:
             await send(error: MCPError(code: MCPError.parseError, message: "The message is not valid JSON."), id: nil)
             return
+        case .message(let message):
+            fields = message
         }
 
         guard let method = fields["method"]?.string else {
@@ -235,19 +339,20 @@ public actor MCPServer {
         running[id]?.cancel()
     }
 
+    // The request counts as running until its answer is out. So a new build never starts before
+    // that answer.
     private func finish(_ id: MCPRequestID, with outcome: Result<JSONValue, MCPError>) async {
+        if cancelled.remove(id) == nil {
+            switch outcome {
+            case .success(let result):
+                await send(["jsonrpc": "2.0", "id": id.json, "result": result])
+            case .failure(let error):
+                await send(error: error, id: id)
+            }
+        }
+
         running[id] = nil
-
-        guard cancelled.remove(id) == nil else {
-            return
-        }
-
-        switch outcome {
-        case .success(let result):
-            await send(["jsonrpc": "2.0", "id": id.json, "result": result])
-        case .failure(let error):
-            await send(error: error, id: id)
-        }
+        await startNewBuildWhenIdle()
     }
 
     private func answer(_ method: String, params: [String: JSONValue]) async throws -> JSONValue {

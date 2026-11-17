@@ -41,8 +41,9 @@ extension PortHolder {
             port: conflict.port,
             app: conflict.owner?.application ?? "another user",
             process: conflict.owner?.command ?? "a process",
-            processNumber: Int(conflict.owner?.mainPID ?? conflict.owner?.pid ?? 0),
+            processNumber: Int(conflict.owner?.mainProcess ?? 0),
             path: conflict.owner?.executable ?? "",
+            mainPath: conflict.owner?.mainProcessPath,
             suggestedPort: conflict.suggestedPort,
             managerApp: conflict.owner?.managerBundleIdentifier,
             canStop: conflict.owner?.canStop ?? false,
@@ -63,6 +64,10 @@ extension PortHolder {
         return managerApp == nil
             ? "A program of another user uses port \(port). Nexus cannot stop it, so use another port."
             : "\(app) uses port \(port). Stop the servers in \(app), or use another port."
+    }
+
+    func changedText(service: String) -> String {
+        PortConflict.otherProgramText(port: port, service: service)
     }
 
     var bannerText: String {

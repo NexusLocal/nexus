@@ -6,6 +6,22 @@ public enum WorkspaceState: Codable, Sendable, Hashable {
     case ready
     case notIsolated(String)
 
+    public var title: String {
+        switch self {
+        case .preparing: "Preparing"
+        case .ready: "Ready"
+        case .notIsolated: "Not isolated"
+        }
+    }
+
+    public var reason: String? {
+        guard case .notIsolated(let reason) = self else {
+            return nil
+        }
+
+        return reason
+    }
+
     public var isNotIsolated: Bool {
         if case .notIsolated = self {
             return true

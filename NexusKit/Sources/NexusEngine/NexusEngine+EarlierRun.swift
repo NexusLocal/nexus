@@ -34,11 +34,11 @@ extension NexusEngine {
 
         await withTaskGroup(of: Void.self) { group in
             for leftover in leftovers {
-                let definition = services.values.first { $0.id == leftover.id }?.definition
+                let definition = services[leftover.path]?.definition
                 activity?.write("leftover", "nexusd stops \(leftover.id) of an earlier run (process \(leftover.pid))")
 
                 group.addTask {
-                    await Self.stop(pid: leftover.pid, signal: definition?.stopSignal ?? SIGTERM, timeout: definition?.stopTimeout ?? Self.leftoverStopTimeout)
+                    await Self.stop(pid: leftover.pid, path: leftover.path, signal: definition?.stopSignal ?? SIGTERM, timeout: definition?.stopTimeout ?? Self.leftoverStopTimeout)
                 }
             }
         }
@@ -46,10 +46,10 @@ extension NexusEngine {
 
     // Only a program whose parent is launchd counts. A service of this nexusd is its child, and a
     // worker of a service, such as a worker of nginx, is the child of that service.
-    static func leftovers(in programs: [RunningProgram], services: [String: String]) -> [(pid: Int32, id: String)] {
+    static func leftovers(in programs: [RunningProgram], services: [String: String]) -> [(pid: Int32, id: String, path: String)] {
         programs
             .filter { $0.parent == 1 }
-            .compactMap { program in services[program.path].map { (program.pid, $0) } }
+            .compactMap { program in services[program.path].map { (program.pid, $0, program.path) } }
     }
 
     static func runningPrograms() -> [RunningProgram] {
@@ -79,18 +79,20 @@ extension NexusEngine {
     }
 
     // A service that does not end in its time gets SIGKILL, so its port is free for the new start.
-    static func stop(pid: Int32, signal: Int32, timeout: Duration) async {
-        guard kill(pid, signal) == 0 else {
+    // The program can end after the list. Another program can then get its number. So each signal
+    // goes only to a process that still has the path of the list.
+    static func stop(pid: Int32, path: String, signal: Int32, timeout: Duration) async {
+        guard PortInspector.runs(pid, path: path), kill(pid, signal) == 0 else {
             return
         }
 
         let deadline = ContinuousClock.now + timeout
 
-        while kill(pid, 0) == 0, ContinuousClock.now < deadline {
+        while PortInspector.runs(pid, path: path), ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(100))
         }
 
-        if kill(pid, 0) == 0 {
+        if PortInspector.runs(pid, path: path) {
             kill(pid, SIGKILL)
         }
     }

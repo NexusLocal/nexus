@@ -1,4 +1,6 @@
+import Darwin
 import Foundation
+import NexusSupervisor
 import Testing
 @testable import NexusEngine
 
@@ -18,6 +20,37 @@ struct EarlierRunTests {
 
         #expect(leftovers.map(\.pid) == [501, 502])
         #expect(leftovers.map(\.id) == ["mysql-8.4", "nginx"])
+        #expect(leftovers.map(\.path) == [mysql, nginx])
+    }
+
+    private func sleeper() throws -> Process {
+        let process = Process()
+        process.executableURL = URL(filePath: "/bin/sleep")
+        process.arguments = ["30"]
+        try process.run()
+        return process
+    }
+
+    @Test func aStopSendsNoSignalToANumberWithAnotherProgram() async throws {
+        let other = try sleeper()
+        defer { other.terminate() }
+
+        await NexusEngine.stop(pid: other.processIdentifier, path: "/Users/a/Library/Application Support/Nexus/runtimes/mysql/8.4/bin/mysqld", signal: SIGTERM, timeout: .milliseconds(200))
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(other.isRunning)
+    }
+
+    @Test func aStopEndsTheProgramOfItsPath() async throws {
+        let leftover = try sleeper()
+        defer { leftover.terminate() }
+        let path = try #require(PortInspector.executablePath(of: leftover.processIdentifier))
+
+        await NexusEngine.stop(pid: leftover.processIdentifier, path: path, signal: SIGTERM, timeout: .seconds(5))
+        leftover.waitUntilExit()
+
+        #expect(leftover.terminationReason == .uncaughtSignal)
+        #expect(leftover.terminationStatus == SIGTERM)
     }
 
     @Test func theListOfProgramsHoldsThisTestProcess() {

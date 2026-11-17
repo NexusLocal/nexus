@@ -87,7 +87,7 @@ extension NexusEngine {
             let state = await stateStore.current()
             let servicesStopped = await servicesAreStopped()
             let servers = await workspaceServers(state, includesRunning: !servicesStopped)
-            let wanted = await wantedProcesses(state, servers: servers, servicesStopped: servicesStopped)
+            let (wanted, serverStopCauses) = await wantedProcesses(state, servers: servers, servicesStopped: servicesStopped)
             let restartsFailed = restartFailedProcesses
 
             restartFailedProcesses = false
@@ -110,14 +110,15 @@ extension NexusEngine {
             await withTaskGroup { group in
                 for id in outdated {
                     let server = runningProcesses[id]?.server
+                    let cause = Self.stopCause(of: id, wanted: wanted, failed: failed, serverStopCauses: serverStopCauses, servicesStopped: servicesStopped)
 
                     group.addTask {
                         guard let server else {
-                            try? await self.processSupervisor.stop(id)
+                            try? await self.processSupervisor.stop(id, cause: cause)
                             return
                         }
 
-                        await self.stopServer(id, server)
+                        await self.stopServer(id, server, cause: cause)
                     }
                 }
             }
@@ -185,6 +186,24 @@ extension NexusEngine {
         processSync = nil
     }
 
+    // The cause of the stop of a program that the list of this run does not want, for the activity
+    // log. Only a database server of a workspace gets a line.
+    private static func stopCause(of id: String, wanted: [String: BackgroundProcess], failed: Set<String>, serverStopCauses: [String: String], servicesStopped: Bool) -> String {
+        if failed.contains(id) {
+            return "a new start after its failure"
+        }
+
+        if wanted[id] != nil {
+            return "its settings changed"
+        }
+
+        if servicesStopped {
+            return "the services are stopped"
+        }
+
+        return serverStopCauses[id] ?? "no workspace needs it now"
+    }
+
     // The start of one program of the list, for the sync and for the start of a stopped workspace.
     // The entry in runningProcesses comes before the first wait. So no second start of the same
     // program begins in that time. A server that starts leaves the list of hold, as in the gate.
@@ -209,7 +228,7 @@ extension NexusEngine {
             // An end or a stop can reach the supervisor before this start. Then nothing else ends
             // this program.
             guard runningProcesses[id] != nil else {
-                await processSupervisor.end(id)
+                await processSupervisor.end(id, cause: "a stop during its start")
                 return nil
             }
 
@@ -231,9 +250,9 @@ extension NexusEngine {
     // The stop of one workspace server. The gate takes the port back after serverDidStop, and a
     // connection that waited in the stop can start the workspace at once. That start must not find
     // the server that just stopped. So its entry in runningProcesses goes first (plan item 3e).
-    func stopServer(_ id: String, _ server: GatedServer) async {
+    func stopServer(_ id: String, _ server: GatedServer, cause: String) async {
         await serverGate.serverWillStop(server)
-        try? await processSupervisor.stop(id)
+        try? await processSupervisor.stop(id, cause: cause)
         runningProcesses[id] = nil
         serverHandOvers[id] = nil
         await serverGate.serverDidStop(server)
@@ -293,7 +312,7 @@ extension NexusEngine {
         worktreeWatchers[worktree] = nil
 
         for (id, process) in runningProcesses where process.worktree == worktree {
-            await processSupervisor.end(id)
+            await processSupervisor.end(id, cause: "git removes the worktree")
             runningProcesses[id] = nil
         }
 
@@ -352,7 +371,7 @@ extension NexusEngine {
     // "Stop all services" runs in the queue of the changes, and a sync can wait for that queue. So
     // this stop does not wait for a sync. A server during the hand-over of its port belongs to a
     // workspace that starts. The gate then gives the clients of that start the reason (plan item 3e).
-    func stopBackgroundProcesses() async {
+    func stopBackgroundProcesses(cause: String) async {
         let servers = runningProcesses.values.compactMap(\.server)
         let gate = serverGate
 
@@ -360,7 +379,7 @@ extension NexusEngine {
             await gate.serverWillStop(server)
         }
 
-        await processSupervisor.stopAll()
+        await processSupervisor.stopAll(cause: cause)
         runningProcesses = [:]
         serverHandOvers = [:]
         worktreeWatchers = [:]
@@ -463,19 +482,21 @@ extension NexusEngine {
         publishSites()
     }
 
-    // After "Stop all services" the programs have no database, so they wait for the services.
-    private func wantedProcesses(_ state: EngineState, servers: [WorkspaceServerEntry], servicesStopped: Bool) async -> [String: BackgroundProcess] {
+    // After "Stop all services" the programs have no database, so they wait for the services. Each
+    // workspace server that must not run gets the cause of its stop.
+    private func wantedProcesses(_ state: EngineState, servers: [WorkspaceServerEntry], servicesStopped: Bool) async -> (processes: [String: BackgroundProcess], serverStopCauses: [String: String]) {
         plannedProcessProblems = [:]
         plannedDevServers = [:]
         plannedOnDemandPrograms = [:]
 
         guard !servicesStopped else {
             usePlannedDevServers()
-            return [:]
+            return ([:], [:])
         }
 
         let (_, conflicts, sitesOfRecord, _, _) = workspaceSites(state)
-        var wanted = workspaceServerProcesses(servers)
+        let (serverProcesses, serverStopCauses) = workspaceServerProcesses(servers)
+        var wanted = serverProcesses
 
         let hasMainSwitch = { (key: String) in sitesOfRecord[key]?.contains(where: \.runsMainProcesses) == true }
 
@@ -507,7 +528,7 @@ extension NexusEngine {
         }
 
         usePlannedDevServers()
-        return Dictionary(wanted.map { ($0.definition.id, $0) }) { first, _ in first }
+        return (Dictionary(wanted.map { ($0.definition.id, $0) }) { first, _ in first }, serverStopCauses)
     }
 
     // The plans of this sync replace the plans of the last sync at once. A page or an idle check

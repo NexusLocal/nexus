@@ -193,24 +193,20 @@ public final class DumpReceiver: Sendable {
 // for example a second nexusd. The device and the inode tell the two files apart.
 struct SocketFile: Sendable, Equatable {
     let path: String
-    let device: dev_t
-    let inode: ino_t
+    let identity: FileIdentity
 
     init?(path: String) {
-        var info = stat()
-
-        guard stat(path, &info) == 0 else {
+        guard let identity = FileIdentity(path: path) else {
             return nil
         }
 
         self.path = path
-        device = info.st_dev
-        inode = info.st_ino
+        self.identity = identity
     }
 
     // Removes the file only while it is still this file.
     func remove() {
-        guard SocketFile(path: path) == self else {
+        guard FileIdentity(path: path) == identity else {
             return
         }
 

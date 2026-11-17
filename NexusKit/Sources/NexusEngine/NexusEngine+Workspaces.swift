@@ -152,6 +152,11 @@ extension NexusEngine {
 
             let change = await reconcileWorktrees()
             let removed = change?.removed ?? [:]
+
+            for line in change.map(Self.recordLines) ?? [] {
+                activity?.write("workspace", line)
+            }
+
             let removedIndexes = Set(removed.values.joined().flatMap(\.redisIndexesOnInstances))
 
             // No record names these indexes now. A setup that runs must not choose them before they
@@ -190,6 +195,14 @@ extension NexusEngine {
             // setup that a stop of nexusd ended.
             startWorkspaceSetups()
         } while reconcileAgain
+    }
+
+    static func recordLines(of change: WorktreeChange) -> [String] {
+        let added = change.added.sorted { $0.key < $1.key }.flatMap(\.value)
+        let removed = change.removed.sorted { $0.key < $1.key }.flatMap(\.value)
+
+        return added.map { "Nexus adds the workspace \($0.name) for the worktree \($0.worktree)." }
+            + removed.map { "Nexus removes the workspace \($0.name) of the worktree \($0.worktree)." }
     }
 
     // A new workspace needs its server block, and a Node.js app in it needs its port there. A change

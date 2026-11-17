@@ -33,6 +33,14 @@ enum WebChange {
     // A port, a module or the LAN switch changed. nexusd only reloads the running servers. So
     // the services that "Stop all services" stopped stay stopped.
     case setting
+
+    var reloadCause: String {
+        switch self {
+        case .sites: "a change of the sites"
+        case .automatic: "a change of the parked folders or the workspaces"
+        case .setting: "a change of the web settings"
+        }
+    }
 }
 
 // Sites, PHP, nginx and Apache (step 4).
@@ -533,14 +541,14 @@ extension NexusEngine {
                 let id = ServiceCatalog.phpID(line: line)
                 needed.insert(id)
 
-                if try await !ensureRunning(id, reload: plan.changedPHPLines.contains(line) ? SIGUSR2 : nil, waits: waits(id)) {
+                if try await !ensureRunning(id, reload: plan.changedPHPLines.contains(line) ? SIGUSR2 : nil, waits: waits(id), cause: nil) {
                     waiting.insert(id)
                 }
             }
 
             for status in await supervisor.status() where status.state.isActive {
                 if let line = ServiceID.phpLine(of: status.id), !plan.phpLines.contains(line), !enabled.contains(status.id) {
-                    try await supervisor.stop(status.id)
+                    try await supervisor.stop(status.id, cause: "no site uses PHP \(line)")
                 }
             }
 
@@ -551,7 +559,7 @@ extension NexusEngine {
                     needed.insert(id)
                 }
 
-                if try await !apply(id, needed: isNeeded, enabled: enabled, reload: signal, waits: waits(id)) {
+                if try await !apply(id, needed: isNeeded, enabled: enabled, reload: signal, waits: waits(id), cause: change.reloadCause) {
                     waiting.insert(id)
                 }
             }
@@ -570,13 +578,13 @@ extension NexusEngine {
             }
         case .setting:
             for line in plan.changedPHPLines.sorted() where await supervisor.state(of: ServiceCatalog.phpID(line: line))?.isActive == true {
-                try await reload(ServiceCatalog.phpID(line: line), SIGUSR2)
+                try await reload(ServiceCatalog.phpID(line: line), SIGUSR2, cause: nil)
             }
 
             await syncXdebugServices()
 
             for (id, signal) in [(ServiceCatalog.apacheID, SIGUSR1), (ServiceCatalog.nginxID, SIGHUP)] where await supervisor.state(of: id)?.isActive == true {
-                try await reload(id, signal)
+                try await reload(id, signal, cause: change.reloadCause)
             }
         }
 
@@ -593,17 +601,17 @@ extension NexusEngine {
     }
 
     // Returns false when a needed service waits for "Start stopped services".
-    private func apply(_ id: String, needed: Bool, enabled: Set<String>, reload: Int32, waits: Bool) async throws -> Bool {
+    private func apply(_ id: String, needed: Bool, enabled: Set<String>, reload: Int32, waits: Bool, cause: String) async throws -> Bool {
         let running = await supervisor.state(of: id)?.isActive == true
 
         if needed {
-            return try await ensureRunning(id, reload: reload, waits: waits)
+            return try await ensureRunning(id, reload: reload, waits: waits, cause: cause)
         }
 
         if running, enabled.contains(id) {
-            try await self.reload(id, reload)
+            try await self.reload(id, reload, cause: cause)
         } else if running {
-            try await supervisor.stop(id)
+            try await supervisor.stop(id, cause: "no site needs it")
         }
 
         return true
@@ -611,10 +619,10 @@ extension NexusEngine {
 
     // A service that does not run stays stopped when it waits for "Start stopped services". The
     // answer is false then.
-    private func ensureRunning(_ id: String, reload: Int32?, waits: Bool) async throws -> Bool {
+    private func ensureRunning(_ id: String, reload: Int32?, waits: Bool, cause: String?) async throws -> Bool {
         if await supervisor.state(of: id)?.isActive == true {
             if let reload {
-                try await self.reload(id, reload)
+                try await self.reload(id, reload, cause: cause)
             }
             return true
         }
@@ -631,18 +639,23 @@ extension NexusEngine {
     // port of Apache shows at once, without a stop of Apache. A reload that moves a service to
     // a new port waits until that port accepts connections. When it does not, the change fails.
     // PHP has no port, and only an update changes its definition. An update starts PHP again.
-    private func reload(_ id: String, _ signal: Int32) async throws {
-        guard let definition = try? await serviceDefinition(id) else {
+    // A reload with a cause gets a line in the activity log. PHP has none.
+    private func reload(_ id: String, _ signal: Int32, cause: String?) async throws {
+        let definition = try? await serviceDefinition(id)
+        let previousPorts = await supervisor.status().first { $0.id == id }?.ports
+        let reloaded = if let definition {
+            await supervisor.reload(definition, signal: signal)
+        } else {
             await supervisor.signal(id, signal)
-            await signalXdebug(of: id, signal)
-            return
         }
 
-        let previousPorts = await supervisor.status().first { $0.id == id }?.ports
-        await supervisor.reload(definition, signal: signal)
+        if reloaded, let cause {
+            activity?.write("service", "\(id) reloaded: \(cause)")
+        }
+
         await signalXdebug(of: id, signal)
 
-        if previousPorts != definition.ports {
+        if let definition, previousPorts != definition.ports {
             try await waitForConnections(definition)
         }
     }
@@ -1694,7 +1707,7 @@ extension NexusEngine {
         _ = try await writeWebConfig()
 
         if running {
-            try await supervisor.stop(ServiceCatalog.nginxID)
+            try await supervisor.stop(ServiceCatalog.nginxID, cause: "a restart for new ports or modules")
             _ = try await startService(ServiceCatalog.nginxID)
         }
     }

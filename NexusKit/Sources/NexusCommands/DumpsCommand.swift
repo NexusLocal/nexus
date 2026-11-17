@@ -472,6 +472,10 @@ struct DumpFollowLoop {
                 }
             case .event:
                 unreadable = false
+            case .programChanged(let change):
+                // nexusd refuses this process for ever. So a wait would never end.
+                write([NexusClientError.programChanged(change).description], true)
+                throw ExitCode.failure
             case .unreachable(let reason):
                 unreadable = false
 

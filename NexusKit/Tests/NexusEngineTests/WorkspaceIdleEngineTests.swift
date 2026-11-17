@@ -362,7 +362,7 @@ extension NexusEngineTests {
         let current = await engine.stateStore.current()
 
         let servers = await engine.workspaceServers(current)
-        let processes = await engine.workspaceServerProcesses(servers)
+        let (processes, stopCauses) = await engine.workspaceServerProcesses(servers)
         let held = NexusEngine.serversToHold(servers)
         let expected = GatedServer(
             folder: stoppedServer.folder,
@@ -374,6 +374,8 @@ extension NexusEngineTests {
         )
 
         #expect(processes.map(\.definition.id) == [removedServer.folder])
+        #expect(processes.first?.definition.activityName == "mysql-8.4 of the workspace old")
+        #expect(stopCauses == [stoppedServer.folder: "the workspace stopped"])
         #expect(held == [expected])
     }
 

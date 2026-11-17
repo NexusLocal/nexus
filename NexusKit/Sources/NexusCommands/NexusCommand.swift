@@ -27,6 +27,9 @@ public enum NexusCLI {
             exit(DumpFilterRun.run(Array(CommandLine.arguments.dropFirst(2))))
         }
 
+        // An update of Nexus can replace the file of a command that waits long. A later read would
+        // see the new file. A tool through a link asks nexusd only one time at its start.
+        ExecutableFile.recordStart()
         await NexusCommand.main()
     }
 
@@ -211,7 +214,8 @@ private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bo
         let activity: Bool? = environment[BackgroundProcessMarker.name] == nil ? nil : false
         response = try await NexusClient().send(.tool(tool, folder: folder, argumentFolder: argumentFolder, debug: debug ? true : nil, activity: activity))
     } catch let error as NexusClientError {
-        guard let other = nextProgram() else {
+        // After an update the next program on the PATH is not the program of the site.
+        guard case .daemonNotRunning = error, let other = nextProgram() else {
             try fail("\(ErrorText.plain(error))")
         }
 
@@ -258,12 +262,21 @@ private func runTool(_ tool: ProjectTool, _ arguments: [String], throughLink: Bo
 
 // The nexus command becomes the program. This throws when the program cannot start.
 private func execute(_ executable: String, _ arguments: [String], environment: [String: String]) throws -> Never {
+    let reason = becomeProgram(executable, arguments, environment: environment)
+
+    FileHandle.standardError.write(Data("Nexus cannot start \(executable): \(reason)\n".utf8))
+    throw ExitCode.failure
+}
+
+// Returns the reason only when the program cannot start.
+func becomeProgram(_ executable: String, _ arguments: [String], environment: [String: String]) -> String {
     let argv = arguments.map { strdup($0) } + [nil]
     let envp = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
     execve(executable, argv, envp)
 
-    FileHandle.standardError.write(Data("Nexus cannot start \(executable): \(String(cString: strerror(errno)))\n".utf8))
-    throw ExitCode.failure
+    let reason = String(cString: strerror(errno))
+    (argv + envp).forEach { free($0) }
+    return reason
 }
 
 struct Status: AsyncParsableCommand {

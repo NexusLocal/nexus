@@ -6,17 +6,25 @@ import Testing
 
 private actor FakeNexus: NexusConnecting {
     let running: Bool
+    let change: ProgramChange?
+    let changeAfterSites: Bool
     let caught: [DumpedRequest]
     let entries: [CaughtDump]
     var requests: [NexusRequest] = []
 
-    init(running: Bool = true, caught: [DumpedRequest] = [], entries: [CaughtDump] = []) {
+    init(running: Bool = true, change: ProgramChange? = nil, changeAfterSites: Bool = false, caught: [DumpedRequest] = [], entries: [CaughtDump] = []) {
         self.running = running
+        self.change = change
+        self.changeAfterSites = changeAfterSites
         self.caught = caught
         self.entries = entries
     }
 
     func send(_ request: NexusRequest) async throws -> NexusResponse {
+        if let change, !(changeAfterSites && request.inner == .sites) {
+            throw NexusClientError.programChanged(change)
+        }
+
         guard running else {
             throw NexusClientError.daemonNotRunning("test")
         }
@@ -297,6 +305,76 @@ struct NexusToolboxTests {
         #expect(text.contains("Nexus does not run now."))
         #expect(text.contains("You can only look."))
         #expect(text.count <= AgentInstructions.longest)
+    }
+
+    private func changedToolbox(_ change: ProgramChange, restart: MCPRestart? = nil) -> NexusToolbox {
+        NexusToolbox(connection: FakeNexus(change: change), paths: NexusPaths(root: URL(filePath: "/tmp/nexus-tests-none")), folder: "/w/shop", loadSettings: { AgentSettings(level: .read) }, restart: restart)
+    }
+
+    private func failedStart() throws -> MCPRestart {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "Nexus Update \(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let program = folder.appending(path: "nexus")
+        try Data("old".utf8).write(to: program)
+        let restart = MCPRestart(file: try #require(ExecutableFile(path: program.path(percentEncoded: false)))) { _, _ in }
+        try Data("new".utf8).write(to: folder.appending(path: "nexus.new"))
+        _ = try FileManager.default.replaceItemAt(program, withItemAt: folder.appending(path: "nexus.new"))
+
+        restart.run(MCPResume(agent: nil, input: Data()))
+
+        return restart
+    }
+
+    @Test func aCallDuringAnUpdateSaysThatItCanRunAgain() async {
+        let toolbox = changedToolbox(.updated)
+
+        let status = await toolbox.call("status", arguments: [:], agent: "claude-code")
+        let siteInfo = await toolbox.call("site_info", arguments: [:], agent: "claude-code")
+
+        #expect(status == .error("Nexus was updated during this call. Call the tool again."))
+        #expect(siteInfo == .error(NexusToolbox.updatedDuringCallText))
+    }
+
+    @Test func eachCallAfterAFailedStartOfTheNewBuildSaysThatTheServerMustRestart() async throws {
+        let restart = try failedStart()
+
+        let status = await changedToolbox(.updated, restart: restart).call("status", arguments: [:], agent: "claude-code")
+        let text = await changedToolbox(.updated, restart: restart).instructions(agent: "claude-code")
+
+        #expect(restart.startFailed)
+        #expect(status == .error("Nexus was updated while this MCP server ran. Restart the MCP server of Nexus in your agent, for example with /mcp in Claude Code."))
+        #expect(text.contains(NexusToolbox.updatedText))
+        #expect(!text.contains("does not run"))
+        #expect(text.count <= AgentInstructions.longest)
+    }
+
+    @Test func aMovedNexusSaysSoToTheAgentAndToTheCommand() async {
+        let toolbox = changedToolbox(.removed)
+
+        let call = await toolbox.call("site_info", arguments: [:], agent: "claude-code")
+        let command = await toolbox.look("site_info", arguments: [:])
+        let text = await toolbox.instructions(agent: "claude-code")
+
+        #expect(call == .error("Nexus was moved or removed while this MCP server ran. Open Nexus. Then restart the MCP server of Nexus in your agent, for example with /mcp in Claude Code."))
+        #expect(command == .error("Nexus was moved or removed while this command ran. Open Nexus. Then run the command again."))
+        #expect(text.contains(NexusToolbox.removedText))
+    }
+
+    @Test func aReadThatOnlyAddsDetailsDoesNotHideAChangeOfTheProgram() async {
+        let toolbox = NexusToolbox(connection: FakeNexus(change: .updated, changeAfterSites: true), paths: NexusPaths(root: URL(filePath: "/tmp/nexus-tests-none")), folder: "/w/shop/public", loadSettings: { AgentSettings(level: .read) })
+
+        let siteInfo = await toolbox.call("site_info", arguments: [:], agent: "claude-code")
+        let text = await toolbox.instructions(agent: "claude-code")
+
+        #expect(siteInfo == .error(NexusToolbox.updatedDuringCallText))
+        #expect(text.contains(NexusToolbox.updatedText))
+        #expect(!text.contains("This folder is"))
+    }
+
+    @Test func aCommandAfterAnUpdateSaysThatItCanRunAgain() async {
+        let result = await changedToolbox(.updated).look("site_info", arguments: [:])
+
+        #expect(result == .error("Nexus was updated while this command ran. Run the command again."))
     }
 
     @Test func theInstructionsNameTheSite() async {

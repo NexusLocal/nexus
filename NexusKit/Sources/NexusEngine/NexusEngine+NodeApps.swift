@@ -207,7 +207,7 @@ extension NexusEngine {
         }
 
         if runningProcesses[id] != nil {
-            try? await processSupervisor.stop(id)
+            try? await processSupervisor.stop(id, cause: "a restart of the app")
             runningProcesses[id] = nil
         }
 

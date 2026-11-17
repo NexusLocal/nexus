@@ -48,7 +48,7 @@ extension NexusEngine {
         }
 
         if running {
-            try? await supervisor.stop(id)
+            try? await supervisor.stop(id, cause: phpRuns ? "the Xdebug switch of PHP \(line) is off" : "PHP \(line) does not run")
         }
     }
 
