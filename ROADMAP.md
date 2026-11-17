@@ -25,6 +25,8 @@ In this order:
 
 ## Done recently
 
+- **0.6.5:** a line in the activity log for each start and stop with its cause, coding agents
+  that keep working after an update, and a safer stop in the "Port in use" window.
 - **0.6.4:** a faster switch to a new version after an update, a clear message when a newer
   `nexus` command meets an older background service, and two fixes for a workspace removal that
   stopped halfway.
