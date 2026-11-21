@@ -36,8 +36,17 @@ public enum CrashReports {
 
     // process is "app" or "nexusd". A second call with the setting off stops the SDK. The request
     // of the app gives nexusd the new value, because the defaults of another process can reach
-    // nexusd a moment later.
+    // nexusd a moment later. Sentry installs its crash handler at once only on the main thread. The
+    // exception ports go back after that install (ExceptionPorts).
     public static func apply(process: String, isOn: Bool = CrashReports.isOn) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async {
+                apply(process: process, isOn: isOn)
+            }
+
+            return
+        }
+
         guard isOn, !isDebugBuild || defaults.bool(forKey: debugSetting) else {
             if SentrySDK.isEnabled {
                 SentrySDK.close()
@@ -49,6 +58,9 @@ public enum CrashReports {
         guard !SentrySDK.isEnabled else {
             return
         }
+
+        let portsBeforeSentry = ExceptionPorts.current()
+        defer { portsBeforeSentry.restore() }
 
         SentrySDK.start { options in
             options.dsn = dsn

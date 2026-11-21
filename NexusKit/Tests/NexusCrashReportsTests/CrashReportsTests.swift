@@ -37,4 +37,24 @@ struct CrashReportsTests {
         #expect(anonymous.context?["device"]?["model"] as? String == "Mac16,1")
         #expect(anonymous.context?["app"]?["path"] as? String == "~/Applications")
     }
+
+    @Test func theExceptionPortsGoBackToThePortsFromBeforeAnotherHandler() throws {
+        let before = ExceptionPorts.current()
+        var handler = mach_port_t(MACH_PORT_NULL)
+        try #require(mach_port_allocate(mach_task_self_, MACH_PORT_RIGHT_RECEIVE, &handler) == KERN_SUCCESS)
+        defer { mach_port_mod_refs(mach_task_self_, handler, MACH_PORT_RIGHT_RECEIVE, -1) }
+        try #require(mach_port_insert_right(mach_task_self_, handler, handler, mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND)) == KERN_SUCCESS)
+
+        task_set_exception_ports(mach_task_self_, ExceptionPorts.crashMask, handler, EXCEPTION_DEFAULT, THREAD_STATE_NONE)
+        let installed = ExceptionPorts.current()
+        before.restore()
+
+        #expect(installed.handlers.contains { $0.port == handler })
+        #expect(portsByMask(ExceptionPorts.current()) == portsByMask(before))
+    }
+
+    // A kind of crash without a port can come back with another behavior. Only the port counts.
+    private func portsByMask(_ ports: ExceptionPorts) -> [[UInt32]] {
+        ports.handlers.map { [$0.mask, $0.port] }
+    }
 }
