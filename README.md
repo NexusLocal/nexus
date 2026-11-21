@@ -23,7 +23,7 @@
   <sub>Public beta · Mac with Apple silicon · macOS 27 or later · MIT license</sub>
 </p>
 
-![The Overview screen of Nexus in dark mode with the sites and the services](.github/overview.png)
+![The Overview screen of Nexus in dark mode with the sites, the public links and the services](.github/overview.png)
 
 ## Why Nexus
 
@@ -38,6 +38,8 @@
   the errors, the dumps and the mail of your sites. You decide what an agent can do.
 - 🐞 **See what your code does.** Each `dump()`, query, log line and queue job of a request in one
   place. Xdebug runs only when you debug.
+- 🔗 **Share a site with one click.** Send a client or your phone a public link to a local site. With
+  a password, hidden errors and the requests of each webhook.
 - 🧱 **WordPress, done right.** Bedrock, multisite on subdomains and WP-CLI. Change the URLs in one
   click. Changed your mind? Undo it.
 - 📥 **Import a WordPress backup.** From Local, Studio, Jetpack or All-in-One WP Migration.
@@ -148,6 +150,23 @@ an N+1 query. A click on a file opens your code editor at that line.
 - **Xdebug only when you debug.** Only a request that starts a debug session uses Xdebug. So your
   normal pages stay fast. `nexus debug artisan my:command` runs one command with Xdebug.
 
+## 🔗 Share a site
+
+![The Site screen of shop.test with its public link, the QR code and the visitors](.github/share.png)
+
+Click Share on the Site screen, or run `nexus share` in the folder of a site. Nexus opens a public
+link through Cloudflare. You need no account. Send the address to a client, a colleague or your
+phone.
+
+- **Visitors see only the site.** Error details and tools such as Telescope stay hidden. A password
+  keeps other people out. Webhooks still reach the site.
+- **The site works through the link.** Laravel sees the public address. Nexus changes the addresses
+  in the pages of WordPress and other sites. Vite keeps hot reload on for you.
+- **Check a webhook.** The dump viewer can keep each request of a link with its headers, its body
+  and its dumps.
+- **Your own domain.** With a domain at Cloudflare a link keeps a fixed address, for example
+  `shop.example.com`.
+
 ## 🧱 WordPress, done right
 
 - Nexus finds WordPress and Bedrock sites. It gives them the right web rules on nginx and Apache.
@@ -255,6 +274,7 @@ nexus composer install        # Composer with that PHP
 nexus wp plugin list          # WP-CLI with that PHP
 nexus errors                  # the newest errors of the site in this folder
 nexus dumps --follow          # each new dump of your sites
+nexus share                   # a public link to the site in this folder
 nexus debug artisan my:task   # one command with Xdebug
 ```
 
