@@ -8,7 +8,8 @@ needs research and a plan before the work starts.
 In this order:
 
 1. **Packages:**
-   - **PHP 8.6**, after its release.
+   - **PHP 8.6**, when Xdebug, Redis, APCu, pcov, igbinary, YAML and Imagick have releases that
+     support it.
    - **More PHP extensions:** `gmp` and `memcached`, in each PHP version where they build and
      load.
    - **PostgreSQL extensions:** pgvector, PostGIS and pgRouting.
@@ -23,6 +24,8 @@ In this order:
 
 ## Done recently
 
+- **0.7.1:** PostgreSQL 19, Server Actions of Next.js, no PHP source on Apache for a file such as
+  `info.PHP`, and no crash report of Nexus for a crash of a service.
 - **0.7.0:** share a site through a public link, with a password, hidden errors, the requests of
   each webhook in the dump viewer and a fixed address on your own domain.
 - **0.6.5:** a line in the activity log for each start and stop with its cause, coding agents
