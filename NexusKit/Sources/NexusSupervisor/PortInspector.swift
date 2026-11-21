@@ -275,7 +275,7 @@ public enum PortInspector {
         process.standardError = FileHandle.nullDevice
 
         do {
-            try process.run()
+            try ProcessLaunch.run(process)
         } catch {
             return nil
         }

@@ -37,24 +37,52 @@ struct CrashReportsTests {
         #expect(anonymous.context?["device"]?["model"] as? String == "Mac16,1")
         #expect(anonymous.context?["app"]?["path"] as? String == "~/Applications")
     }
+}
 
-    @Test func theExceptionPortsGoBackToThePortsFromBeforeAnotherHandler() throws {
+@Suite(.serialized)
+struct ExceptionPortsTests {
+    @Test func eachKindOfExceptionGetsBackItsPortFromBeforeAnotherHandler() throws {
         let before = ExceptionPorts.current()
+        let kindsBefore = behaviorOfEachKindWithAPort(before.handlers)
         var handler = mach_port_t(MACH_PORT_NULL)
         try #require(mach_port_allocate(mach_task_self_, MACH_PORT_RIGHT_RECEIVE, &handler) == KERN_SUCCESS)
-        defer { mach_port_mod_refs(mach_task_self_, handler, MACH_PORT_RIGHT_RECEIVE, -1) }
         try #require(mach_port_insert_right(mach_task_self_, handler, handler, mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND)) == KERN_SUCCESS)
 
-        task_set_exception_ports(mach_task_self_, ExceptionPorts.crashMask, handler, EXCEPTION_DEFAULT, THREAD_STATE_NONE)
-        let installed = ExceptionPorts.current()
-        before.restore()
+        defer {
+            mach_port_deallocate(mach_task_self_, handler)
+            mach_port_mod_refs(mach_task_self_, handler, MACH_PORT_RIGHT_RECEIVE, -1)
+        }
 
-        #expect(installed.handlers.contains { $0.port == handler })
-        #expect(portsByMask(ExceptionPorts.current()) == portsByMask(before))
+        task_set_exception_ports(mach_task_self_, ExceptionPorts.allKinds, handler, EXCEPTION_DEFAULT, THREAD_STATE_NONE)
+        let installed = readAndRelease()
+        let restored = before.restore()
+        let after = readAndRelease()
+
+        #expect(installed.allSatisfy { $0.port == handler })
+        #expect(restored)
+        #expect(!after.contains { $0.port == handler })
+        #expect(behaviorOfEachKindWithAPort(after) == kindsBefore)
     }
 
-    // A kind of crash without a port can come back with another behavior. Only the port counts.
-    private func portsByMask(_ ports: ExceptionPorts) -> [[UInt32]] {
-        ports.handlers.map { [$0.mask, $0.port] }
+    private func readAndRelease() -> [ExceptionPorts.Handler] {
+        let handlers = ExceptionPorts.current().handlers
+
+        for handler in handlers where handler.port != mach_port_t(MACH_PORT_NULL) {
+            mach_port_deallocate(mach_task_self_, handler.port)
+        }
+
+        return handlers
+    }
+
+    private func behaviorOfEachKindWithAPort(_ handlers: [ExceptionPorts.Handler]) -> [Int: exception_behavior_t] {
+        var kinds: [Int: exception_behavior_t] = [:]
+
+        for handler in handlers where handler.port != mach_port_t(MACH_PORT_NULL) {
+            for kind in 0..<32 where handler.mask & (1 << kind) != 0 {
+                kinds[kind] = handler.behavior
+            }
+        }
+
+        return kinds
     }
 }

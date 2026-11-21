@@ -145,7 +145,7 @@ public enum ApacheConfig {
 
     // APFS finds /index.php through /index.PHP. Without (?i) Apache sends such a file as text, with
     // its source. PHP-FPM refuses each extension that is not .php in lower case. So the visitor gets
-    // 403, as from a site in nginx, whose locations ignore case on macOS.
+    // 403. A site in nginx gives the same answer, because its locations ignore case on macOS.
     static let phpFiles = #"(?i)\.php$"#
 
     // A request that starts an Xdebug session goes to the PHP-FPM with Xdebug, as in nginx. nginx

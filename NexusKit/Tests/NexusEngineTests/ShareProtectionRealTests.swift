@@ -523,8 +523,6 @@ struct ShareProtectionRealTests {
         }
     }
 
-    // The site block without a link, as each device of the LAN reaches it. APFS finds a file
-    // through each case variant of its name.
     @Test(.enabled(if: NexusEngineTests.realRuntimes != nil), .timeLimit(.minutes(3)))
     func aPHPFileWithAnExtensionInCapitalsShowsNoSourceInNginxOrInApache() async throws {
         let fixture = try await fixture(hosts: ["shop.test", "apache.test"], apache: true)

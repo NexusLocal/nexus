@@ -184,7 +184,7 @@ public enum NginxConfig {
             "",
         ]
 
-        guard framework?.checksOrigin == true else {
+        guard framework?.originCheckedPaths != nil else {
             return lines
         }
 
@@ -364,10 +364,11 @@ public enum NginxConfig {
         // soon as nginx answers, also with a 502. So the wait page also covers a 504.
         case .app(_, let framework):
             let forwardedPort = ShareRewrite.forwardedPort(for: site, index: index)
-            lines += proxyLocation(to: "http://nexus_app_\(index)", forwardedPort: forwardedPort)
+            let app = "http://nexus_app_\(index)"
+            lines += proxyLocation(to: app, forwardedPort: forwardedPort)
 
-            if framework?.checksOrigin == true {
-                lines += [""] + proxyLocation(nextDevPaths, to: "http://nexus_app_\(index)", origin: "$nexus_origin_\(index)", forwardedPort: forwardedPort)
+            if let originCheckedPaths = framework?.originCheckedPaths {
+                lines += [""] + proxyLocation("~ \(originCheckedPaths)", to: app, forwardedPort: forwardedPort, extra: ["        proxy_set_header Origin $nexus_origin_\(index);"])
             }
 
             lines += waitLocation(on: [502, 504], name: "nexus_app_waits", page: ErrorPages.appWaits)
@@ -516,17 +517,10 @@ public enum NginxConfig {
         "        proxy_ssl_name $host;",
     ]
 
-    // Next.js refuses another origin on its dev files, its HMR socket and its dev endpoints, also
-    // below a base path. A Server Action compares Origin with Host, so the pages of the app keep
-    // the origin of the browser. Next.js 16.4 checks the same two names anywhere in the path.
-    static let nextDevPaths = "~ /(?:_next|__nextjs)"
-
     // A request of a public link comes through port 443 of its public host (group 4, 4c). So
     // forwardedPort is a map of the link for a site with a link.
-    private static func proxyLocation(_ path: String = "/", to address: String, origin: String? = nil, forwardedPort: String, extra: [String] = []) -> [String] {
-        let originLine = origin.map { ["        proxy_set_header Origin \($0);"] } ?? []
-
-        return [
+    private static func proxyLocation(_ path: String = "/", to address: String, forwardedPort: String, extra: [String] = []) -> [String] {
+        [
             "    location \(path) {",
             "        proxy_pass \(address);",
             "        proxy_http_version 1.1;",
@@ -537,7 +531,7 @@ public enum NginxConfig {
             "        proxy_set_header Upgrade $http_upgrade;",
             "        proxy_set_header Connection $connection_upgrade;",
             ShareRequests.proxyLine,
-        ] + originLine + extra + [
+        ] + extra + [
             "        proxy_read_timeout 300;",
             "    }",
         ]

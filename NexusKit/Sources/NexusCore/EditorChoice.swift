@@ -87,7 +87,7 @@ public enum SystemOpen {
             }
 
             do {
-                try process.run()
+                try ProcessLaunch.run(process)
             } catch {
                 continuation.resume(returning: false)
             }

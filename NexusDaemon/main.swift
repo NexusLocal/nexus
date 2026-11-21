@@ -46,7 +46,7 @@ let engine = NexusEngine(
     activity: activity,
     cloudflareKeys: LoginCloudflareKeyStore(),
     unregister: BackgroundServices.unregisterAll,
-    applyCrashReports: { isOn in CrashReports.apply(process: "nexusd", isOn: isOn) }
+    applyCrashReports: { isOn in await CrashReports.apply(process: "nexusd", isOn: isOn) }
 )
 let service = DaemonService(engine: engine, activity: activity)
 let listener = NSXPCListener(machServiceName: NexusIdentifiers.daemon)

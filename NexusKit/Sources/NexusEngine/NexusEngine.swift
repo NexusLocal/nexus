@@ -61,8 +61,9 @@ public actor NexusEngine {
     let certificateAuthority: CertificateAuthority
     private let systemFiles: SystemDNSFiles
     private let unregister: @Sendable () -> Void
-    // Starts or stops the crash reports of nexusd after a change of the setting in the app.
-    private let applyCrashReports: @Sendable (Bool) -> Void
+    // Starts or stops the crash reports of nexusd after a change of the setting in the app. The
+    // answer of the request comes after the change.
+    private let applyCrashReports: @Sendable (Bool) async -> Void
     private let helperRetryDelay: Duration
 
     private var dnsServer: DNSServer?
@@ -390,7 +391,7 @@ public actor NexusEngine {
         activity: ActivityLog? = nil,
         cloudflareKeys: any CloudflareKeyStore = NoCloudflareKeyStore(),
         unregister: @escaping @Sendable () -> Void = {},
-        applyCrashReports: @escaping @Sendable (Bool) -> Void = { _ in }
+        applyCrashReports: @escaping @Sendable (Bool) async -> Void = { _ in }
     ) {
         self.paths = paths
         self.cloudflareKeys = cloudflareKeys
@@ -481,7 +482,7 @@ public actor NexusEngine {
             case .uninstall:
                 return .done(message: try await uninstall())
             case .crashReports(let enabled):
-                applyCrashReports(enabled)
+                await applyCrashReports(enabled)
                 return .done(message: enabled ? "nexusd sends crash reports." : "nexusd sends no crash reports.")
             case .sites:
                 return .sites(await siteInfo())

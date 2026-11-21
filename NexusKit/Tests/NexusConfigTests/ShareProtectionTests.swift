@@ -35,8 +35,7 @@ struct ShareProtectionTests {
     }
 
     private func matches(_ pattern: String, _ text: String, ignoresCase: Bool = true) throws -> Bool {
-        let regex = try NSRegularExpression(pattern: pattern, options: ignoresCase ? [.caseInsensitive] : [])
-        return regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        try regexMatches(pattern, text, ignoresCase: ignoresCase)
     }
 
     private func values(of paths: [String], in rules: [ShareProtection.Rule]) throws -> [String: String] {

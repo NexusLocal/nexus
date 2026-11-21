@@ -56,8 +56,7 @@ struct WebConfigTests {
         let other = try NginxConfig.render(sites: [site(.nginx)], settings: nginxSettings())
         let uploads = try #require(nginx.range(of: "location ~* \(NginxConfig.uploadsPattern) {\n            deny all;"))
         let php = try #require(nginx.range(of: "location ~ \\.php(/|$) {"))
-        let pattern = try NSRegularExpression(pattern: NginxConfig.uploadsPattern, options: .caseInsensitive)
-        let denies = { (path: String) in pattern.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)) != nil }
+        let denies = { (path: String) in (try? regexMatches(NginxConfig.uploadsPattern, path, ignoresCase: true)) == true }
 
         #expect(nginx.contains("location = /wp-admin {\n            return 301 /wp-admin/;"))
         #expect(uploads.lowerBound < php.lowerBound)
@@ -160,25 +159,20 @@ struct WebConfigTests {
     @Test func thePagesOfNextKeepTheOriginOfTheBrowserSoAServerActionMatchesTheHost() throws {
         let config = try NginxConfig.render(sites: [site(.app(port: 20019, framework: .next))], settings: nginxSettings())
         let pages = try location("/", in: config)
-        let devPaths = try location(NginxConfig.nextDevPaths, in: config)
+        let devPaths = try location("~ \(try #require(NodeFramework.next.originCheckedPaths))", in: config)
+        let devLinesWithoutOrigin = devPaths.split(separator: "\n").dropFirst().filter { !$0.contains("proxy_set_header Origin") }
 
         #expect(!pages.contains("Origin"))
         #expect(pages.contains("proxy_pass http://nexus_app_0;"))
         #expect(devPaths.contains("proxy_set_header Origin $nexus_origin_0;"))
-        #expect(devPaths.contains("proxy_pass http://nexus_app_0;"))
-        #expect(devPaths.contains("proxy_set_header Host $http_host;"))
-        #expect(devPaths.contains("proxy_set_header Upgrade $http_upgrade;"))
-        #expect(devPaths.contains("proxy_set_header Connection $connection_upgrade;"))
-        #expect(devPaths.contains("proxy_set_header X-Forwarded-Port $server_port;"))
-        #expect(devPaths.contains("proxy_read_timeout 300;"))
+        #expect(Array(devLinesWithoutOrigin) == Array(pages.split(separator: "\n").dropFirst()))
         #expect(config.components(separatedBy: "error_page 502 504 = @nexus_app_waits;").count == 2)
     }
 
     @Test func theDevPathsOfNextAreItsFilesItsSocketAndItsEndpointsAlsoBelowABasePath() throws {
-        let pattern = try NSRegularExpression(pattern: String(NginxConfig.nextDevPaths.dropFirst(2)))
-        let matches = { (path: String) in pattern.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)) != nil }
+        let pattern = try #require(NodeFramework.next.originCheckedPaths)
+        let matches = { (path: String) in (try? regexMatches(pattern, path)) == true }
 
-        #expect(NginxConfig.nextDevPaths.hasPrefix("~ /"))
         #expect(matches("/_next/static/chunks/main.js"))
         #expect(matches("/_next/webpack-hmr"))
         #expect(matches("/__nextjs_original-stack-frames"))
@@ -188,12 +182,16 @@ struct WebConfigTests {
         #expect(!matches("/checkout"))
         #expect(!matches("/api/next"))
         #expect(!matches("/next/page"))
+        #expect(!matches("/blog/_next-steps"))
+        #expect(!matches("/posts/_nextgen-ideas"))
+        #expect(!matches("/docs/__nextjs-guide"))
     }
 
     @Test func onlyNextGetsALocationForItsDevPaths() throws {
         let config = try NginxConfig.render(sites: [site(.app(port: 20017, framework: .express)), site(.app(port: 20018, framework: .vite)), site(.proxy(address: "http://127.0.0.1:3000"))], settings: nginxSettings())
 
-        #expect(!config.contains("location \(NginxConfig.nextDevPaths)"))
+        #expect(NodeFramework.allCases.filter { $0.originCheckedPaths != nil } == [.next])
+        #expect(!config.contains("location ~ /"))
         #expect(!config.contains("proxy_set_header Origin"))
     }
 
@@ -451,8 +449,7 @@ struct WebConfigTests {
     }
 
     @Test func apacheGivesEachCaseVariantOfDotPHPToPHPSoItNeverSendsTheSource() throws {
-        let pattern = try NSRegularExpression(pattern: ApacheConfig.phpFiles)
-        let matches = { (name: String) in pattern.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil }
+        let matches = { (name: String) in (try? regexMatches(ApacheConfig.phpFiles, name)) == true }
 
         #expect(matches("index.php"))
         #expect(matches("info.PHP"))

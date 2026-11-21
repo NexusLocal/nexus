@@ -794,7 +794,7 @@ extension NexusEngine {
         let output = Pipe()
         process.standardOutput = output
         process.standardError = output
-        try process.run()
+        try ProcessLaunch.run(process)
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 

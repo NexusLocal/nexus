@@ -37,16 +37,9 @@ public enum CrashReports {
     // process is "app" or "nexusd". A second call with the setting off stops the SDK. The request
     // of the app gives nexusd the new value, because the defaults of another process can reach
     // nexusd a moment later. Sentry installs its crash handler at once only on the main thread. The
-    // exception ports go back after that install (ExceptionPorts).
+    // exception ports go back after that install (ExceptionPorts). No program starts in between.
+    @MainActor
     public static func apply(process: String, isOn: Bool = CrashReports.isOn) {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async {
-                apply(process: process, isOn: isOn)
-            }
-
-            return
-        }
-
         guard isOn, !isDebugBuild || defaults.bool(forKey: debugSetting) else {
             if SentrySDK.isEnabled {
                 SentrySDK.close()
@@ -59,42 +52,45 @@ public enum CrashReports {
             return
         }
 
-        let portsBeforeSentry = ExceptionPorts.current()
-        defer { portsBeforeSentry.restore() }
+        ProcessLaunch.withoutStarts {
+            let portsBeforeSentry = ExceptionPorts.current()
+            SentrySDK.start { configure($0, process: process) }
+            portsBeforeSentry.restore()
+        }
+    }
 
-        SentrySDK.start { options in
-            options.dsn = dsn
-            // nexusd has the app as its main bundle, so without its own folder both processes
-            // would share one file of the crash state.
-            options.cacheDirectoryPath = cacheFolder(of: process)
-            options.releaseName = "nexus@\(NexusVersion.current())+\(NexusVersion.build())"
-            options.environment = isDebugBuild ? "development" : "production"
-            options.sendDefaultPii = false
-            options.enableCrashHandler = true
-            options.enableAutoSessionTracking = false
-            options.enableAppHangTracking = false
-            options.enableWatchdogTerminationTracking = false
-            options.enableMetricKit = false
-            options.enableAutoPerformanceTracing = false
-            options.enableNetworkTracking = false
-            options.enableNetworkBreadcrumbs = false
-            options.enableCaptureFailedRequests = false
-            options.enableAutoBreadcrumbTracking = false
-            options.enableFileIOTracing = false
-            options.enableCoreDataTracing = false
-            options.enableSwizzling = false
-            options.enableLogs = false
-            options.enableMetrics = false
-            options.sendClientReports = false
-            options.maxBreadcrumbs = 0
-            options.tracesSampleRate = nil
-            options.initialScope = { scope in
-                scope.setTag(value: process, key: "process")
-                return scope
-            }
-            options.beforeSend = { event in
-                anonymized(event)
-            }
+    private static func configure(_ options: Options, process: String) {
+        options.dsn = dsn
+        // nexusd has the app as its main bundle, so without its own folder both processes would
+        // share one file of the crash state.
+        options.cacheDirectoryPath = cacheFolder(of: process)
+        options.releaseName = "nexus@\(NexusVersion.current())+\(NexusVersion.build())"
+        options.environment = isDebugBuild ? "development" : "production"
+        options.sendDefaultPii = false
+        options.enableCrashHandler = true
+        options.enableAutoSessionTracking = false
+        options.enableAppHangTracking = false
+        options.enableWatchdogTerminationTracking = false
+        options.enableMetricKit = false
+        options.enableAutoPerformanceTracing = false
+        options.enableNetworkTracking = false
+        options.enableNetworkBreadcrumbs = false
+        options.enableCaptureFailedRequests = false
+        options.enableAutoBreadcrumbTracking = false
+        options.enableFileIOTracing = false
+        options.enableCoreDataTracing = false
+        options.enableSwizzling = false
+        options.enableLogs = false
+        options.enableMetrics = false
+        options.sendClientReports = false
+        options.maxBreadcrumbs = 0
+        options.tracesSampleRate = nil
+        options.initialScope = { scope in
+            scope.setTag(value: process, key: "process")
+            return scope
+        }
+        options.beforeSend = { event in
+            anonymized(event)
         }
     }
 

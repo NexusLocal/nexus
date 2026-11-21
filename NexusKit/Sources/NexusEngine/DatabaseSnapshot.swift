@@ -29,7 +29,7 @@ final class DatabaseSession: @unchecked Sendable {
 
         // A client that stopped must give an error here, and no SIGPIPE for nexusd.
         _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
-        try process.run()
+        try ProcessLaunch.run(process)
     }
 
     func send(_ sql: String) throws {

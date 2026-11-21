@@ -214,7 +214,7 @@ public enum CommandRunner {
     private static func start(_ process: Process) throws -> ExitStatus {
         let exit = ExitStatus()
         process.terminationHandler = { exit.finish(ProcessEnd(reason: $0.terminationReason, status: $0.terminationStatus)) }
-        try process.run()
+        try ProcessLaunch.run(process)
         return exit
     }
 

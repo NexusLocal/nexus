@@ -344,7 +344,7 @@ public actor ProcessSupervisor {
         }
 
         do {
-            try process.run()
+            try ProcessLaunch.run(process)
         } catch {
             managed.state = .failed(reason: error.localizedDescription)
             services[id] = managed

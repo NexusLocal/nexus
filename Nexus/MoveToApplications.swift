@@ -68,7 +68,7 @@ enum MoveToApplications {
         process.executableURL = URL(filePath: "/usr/bin/open")
         process.arguments = ["-n", app.path(percentEncoded: false)]
 
-        guard (try? process.run()) != nil else {
+        guard (try? ProcessLaunch.run(process)) != nil else {
             return false
         }
 

@@ -1,5 +1,6 @@
 #if DEBUG
 import Foundation
+import NexusCore
 
 // Writes a sample of the app to the temporary folder when the main thread is busy for more than
 // one second. The sample shows the cause of a slow click afterwards.
@@ -42,7 +43,7 @@ nonisolated final class HangWatchdog: @unchecked Sendable {
         process.arguments = ["\(ProcessInfo.processInfo.processIdentifier)", "3", "-file", file.path]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        try? process.run()
+        try? ProcessLaunch.run(process)
         process.waitUntilExit()
         print("Nexus was busy for more than one second. Sample: \(file.path)")
     }

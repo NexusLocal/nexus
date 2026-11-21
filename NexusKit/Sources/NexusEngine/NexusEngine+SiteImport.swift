@@ -802,7 +802,7 @@ enum ProcessStream {
             process.standardError = FileHandle.nullDevice
             let output = Pipe()
             process.standardOutput = output
-            try process.run()
+            try ProcessLaunch.run(process)
             processes.append(process)
             input = output
         }
