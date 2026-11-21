@@ -7,17 +7,15 @@ needs research and a plan before the work starts.
 
 In this order:
 
-1. **Share a site through a tunnel.** A local site gets a public link, for example for a client or
-   for a webhook.
-2. **Packages:**
+1. **Packages:**
    - **PHP 8.6**, after its release.
    - **More PHP extensions:** `gmp` and `memcached`, in each PHP version where they build and
      load.
    - **PostgreSQL extensions:** pgvector, PostGIS and pgRouting.
-3. **MongoDB.** A database service with versions, as MySQL, MariaDB and PostgreSQL have. Each PHP
+2. **MongoDB.** A database service with versions, as MySQL, MariaDB and PostgreSQL have. Each PHP
    version gets the `mongodb` extension.
-4. **Valkey.** The fork of Redis with the BSD license, as a service next to Redis.
-5. **A log viewer** for the logs of your apps.
+3. **Valkey.** The fork of Redis with the BSD license, as a service next to Redis.
+4. **A log viewer** for the logs of your apps.
 
 ## Later
 
@@ -25,6 +23,8 @@ In this order:
 
 ## Done recently
 
+- **0.7.0:** share a site through a public link, with a password, hidden errors, the requests of
+  each webhook in the dump viewer and a fixed address on your own domain.
 - **0.6.5:** a line in the activity log for each start and stop with its cause, coding agents
   that keep working after an update, and a safer stop in the "Port in use" window.
 - **0.6.4:** a faster switch to a new version after an update, a clear message when a newer
