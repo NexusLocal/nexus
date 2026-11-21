@@ -150,6 +150,53 @@ struct WebConfigTests {
         #expect(config.contains("proxy_set_header Origin $nexus_origin_0;"))
     }
 
+    private func location(_ path: String, in config: String) throws -> Substring {
+        let site = try #require(config.range(of: "server_name shop.test www.shop.test;"))
+        let start = try #require(config.range(of: "        location \(path) {\n", range: site.upperBound..<config.endIndex))
+        let end = try #require(config.range(of: "\n        }\n", range: start.upperBound..<config.endIndex))
+        return config[start.lowerBound..<end.upperBound]
+    }
+
+    @Test func thePagesOfNextKeepTheOriginOfTheBrowserSoAServerActionMatchesTheHost() throws {
+        let config = try NginxConfig.render(sites: [site(.app(port: 20019, framework: .next))], settings: nginxSettings())
+        let pages = try location("/", in: config)
+        let devPaths = try location(NginxConfig.nextDevPaths, in: config)
+
+        #expect(!pages.contains("Origin"))
+        #expect(pages.contains("proxy_pass http://nexus_app_0;"))
+        #expect(devPaths.contains("proxy_set_header Origin $nexus_origin_0;"))
+        #expect(devPaths.contains("proxy_pass http://nexus_app_0;"))
+        #expect(devPaths.contains("proxy_set_header Host $http_host;"))
+        #expect(devPaths.contains("proxy_set_header Upgrade $http_upgrade;"))
+        #expect(devPaths.contains("proxy_set_header Connection $connection_upgrade;"))
+        #expect(devPaths.contains("proxy_set_header X-Forwarded-Port $server_port;"))
+        #expect(devPaths.contains("proxy_read_timeout 300;"))
+        #expect(config.components(separatedBy: "error_page 502 504 = @nexus_app_waits;").count == 2)
+    }
+
+    @Test func theDevPathsOfNextAreItsFilesItsSocketAndItsEndpointsAlsoBelowABasePath() throws {
+        let pattern = try NSRegularExpression(pattern: String(NginxConfig.nextDevPaths.dropFirst(2)))
+        let matches = { (path: String) in pattern.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)) != nil }
+
+        #expect(NginxConfig.nextDevPaths.hasPrefix("~ /"))
+        #expect(matches("/_next/static/chunks/main.js"))
+        #expect(matches("/_next/webpack-hmr"))
+        #expect(matches("/__nextjs_original-stack-frames"))
+        #expect(matches("/__nextjs_devtools_config"))
+        #expect(matches("/docs/_next/webpack-hmr"))
+        #expect(!matches("/"))
+        #expect(!matches("/checkout"))
+        #expect(!matches("/api/next"))
+        #expect(!matches("/next/page"))
+    }
+
+    @Test func onlyNextGetsALocationForItsDevPaths() throws {
+        let config = try NginxConfig.render(sites: [site(.app(port: 20017, framework: .express)), site(.app(port: 20018, framework: .vite)), site(.proxy(address: "http://127.0.0.1:3000"))], settings: nginxSettings())
+
+        #expect(!config.contains("location \(NginxConfig.nextDevPaths)"))
+        #expect(!config.contains("proxy_set_header Origin"))
+    }
+
     @Test func standardPortsGiveOriginsWithoutAPort() {
         let settings = NginxSettings(httpPort: 80, httpsPort: 443, apachePort: 8081, lanAccess: false, runtime: runtime, runFolder: run, modules: [])
 

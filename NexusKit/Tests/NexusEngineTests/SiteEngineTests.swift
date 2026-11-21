@@ -457,7 +457,7 @@ extension NexusEngineTests {
 
     // A project with its public folder after a short wait, as composer create-project makes it.
     @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(2)))
-    func aRealNodeAppAndAProxySiteOpenOverHTTPSAndNextGetsItsOwnOrigin() async throws {
+    func aRealNodeAppAndAProxySiteOpenOverHTTPSAndNextGetsItsOwnOriginOnlyOnItsDevPaths() async throws {
         let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let paths = NexusPaths(root: root.appending(path: "Application Support/Nexus", directoryHint: .isDirectory))
@@ -488,7 +488,7 @@ extension NexusEngineTests {
             )
         )
         var added: NexusResponse?
-        var app, ownOrigin, otherOrigin, proxy: String?
+        var app, ownOrigin, devFiles, devEndpoint, otherOrigin, proxy: String?
         var port = 0
 
         try await whileRunning(engine) {
@@ -499,9 +499,12 @@ extension NexusEngineTests {
             await openPage(engine, shop: shop)
             _ = await engine.handle(.addSite(folder: api.path(percentEncoded: false), host: nil, aliases: [], php: nil, server: nil, runsAs: .proxy, address: "http://[::1]:\(port)"))
 
+            let ownSite = "https://shop.test:\(httpsPort)"
             app = await page("shop.test", port: httpsPort, expecting: "app shop.test:\(httpsPort) ")
-            ownOrigin = await page("shop.test", port: httpsPort, origin: "https://shop.test:\(httpsPort)", expecting: "app shop.test:\(httpsPort) http://localhost:\(port)")
-            otherOrigin = await page("shop.test", port: httpsPort, origin: "https://evil.example", expecting: "app shop.test:\(httpsPort) https://evil.example")
+            ownOrigin = await page("shop.test", port: httpsPort, origin: ownSite, expecting: "app shop.test:\(httpsPort) \(ownSite)")
+            devFiles = await page("shop.test", port: httpsPort, path: "/_next/webpack-hmr", origin: ownSite, expecting: "app shop.test:\(httpsPort) http://localhost:\(port)")
+            devEndpoint = await page("shop.test", port: httpsPort, path: "/__nextjs_original-stack-frames", origin: ownSite, expecting: "app shop.test:\(httpsPort) http://localhost:\(port)")
+            otherOrigin = await page("shop.test", port: httpsPort, path: "/_next/webpack-hmr", origin: "https://evil.example", expecting: "app shop.test:\(httpsPort) https://evil.example")
             proxy = await page("api.test", port: httpsPort, expecting: "app api.test:\(httpsPort) ")
 
             _ = await engine.handle(.stopAll)
@@ -509,7 +512,9 @@ extension NexusEngineTests {
 
         #expect(added.map { if case .done = $0 { true } else { false } } == true, "\(String(describing: added))")
         #expect(app == "app shop.test:\(httpsPort) ")
-        #expect(ownOrigin == "app shop.test:\(httpsPort) http://localhost:\(port)")
+        #expect(ownOrigin == "app shop.test:\(httpsPort) https://shop.test:\(httpsPort)")
+        #expect(devFiles == "app shop.test:\(httpsPort) http://localhost:\(port)")
+        #expect(devEndpoint == "app shop.test:\(httpsPort) http://localhost:\(port)")
         #expect(otherOrigin == "app shop.test:\(httpsPort) https://evil.example")
         #expect(proxy == "app api.test:\(httpsPort) ")
     }
@@ -694,14 +699,14 @@ extension NexusEngineTests {
     }
 
     // curl does not trust the root CA of the test. That does not matter here.
-    func page(_ host: String, port: Int, origin: String? = nil, expecting expected: String) async -> String? {
+    func page(_ host: String, port: Int, path: String = "/", origin: String? = nil, expecting expected: String) async -> String? {
         let deadline = ContinuousClock.now + .seconds(15)
         var body: String?
 
         while body != expected, ContinuousClock.now < deadline {
             let curl = Process()
             curl.executableURL = URL(filePath: "/usr/bin/curl")
-            curl.arguments = ["-sk", "--max-time", "2", "--resolve", "\(host):\(port):127.0.0.1"] + (origin.map { ["-H", "Origin: \($0)"] } ?? []) + ["https://\(host):\(port)/"]
+            curl.arguments = ["-sk", "--max-time", "2", "--resolve", "\(host):\(port):127.0.0.1"] + (origin.map { ["-H", "Origin: \($0)"] } ?? []) + ["https://\(host):\(port)\(path)"]
             let output = Pipe()
             curl.standardOutput = output
             curl.standardError = FileHandle.nullDevice

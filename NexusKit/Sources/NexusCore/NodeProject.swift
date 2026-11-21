@@ -74,8 +74,9 @@ public enum NodeFramework: String, Codable, Sendable, CaseIterable {
         usesViteServer || self == .nuxt
     }
 
-    // Next.js refuses /_next/* and its websocket for an origin that is not its own. It has no
-    // environment variable for allowedDevOrigins. So nginx gives it the origin of its own address.
+    // Next.js refuses /_next/*, /__nextjs* and its websocket for an origin that is not its own. It
+    // has no environment variable for allowedDevOrigins. So nginx gives these paths the origin of
+    // its own address.
     public var checksOrigin: Bool {
         self == .next
     }
