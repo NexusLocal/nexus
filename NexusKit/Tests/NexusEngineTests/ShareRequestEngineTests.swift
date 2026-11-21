@@ -198,10 +198,7 @@ struct ShareRequestEngineTests {
     }
 
     private func append(_ lines: [String], to file: URL) throws {
-        let handle = try FileHandle(forWritingTo: file)
-        defer { try? handle.close() }
-        try handle.seekToEnd()
-        try handle.write(contentsOf: Data(lines.map { "\($0)\n" }.joined().utf8))
+        try writeAtEnd(lines.map { "\($0)\n" }.joined(), of: file)
     }
 
     private func dump(_ id: String) -> DumpEvent {

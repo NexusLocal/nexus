@@ -314,9 +314,6 @@ public enum NginxConfig {
             lines += site.isWordPress ? wordPressRules + [""] : []
             lines += site.network == .subfolders ? subfolderNetworkRules(bedrock: site.project == .bedrock) + [""] : []
             let pass = try phpPass(socket: socket, xdebugSocket: xdebugSocket, index: index, share: site.share).target
-            // A request of a public link gives PHP the id of the share block. PHP then uses it as the
-            // id of its request (group 4, 4f).
-            let linkRequestLines = site.share == nil ? [] : [ShareRequests.fastcgiLine]
             lines += [
                 "    location ~ \\.php(/|$) {",
                 "        fastcgi_split_path_info ^(.+?\\.php)(/.*)$;",
@@ -326,7 +323,10 @@ public enum NginxConfig {
                 "        fastcgi_param HTTP_PROXY \"\";",
             ]
             lines += ShareRewrite.fastcgiLines(for: site, index: index).map { "        \($0)" }
-            lines += linkRequestLines + [
+            // A request of a public link gives PHP the id of the share block. PHP then uses it as the
+            // id of its request (group 4, 4f).
+            lines += [
+                ShareRequests.fastcgiLine,
                 "        fastcgi_pass \(pass);",
                 "        fastcgi_read_timeout 300;",
                 "    }",
@@ -355,7 +355,7 @@ public enum NginxConfig {
                 "        proxy_set_header \(ShareConfig.Header.host.rawValue) \(ShareRewrite.apacheShareHost(for: site, index: index));",
                 "        proxy_set_header \(ShareConfig.Header.hide.rawValue) \(ShareRewrite.apacheShareHide(for: site, index: index));",
             ]
-            lines += proxyLocation(to: "https://127.0.0.1:\(settings.apachePort)", forwardedPort: ShareRewrite.forwardedPort(for: site, index: index), extra: apacheTLS + shareHeaders + (site.share == nil ? [] : [ShareRequests.proxyLine]))
+            lines += proxyLocation(to: "https://127.0.0.1:\(settings.apachePort)", forwardedPort: ShareRewrite.forwardedPort(for: site, index: index), extra: apacheTLS + shareHeaders)
             lines += waitLocation(on: [502], name: "nexus_apache_waits", page: ErrorPages.apacheWaits)
         case .notice(let title, let text):
             lines += noticePage(title: title, text: text)
@@ -525,6 +525,7 @@ public enum NginxConfig {
             "        proxy_set_header X-Forwarded-Port \(forwardedPort);",
             "        proxy_set_header Upgrade $http_upgrade;",
             "        proxy_set_header Connection $connection_upgrade;",
+            ShareRequests.proxyLine,
         ] + originLine + extra + [
             "        proxy_read_timeout 300;",
             "    }",

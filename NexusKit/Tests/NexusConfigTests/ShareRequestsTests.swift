@@ -82,18 +82,29 @@ struct ShareRequestsTests {
         #expect(ShareRequests.script.hasPrefix("// Nexus writes this file (group 4, 4f)."))
     }
 
-    @Test func onlyAPHPSiteOrAnApacheSiteWithALinkPassesTheIDOfTheRequest() throws {
+    @Test func eachSiteWithOrWithoutALinkPassesOnlyTheTrustedIDOfTheRequest() throws {
         let config = try NginxConfig.render(sites: [
             site("shop.test", linked: true),
             site("blog.test", backend: .php(server: .apache, documentRoot: URL(filePath: "/Sites/blog", directoryHint: .isDirectory), socket: URL(filePath: "/Nexus/run/php-8.5.sock")), linked: true),
             site("crm.test", linked: false),
             site("app.test", backend: .app(port: 3000, framework: nil), linked: true),
+            site("api.test", backend: .proxy(address: "http://127.0.0.1:9000"), linked: false),
         ], shares: [share(keepsRequests: true)], requestScript: script, settings: settings)
+        let afterApache = config[try #require(config.range(of: "server_name blog.test")).upperBound...]
+        let apacheBlock = afterApache.range(of: "server_name").map { afterApache[..<$0.lowerBound] } ?? afterApache
 
-        #expect(config.components(separatedBy: "fastcgi_param HTTP_X_NEXUS_SHARE_REQUEST $nexus_share_request;").count == 2)
+        #expect(config.components(separatedBy: "fastcgi_param HTTP_X_NEXUS_SHARE_REQUEST $nexus_share_request;").count == 3)
         #expect(config.contains("        fastcgi_param HTTP_PROXY \"\";\n" + "    " + ShareRequests.fastcgiLine + "\n"))
-        #expect(config.components(separatedBy: "proxy_set_header X-Nexus-Share-Request $nexus_share_request;").count == 2)
+        #expect(config.components(separatedBy: "proxy_set_header X-Nexus-Share-Request $nexus_share_request;").count == 4)
+        #expect(apacheBlock.contains("proxy_pass https://127.0.0.1:"))
+        #expect(apacheBlock.contains(ShareRequests.proxyLine.trimmingCharacters(in: .whitespaces)))
         #expect(config.contains("    js_import nexus_requests from \"/Users/me/Library/Application Support/Nexus/data/share/requests.js\";"))
         #expect(config.contains("    log_format nexus_share_requests escape=none '$nexus_share_request_line';"))
+    }
+
+    @Test func theConfigWithoutAnyLinkStillHasTheMapOfTheTrustedID() throws {
+        let config = try NginxConfig.render(sites: [site("crm.test", linked: false)], shares: [], requestScript: nil, settings: settings)
+
+        #expect(config.contains(trustedMap.dropFirst().map { "    \($0)" }.joined(separator: "\n")))
     }
 }

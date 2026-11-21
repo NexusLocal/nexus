@@ -57,6 +57,19 @@ func eventually(_ condition: () async throws -> Bool) async rethrows -> Bool {
     return false
 }
 
+// Adds text at the end of a log, as nginx does.
+func writeAtEnd(_ text: String, of file: URL) throws {
+    let handle = try FileHandle(forWritingTo: file)
+    defer { try? handle.close() }
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data(text.utf8))
+}
+
+// One line of the visitor log of a link, in the format nexus_share of nginx.
+func visitorLine(_ request: String = "5f2b", visitor: String = "203.0.113.7", time: Date = Date(timeIntervalSince1970: 1_800_000_000.125)) -> String {
+    #"{"time":\#(time.timeIntervalSince1970),"request":"\#(request)","status":200,"visitor":"\#(visitor)"}"# + "\n"
+}
+
 func exists(_ file: URL) -> Bool {
     FileManager.default.fileExists(atPath: file.path(percentEncoded: false))
 }

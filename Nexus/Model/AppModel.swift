@@ -234,7 +234,10 @@ final class AppModel {
     var rebuildingShares: Set<String> = []
     var sharePanelHost: String?
     // A stop during a start gives a failure that the user asked for. So the app does not show it.
+    // shareStartTokens holds the newest start of each host. The answer of an older start of that
+    // host then changes nothing.
     @ObservationIgnored var cancelledStarts: Set<String> = []
+    @ObservationIgnored var shareStartTokens: [String: UUID] = [:]
     // The state of each link of the last site list, by host and start time. It is nil until the
     // first list after the launch. It stays over a new connection to nexusd. So the end at a
     // restart of nexusd gets its notification.

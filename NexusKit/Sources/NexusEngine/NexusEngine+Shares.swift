@@ -795,19 +795,24 @@ extension NexusEngine {
 
     // The quit of the app sends appQuit. The alert before the quit is part of 4g (owner,
     // review-4ab question 1).
+    // A start without a record counts as a stopped link, as in stopShare. A start can add its
+    // record during the mark. So the read of the records comes after the mark.
     func stopAllShares(reason: ShareEndReason) async -> String {
-        let ids = await activeShareIDs()
+        let starting = Set(shareStarts.keys)
 
-        for host in shareStarts.keys {
+        for host in starting {
             stoppedStarts[host] = reason
         }
 
-        guard !ids.isEmpty else {
+        let active = await stateStore.current().shares.filter(\.state.isActive)
+        let count = active.count + starting.subtracting(active.map(\.host)).count
+
+        guard count > 0 else {
             return ShareText.noLinkOpen
         }
 
-        await endShares(ids, reason: reason)
-        return ShareText.stoppedLinks(ids.count)
+        await endShares(active.map(\.id), reason: reason)
+        return ShareText.stoppedLinks(count)
     }
 
     // Ends links (overview, "The flow of one link", step 10). The record keeps the reason until the
@@ -1039,6 +1044,10 @@ extension NexusEngine {
     // A visitor is one address of CF-Connecting-IP (owner, review-4ab question 18). The site list
     // changes only when the count or the minute of the last visit changes.
     func linkLinesArrived(id: String, lines: [ShareLogLine], now: Date = .now) async {
+        guard let newest = lines.map({ Date(timeIntervalSince1970: $0.time) }).max() else {
+            return
+        }
+
         let state = await stateStore.current()
 
         guard let record = state.shares.first(where: { $0.id == id }), record.state.isActive else {
@@ -1049,14 +1058,15 @@ extension NexusEngine {
         var visits = before
 
         visits.visitors.formUnion(lines.map(\.visitor).filter { !$0.isEmpty })
-        visits.last = now
+        visits.last = max(before.last ?? newest, newest)
         shareVisits[id] = visits
 
         // A link of the own domain (4h) has no program of its own. It finds its owner through its
-        // target.
+        // target. The watch reads the whole log again after a new start of nexusd. Those old lines
+        // give the count and the last visit, but they are no new page.
         let owner = sharePrograms[id]?.owner ?? shareTargets(state)[record.host]?.owner
 
-        if let owner, now.timeIntervalSince(linkPageTimes[owner] ?? .distantPast) >= 1 {
+        if let owner, newest >= launched, now.timeIntervalSince(linkPageTimes[owner] ?? .distantPast) >= 1 {
             await linkRequested(by: owner, now: now)
         }
 

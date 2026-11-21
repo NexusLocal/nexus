@@ -175,10 +175,18 @@ extension AppModel {
             return
         }
 
+        let token = UUID()
+        shareStartTokens[host] = token
         startingShares.insert(host)
 
         Task {
             let reply = await outcome(of: .startShare(start))
+
+            guard shareStartTokens[host] == token else {
+                return
+            }
+
+            shareStartTokens[host] = nil
             startingShares.remove(host)
 
             guard case .failure(let message) = reply, cancelledStarts.remove(host) == nil else {

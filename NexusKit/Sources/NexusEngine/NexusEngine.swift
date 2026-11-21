@@ -207,7 +207,10 @@ public actor NexusEngine {
     // stoppedStarts holds a stop that came before the record of such a start. sharePrograms holds the
     // program of each link by its share id. notReadySince holds the first check of each link without a
     // connection. wakeChecks holds the links that the check after a wake reads now. linkPageTimes
-    // holds the last page of each owner that a link gave, for the last activity.
+    // holds the last page of each owner that a link gave, for the last activity. A line of a visitor
+    // log from before launched is from an earlier start of nexusd. launched never changes, while
+    // activityBaseline moves to the start of the idle checks and a test can change it.
+    nonisolated let launched = Date.now
     var shareStarts: [String: Task<ShareInfo, any Error>] = [:]
     var stoppedStarts: [String: ShareEndReason] = [:]
     var sharePrograms: [String: ShareProgram] = [:]

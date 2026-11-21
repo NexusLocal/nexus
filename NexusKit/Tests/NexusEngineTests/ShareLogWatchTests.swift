@@ -53,14 +53,11 @@ struct ShareLogWatchTests {
     }
 
     private func append(_ text: String, to file: URL) throws {
-        let handle = try FileHandle(forWritingTo: file)
-        defer { try? handle.close() }
-        try handle.seekToEnd()
-        try handle.write(contentsOf: Data(text.utf8))
+        try writeAtEnd(text, of: file)
     }
 
     private func line(_ request: String, visitor: String = "203.0.113.7") -> String {
-        #"{"time":1800000000.125,"request":"\#(request)","status":200,"visitor":"\#(visitor)"}"# + "\n"
+        visitorLine(request, visitor: visitor)
     }
 
     @Test func twoLinesArriveWithTheirIDInTheirOrder() async throws {

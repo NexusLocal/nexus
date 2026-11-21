@@ -87,6 +87,21 @@ extension NexusEngine {
     func stopBeforeTheRecord(host: String) {
         stoppedStarts[host] = .stopped
     }
+
+    // A start that has no record yet, for example during the build of its assets.
+    func holdStartWithoutRecord(host: String) -> Task<ShareInfo, any Error> {
+        let start = Task<ShareInfo, any Error> {
+            try await Task.sleep(for: .seconds(60))
+            throw CancellationError()
+        }
+
+        shareStarts[host] = start
+        return start
+    }
+
+    func stoppedStart(of host: String) -> ShareEndReason? {
+        stoppedStarts[host]
+    }
 }
 
 @Suite(.serialized)
@@ -586,6 +601,20 @@ struct ShareEngineTests {
         }
     }
 
+    @Test func aStopOfAllLinksCountsAStartWithoutARecord() async throws {
+        let fixture = try await fixture()
+
+        try await run(fixture) {
+            let start = await fixture.engine.holdStartWithoutRecord(host: "shop.test")
+            defer { start.cancel() }
+
+            let stopped = await fixture.engine.handle(.stopAllShares(appQuit: false))
+
+            #expect(stopped == .done(message: "Nexus stopped 1 link."))
+            #expect(await fixture.engine.stoppedStart(of: "shop.test") == .stopped)
+        }
+    }
+
     @Test func anEndOfCloudflaredAfterTheOpenEndsTheLinkWithoutANewTunnel() async throws {
         let fixture = try await fixture()
 
@@ -815,11 +844,7 @@ struct ShareEngineTests {
             _ = await fixture.engine.handle(.stopWorkspace(host: "shop.test", name: "fix"))
             let stopped = try await base.record(fixture.engine, of: shop).runState
 
-            let line = #"{"time":1800000000.125,"request":"5f2b","status":200,"visitor":"203.0.113.7"}"# + "\n"
-            let handle = try FileHandle(forWritingTo: fixture.paths.shareVisitorLog(active.id))
-            try handle.seekToEnd()
-            try handle.write(contentsOf: Data(line.utf8))
-            try handle.close()
+            try visit(at: .now, in: fixture.paths.shareVisitorLog(active.id))
 
             let counted = await eventually { await fixture.engine.shareInfos().first?.visitors == 1 }
             let started = await eventually { (try? await base.record(fixture.engine, of: shop).runState) == .running }
@@ -832,6 +857,30 @@ struct ShareEngineTests {
             #expect(started)
             #expect(await fixture.engine.lastActivity(of: tracked)?.source == .page)
         }
+    }
+
+    @Test func aVisitFromBeforeTheStartOfNexusdCountsButStartsNoWorkspace() async throws {
+        let (fixture, shop, host) = try await workspaceFixture()
+
+        try await run(fixture) {
+            _ = try #require(await open(fixture, ShareStart(host: host)))
+            let active = try #require(await record(fixture, host: host))
+            _ = await fixture.engine.handle(.stopWorkspace(host: "shop.test", name: "fix"))
+            let visited = fixture.engine.launched.addingTimeInterval(-600)
+
+            try visit(at: visited, in: fixture.paths.shareVisitorLog(active.id))
+
+            let counted = await eventually { await fixture.engine.shareInfos().first?.visitors == 1 }
+            try await Task.sleep(for: .milliseconds(300))
+
+            #expect(counted)
+            #expect(await fixture.engine.shareInfos().first?.lastVisit == NexusEngine.wholeMinute(of: visited))
+            #expect(try await base.record(fixture.engine, of: shop).runState == .stopped)
+        }
+    }
+
+    private func visit(at time: Date, in log: URL) throws {
+        try writeAtEnd(visitorLine(time: time), of: log)
     }
 
     @Test func aRemovalOfTheWorkspaceEndsItsLink() async throws {

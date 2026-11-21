@@ -914,11 +914,11 @@ extension WebConfigTests {
         #expect(!config.contains("$nexus_share_0_1"))
     }
 
-    @Test func aPHPSiteWithoutALinkGetsNoLineOfTheLink() throws {
+    @Test func aPHPSiteWithoutALinkGetsNoLineOfTheLinkAndAnEmptyRequestID() throws {
         let config = try NginxConfig.render(sites: [site(.nginx)], settings: nginxSettings())
 
         #expect(!config.contains("$nexus_share_0"))
-        #expect(config.contains("            fastcgi_param HTTP_PROXY \"\";\n            fastcgi_pass"))
+        #expect(config.contains("            fastcgi_param HTTP_PROXY \"\";\n            fastcgi_param HTTP_X_NEXUS_SHARE_REQUEST $nexus_share_request;\n            fastcgi_pass"))
     }
 
     @Test func anApacheSiteWithALinkSendsPort443AndThePublicHostOnlyForTheLink() throws {

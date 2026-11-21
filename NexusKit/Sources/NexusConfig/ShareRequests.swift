@@ -22,8 +22,11 @@ public enum ShareRequests {
         "}",
     ]
 
-    // The line of the site block of a host with an open link. A fastcgi_param with the name of a
-    // header replaces that header. So a forged header never reaches PHP.
+    // The line of each site block, also of a site without a link. A fastcgi_param with the name of a
+    // header replaces that header, and an empty proxy_set_header removes it. The map of httpLines
+    // gives an empty value to each request that is not a request of an open link. So a forged header
+    // reaches PHP, an app or a proxy only together with the id of an open link. Only nginx and
+    // nexusd know that id.
     public static let fastcgiLine = "        fastcgi_param \(ShareConfig.Header.request.fastcgiName) $nexus_share_request;"
     public static let proxyLine = "        proxy_set_header \(ShareConfig.Header.request.rawValue) $nexus_share_request;"
 
