@@ -173,7 +173,7 @@ extension NexusEngineTests {
             #expect(delivered)
             #expect(received.count == 2)
             #expect(received.users == ["shop.test", "shop.test"])
-            #expect(outbox(of: root).waiting().isEmpty)
+            #expect(await eventually { outbox(of: root).waiting().isEmpty })
         }
     }
 
@@ -196,7 +196,7 @@ extension NexusEngineTests {
             let delivered = await eventually { received.count == 1 }
 
             #expect(delivered)
-            #expect(outbox(of: root).waiting().isEmpty)
+            #expect(await eventually { outbox(of: root).waiting().isEmpty })
         }
     }
 

@@ -76,6 +76,8 @@ struct MainWindow: View {
                 }
             case .oldWorkspaces(let host):
                 OldWorkspacesSheet(host: host)
+            case .share(let host):
+                ShareSheet(host: host)
             }
         }
         .alert(model.windowFailure?.title ?? "", isPresented: showsFailure, presenting: model.windowFailure) { failure in

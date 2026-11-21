@@ -321,7 +321,8 @@ extension NexusEngine {
                 devServer: devServerInfo(owner: owner),
                 runState: workspaceStarts[owner] != nil ? .starting : workspace.runState,
                 keepAwake: workspace.keepAwake,
-                stoppedAfter: workspace.runState == .stopped ? workspace.stoppedAfter : nil
+                stoppedAfter: workspace.runState == .stopped ? workspace.stoppedAfter : nil,
+                share: tracked.hosts.first.flatMap { activeOrLastShare(host: $0, in: state) }.map(shareInfo)
             )
         }
     }

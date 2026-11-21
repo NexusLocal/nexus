@@ -153,6 +153,10 @@ public struct NodeProject: Sendable, Equatable {
     // The program of the migrations, for example "prisma migrate deploy". An empty database of a
     // workspace gets its tables from it.
     public let migrationProgram: String?
+    // The scripts have build. A public link with Build runs it (group 4, 4e).
+    public let hasBuildScript: Bool
+    // The names of the dependencies and the dev dependencies (group 4, 4d).
+    public let dependencyNames: Set<String>
 
     // The clients and the ORMs that connect to a server on this Mac.
     static let databaseClients: Set<String> = [
@@ -167,13 +171,15 @@ public struct NodeProject: Sendable, Equatable {
         ("drizzle-kit", "drizzle-kit migrate"),
     ]
 
-    public init(script: String?, framework: NodeFramework?, packageManager: PackageManager, scriptText: String? = nil, usesDatabaseClient: Bool = false, migrationProgram: String? = nil) {
+    public init(script: String?, framework: NodeFramework?, packageManager: PackageManager, scriptText: String? = nil, usesDatabaseClient: Bool = false, migrationProgram: String? = nil, hasBuildScript: Bool = false, dependencyNames: Set<String> = []) {
         self.script = script
         self.framework = framework
         self.packageManager = packageManager
         self.scriptText = scriptText
         self.usesDatabaseClient = usesDatabaseClient
         self.migrationProgram = migrationProgram
+        self.hasBuildScript = hasBuildScript
+        self.dependencyNames = dependencyNames
     }
 
     public var command: String? {
@@ -211,7 +217,9 @@ public struct NodeProject: Sendable, Equatable {
             packageManager: packageManager(of: folder, named: package["packageManager"] as? String),
             scriptText: script.flatMap { scripts[$0] as? String },
             usesDatabaseClient: !databaseClients.isDisjoint(with: dependencies.keys),
-            migrationProgram: migrationPrograms.first { dependencies[$0.dependency] != nil }?.program
+            migrationProgram: migrationPrograms.first { dependencies[$0.dependency] != nil }?.program,
+            hasBuildScript: scripts["build"] is String,
+            dependencyNames: Set(dependencies.keys)
         )
     }
 
@@ -220,7 +228,7 @@ public struct NodeProject: Sendable, Equatable {
     // file, the packageManager key of package.json decides, as for corepack.
     private static func packageManager(of folder: URL, named declared: String?) -> PackageManager {
         let start = RealPath.of(folder)
-        let top = gitRoot(from: start) ?? start
+        let top = ProjectFolder.gitRoot(from: start) ?? start
         var current = start
 
         while true {
@@ -237,20 +245,6 @@ public struct NodeProject: Sendable, Equatable {
 
         let name = declared?.split(separator: "@").first.map(String.init)
         return name.flatMap(PackageManager.init(rawValue:)) ?? .npm
-    }
-
-    private static func gitRoot(from path: String) -> String? {
-        var current = path
-
-        while current != "/" {
-            if FileManager.default.fileExists(atPath: (current as NSString).appendingPathComponent(".git")) {
-                return current
-            }
-
-            current = (current as NSString).deletingLastPathComponent
-        }
-
-        return nil
     }
 }
 

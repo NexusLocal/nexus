@@ -26,6 +26,9 @@ public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
     // The name in the activity log, for example "mysql-8.4 of the workspace fix". A program of a
     // workspace without this name gets no line.
     public let activityName: String?
+    // A quick tunnel gets a new address at each start. So its cloudflared fails at its first end that
+    // nobody asked for. The supervisor does not start it again (group 4, 4b).
+    public let restartsAfterExit: Bool
 
     public init(
         id: String,
@@ -41,7 +44,8 @@ public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
         stopTimeout: Duration? = nil,
         stopsGroup: Bool = false,
         greetingSocket: URL? = nil,
-        activityName: String? = nil
+        activityName: String? = nil,
+        restartsAfterExit: Bool = true
     ) {
         self.id = id
         self.displayName = displayName
@@ -57,6 +61,7 @@ public struct ServiceDefinition: Codable, Sendable, Equatable, Identifiable {
         self.stopsGroup = stopsGroup
         self.greetingSocket = greetingSocket
         self.activityName = activityName
+        self.restartsAfterExit = restartsAfterExit
     }
 }
 

@@ -49,7 +49,7 @@ public enum NexusTools {
             title: "Site info",
             summary: "The URL, folder, PHP version, databases, mail and workspaces of a site.",
             level: .read,
-            description: "The URL, folder, type and PHP version of a site, its database connections with the password, its test database, where its mail goes and its workspaces. Call this before you guess a URL, a port or a password.",
+            description: "The URL, folder, type and PHP version of a site, its database connections with the password, its test database, where its mail goes, its workspaces and its public link. Call this before you guess a URL, a port or a password.",
             properties: ["site": site],
             required: []
         ),
@@ -111,6 +111,19 @@ public enum NexusTools {
                 "site": dumpSite,
                 "request": ["type": "string", "description": "The id of one request, from the line `request <id>` of an earlier result or from the `From` line of a job."],
                 "limit": ["type": "integer", "minimum": 1, "maximum": 50, "description": "The number of newest requests. The default is 20."],
+            ],
+            required: []
+        ),
+        NexusToolSpec(
+            name: "read_link_requests",
+            title: "Read link requests",
+            summary: "The requests through the public link of a site with their headers and bodies.",
+            level: .read,
+            description: "The newest requests through the open public link of a site, oldest first. Each request shows its headers and its body, and the status, the headers and the size of its answer. Nexus hides the values of Cookie and Authorization. Use it to check a webhook. The line `request <id>` gives the id for read_dumps. read_dumps shows the dumps, queries and log lines of the same request. Nexus keeps the requests only when the user turned on Keep a list of the requests for the link.",
+            properties: [
+                "site": site,
+                "request": ["type": "string", "description": "The id of one request, from the line `request <id>` of an earlier result."],
+                "limit": ["type": "integer", "minimum": 1, "maximum": 50, "description": "The number of newest requests. The default is 10."],
             ],
             required: []
         ),

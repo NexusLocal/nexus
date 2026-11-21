@@ -10,14 +10,18 @@ private actor FakeNexus: NexusConnecting {
     let changeAfterSites: Bool
     let caught: [DumpedRequest]
     let entries: [CaughtDump]
+    let link: ShareInfo
+    let details: [String: ShareRequestDetail]
     var requests: [NexusRequest] = []
 
-    init(running: Bool = true, change: ProgramChange? = nil, changeAfterSites: Bool = false, caught: [DumpedRequest] = [], entries: [CaughtDump] = []) {
+    init(running: Bool = true, change: ProgramChange? = nil, changeAfterSites: Bool = false, caught: [DumpedRequest] = [], entries: [CaughtDump] = [], link: ShareInfo = NexusToolboxTests.openLink, details: [String: ShareRequestDetail] = [:]) {
         self.running = running
         self.change = change
         self.changeAfterSites = changeAfterSites
         self.caught = caught
         self.entries = entries
+        self.link = link
+        self.details = details
     }
 
     func send(_ request: NexusRequest) async throws -> NexusResponse {
@@ -33,8 +37,8 @@ private actor FakeNexus: NexusConnecting {
 
         switch request.inner {
         case .sites:
-            let workspace = WorkspaceInfo(name: "fix", worktree: "/w/shop-fix", folder: "/w/shop-fix", hosts: ["shop-fix.test"], url: "https://shop-fix.test", state: .ready, runState: .stopped)
-            return .sites([SiteInfo(hosts: ["shop.test"], folder: "/w/shop/public", documentRoot: "/w/shop/public", php: "8.4", server: .nginx, parked: false, url: "https://shop.test", workspaces: [workspace], projectType: .laravel)])
+            let workspace = WorkspaceInfo(name: "fix", worktree: "/w/shop-fix", folder: "/w/shop-fix", hosts: ["shop-fix.test"], url: "https://shop-fix.test", state: .ready, runState: .stopped, share: NexusToolboxTests.endedLink)
+            return .sites([SiteInfo(hosts: ["shop.test"], folder: "/w/shop/public", documentRoot: "/w/shop/public", php: "8.4", server: .nginx, parked: false, url: "https://shop.test", workspaces: [workspace], projectType: .laravel, share: link)])
         case .tool:
             return .failure(message: "No PHP in this test.")
         case .databaseConnections:
@@ -49,6 +53,8 @@ private actor FakeNexus: NexusConnecting {
             return .dumpList(DumpList(requests: caught.filter { place.includes($0.place) }, settings: DumpSettings(catchDumps: true, catchLogs: true), receiving: true))
         case .requestDumps(let id, _):
             return .caughtDumps(entries.filter { $0.requestID == id })
+        case .shareRequest(let id):
+            return details[id].map(NexusResponse.shareRequest) ?? .failure(message: LinkRequestText.detailGone)
         default:
             return .done(message: "Done.")
         }
@@ -56,11 +62,58 @@ private actor FakeNexus: NexusConnecting {
 }
 
 struct NexusToolboxTests {
+    static let openLink = ShareInfo(host: "shop.test", site: "shop.test", url: "https://calm-river-tree-lamp.trycloudflare.com", state: .open, options: ShareOptions(duration: .oneHour, password: true, hidesErrors: true, viteMode: .live, keepsRequests: false, address: .random), started: Date(timeIntervalSince1970: 1_800_000_000), endsAt: Date(timeIntervalSince1970: 1_800_003_600), password: "plum-river-42", visitors: 2, log: "/tmp/cloudflared-shop.test.log")
+    static let endedLink = ShareInfo(host: "shop-fix.test", site: "shop.test", workspace: "fix", state: .ended(.sleep), options: .standard, started: Date(timeIntervalSince1970: 1_800_000_000), endsAt: Date(timeIntervalSince1970: 1_800_028_800), log: "/tmp/cloudflared-shop-fix.test.log")
+
     private func toolbox(_ nexus: FakeNexus, level: AgentLevel, folder: String = "/w/shop") -> NexusToolbox {
         NexusToolbox(connection: nexus, paths: NexusPaths(root: URL(filePath: "/tmp/nexus-tests-none")), folder: folder, loadSettings: { AgentSettings(level: level) })
     }
 
-    @Test(arguments: [(AgentLevel.read, 11), (.change, 19), (.remove, 23)])
+    @Test func anOpenLinkForTheAgentHasItsAddressItsEndAndItsVisitorsButNoPassword() throws {
+        let link = AgentPublicLink(Self.openLink)
+        let json = String(decoding: try JSONEncoder().encode(link), as: UTF8.self)
+
+        #expect(link.url == "https://calm-river-tree-lamp.trycloudflare.com")
+        #expect(link.state == "open")
+        #expect(link.endsAt == "2027-01-15T09:00:00Z")
+        #expect(link.password)
+        #expect(link.visitors == 2)
+        #expect(link.requests == nil)
+        #expect(link.ended == nil)
+        #expect(!json.contains("plum-river-42"))
+    }
+
+    @Test func anEndedLinkForTheAgentHasTheReasonAndNoAddress() {
+        let link = AgentPublicLink(Self.endedLink)
+
+        #expect(link.state == "ended")
+        #expect(link.url == nil)
+        #expect(!link.password)
+        #expect(link.ended == "Cloudflare removed the link during a sleep.")
+    }
+
+    @Test func siteInfoAndListSitesHaveThePublicLinkOfTheTarget() async {
+        let site = await toolbox(FakeNexus(), level: .read).call("site_info", arguments: ["site": "shop.test"], agent: nil)
+        let workspace = await toolbox(FakeNexus(), level: .read).call("site_info", arguments: ["site": "shop-fix.test"], agent: nil)
+        let rows = await toolbox(FakeNexus(), level: .read).call("list_sites", arguments: [:], agent: nil)
+
+        #expect(site.structured?["publicLink"]?["state"] == "open")
+        #expect(site.structured?["publicLink"]?["url"] == "https://calm-river-tree-lamp.trycloudflare.com")
+        #expect(workspace.structured?["publicLink"]?["state"] == "ended")
+        #expect(rows.structured?["sites"]?.array?.first?["publicLink"]?["visitors"]?.int == 2)
+        #expect(rows.structured?["sites"]?.array?.first?["workspaces"]?.array?.first?["publicLink"]?["state"] == "ended")
+        #expect(!site.text.contains("plum-river-42"))
+    }
+
+    @Test func theInstructionsSayThatOnlyTheUserOpensALinkAndStayWhole() async {
+        let text = await toolbox(FakeNexus(), level: .read, folder: "/w/shop-fix").instructions(agent: nil)
+
+        #expect(text.contains("- Only the user opens a public link of a site. site_info shows an open link with its address."))
+        #expect(text.hasSuffix("- You can only look. Ask the user to start a service or to install something."))
+        #expect(text.count < AgentInstructions.longest)
+    }
+
+    @Test(arguments: [(AgentLevel.read, 12), (.change, 20), (.remove, 24)])
     func eachLevelListsItsTools(level: AgentLevel, count: Int) async {
         let tools = await toolbox(FakeNexus(), level: level).tools(agent: nil)
 
@@ -211,6 +264,70 @@ struct NexusToolboxTests {
         #expect(result.text.hasPrefix("The text leaves out the oldest request, because it is too long. Give a lower limit or a request."))
         #expect(result.text.hasSuffix("[The text of this request stops here, because it is too long.]"))
         #expect(!result.text.contains("request old"))
+    }
+
+    private static let listedLink = ShareInfo(host: "shop.test", site: "shop.test", url: "https://calm-river-tree-lamp.trycloudflare.com", state: .open, options: ShareOptions(duration: .oneHour, password: false, hidesErrors: true, viteMode: .live, keepsRequests: true, address: .random), started: started, requestCount: 2, log: "/tmp/cloudflared-shop.test.log")
+
+    private static func linkRequest(_ id: String, host: String = "shop.test", dumps: Int = 0) -> DumpedRequest {
+        DumpedRequest(id: id, kind: .http, method: "POST", target: "/webhooks/\(id)", url: "https://calm-river-tree-lamp.trycloudflare.com/webhooks/\(id)", host: host, site: host, started: started, status: 200, duration: 0.184, dumpCount: dumps, publicLink: PublicLinkRequest(host: host, visitor: "3.18.12.63", size: 34, contentType: "application/json"))
+    }
+
+    private static func linkDetail(_ id: String) -> ShareRequestDetail {
+        ShareRequestDetail(id: id, requestHeaders: [ShareHeader(name: "Content-Type", value: "application/json"), ShareHeader(name: "Cookie", value: "hidden")], requestBody: #"{"event":"\#(id)"}"#, requestBodyBytes: 14, requestBodyCut: false, status: 200, responseHeaders: [ShareHeader(name: "Content-Type", value: "application/json")], size: 34)
+    }
+
+    @Test func readLinkRequestsGivesTheRequestsOfTheLinkOldestFirstWithTheirHeadersAndBodies() async throws {
+        let nexus = FakeNexus(caught: [Self.linkRequest("new"), Self.caught("plain"), Self.linkRequest("old", dumps: 1), Self.linkRequest("blog", host: "blog.test")], link: Self.listedLink, details: ["new": Self.linkDetail("new"), "old": Self.linkDetail("old")])
+
+        let result = await toolbox(nexus, level: .read, folder: "/w/shop/public").call("read_link_requests", arguments: [:], agent: "claude-code")
+        let old = try #require(result.text.range(of: "  request old · 1 dump"))
+        let new = try #require(result.text.range(of: "  request new\n"))
+
+        #expect(!result.isError)
+        #expect(old.lowerBound < new.lowerBound)
+        #expect(result.text.contains("  visitor 3.18.12.63"))
+        #expect(result.text.contains("  Request headers\n    Content-Type: application/json\n    Cookie: hidden\n  Body\n    {\n      \"event\": \"new\"\n    }\n  Answer  200 · 34 bytes · application/json\n  Answer headers\n    Content-Type: application/json"))
+        #expect(!result.text.contains("request plain"))
+        #expect(!result.text.contains("request blog"))
+        #expect(await nexus.requests.contains(.fromAgent(agent: "Claude Code", request: .shareRequest(id: "new"))))
+    }
+
+    @Test func readLinkRequestsWithARequestOrALimitReadsOnlyThose() async {
+        let nexus = FakeNexus(caught: [Self.linkRequest("new"), Self.linkRequest("old")], link: Self.listedLink, details: ["new": Self.linkDetail("new")])
+
+        let one = await toolbox(nexus, level: .read).call("read_link_requests", arguments: ["site": "shop.test", "request": "old"], agent: nil)
+        let limited = await toolbox(nexus, level: .read).call("read_link_requests", arguments: ["site": "shop.test", "limit": 1], agent: nil)
+        let unknown = await toolbox(nexus, level: .read).call("read_link_requests", arguments: ["site": "shop.test", "request": "gone"], agent: nil)
+
+        #expect(one.text.contains("request old"))
+        #expect(one.text.contains("  [\(LinkRequestText.detailGone)]"))
+        #expect(!one.text.contains("request new"))
+        #expect(limited.text.contains("request new"))
+        #expect(!limited.text.contains("request old"))
+        #expect(unknown.isError)
+        #expect(unknown.text == "Nexus has no request gone of the link to shop.test. The link ended, or newer requests took its place.")
+    }
+
+    @Test func readLinkRequestsExplainsALinkWithoutAListAndASiteWithoutALink() async {
+        let withoutList = await toolbox(FakeNexus(), level: .read).call("read_link_requests", arguments: ["site": "shop.test"], agent: nil)
+        let withoutLink = await toolbox(FakeNexus(), level: .read).call("read_link_requests", arguments: ["site": "shop-fix.test"], agent: nil)
+        let empty = await toolbox(FakeNexus(link: Self.listedLink), level: .read).call("read_link_requests", arguments: ["site": "shop.test"], agent: nil)
+
+        #expect(withoutList.isError)
+        #expect(withoutList.text == "The link to shop.test keeps no list of the requests. Only the user can turn on Keep a list of the requests, when they share the site.")
+        #expect(withoutLink.isError)
+        #expect(withoutLink.text == "shop-fix.test has no open link.")
+        #expect(!empty.isError)
+        #expect(empty.text == "No request came through the public link of shop.test yet.")
+    }
+
+    @Test func readDumpsLeavesOutARequestOfALinkWithoutEntries() async {
+        let nexus = FakeNexus(caught: [Self.linkRequest("empty"), Self.linkRequest("dumped", dumps: 1)], entries: [Self.dump(of: "dumped")])
+
+        let result = await toolbox(nexus, level: .read).call("read_dumps", arguments: [:], agent: nil)
+
+        #expect(result.text.contains("request dumped · 1 dump"))
+        #expect(!result.text.contains("request empty"))
     }
 
     @Test func readDumpsReadsAGroupAtATimeAndStopsWhenTheTextIsNearTheLimit() async throws {

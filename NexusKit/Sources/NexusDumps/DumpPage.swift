@@ -34,6 +34,8 @@ public enum DumpPage {
             "{{NONCE}}": nonce,
             "{{TITLE}}": title,
             "{{REQUEST_LIMIT}}": String(DumpStore.requestLimit),
+            "{{LINK_REQUEST_LIMIT}}": String(DumpStore.linkRequestLimit),
+            "{{BUFFERED_BODY_LIMIT}}": String(LinkRequestText.bufferedBodyLimit),
             "{{OPEN_LIMIT}}": String(DumpNode.openChildrenLimit),
             "{{SLOW_MILLISECONDS}}": String(QueryMarks.slowMilliseconds),
             "{{DUPLICATE_COUNT}}": String(QueryMarks.duplicateCount),
@@ -279,6 +281,14 @@ public enum DumpPage {
     .soft { color: var(--secondary); }
     .bold { font-weight: 600; }
     .note { margin-top: 4px; font-size: 11px; color: var(--secondary); }
+    .mark { flex: none; display: inline-flex; color: var(--accent); }
+    .mark svg { width: 11px; height: 11px; }
+    .tag svg { width: 10px; height: 10px; margin-right: 3px; vertical-align: -1px; }
+    .section-title { font-size: 11px; font-weight: 600; color: var(--secondary); }
+    .link-data { flex: none; max-height: 280px; overflow-y: auto; padding: 16px; border-bottom: 1px solid var(--separator); }
+    .link-data.only { flex: 1; max-height: none; border-bottom: 0; }
+    .header-line { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .header-name { color: var(--secondary); }
     .empty-line { padding: 12px 14px; border-radius: 10px; background: var(--group); color: var(--secondary); }
     .center { margin: auto; color: var(--secondary); }
     .footer { margin: 0; font-size: 11px; line-height: 1.35; color: var(--secondary); }
@@ -326,7 +336,7 @@ public enum DumpPage {
         <div class="detail" id="detail"></div>
       </section>
       <p class="empty-line" id="empty" hidden></p>
-      <p class="footer">Nexus keeps the newest {{REQUEST_LIMIT}} requests. A click on a file opens it in your editor. Test runs send nothing.</p>
+      <p class="footer" id="footer">Nexus keeps the newest {{REQUEST_LIMIT}} requests. A click on a file opens it in your editor. Test runs send nothing.</p>
     </main>
     <dialog id="confirm">
       <h2 id="confirm-title"></h2>
@@ -503,6 +513,137 @@ public enum DumpPage {
     // The kinds that the request has, in the order of the tabs.
     function presentKinds(request) {
       return kinds.filter((kind) => kindCount(request, kind) > 0);
+    }
+
+    // The tabs of a request, as DumpEntryTab.tabs. A request with only dumps has no tabs.
+    function requestTabs(request) {
+      const present = presentKinds(request);
+      return present.every((kind) => kind === "dump") ? [] : present;
+    }
+
+    // The texts of a request through a public link (group 4, 4f). They follow LinkRequestText.
+
+    const bufferedBodyLimit = {{BUFFERED_BODY_LIMIT}};
+
+    function linkFilterLabel(host, linkCount) {
+      return linkCount > 1 ? `Public link of ${host}` : "Public link";
+    }
+
+    // "412 bytes", "1.2 KB" or "3.4 MB". 1000 bytes are 1 KB. A half rounds up, as in Swift.
+    function sizeText(bytes, locale = undefined) {
+      if (bytes < 1000) {
+        return count(bytes, "byte");
+      }
+
+      const format = new Intl.NumberFormat(locale, { maximumFractionDigits: 1, useGrouping: false });
+      const kilobytes = Math.floor((bytes + 50) / 100);
+
+      if (kilobytes < 10000) {
+        return `${format.format(kilobytes / 10)} KB`;
+      }
+
+      return `${format.format(Math.floor((bytes + 50000) / 100000) / 10)} MB`;
+    }
+
+    // The note under the body, or null when the body shows in full.
+    function bodyNote(body, bytes, cut, locale = undefined) {
+      if (body) {
+        return cut ? "Nexus keeps only the first 64 KB of this body." : null;
+      }
+
+      if (!(bytes > 0)) {
+        return "This request has no body.";
+      }
+
+      if (bytes > bufferedBodyLimit) {
+        return `Nexus did not keep this body of ${sizeText(bytes, locale)}, because it is larger than 1 MB.`;
+      }
+
+      return `This body of ${sizeText(bytes, locale)} is not text. So Nexus does not show it.`;
+    }
+
+    // The JSON of a body with an indent of 2 spaces for each level. The keys keep their order and
+    // each value keeps its text. null when the text is not one JSON value.
+    function indentJSON(text) {
+      try {
+        JSON.parse(text);
+      } catch {
+        return null;
+      }
+
+      const spaces = " \t\n\r";
+      let output = "";
+      let depth = 0;
+      let inString = false;
+      let escaped = false;
+      const lineBreak = () => `\n${"  ".repeat(depth)}`;
+
+      for (let index = 0; index < text.length; index += 1) {
+        const character = text[index];
+
+        if (inString) {
+          output += character;
+
+          if (escaped) {
+            escaped = false;
+          } else if (character === "\\") {
+            escaped = true;
+          } else if (character === "\"") {
+            inString = false;
+          }
+
+          continue;
+        }
+
+        switch (character) {
+          case "\"":
+            inString = true;
+            output += character;
+            break;
+          case "{":
+          case "[": {
+            const close = character === "{" ? "}" : "]";
+            let next = index + 1;
+
+            while (next < text.length && spaces.includes(text[next])) {
+              next += 1;
+            }
+
+            if (text[next] === close) {
+              output += character + close;
+              index = next;
+              break;
+            }
+
+            depth += 1;
+            output += character + lineBreak();
+            break;
+          }
+          case "}":
+          case "]":
+            depth -= 1;
+            output += lineBreak() + character;
+            break;
+          case ",":
+            output += character + lineBreak();
+            break;
+          case ":":
+            output += ": ";
+            break;
+          default:
+            if (!spaces.includes(character)) {
+              output += character;
+            }
+        }
+      }
+
+      return output;
+    }
+
+    // The indented JSON when the text starts with { or [ and is JSON, else the text itself.
+    function shownBody(text) {
+      const first = text.replace(/^[ \t\n\r]+/, "")[0];
+      return first === "{" || first === "[" ? (indentJSON(text) ?? text) : text;
     }
 
     function entryKind(entry) {
@@ -834,7 +975,15 @@ public enum DumpPage {
       requestedLast: null,
       generation: 0,
       lostConnection: false,
+      linkDetail: null,
+      linkDetailID: null,
+      linkProblem: null,
+      linkVersion: 0,
     };
+
+    // The footer names the limit of a public link while the filter shows a link (group 4, 4f).
+    const defaultFooter = document.getElementById("footer").textContent;
+    const linkFooter = "Nexus keeps the newest {{LINK_REQUEST_LIMIT}} requests of each public link. It deletes them when the link ends.";
 
     const timeFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
     const secondsFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
@@ -874,6 +1023,7 @@ public enum DumpPage {
       copy: ["M8 8h12v12H8z", "M4 16V4h12"],
       trash: ["M3 6h18", "M19 6l-1 14H6L5 6", "M10 11v6", "M14 11v6", "M9 6V4h6v2"],
       warning: ["M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z", "M12 9v4", "M12 17h.01"],
+      globe: ["M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0z", "M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20", "M2 12h20"],
     };
 
     function icon(name) {
@@ -997,8 +1147,42 @@ public enum DumpPage {
       return settings.catchDumps || settings.catchQueries || settings.catchLogs || settings.catchJobs;
     }
 
+    // The list of a public link shows also without a Catch switch. The option of the link decides
+    // (group 4, 4f).
+    function showsList() {
+      return Boolean(catchesAnything() || linkHosts().length > 0);
+    }
+
+    // The sorted local hosts of the links with a list and of the requests of a link in the list.
+    function linkHosts() {
+      const hosts = new Set(state.list?.linkHosts ?? []);
+
+      for (const request of state.requests) {
+        if (request.publicLink) {
+          hosts.add(request.publicLink.host);
+        }
+      }
+
+      return [...hosts].sort();
+    }
+
+    // A filter of a link has the key link:<host>. A key of a place is JSON. So the two never meet.
+    function linkHostOfKey(key) {
+      return key.startsWith("link:") ? key.slice(5) : null;
+    }
+
     function visibleRequests() {
-      return state.filter ? state.requests.filter((request) => placeKey(request) === state.filter) : state.requests;
+      if (!state.filter) {
+        return state.requests;
+      }
+
+      const host = linkHostOfKey(state.filter);
+
+      if (host !== null) {
+        return state.requests.filter((request) => request.publicLink?.host === host);
+      }
+
+      return state.requests.filter((request) => placeKey(request) === state.filter);
     }
 
     function placeChoices() {
@@ -1012,7 +1196,7 @@ public enum DumpPage {
         }
       }
 
-      if (state.filter && !choices.has(state.filter)) {
+      if (state.filter && linkHostOfKey(state.filter) === null && !choices.has(state.filter)) {
         choices.set(state.filter, { key: state.filter, label: state.filterLabel ?? "No site", hasSite: placeOfKey(state.filter).site != null });
       }
 
@@ -1023,6 +1207,19 @@ public enum DumpPage {
 
         return first.label.localeCompare(second.label, undefined, { numeric: true });
       });
+    }
+
+    // One choice for each link. The link of the filter keeps its choice also after its end.
+    function linkChoices() {
+      const hosts = new Set(linkHosts());
+      const filterHost = linkHostOfKey(state.filter);
+
+      if (filterHost !== null) {
+        hosts.add(filterHost);
+      }
+
+      const sorted = [...hosts].sort();
+      return sorted.map((host) => ({ key: `link:${host}`, label: linkFilterLabel(host, sorted.length) }));
     }
 
     function applyList(list) {
@@ -1112,18 +1309,19 @@ public enum DumpPage {
 
     function renderHead() {
       const visible = visibleRequests();
-      const showsList = catchesAnything() && visible.length > 0;
+      const listShows = showsList() && visible.length > 0;
 
       $("subtitle").textContent = state.list ? subtitleText(visible) : "";
-      $("clear").disabled = !showsList;
-      $("filter").disabled = !catchesAnything();
-      $("requests").hidden = !showsList;
-      $("empty").hidden = showsList || !state.list;
-      $("empty").textContent = showsList ? "" : emptyText();
+      $("clear").disabled = !listShows;
+      $("filter").disabled = !showsList();
+      $("requests").hidden = !listShows;
+      $("empty").hidden = listShows || !state.list;
+      $("empty").textContent = listShows ? "" : emptyText();
+      $("footer").textContent = linkHostOfKey(state.filter) === null ? defaultFooter : linkFooter;
     }
 
     function subtitleText(visible) {
-      if (!catchesAnything()) {
+      if (!showsList()) {
         return "All Catch switches are off";
       }
 
@@ -1136,12 +1334,18 @@ public enum DumpPage {
     }
 
     function emptyText() {
-      if (!catchesAnything()) {
+      if (!showsList()) {
         return "Turn on Catch dumps, Catch queries, Catch log lines or Catch queue jobs in Nexus to see them here.";
       }
 
       if (state.list && !state.list.loaded) {
         return "Nexus loads the requests of its last run.";
+      }
+
+      const host = linkHostOfKey(state.filter);
+
+      if (host !== null) {
+        return `No request came through the public link of ${host} yet.`;
       }
 
       if (state.filter) {
@@ -1186,15 +1390,18 @@ public enum DumpPage {
       $("banners").replaceChildren(...banners);
     }
 
-    // The options change only with the places. So an open menu stays open while dumps arrive.
+    // The options change only with the places and the links. So an open menu stays open while dumps
+    // arrive. A line separates the links from the places.
     function renderFilter() {
       const choices = placeChoices();
-      const key = JSON.stringify(choices);
+      const links = linkChoices();
+      const key = JSON.stringify([choices, links]);
       const select = $("filter");
 
       if (key !== state.choices) {
         state.choices = key;
-        select.replaceChildren(new Option("All sites and workspaces", ""), ...choices.map((choice) => new Option(choice.label, choice.key)));
+        const linkOptions = links.length === 0 ? [] : [document.createElement("hr"), ...links.map((choice) => new Option(choice.label, choice.key))];
+        select.replaceChildren(new Option("All sites and workspaces", ""), ...choices.map((choice) => new Option(choice.label, choice.key)), ...linkOptions);
       }
 
       select.value = state.filter;
@@ -1235,6 +1442,11 @@ public enum DumpPage {
       row.dataset.id = request.id;
 
       const top = element("div", "row-line");
+
+      if (request.publicLink) {
+        top.append(linkMark(request.publicLink.host));
+      }
+
       top.append(element("span", "method", displayMethod(request)), element("span", "target", request.target), element("span", "small", listTime(request.started)));
 
       const bottom = element("div", "row-line");
@@ -1259,6 +1471,14 @@ public enum DumpPage {
       bottom.append(element("span", "tag", request.placeHost ?? "No site"));
       row.append(top, bottom);
       return row;
+    }
+
+    // The globe of a request through a public link, as in the design "Dumps Web Page · Public link".
+    function linkMark(host) {
+      const mark = element("span", "mark");
+      mark.title = `This request came through the public link of ${host}.`;
+      mark.append(icon("globe"));
+      return mark;
     }
 
     function openRequestData() {
@@ -1307,11 +1527,20 @@ public enum DumpPage {
 
       if (detail.dataset.id !== request.id) {
         detail.dataset.id = request.id;
-        detail.replaceChildren(element("div", "head"), element("div", "tabs-bar"), element("div", "entries"));
+        detail.replaceChildren(element("div", "head"), element("div", "link-data"), element("div", "tabs-bar"), element("div", "entries"));
       }
 
       const title = element("div", "head-title");
-      title.append(element("h2", null, titleText(request)), element("span", "tag", request.placeHost ?? "No site"));
+      title.append(element("h2", null, titleText(request)));
+
+      if (request.publicLink) {
+        const tag = element("span", "tag");
+        tag.title = `This request came through the public link of ${request.publicLink.host}.`;
+        tag.append(icon("globe"), "Public link");
+        title.append(tag);
+      }
+
+      title.append(element("span", "tag", request.placeHost ?? "No site"));
       title.append(iconButton("trash", "Remove this request and its entries", () => post("/api/remove-request", { id: request.id })));
 
       const lines = [title, ...(request.kind === "job" ? jobHeadLines(request) : headLines(request))];
@@ -1341,6 +1570,10 @@ public enum DumpPage {
 
       if (result) {
         lines.push(headLine("Status", result));
+      }
+
+      if (request.publicLink?.visitor) {
+        lines.push(headLine("Visitor", request.publicLink.visitor));
       }
 
       return lines;
@@ -1377,15 +1610,15 @@ public enum DumpPage {
     }
 
     function currentTab(request) {
-      const present = presentKinds(request);
-      return present.includes(state.tab) ? state.tab : (present[0] ?? "dump");
+      const tabs = requestTabs(request);
+      return tabs.includes(state.tab) ? state.tab : (tabs[0] ?? "dump");
     }
 
     // A request with only dumps has no tabs, as in the app.
     function renderTabs(request) {
       const bar = $("detail").querySelector(".tabs-bar");
-      const present = presentKinds(request);
-      bar.hidden = present.every((kind) => kind === "dump");
+      const present = requestTabs(request);
+      bar.hidden = present.length === 0;
 
       if (bar.hidden) {
         bar.replaceChildren();
@@ -1450,10 +1683,21 @@ public enum DumpPage {
       state.loadProblem = null;
       state.loading = false;
       state.requestedLast = null;
+      state.linkDetailID = null;
+      state.linkDetail = null;
+      state.linkProblem = null;
+      state.linkVersion += 1;
     }
 
-    // A second click on a request whose dumps did not load tries again, as in the app.
+    // A second click on a request whose dumps or whose detail did not load tries again, as in the
+    // app.
     function loadAgain() {
+      if (state.linkProblem) {
+        state.linkDetailID = null;
+        state.linkProblem = null;
+        loadLinkDetail();
+      }
+
       if (!state.loadProblem) {
         return;
       }
@@ -1472,6 +1716,7 @@ public enum DumpPage {
         return;
       }
 
+      loadLinkDetail();
       const kept = state.dumps.filter((dump) => dump.number >= request.firstNumber);
 
       if (kept.length < state.dumps.length) {
@@ -1520,6 +1765,45 @@ public enum DumpPage {
       loadOpenDumps();
     }
 
+    // The headers and the body of the open request of a link load once from nexusd. A failure shows
+    // its message in the tab.
+    async function loadLinkDetail() {
+      const request = openRequestData();
+
+      if (!request?.publicLink || state.linkDetailID === request.id) {
+        return;
+      }
+
+      const id = request.id;
+      state.linkDetailID = id;
+      state.linkDetail = null;
+      state.linkProblem = null;
+      state.linkVersion += 1;
+      let detail = null;
+      let problem = null;
+
+      try {
+        const response = await fetch(`/api/link-request?id=${encodeURIComponent(id)}`);
+
+        if (response.ok) {
+          detail = await response.json();
+        } else {
+          problem = (await response.json().catch(() => ({}))).message ?? "Nexus did not load the request.";
+        }
+      } catch {
+        problem = "Nexus does not answer. Is Nexus running?";
+      }
+
+      if (state.linkDetailID !== id) {
+        return;
+      }
+
+      state.linkDetail = detail;
+      state.linkProblem = problem;
+      state.linkVersion += 1;
+      renderDumps();
+    }
+
     // Each box stays while its entries and its texts stay, also after a switch of the tab. So an
     // open node of a tree stays open. A group of queries gets a new box when it gets a query. Each
     // change of the list calls this. It does nothing when the entries, the tab, the end of the
@@ -1532,6 +1816,7 @@ public enum DumpPage {
         return;
       }
 
+      renderLinkData(request, container);
       const tab = currentTab(request);
       const runs = tab === "job" ? state.dumps.filter((entry) => entry.kind === "job").map((row) => runSignature(ranRequest(row))) : [];
       const shown = JSON.stringify([request.id, state.dumpsVersion, tab, request.droppedQueries ?? 0, state.loading, state.loadProblem, runs]);
@@ -1608,6 +1893,108 @@ public enum DumpPage {
         default:
           return entries.map((dump) => ({ key: `dump ${dump.number}`, numbers: [dump.number], make: (projectFolder) => dumpBox(dump, projectFolder) }));
       }
+    }
+
+    // The request and the answer of a request through a public link are sections above the tabs
+    // (frame "Dumps · Public link"), as in the app. Without entries they take the whole pane.
+    function renderLinkData(request, container) {
+      const data = $("detail").querySelector(".link-data");
+      const hasEntries = presentKinds(request).length > 0;
+
+      data.hidden = !request.publicLink;
+      data.classList.toggle("only", !hasEntries);
+      container.hidden = Boolean(request.publicLink) && !hasEntries;
+
+      if (!request.publicLink) {
+        return;
+      }
+
+      const shown = JSON.stringify([request.id, state.linkVersion, request.status ?? null, request.publicLink]);
+
+      if (data.dataset.shown !== shown) {
+        data.dataset.shown = shown;
+        data.replaceChildren(...linkDataNodes(request));
+      }
+    }
+
+    // The sections Request headers, Data and Answer. nexusd wrote "Hidden by Nexus" for the values
+    // of the hidden headers already.
+    function linkDataNodes(request) {
+      const detail = state.linkDetailID === request.id ? state.linkDetail : null;
+      const link = request.publicLink ?? {};
+      const status = detail?.status ?? request.status;
+      const size = detail?.size ?? link.size;
+      const answer = element("div", "entry");
+      const nodes = [];
+
+      if (detail) {
+        const headers = element("div", "entry");
+        headers.append(element("div", "section-title", "Request headers"), headerBox(detail.requestHeaders ?? []));
+        nodes.push(headers, bodySection(detail));
+      }
+
+      answer.append(element("div", "section-title", "Answer"));
+
+      if (status != null) {
+        answer.append(headLine("Status", String(status)));
+      }
+
+      if (size != null) {
+        answer.append(headLine("Size", sizeText(size)));
+      }
+
+      if (link.contentType) {
+        answer.append(headLine("Type", link.contentType));
+      }
+
+      if (detail?.responseHeaders?.length) {
+        answer.append(headerBox(detail.responseHeaders));
+      }
+
+      nodes.push(answer);
+
+      if (state.linkProblem) {
+        nodes.push(element("p", "note", state.linkProblem));
+      }
+
+      return nodes;
+    }
+
+    function headerBox(headers) {
+      const box = element("div", "box");
+
+      for (const header of headers) {
+        const line = element("div", "header-line");
+        line.append(element("span", "header-name", `${header.name}: `), element("span", null, header.value));
+        box.append(line);
+      }
+
+      return box;
+    }
+
+    // The copy gives the body as nexusd sent it, without the indents.
+    function bodySection(detail) {
+      const section = element("div", "entry");
+      const head = element("div", "source");
+      head.append(element("span", "section-title", "Data"), element("span", "spacer"));
+
+      if (detail.requestBody) {
+        head.append(copyButton(detail.requestBody, "Copy the body of this request", "Nexus copied the body."));
+      }
+
+      section.append(head);
+
+      if (detail.requestBody) {
+        section.append(textBox(shownBody(detail.requestBody)));
+      }
+
+      const note = bodyNote(detail.requestBody, detail.requestBodyBytes, detail.requestBodyCut);
+
+      if (note) {
+        section.append(element("div", "note", note));
+      }
+
+      return section;
     }
 
     function fileLink(entry, projectFolder) {
@@ -2020,8 +2407,29 @@ public enum DumpPage {
       }
     });
 
+    // With the filter of a link, Clear removes the requests of that link (group 4, 4f).
+    function clearTitle() {
+      const host = linkHostOfKey(state.filter);
+
+      if (host !== null) {
+        return `Remove the requests of the public link of ${host}?`;
+      }
+
+      return state.filter ? `Remove the requests of ${state.filterLabel ?? "No site"}?` : "Remove all requests?";
+    }
+
+    function clearBody() {
+      const host = linkHostOfKey(state.filter);
+
+      if (host !== null) {
+        return { link: host };
+      }
+
+      return state.filter ? { place: placeOfKey(state.filter) } : { all: true };
+    }
+
     $("clear").addEventListener("click", () => {
-      $("confirm-title").textContent = state.filter ? `Remove the requests of ${state.filterLabel ?? "No site"}?` : "Remove all requests?";
+      $("confirm-title").textContent = clearTitle();
       $("confirm").showModal();
     });
 
@@ -2029,7 +2437,7 @@ public enum DumpPage {
 
     $("confirm-clear").addEventListener("click", () => {
       $("confirm").close();
-      post("/api/clear", state.filter ? { place: placeOfKey(state.filter) } : { all: true });
+      post("/api/clear", clearBody());
     });
 
     // The events of Nexus. Nexus sends the whole list first. A change before that list is in the

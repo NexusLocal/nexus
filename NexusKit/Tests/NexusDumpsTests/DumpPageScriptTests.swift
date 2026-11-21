@@ -237,6 +237,78 @@ struct DumpPageScriptTests {
 
         #expect(try run("treeText(value).join('\\n')", with: tree, in: context) == DumpEntryText.text(of: tree))
     }
+
+    @Test(arguments: [
+        #"{"type":"payment_intent.succeeded","id":"evt_1Q","data":{"object":{"amount":2450,"items":[1,2]}}}"#,
+        #"{"note":"a {b}, [c]: \"d\" \\","n":1.0}"#,
+        #"{"a":{ },"b":[]}"#,
+        "{}",
+        "[]",
+        "1.0",
+        #" [ 1 , "é😀" ] "#,
+        #"{"a":1}{"b":2}"#,
+        #"{"a":"#,
+    ])
+    func theIndentOfTheJSONOfABodyIsTheIndentOfTheApp(_ text: String) throws {
+        let context = try page()
+
+        #expect(try run("String(indentJSON(value))", with: text, in: context) == LinkRequestText.indentedJSON(text) ?? "null")
+        #expect(try run("shownBody(value)", with: text, in: context) == LinkRequestText.shownBody(text))
+    }
+
+    @Test(arguments: [0, 1, 999, 1000, 1049, 1050, 1250, 12_000, 99_949, 999_999, 3_400_000, 3_250_000])
+    func theSizeOfABodyIsTheSizeOfTheApp(bytes: Int) throws {
+        #expect(try run("sizeText(value, 'en-US')", with: bytes, in: try page()) == LinkRequestText.size(bytes, locale: Self.english))
+    }
+
+    @Test func theNoteOfABodyIsTheNoteOfTheApp() throws {
+        let context = try page()
+        let cases: [(body: String?, bytes: Int?, cut: Bool)] = [("{}", 200_000, true), ("{}", 2, false), (nil, 3_200_000, true), (nil, 12_000, false), (nil, nil, false), ("", 0, false)]
+
+        for (body, bytes, cut) in cases {
+            let value = LinkNoteInput(body: body, bytes: bytes, cut: cut)
+
+            #expect(try run("String(bodyNote(value.body, value.bytes, value.cut, 'en-US'))", with: value, in: context) == LinkRequestText.bodyNote(body: body, bytes: bytes, cut: cut, locale: Self.english) ?? "null")
+        }
+    }
+
+    @Test func theTabsOfARequestOfALinkAreTheTabsOfTheApp() throws {
+        let context = try page()
+        let link = PublicLinkRequest(host: "shop.test", visitor: nil, size: 34, contentType: "application/json")
+        let names: [DumpEntryTab: String] = [.dumps: "dump", .queries: "query", .logs: "log", .jobs: "job"]
+        let requests = [
+            DumpedRequest(id: "l1", kind: .http, method: "POST", target: "/webhooks", started: Self.started, dumpCount: 1, publicLink: link),
+            DumpedRequest(id: "l2", kind: .http, method: "POST", target: "/webhooks", started: Self.started, publicLink: link),
+            DumpedRequest(id: "l3", kind: .http, method: "POST", target: "/webhooks", started: Self.started, queryCount: 2, publicLink: link),
+            DumpedRequest(id: "r1", kind: .http, method: "GET", target: "/", started: Self.started, dumpCount: 1),
+            DumpedRequest(id: "r2", kind: .http, method: "GET", target: "/", started: Self.started, dumpCount: 1, queryCount: 2),
+        ]
+
+        for request in requests {
+            #expect(try run("requestTabs(value).join()", with: request, in: context) == DumpEntryTab.tabs(of: request).compactMap { names[$0] }.joined(separator: ","))
+        }
+
+        #expect(try run("linkFilterLabel('shop.test', 2)", with: 0, in: context) == LinkRequestText.filterLabel(host: "shop.test", linkCount: 2))
+    }
+}
+
+private struct LinkNoteInput: Encodable {
+    let body: String?
+    let bytes: Int?
+    let cut: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case body
+        case bytes
+        case cut
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(body, forKey: .body)
+        try container.encode(bytes, forKey: .bytes)
+        try container.encode(cut, forKey: .cut)
+    }
 }
 
 // Two values of other types in one JSON object for the page.

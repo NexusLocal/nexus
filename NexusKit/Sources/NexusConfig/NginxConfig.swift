@@ -25,6 +25,29 @@ public struct NginxSettings: Sendable, Equatable {
     public var pages: URL {
         NexusPaths.nginxPages(inRun: runFolder)
     }
+
+    // A port after a host, as a browser writes it: nothing for the standard port of the scheme.
+    public static func portSuffix(_ port: Int, standard: Int) -> String {
+        port == standard ? "" : ":\(port)"
+    }
+
+    public var httpsSuffix: String {
+        Self.portSuffix(httpsPort, standard: 443)
+    }
+
+    public var httpSuffix: String {
+        Self.portSuffix(httpPort, standard: 80)
+    }
+
+    // The host with the HTTPS port of Nexus, as a browser sends it in Host.
+    public func authority(of host: String) -> String {
+        host + httpsSuffix
+    }
+
+    // The origin of a host on the HTTPS port of Nexus, for example https://shop.test:8443.
+    public func origin(of host: String) -> String {
+        "https://\(authority(of: host))"
+    }
 }
 
 // The front server. It listens on all addresses for HTTP and HTTPS, does TLS for every site,
@@ -39,8 +62,9 @@ public enum NginxConfig {
         "ngx_stream_js_module": ["ngx_stream_module"],
     ])
 
-    // The modules load in the order of the settings.
-    public static func render(sites: [WebSite], settings: NginxSettings) throws -> String {
+    // The modules load in the order of the settings. The share blocks of the public links come after
+    // the sites (group 4, 4b). requestScript is the njs file of the list of the requests (4f).
+    public static func render(sites: [WebSite], shares: [ShareBlock] = [], requestScript: URL? = nil, settings: NginxSettings) throws -> String {
         let temp = settings.runFolder.appending(path: "nginx", directoryHint: .isDirectory)
         var lines: [String] = [
             "# Nexus writes this file. Changes are lost at the next change of a site.",
@@ -80,6 +104,9 @@ public enum NginxConfig {
             "    }",
             "",
         ]
+
+        lines += try ShareConfig.httpLines(for: shares, settings: settings, requestScript: requestScript).map { $0.isEmpty ? "" : "    \($0)" }
+        lines.append("")
 
         let phpMaps = try sites.enumerated().map { index, site in try phpMap(for: site, index: index) }
 
@@ -123,7 +150,15 @@ public enum NginxConfig {
             lines.append("")
             lines += appUpstream(for: site, index: index, settings: settings).map { "    \($0)" }
             lines += phpMaps[index].map { "    \($0)" }
+            // A request of a public link gets the values of its link (group 4, 4c). The map compares
+            // the id of the link. So a request without that id keeps each value.
+            lines += ShareRewrite.siteMaps(for: site, index: index).map { $0.isEmpty ? "" : "    \($0)" }
             lines += try server(for: site, index: index, settings: settings).map { "    \($0)" }
+        }
+
+        for share in shares {
+            lines.append("")
+            lines += try ShareConfig.render(share, settings: settings).map { $0.isEmpty ? "" : "    \($0)" }
         }
 
         lines.append("}")
@@ -164,52 +199,73 @@ public enum NginxConfig {
     static func origins(of hosts: [String], settings: NginxSettings) -> [String] {
         hosts.flatMap { host in
             guard host.hasPrefix("*.") else {
-                return [
-                    settings.httpsPort == 443 ? "https://\(host)" : "https://\(host):\(settings.httpsPort)",
-                    settings.httpPort == 80 ? "http://\(host)" : "http://\(host):\(settings.httpPort)",
-                ]
+                return [settings.origin(of: host), "http://\(host)\(settings.httpSuffix)"]
             }
 
-            let below = host.dropFirst(2).replacingOccurrences(of: ".", with: "\\.")
-            let https = settings.httpsPort == 443 ? "" : ":\(settings.httpsPort)"
-            let http = settings.httpPort == 80 ? "" : ":\(settings.httpPort)"
+            let below = ConfigText.regexEscaped(String(host.dropFirst(2)))
 
-            return ["~^https://[^./]+\\.\(below)\(https)$", "~^http://[^./]+\\.\(below)\(http)$"]
+            return ["~^https://[^./]+\\.\(below)\(settings.httpsSuffix)$", "~^http://[^./]+\\.\(below)\(settings.httpSuffix)$"]
         }
     }
 
     // A request that starts an Xdebug session goes to the PHP-FPM with Xdebug (owner, 2026-11-14).
     // Xdebug 3 reads the trigger from a cookie or from the query string, not from a header. A
     // trigger without a value also counts. The regular expressions are case sensitive, as PHP is.
+    // The share block removes the same triggers (group 4, 4d).
+    static let xdebugCookiePattern = #"(^|;)\s*XDEBUG_(SESSION|TRIGGER)="#
+    static let xdebugQueryPattern = #"(^|&)XDEBUG_(SESSION|SESSION_START|TRIGGER)(=|&|$)"#
+
     static let xdebugMaps = [
         "    map $http_cookie $nexus_xdebug_cookie {",
         "        default 0;",
-        #"        "~(^|;)\s*XDEBUG_(SESSION|TRIGGER)=" 1;"#,
+        "        \"~\(xdebugCookiePattern)\" 1;",
         "    }",
         "",
         "    map $args $nexus_xdebug {",
         "        default $nexus_xdebug_cookie;",
-        #"        "~(^|&)XDEBUG_(SESSION|SESSION_START|TRIGGER)(=|&|$)" 1;"#,
+        "        \"~\(xdebugQueryPattern)\" 1;",
         "    }",
         "",
     ]
 
     // nginx passes the PHP requests of a site to target. With the Xdebug switch on, the map before
-    // the server block chooses the socket of each request.
-    private static func phpPass(socket: URL, xdebugSocket: URL?, index: Int) throws -> (map: [String], target: String) {
+    // the server block chooses the socket of each request. A request of a link with hidden errors
+    // goes to the pool nexus-share. So it never reaches Xdebug (group 4, 4d).
+    private static func phpPass(socket: URL, xdebugSocket: URL?, index: Int, share: SiteShare?) throws -> (map: [String], target: String) {
         let standard = try ConfigText.socket(socket, prefix: "unix:")
+        let debug = try xdebugSocket.map { try ConfigText.socket($0, prefix: "unix:") }
+        let link = try share.flatMap { share in try share.shareSocket.map { (id: share.id, target: try ConfigText.socket($0, prefix: "unix:")) } }
 
-        guard let xdebugSocket else {
+        switch (debug, link) {
+        case (nil, nil):
             return ([], standard)
+        case (let debug?, nil):
+            return ([
+                "map $nexus_xdebug $nexus_php_\(index) {",
+                "    default \(standard);",
+                "    1 \(debug);",
+                "}",
+                "",
+            ], "$nexus_php_\(index)")
+        case (nil, let link?):
+            return ([
+                "map $nexus_share $nexus_php_\(index) {",
+                "    default \(standard);",
+                "    \"\(link.id)\" \(link.target);",
+                "}",
+                "",
+            ], "$nexus_php_\(index)")
+        case (let debug?, let link?):
+            return ([
+                "map \"$nexus_share|$nexus_xdebug\" $nexus_php_\(index) {",
+                "    default \(standard);",
+                "    \"|1\" \(debug);",
+                "    \"\(link.id)|0\" \(link.target);",
+                "    \"\(link.id)|1\" \(link.target);",
+                "}",
+                "",
+            ], "$nexus_php_\(index)")
         }
-
-        return ([
-            "map $nexus_xdebug $nexus_php_\(index) {",
-            "    default \(standard);",
-            "    1 \(try ConfigText.socket(xdebugSocket, prefix: "unix:"));",
-            "}",
-            "",
-        ], "$nexus_php_\(index)")
     }
 
     // Apache chooses the socket of an Apache site itself.
@@ -218,7 +274,7 @@ public enum NginxConfig {
             return []
         }
 
-        return try phpPass(socket: socket, xdebugSocket: xdebugSocket, index: index).map
+        return try phpPass(socket: socket, xdebugSocket: xdebugSocket, index: index, share: site.share).map
     }
 
     private static func server(for site: WebSite, index: Int, settings: NginxSettings) throws -> [String] {
@@ -232,7 +288,9 @@ public enum NginxConfig {
             "    server_name \(site.hosts.joined(separator: " "));",
             "    ssl_certificate \(try ConfigText.quoted(site.certificate));",
             "    ssl_certificate_key \(try ConfigText.quoted(site.key));",
-            "    access_log \(try ConfigText.quoted(site.accessLog));",
+            // A request through a link writes no line in the access log of the site. So it does not
+            // start the dev server by itself (group 4, 4b). nginx reads the third word as the format.
+            "    access_log \(try ConfigText.quoted(site.accessLog)) combined if=$nexus_site_log;",
             "",
         ]
 
@@ -255,7 +313,10 @@ public enum NginxConfig {
             lines += site.project == .bedrock ? bedrockRules + [""] : []
             lines += site.isWordPress ? wordPressRules + [""] : []
             lines += site.network == .subfolders ? subfolderNetworkRules(bedrock: site.project == .bedrock) + [""] : []
-            let pass = try phpPass(socket: socket, xdebugSocket: xdebugSocket, index: index).target
+            let pass = try phpPass(socket: socket, xdebugSocket: xdebugSocket, index: index, share: site.share).target
+            // A request of a public link gives PHP the id of the share block. PHP then uses it as the
+            // id of its request (group 4, 4f).
+            let linkRequestLines = site.share == nil ? [] : [ShareRequests.fastcgiLine]
             lines += [
                 "    location ~ \\.php(/|$) {",
                 "        fastcgi_split_path_info ^(.+?\\.php)(/.*)$;",
@@ -263,6 +324,9 @@ public enum NginxConfig {
                 "        include \(try ConfigText.quoted(settings.runtime.appending(path: "conf/fastcgi.conf")));",
                 "        fastcgi_param PATH_INFO $fastcgi_path_info;",
                 "        fastcgi_param HTTP_PROXY \"\";",
+            ]
+            lines += ShareRewrite.fastcgiLines(for: site, index: index).map { "        \($0)" }
+            lines += linkRequestLines + [
                 "        fastcgi_pass \(pass);",
                 "        fastcgi_read_timeout 300;",
                 "    }",
@@ -273,10 +337,9 @@ public enum NginxConfig {
             ]
             lines += waitLocation(on: [502], name: "nexus_php_waits", page: ErrorPages.phpWaits)
         case .php(.apache, _, _, _):
-            let httpsPort = settings.httpsPort == 443 ? "" : ":\(settings.httpsPort)"
             lines += [
                 "    if ($scheme = http) {",
-                "        return 301 https://$host\(httpsPort)$request_uri;",
+                "        return 301 https://$host\(settings.httpsSuffix)$request_uri;",
                 "    }",
                 "",
             ]
@@ -288,7 +351,11 @@ public enum NginxConfig {
                 "",
             ]
             lines += site.isWordPress ? uploadsRule + [""] : []
-            lines += proxyLocation(to: "https://127.0.0.1:\(settings.apachePort)", extra: apacheTLS)
+            let shareHeaders = [
+                "        proxy_set_header \(ShareConfig.Header.host.rawValue) \(ShareRewrite.apacheShareHost(for: site, index: index));",
+                "        proxy_set_header \(ShareConfig.Header.hide.rawValue) \(ShareRewrite.apacheShareHide(for: site, index: index));",
+            ]
+            lines += proxyLocation(to: "https://127.0.0.1:\(settings.apachePort)", forwardedPort: ShareRewrite.forwardedPort(for: site, index: index), extra: apacheTLS + shareHeaders + (site.share == nil ? [] : [ShareRequests.proxyLine]))
             lines += waitLocation(on: [502], name: "nexus_apache_waits", page: ErrorPages.apacheWaits)
         case .notice(let title, let text):
             lines += noticePage(title: title, text: text)
@@ -296,10 +363,10 @@ public enum NginxConfig {
         // these sites get no rule for such folders. The client of a dev server reloads the page as
         // soon as nginx answers, also with a 502. So the wait page also covers a 504.
         case .app(_, let framework):
-            lines += proxyLocation(to: "http://nexus_app_\(index)", origin: framework?.checksOrigin == true ? "$nexus_origin_\(index)" : nil)
+            lines += proxyLocation(to: "http://nexus_app_\(index)", origin: framework?.checksOrigin == true ? "$nexus_origin_\(index)" : nil, forwardedPort: ShareRewrite.forwardedPort(for: site, index: index))
             lines += waitLocation(on: [502, 504], name: "nexus_app_waits", page: ErrorPages.appWaits)
         case .proxy(let address):
-            lines += proxyLocation(to: address)
+            lines += proxyLocation(to: address, forwardedPort: ShareRewrite.forwardedPort(for: site, index: index))
         }
 
         lines.append("}")
@@ -443,7 +510,9 @@ public enum NginxConfig {
         "        proxy_ssl_name $host;",
     ]
 
-    private static func proxyLocation(to address: String, origin: String? = nil, extra: [String] = []) -> [String] {
+    // A request of a public link comes through port 443 of its public host (group 4, 4c). So
+    // forwardedPort is a map of the link for a site with a link.
+    private static func proxyLocation(to address: String, origin: String? = nil, forwardedPort: String, extra: [String] = []) -> [String] {
         let originLine = origin.map { ["        proxy_set_header Origin \($0);"] } ?? []
 
         return [
@@ -453,7 +522,7 @@ public enum NginxConfig {
             "        proxy_set_header Host $http_host;",
             "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
             "        proxy_set_header X-Forwarded-Proto $scheme;",
-            "        proxy_set_header X-Forwarded-Port $server_port;",
+            "        proxy_set_header X-Forwarded-Port \(forwardedPort);",
             "        proxy_set_header Upgrade $http_upgrade;",
             "        proxy_set_header Connection $connection_upgrade;",
         ] + originLine + extra + [

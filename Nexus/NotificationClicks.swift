@@ -17,6 +17,7 @@ final class NotificationClicks: NSObject, nonisolated UNUserNotificationCenterDe
     func connect(_ model: AppModel) {
         self.model = model
         UNUserNotificationCenter.current().delegate = self
+        UNUserNotificationCenter.current().setNotificationCategories([PublicLinkNotification.category])
     }
 
     func connect(openMainWindow: @escaping () -> Void) {
@@ -27,10 +28,11 @@ final class NotificationClicks: NSObject, nonisolated UNUserNotificationCenterDe
         let content = response.notification.request.content
         let target = NotificationTarget(userInfo: content.userInfo)
         let title = content.title
-        await open(target, title: title)
+        let action = response.actionIdentifier
+        await open(target, title: title, action: action)
     }
 
-    func open(_ target: NotificationTarget?, title: String) {
+    func open(_ target: NotificationTarget?, title: String, action: String? = nil) {
         ActivityTracker.log.write("notification", title)
 
         let busy = model.map { windowIsBusy($0, alertTitle: title) } ?? true
@@ -48,6 +50,11 @@ final class NotificationClicks: NSObject, nonisolated UNUserNotificationCenterDe
         }
 
         model.show(target)
+
+        // "Share Again" opens the confirm sheet over the Site screen (owner, 2026-11-17).
+        if action == PublicLinkNotification.shareAgainID, case .publicLink(let host) = target {
+            model.askToShare(host: host)
+        }
     }
 
     private func windowIsBusy(_ model: AppModel, alertTitle: String) -> Bool {

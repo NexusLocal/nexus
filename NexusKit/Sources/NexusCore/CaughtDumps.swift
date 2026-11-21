@@ -238,8 +238,12 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
     // the others in droppedQueries. job is only for a job of a worker.
     public var droppedQueries: Int
     public var job: JobRun?
+    // The request came through a public link (group 4, 4f). nexusd sets it from the request log of
+    // the link. A request of a link has its own limit in the store and stays without entries. The end
+    // of the link removes it again.
+    public var publicLink: PublicLinkRequest?
 
-    public init(id: String, kind: Kind, method: String? = nil, target: String, url: String? = nil, host: String? = nil, root: String? = nil, scriptFolders: [String] = [], site: String? = nil, workspace: String? = nil, started: Date, status: Int? = nil, exitCode: Int? = nil, duration: TimeInterval? = nil, dumpCount: Int = 0, hasDD: Bool = false, lastSeq: Int = 0, firstSeq: Int = 0, placeHost: String? = nil, projectFolder: String? = nil, lastNumber: Int = 0, firstNumber: Int = 0, queryCount: Int = 0, queryMilliseconds: Double = 0, logCount: Int = 0, jobCount: Int = 0, marks: Set<QueryMark> = [], droppedQueries: Int = 0, job: JobRun? = nil) {
+    public init(id: String, kind: Kind, method: String? = nil, target: String, url: String? = nil, host: String? = nil, root: String? = nil, scriptFolders: [String] = [], site: String? = nil, workspace: String? = nil, started: Date, status: Int? = nil, exitCode: Int? = nil, duration: TimeInterval? = nil, dumpCount: Int = 0, hasDD: Bool = false, lastSeq: Int = 0, firstSeq: Int = 0, placeHost: String? = nil, projectFolder: String? = nil, lastNumber: Int = 0, firstNumber: Int = 0, queryCount: Int = 0, queryMilliseconds: Double = 0, logCount: Int = 0, jobCount: Int = 0, marks: Set<QueryMark> = [], droppedQueries: Int = 0, job: JobRun? = nil, publicLink: PublicLinkRequest? = nil) {
         self.id = id
         self.kind = kind
         self.method = method
@@ -269,6 +273,7 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
         self.marks = marks
         self.droppedQueries = droppedQueries
         self.job = job
+        self.publicLink = publicLink
     }
 
     enum CodingKeys: String, CodingKey {
@@ -301,10 +306,12 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
         case marks
         case droppedQueries
         case job
+        case publicLink
     }
 
     // A request of an older nexusd has no lastSeq, firstSeq, lastNumber, firstNumber, placeHost,
-    // projectFolder, the counts of the other kinds, marks, droppedQueries and job.
+    // projectFolder, the counts of the other kinds, marks, droppedQueries and job. A request of an
+    // older nexusd has no publicLink.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
@@ -337,6 +344,7 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
         marks = try container.decodeIfPresent(Set<QueryMark>.self, forKey: .marks) ?? []
         droppedQueries = try container.decodeIfPresent(Int.self, forKey: .droppedQueries) ?? 0
         job = try container.decodeIfPresent(JobRun.self, forKey: .job)
+        publicLink = try container.decodeIfPresent(PublicLinkRequest.self, forKey: .publicLink)
     }
 
     // A number of 0 is no number. So a header without numbers has none in its JSON. The counts of
@@ -390,6 +398,7 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
         }
 
         try container.encodeIfPresent(job, forKey: .job)
+        try container.encodeIfPresent(publicLink, forKey: .publicLink)
     }
 
     // The entries of all kinds.
@@ -422,9 +431,14 @@ public struct DumpedRequest: Codable, Sendable, Equatable, Identifiable {
 
     // The one rule of the store for the list: a request stays while it has an entry. A job of a
     // worker that ended stays also without entries. So a WP-Cron event or a Laravel job that ran no
-    // query, dump or log line still shows. The end of a job gives its outcome and its duration.
+    // query, dump or log line still shows. The end of a job gives its outcome and its duration. A
+    // request of a public link stays also without entries (group 4, 4f).
     public var staysInList: Bool {
         if entryCount > 0 {
+            return true
+        }
+
+        if publicLink != nil {
             return true
         }
 

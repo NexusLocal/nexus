@@ -108,6 +108,45 @@ struct AgentSetupTests {
         #expect(try read(".claude/settings.json") == "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(ls)\"\n    ]\n  }\n}\n")
     }
 
+    private func rulesWithoutTheNewReadTools() -> String {
+        let rules = ["Bash(ls)"] + NexusTools.readToolNames.filter { $0 != "read_dumps" && $0 != "read_link_requests" }.map { "mcp__nexus__\($0)" }
+        return "{\n  \"permissions\": {\n    \"allow\": [\n" + rules.map { "      \"\($0)\"" }.joined(separator: ",\n") + "\n    ]\n  }\n}\n"
+    }
+
+    @Test func theStartAddsTheRulesOfNewReadTools() async throws {
+        try write("{\"numStartups\": 3}", to: ".claude.json")
+        try await setup.connect(.claudeCode, askBeforeLooking: false)
+        try write(rulesWithoutTheNewReadTools(), to: ".claude/settings.json")
+
+        try setup.addNewReadRules(askBeforeLooking: false)
+        let first = try read(".claude/settings.json")
+        try setup.addNewReadRules(askBeforeLooking: false)
+
+        #expect(setup.claudeCodeRules().count == NexusTools.readToolNames.count)
+        #expect(setup.claudeCodeRules().contains("mcp__nexus__read_dumps"))
+        #expect(setup.claudeCodeRules().contains("mcp__nexus__read_link_requests"))
+        #expect(((try JSONTextEdit.value(at: ["permissions", "allow"], in: first)) as? [String])?.first == "Bash(ls)")
+        #expect(try read(".claude/settings.json") == first)
+    }
+
+    @Test func theStartAddsNoRuleWhenTheUserWantsAQuestion() async throws {
+        try write("{\"numStartups\": 3}", to: ".claude.json")
+        try await setup.connect(.claudeCode, askBeforeLooking: false)
+        try write(rulesWithoutTheNewReadTools(), to: ".claude/settings.json")
+
+        try setup.addNewReadRules(askBeforeLooking: true)
+
+        #expect(try read(".claude/settings.json") == rulesWithoutTheNewReadTools())
+    }
+
+    @Test func theStartAddsNoRuleWithoutClaudeCode() throws {
+        try write("{\"numStartups\": 3}", to: ".claude.json")
+
+        try setup.addNewReadRules(askBeforeLooking: false)
+
+        #expect(!FileManager.default.fileExists(atPath: home.appending(path: ".claude/settings.json").path(percentEncoded: false)))
+    }
+
     @Test func aFailedAddPutsTheOldEntryOfClaudeCodeBack() async throws {
         try write("{\"mcpServers\": {\"nexus\": {\"type\": \"stdio\", \"command\": \"/old/nexus\", \"args\": [\"mcp\"]}}}", to: ".claude.json")
         let failing = Self.setup(home: home, command: command, claude: Self.fakeClaude(home: home, failing: command))

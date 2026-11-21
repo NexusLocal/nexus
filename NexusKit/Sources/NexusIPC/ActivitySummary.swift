@@ -28,6 +28,12 @@ extension NexusRequest {
         case .createDatabase(_, let name): "createDatabase \(name)"
         case .importDump(let request): "importDump \(request.name)\(request.existing.map { " \($0.rawValue)" } ?? "")"
         case .useNexus(let request): "useNexus \(request.host)\(request.copy ? " with a copy" : "")"
+        case .startShare(let start): "startShare \(start.host)"
+        case .stopShare(let host): "stopShare \(host)"
+        case .stopAllShares(let appQuit): "stopAllShares\(appQuit ? " (quit)" : "")"
+        case .rebuildShare(let host): "rebuildShare \(host)"
+        case .connectOwnDomain(let domain): "connectOwnDomain \(domain)"
+        case .clearLinkRequests(let host): "clearLinkRequests \(host ?? "all")"
         case .fromAgent(let agent, let request): "\(request.activitySummary) (\(agent))"
         default: Mirror(reflecting: self).children.first?.label ?? "\(self)"
         }
@@ -68,7 +74,7 @@ extension NexusRequest {
         case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules,
              .customSettings, .siteLines, .databases, .databaseSizes, .sourceDatabases, .workspaceEnv, .siteDatabases, .databaseConnections, .serverDatabases, .wordPressSite, .backgroundPreset,
              .workspaceSettings, .oldWorkspaces, .dumps, .probe, .tool, .inspectBackup, .inspectDump, .serviceList, .tasks, .mailStatus, .siteMail, .useNexusInfo, .dumpList,
-             .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps, .requestEntries:
+             .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps, .requestEntries, .shares, .sharePreview, .shareRequest, .checkOwnDomain:
             true
         case .fromAgent(_, let request):
             request.onlyReads

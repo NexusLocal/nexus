@@ -211,7 +211,10 @@ extension NexusEngine {
     func writeDumpFiles(line: String, state: EngineState, keepingStub: Bool) -> (stub: URL?, stubChanged: Bool) {
         let folder = paths.phpConfigFolder(line: line)
         let stub = dumpStub(line: line)
-        let library = state.dumpSettings.catchesAnything ? dumpLibrary() : nil
+        // A link of a WordPress site needs the prepend file for the filters of WooCommerce (group 4,
+        // 4c).
+        let needsStub = state.dumpSettings.catchesAnything || linkNeedsStub(line: line, state: state)
+        let library = needsStub ? dumpLibrary() : nil
 
         guard let library else {
             _ = try? Self.writeScanFolder(named: PHPConfig.dumpsFolderName, iniName: PHPConfig.dumpsIniName, ini: nil, in: folder)
@@ -234,7 +237,7 @@ extension NexusEngine {
 
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let stubChanged = try Self.writeIfChanged(text, to: stub)
-            let ini = try state.dumpSettings.commands ? PHPConfig.dumpsIni(stub: stub) : nil
+            let ini = try state.dumpSettings.catchesAnything && state.dumpSettings.commands ? PHPConfig.dumpsIni(stub: stub) : nil
             try Self.writeScanFolder(named: PHPConfig.dumpsFolderName, iniName: PHPConfig.dumpsIniName, ini: ini, in: folder)
             return (stub, stubChanged)
         } catch {

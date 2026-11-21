@@ -73,6 +73,57 @@ struct DumpPlaceChoice: Hashable, Identifiable {
     }
 }
 
+// A choice of the filter: the requests of a place, or the requests of the public link of a local
+// host (group 4, 4f). The label of a link changes with the number of links. So the picker uses the
+// id, which has only the place or the host.
+enum DumpFilterChoice: Hashable, Identifiable {
+    enum Key: Hashable {
+        case place(DumpPlace)
+        case link(String)
+    }
+
+    case place(DumpPlaceChoice)
+    case link(host: String, label: String)
+
+    var id: Key {
+        switch self {
+        case .place(let choice): .place(choice.place)
+        case .link(let host, _): .link(host)
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .place(let choice): choice.label
+        case .link(_, let label): label
+        }
+    }
+
+    var place: DumpPlace? {
+        guard case .place(let choice) = self else {
+            return nil
+        }
+
+        return choice.place
+    }
+
+    var linkHost: String? {
+        guard case .link(let host, _) = self else {
+            return nil
+        }
+
+        return host
+    }
+
+    // A request of a link shows in the filter of its link and in the filter of its place.
+    func includes(_ request: DumpedRequest) -> Bool {
+        switch self {
+        case .place(let choice): choice.place == request.place
+        case .link(let host, _): request.publicLink?.host == host
+        }
+    }
+}
+
 // The answer of one load of the open dumps, with the trees decoded.
 private enum DumpLoad {
     case shown([ShownDump])
@@ -95,8 +146,22 @@ extension AppModel {
         shownDumpSettings?.catchesAnything != false
     }
 
+    // The list of a public link shows also without a Catch switch. The option of the link decides
+    // (group 4, 4f).
+    var showsDumpList: Bool {
+        if catchesAnything {
+            return true
+        }
+
+        if dumpState?.linkHosts.isEmpty == false {
+            return true
+        }
+
+        return dumpRequests.contains { request in request.publicLink != nil }
+    }
+
     // A block of an older nexusd has no place. It shows only without a filter. A block shows only
-    // while Nexus catches a kind that it stops.
+    // while Nexus catches a kind that it stops. The filter of a link shows no block.
     var visibleDumpBlocks: [DumpBlock] {
         let settings = shownDumpSettings ?? DumpSettings()
         let blocks = (dumpState?.blocked ?? []).filter { block in block.isShown(for: settings) }
@@ -105,7 +170,11 @@ extension AppModel {
             return blocks
         }
 
-        return blocks.filter { $0.place == dumpFilter.place }
+        guard let place = dumpFilter.place else {
+            return []
+        }
+
+        return blocks.filter { $0.place == place }
     }
 
     // The job of a worker that ran the job of a row of the Jobs tab, with its last try.
@@ -164,14 +233,21 @@ extension AppModel {
         setOpenDumps(openDumps.filter { shown in !shouldGo(shown) })
     }
 
+    // The hosts of the links can change with the state. So the choices of the filter follow it.
     func show(_ state: DumpState) {
+        let linkHostsChanged = state.linkHosts != dumpState?.linkHosts
         dumpState = state
+
+        if linkHostsChanged {
+            dumpLinkChoices = linkChoices()
+        }
     }
 
     private func dumpRequestsChanged() {
-        visibleDumpRequests = dumpRequests.filter { (dumpFilter?.place).includes($0.place) }
+        visibleDumpRequests = dumpFilter.map { filter in dumpRequests.filter(filter.includes) } ?? dumpRequests
         visibleDumpCount = visibleDumpRequests.reduce(0) { $0 + $1.dumpCount }
         dumpPlaceChoices = placeChoices()
+        dumpLinkChoices = linkChoices()
         indexDumpRequests()
         updateOpenDumpRequest()
 
@@ -196,7 +272,55 @@ extension AppModel {
 
         if open != openDumpRequest {
             openDumpRequest = open
+            loadOpenLinkDetail()
         }
+    }
+
+    // The headers and the body of the open request of a public link load once for each open (group
+    // 4, 4f). A request of PHP can get its link after its open. A new generation drops the answer of
+    // an earlier open.
+    private func loadOpenLinkDetail() {
+        guard let request = openDumpRequest, request.publicLink != nil, linkDetailID != request.id else {
+            return
+        }
+
+        linkDetailID = request.id
+        linkDetailGeneration += 1
+        let generation = linkDetailGeneration
+        openLinkDetail = nil
+        openLinkDetailProblem = nil
+
+        Task {
+            let answer = await linkDetailAnswer(of: request.id)
+
+            guard generation == linkDetailGeneration else {
+                return
+            }
+
+            switch answer {
+            case .answer(.shareRequest(let detail))?:
+                openLinkDetail = detail
+            case .failure(let message)?:
+                openLinkDetailProblem = message
+            default:
+                openLinkDetailProblem = LinkRequestText.detailGone
+            }
+        }
+    }
+
+    private func linkDetailAnswer(of id: String) async -> RequestOutcome? {
+        guard isLive else {
+            return Self.sampleShareRequest(id: id).map { detail in .answer(.shareRequest(detail)) }
+        }
+
+        return await outcome(of: .shareRequest(id: id))
+    }
+
+    private func forgetOpenLinkDetail() {
+        linkDetailID = nil
+        linkDetailGeneration += 1
+        openLinkDetail = nil
+        openLinkDetailProblem = nil
     }
 
     // The list has the newest first. So a job that a worker tried again keeps its last try.
@@ -231,8 +355,8 @@ extension AppModel {
             choices[request.place] = DumpPlaceChoice(place: request.place, label: request.placeHost ?? "No site")
         }
 
-        if let dumpFilter {
-            choices[dumpFilter.place] = choices[dumpFilter.place] ?? dumpFilter
+        if case .place(let filter)? = dumpFilter {
+            choices[filter.place] = choices[filter.place] ?? filter
         }
 
         return choices.values.sorted { first, second in
@@ -242,6 +366,27 @@ extension AppModel {
 
             return first.label.localizedStandardCompare(second.label) == .orderedAscending
         }
+    }
+
+    // One choice for each link with a list and for each link of a request in the list, sorted by
+    // host. The link of the filter stays also after its end (group 4, 4f).
+    private func linkChoices() -> [DumpFilterChoice] {
+        var hosts = Set(dumpState?.linkHosts ?? [])
+        hosts.formUnion(dumpRequests.compactMap { request in request.publicLink?.host })
+
+        if let host = dumpFilter?.linkHost {
+            hosts.insert(host)
+        }
+
+        let sorted = hosts.sorted()
+        let choices = sorted.map { host in DumpFilterChoice.link(host: host, label: LinkRequestText.filterLabel(host: host, linkCount: sorted.count)) }
+
+        // A label can change with the number of links. The filter then gets the new label.
+        if let host = dumpFilter?.linkHost, let current = choices.first(where: { $0.linkHost == host }), current != dumpFilter {
+            dumpFilter = current
+        }
+
+        return choices
     }
 
     func dumpsScreenAppeared() {
@@ -267,9 +412,17 @@ extension AppModel {
         show(state)
     }
 
-    func filterDumps(by choice: DumpPlaceChoice?) {
+    func filterDumps(by choice: DumpFilterChoice?) {
         dumpFilter = choice
         dumpRequestsChanged()
+    }
+
+    // The button "Requests (12)" of the share panel opens the Dumps screen with the filter of one
+    // link (group 4, 4g calls it).
+    func showLinkRequests(host: String) {
+        let linkCount = Set((dumpState?.linkHosts ?? []) + [host]).count
+        selection = .dumps
+        filterDumps(by: .link(host: host, label: LinkRequestText.filterLabel(host: host, linkCount: linkCount)))
     }
 
     private func openFirstDumpRequestIfNeeded() {
@@ -285,10 +438,10 @@ extension AppModel {
         openDumpRequest(first.id)
     }
 
-    // A second click on a request whose dumps did not load tries again.
+    // A second click on a request whose dumps or whose detail of a link did not load tries again.
     func openDumpRequest(_ id: String) {
         if id == openDumpRequestID {
-            guard openDumpsProblem != nil else {
+            guard openDumpsProblem != nil || openLinkDetailProblem != nil else {
                 return
             }
         }
@@ -297,12 +450,14 @@ extension AppModel {
         openDumpRequestID = id
         openDumpRequest = dumpRequestsByID[id]
         loadOpenDumps()
+        loadOpenLinkDetail()
     }
 
     private func closeDumpRequest() {
         openDumpRequestID = nil
         openDumpRequest = nil
         forgetOpenDumps()
+        forgetOpenLinkDetail()
     }
 
     // A new generation drops the answer of a load that still runs. That load belongs to an earlier
@@ -446,7 +601,7 @@ extension AppModel {
 
         guard isLive else {
             if let state = dumpState {
-                show(DumpState(settings: settings, blocked: state.blocked, receiving: state.receiving, problem: state.problem, loaded: state.loaded, page: state.page))
+                show(DumpState(settings: settings, blocked: state.blocked, receiving: state.receiving, problem: state.problem, loaded: state.loaded, page: state.page, linkHosts: state.linkHosts))
             }
 
             return
@@ -465,11 +620,17 @@ extension AppModel {
         }
     }
 
-    // The filter decides which requests go: all, or the requests of one site or workspace.
+    // The filter decides which requests go: all, the requests of one site or workspace, or the
+    // requests of one public link (group 4, 4f).
     func clearDumps() {
         guard isLive else {
-            dumpRequests.removeAll { (dumpFilter?.place).includes($0.place) }
+            dumpRequests.removeAll { request in dumpFilter?.includes(request) ?? true }
             dumpRequestsChanged()
+            return
+        }
+
+        if let host = dumpFilter?.linkHost {
+            send(.clearLinkRequests(host: host), failure: "Nexus did not remove the requests", place: .window)
             return
         }
 

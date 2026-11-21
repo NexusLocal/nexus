@@ -27,9 +27,14 @@ struct DumpsCommand: AsyncParsableCommand {
         @Option(help: "The number of newest entries of all kinds. The default is 20. With --follow, 0 shows only the new entries.") var limit: Int?
         @Flag(help: "Stays open and shows each new entry. Press Control-C to stop.") var follow = false
         @Flag(help: "Prints one JSON line for each entry, with its request and the tags of a query.") var json = false
-        @Flag(help: "Removes all requests. With --site, only the requests of that site or workspace.") var clear = false
+        @Flag(help: "Removes all requests. With --site, only the requests of that site or workspace. With --public-link, only the requests of the public links.") var clear = false
+        @Flag(name: .customLong("public-link"), help: "Shows the requests through the public links with their headers and bodies, the newest last. With --site, only the link of that site or workspace. --limit counts requests here.") var publicLink = false
 
         func validate() throws {
+            if publicLink, follow {
+                throw ValidationError(LinkRequestText.followRefused)
+            }
+
             if clear, follow {
                 throw clearAlone()
             }
@@ -56,6 +61,11 @@ struct DumpsCommand: AsyncParsableCommand {
         }
 
         func run() async throws {
+            if publicLink {
+                try await DumpsCommand.showLinkRequests(site: site, limit: limit ?? DumpsCommand.defaultLimit, json: json, clear: clear)
+                return
+            }
+
             let target: (place: DumpPlace, host: String)? = if let site { try await DumpsCommand.place(of: site) } else { nil }
             let place = target?.place
             let write = DumpsCommand.write(_:toErrors:)
@@ -159,6 +169,89 @@ struct DumpsCommand: AsyncParsableCommand {
         }
 
         return (place, firstHost)
+    }
+
+    // nexus dumps --public-link (group 4, 4f). Only a link with the option Keep a list of the
+    // requests has requests. --limit counts requests here.
+    static func showLinkRequests(site: String?, limit: Int, json: Bool, clear: Bool) async throws {
+        let links = try await activeLinks()
+        var host: String?
+
+        if let site {
+            let target = try await place(of: site)
+
+            guard let link = links.first(where: { $0.site == target.place.site && $0.workspace == target.place.workspace }) else {
+                write([ShareText.noOpenLink(target.host)], toErrors: true)
+                throw ExitCode.failure
+            }
+
+            guard link.requestCount != nil else {
+                write([LinkRequestText.noList(host: link.host)], toErrors: true)
+                throw ExitCode.failure
+            }
+
+            host = link.host
+        } else if !links.contains(where: { $0.requestCount != nil }) {
+            write([LinkRequestText.noLinkWithList], toErrors: true)
+            throw ExitCode.failure
+        }
+
+        if clear {
+            try finish(try await send(.clearLinkRequests(host: host)))
+            return
+        }
+
+        let response = try await send(.dumpList(place: nil))
+
+        guard case .dumpList(let list) = response else {
+            try finish(response)
+            throw ExitCode.failure
+        }
+
+        guard list.loaded else {
+            write([DumpList.notLoadedText], toErrors: true)
+            throw ExitCode.failure
+        }
+
+        let requests = LinkRequestLines.newest(list.requests, host: host, limit: limit)
+
+        guard !requests.isEmpty else {
+            write([host.map { LinkRequestText.noRequests(host: $0) } ?? LinkRequestText.noLinkRequests])
+            return
+        }
+
+        let times = DumpTimeText()
+
+        for (index, request) in requests.enumerated() {
+            let detail = try await linkDetail(of: request.id)
+
+            if json {
+                write([try LinkRequestLines.json(request: request, detail: detail)])
+                continue
+            }
+
+            write((index > 0 ? [""] : []) + LinkRequestLines.lines(of: request, detail: detail, now: .now, times: times))
+        }
+    }
+
+    private static func activeLinks() async throws -> [ShareInfo] {
+        let response = try await send(.shares)
+
+        guard case .shares(let links) = response else {
+            try finish(response)
+            throw ExitCode.failure
+        }
+
+        return links.filter(\.state.isActive)
+    }
+
+    // nil when nexusd no longer has the detail. The text then says why.
+    private static func linkDetail(of id: String) async throws -> ShareRequestDetail? {
+        guard case .shareRequest(let detail) = try await send(.shareRequest(id: id)) else {
+            return nil
+        }
+
+        return detail
     }
 
     static func state(place: DumpPlace?) async throws -> DumpState {

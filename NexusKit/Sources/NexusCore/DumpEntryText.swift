@@ -210,7 +210,8 @@ public enum DumpTagTone: Sendable, Equatable {
 }
 
 // A tab of the request view: one for each kind of entry. A dump and a dd() share the tab of the
-// dumps.
+// dumps. The request and the answer of a request through a public link are sections above the
+// tabs (group 4, 4f, frame "Dumps · Public link").
 public enum DumpEntryTab: String, CaseIterable, Sendable {
     case dumps
     case queries
@@ -229,8 +230,8 @@ public enum DumpEntryTab: String, CaseIterable, Sendable {
     // The tabs of the kinds that the request has, in the order of the design. The request view has
     // no tabs when the request has only dumps. So this is empty then.
     public static func tabs(of request: DumpedRequest) -> [DumpEntryTab] {
-        let tabs = allCases.filter { tab in tab.count(in: request) > 0 }
-        return tabs.contains { tab in tab != .dumps } ? tabs : []
+        let entryTabs = allCases.filter { tab in tab.count(in: request) > 0 }
+        return entryTabs.contains { tab in tab != .dumps } ? entryTabs : []
     }
 
     public func count(in request: DumpedRequest) -> Int {

@@ -82,14 +82,40 @@ public enum PHPConfig {
 
     // php_value and not php_admin_value: the .user.ini of a site with its own prepend file still
     // wins, for example the firewall of Wordfence (owner answer 3).
-    public static func fpmConfig(socket: URL, pidFile: URL, prepend: URL? = nil, xdebug: Bool = false) throws -> String {
-        let config = try poolConfig(socket: socket, pidFile: pidFile, xdebug: xdebug)
+    public static func fpmConfig(socket: URL, pidFile: URL, prepend: URL? = nil, xdebug: Bool = false, shareSocket: URL? = nil, phpIniLoadsXdebug: Bool = false) throws -> String {
+        let prependLine = try prepend.map { "php_value[auto_prepend_file] = \(try ConfigText.quoted($0))\n" } ?? ""
+        let config = try poolConfig(socket: socket, pidFile: pidFile, xdebug: xdebug) + prependLine
 
-        guard let prepend else {
+        guard let shareSocket, !xdebug else {
             return config
         }
 
-        return config + "php_value[auto_prepend_file] = \(try ConfigText.quoted(prepend))\n"
+        return config + (try sharePool(socket: shareSocket, phpIniLoadsXdebug: phpIniLoadsXdebug)) + prependLine
+    }
+
+    // Requests of a link with the option "Hide error details and debug tools" (group 4, 4d).
+    // php_admin_value holds for each request of this pool. ini_set cannot change it. A PHP_VALUE of
+    // FastCGI would stay in the worker for the next normal request. The pool has no worker while no
+    // link sends a request. Without Xdebug PHP-FPM could refuse the setting of Xdebug. PHP-FPM reads
+    // a word such as no without quotes as an empty value.
+    private static func sharePool(socket: URL, phpIniLoadsXdebug: Bool) throws -> String {
+        let xdebugLine = phpIniLoadsXdebug ? "php_admin_value[xdebug.start_with_request] = \"no\"\n" : ""
+
+        return """
+
+            [nexus-share]
+            listen = \(try ConfigText.socket(socket))
+            listen.mode = 0600
+            pm = ondemand
+            pm.max_children = 10
+            pm.process_idle_timeout = 60s
+            catch_workers_output = yes
+            decorate_workers_output = no
+            clear_env = no
+            php_admin_value[display_errors] = Off
+            php_admin_value[display_startup_errors] = Off
+
+            """ + xdebugLine
     }
 
     // The pool with Xdebug starts a process only for a request and ends it after 60 seconds without

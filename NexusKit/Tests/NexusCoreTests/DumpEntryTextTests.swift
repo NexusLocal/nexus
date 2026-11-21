@@ -112,6 +112,23 @@ struct DumpEntryTextTests {
         #expect(DumpEntryTab(.log) == .logs)
     }
 
+    @Test func aRequestOfAPublicLinkHasTheTabsOfItsEntriesOnly() {
+        var onlyDumps = request(dumps: 1)
+        onlyDumps.publicLink = PublicLinkRequest(host: "shop.test", visitor: nil, size: 34, contentType: "application/json")
+        var withQueries = request(dumps: 1, queries: 2)
+        withQueries.publicLink = onlyDumps.publicLink
+        var withoutEntries = request()
+        withoutEntries.publicLink = onlyDumps.publicLink
+
+        #expect(DumpEntryTab.tabs(of: onlyDumps).isEmpty)
+        #expect(DumpEntryTab.tabs(of: withQueries) == [.dumps, .queries])
+        #expect(DumpEntryTab.tabs(of: withoutEntries).isEmpty)
+        #expect(LinkRequestText.requestHeadersTitle == "Request headers")
+        #expect(LinkRequestText.dataTitle == "Data")
+        #expect(LinkRequestText.answerTitle == "Answer")
+        #expect(LinkRequestText.hiddenValue == "Hidden by Nexus")
+    }
+
     @Test func theToneOfATagFollowsTheLevelOrTheStateOfTheJob() {
         func log(_ level: String, detail: String? = nil) -> CaughtDump {
             CaughtDump(requestID: "a1", seq: 1, time: Self.started, kind: .log, label: level, text: "x", detail: detail)

@@ -1,5 +1,6 @@
 import Foundation
 import NexusCore
+import NexusTestSupport
 import Synchronization
 import Testing
 @testable import NexusRuntime
@@ -55,6 +56,61 @@ struct RuntimeInstallerTests {
             sha256: try FileChecksum.sha256(of: archive),
             format: .tarXZ
         )
+    }
+
+    private func compileSleeper(to binary: URL) throws {
+        let source = workspace.appending(path: "sleeper-\(UUID().uuidString).c")
+        try Data("#include <stdlib.h>\n#include <unistd.h>\nint main(int argc, char **argv) { sleep(argc > 1 ? atoi(argv[1]) : 1); return 0; }\n".utf8).write(to: source)
+
+        let clang = Process()
+        clang.executableURL = URL(filePath: "/usr/bin/clang")
+        clang.arguments = [source.path(percentEncoded: false), "-o", binary.path(percentEncoded: false)]
+        try clang.run()
+        clang.waitUntilExit()
+    }
+
+    private func makeCloudflaredPackage(version: String) throws -> ManifestPackage {
+        let source = workspace.appending(path: "source-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let top = source.appending(path: "cloudflared-\(version)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: top.appending(path: "bin", directoryHint: .isDirectory), withIntermediateDirectories: true)
+        try compileSleeper(to: top.appending(path: "bin/cloudflared"))
+        try Data(version.utf8).write(to: top.appending(path: "build.txt"))
+
+        let archive = workspace.appending(path: "cloudflared-\(version)-\(UUID().uuidString).tar.xz")
+        let tar = Process()
+        tar.executableURL = URL(filePath: "/usr/bin/tar")
+        tar.arguments = ["-cJf", archive.path(percentEncoded: false), "-C", source.path(percentEncoded: false), "cloudflared-\(version)"]
+        try tar.run()
+        tar.waitUntilExit()
+
+        return ManifestPackage(
+            name: "cloudflared",
+            version: version,
+            line: "1",
+            revision: 1,
+            url: archive,
+            sha256: try FileChecksum.sha256(of: archive),
+            format: .tarXZ
+        )
+    }
+
+    @Test func anUpdateKeepsTheProgramThatRuns() async throws {
+        let installer = RuntimeInstaller(paths: paths, downloader: LocalFileDownloader())
+        let first = try await installer.install(try makeCloudflaredPackage(version: "2026.11.0"))
+        let program = Process()
+        program.executableURL = first.folder.appending(path: "bin/cloudflared")
+        program.arguments = ["30"]
+        try program.run()
+        defer {
+            program.terminate()
+            program.waitForEnd()
+        }
+
+        try await installer.install(try makeCloudflaredPackage(version: "2026.11.1"))
+
+        #expect(program.isRunning)
+        #expect(await installer.installed(name: "cloudflared", line: "1")?.version == "2026.11.1")
+        #expect(FileManager.default.fileExists(atPath: paths.runtime("cloudflared", line: "1").appending(path: "bin/cloudflared").path(percentEncoded: false)))
     }
 
     @Test func checksumOfAKnownFile() throws {

@@ -1420,3 +1420,152 @@ final class DumpStoreTests {
         #expect(store.takeChanges().isEmpty)
     }
 }
+
+extension DumpStoreTests {
+    private func linkRequest(_ id: String, host: String = "shop.test", status: Int = 200) -> DumpedRequest {
+        DumpedRequest(id: id, kind: .http, method: "POST", target: "/webhooks/stripe", url: "https://calm-river.trycloudflare.com/webhooks/stripe", host: host, started: started, status: status, duration: 0.184, publicLink: PublicLinkRequest(host: host, visitor: "3.18.12.63", size: 34, contentType: "application/json"))
+    }
+
+    @Test func aNewRequestOfALinkShowsAtTheTopWithItsLink() {
+        let places = SitePlaces()
+        places.set("shop.test", DumpPlace(site: "shop.test"))
+        let store = loadedStore(places: places)
+        store.add(dump("a1", seq: 1))
+
+        store.addLinkRequest(linkRequest("l1"))
+
+        let request = store.list().first
+        #expect(request?.id == "l1")
+        #expect(request?.publicLink?.visitor == "3.18.12.63")
+        #expect(request?.place == DumpPlace(site: "shop.test"))
+        #expect(request?.dumpCount == 0)
+        #expect(store.takeChanges().changed.map(\.id).contains("l1"))
+    }
+
+    @Test func aKnownRequestGetsItsLinkAndKeepsItsEntriesItsURLAndItsStatus() {
+        let store = loadedStore()
+        store.add(dump("l1", seq: 1))
+        store.add(end("l1", status: 201))
+
+        store.addLinkRequest(linkRequest("l1", status: 200))
+
+        let request = store.list().first
+        #expect(store.list().count == 1)
+        #expect(request?.publicLink?.host == "shop.test")
+        #expect(request?.dumpCount == 1)
+        #expect(request?.url == "https://shop.test/orders/l1")
+        #expect(request?.status == 201)
+    }
+
+    @Test func anEndOfPHPWithoutEntriesShowsWithTheLineOfTheLink() {
+        let store = loadedStore()
+        store.add(end("l1", status: 422))
+        #expect(store.list().isEmpty)
+
+        store.addLinkRequest(linkRequest("l1", status: 200))
+
+        #expect(store.list().map(\.id) == ["l1"])
+        #expect(store.list().first?.status == 422)
+        #expect(store.list().first?.publicLink != nil)
+    }
+
+    @Test func aDumpOfPHPAfterTheLineOfTheLinkJoinsTheRequest() {
+        let store = loadedStore()
+        store.addLinkRequest(linkRequest("l1"))
+
+        store.add(dump("l1", seq: 1))
+
+        #expect(store.list().count == 1)
+        #expect(store.list().first?.dumpCount == 1)
+        #expect(store.list().first?.publicLink != nil)
+    }
+
+    @Test func aLinkAndTheSitesHaveTheirOwnLimit() {
+        let store = loadedStore()
+
+        for number in 1...DumpStore.requestLimit {
+            store.add(dump("s\(number)", seq: 1))
+        }
+
+        for number in 1...(DumpStore.linkRequestLimit + 1) {
+            store.addLinkRequest(linkRequest("l\(number)"))
+        }
+
+        #expect(store.linkRequestCount(host: "shop.test") == DumpStore.linkRequestLimit)
+        #expect(!store.list().contains { $0.id == "l1" })
+        #expect(store.list().filter { $0.publicLink == nil }.count == DumpStore.requestLimit)
+
+        store.add(dump("s\(DumpStore.requestLimit + 1)", seq: 1))
+
+        #expect(!store.list().contains { $0.id == "s1" })
+        #expect(store.list().contains { $0.id == "s2" })
+        #expect(store.linkRequestCount(host: "shop.test") == DumpStore.linkRequestLimit)
+        #expect(store.list().contains { $0.id == "l2" })
+    }
+
+    @Test func theEndOfALinkRemovesItsRequestsWithoutEntriesAndKeepsTheOthersWithoutTheLink() throws {
+        let store = loadedStore()
+        store.addLinkRequest(linkRequest("l1"))
+        store.addLinkRequest(linkRequest("l2"))
+        store.add(dump("l2", seq: 1))
+        store.addLinkRequest(linkRequest("b1", host: "blog.test"))
+
+        store.endLinkRequests(hosts: ["shop.test"])
+
+        #expect(store.list().map(\.id) == ["b1", "l2"])
+        #expect(store.list().last?.publicLink == nil)
+        #expect(store.linkRequestCount(host: "shop.test") == 0)
+        #expect(store.linkRequestCount(host: "blog.test") == 1)
+
+        let loaded = reloaded()
+        let text = try String(contentsOf: file, encoding: .utf8)
+
+        #expect(loaded.list().map(\.id) == ["b1", "l2"])
+        #expect(loaded.list().last?.publicLink == nil)
+        #expect(text.components(separatedBy: "\n").filter { $0.contains("\"l2\"") && $0.contains("publicLink") }.isEmpty)
+    }
+
+    @Test func theRemovalOfTheRequestsOfALinkKeepsTheRequestsOfAnotherLink() {
+        let store = loadedStore()
+        store.addLinkRequest(linkRequest("l1"))
+        store.add(dump("l1", seq: 1))
+        store.addLinkRequest(linkRequest("l2"))
+        store.addLinkRequest(linkRequest("b1", host: "blog.test"))
+        store.add(dump("a1", seq: 1, host: "other.test"))
+
+        let removed = store.removeLinkRequests(hosts: ["shop.test"])
+
+        #expect(removed == 2)
+        #expect(store.list().map(\.id) == ["a1", "b1"])
+        #expect(store.dumps(request: "l1").isEmpty)
+        #expect(store.removeLinkRequests(hosts: nil) == 1)
+        #expect(store.list().map(\.id) == ["a1"])
+    }
+
+    @Test func aLoadKeepsTheRequestOfALinkFromTheFile() {
+        let store = loadedStore()
+        store.addLinkRequest(linkRequest("l1"))
+
+        let loaded = reloaded()
+
+        #expect(loaded.list().map(\.id) == ["l1"])
+        #expect(loaded.list().first?.publicLink?.visitor == "3.18.12.63")
+        #expect(loaded.linkRequestCount(host: "shop.test") == 1)
+    }
+
+    @Test func theCountOfALinkFollowsItsRequests() {
+        let store = loadedStore()
+        #expect(store.linkRequestCount(host: "shop.test") == 0)
+
+        store.addLinkRequest(linkRequest("l1"))
+        store.addLinkRequest(linkRequest("l2"))
+        store.addLinkRequest(linkRequest("l2"))
+        #expect(store.linkRequestCount(host: "shop.test") == 2)
+
+        store.remove(request: "l1")
+        #expect(store.linkRequestCount(host: "shop.test") == 1)
+
+        store.clear()
+        #expect(store.linkRequestCount(host: "shop.test") == 0)
+    }
+}

@@ -1,7 +1,8 @@
 // The screen that a click on a notification of the app opens (owner, 2026-11-14). macOS keeps
 // only property list values in the userInfo of a notification. So each value is a string. The
 // target of a workspace or a database is also the scroll id of its row. The old workspaces of a
-// site open the Site screen and the sheet of its old workspaces.
+// site open the Site screen and the sheet of its old workspaces. A public link opens the Site
+// screen of its site. The link of a workspace also marks the row of the workspace (group 4).
 public enum NotificationTarget: Hashable, Sendable {
     case workspace(site: String, name: String)
     case service(id: String)
@@ -9,6 +10,7 @@ public enum NotificationTarget: Hashable, Sendable {
     case mail(id: String, tag: String?)
     case site(host: String)
     case oldWorkspaces(site: String)
+    case publicLink(host: String)
 
     private static let targetKey = "target"
     private static let siteKey = "site"
@@ -18,6 +20,7 @@ public enum NotificationTarget: Hashable, Sendable {
     private static let mailKey = "mail"
     private static let tagKey = "tag"
     private static let oldWorkspacesKey = "oldWorkspaces"
+    private static let publicLinkKey = "publicLink"
 
     public init?(userInfo: [AnyHashable: Any]) {
         func value(_ key: String) -> String? {
@@ -65,6 +68,12 @@ public enum NotificationTarget: Hashable, Sendable {
             }
 
             self = .oldWorkspaces(site: host)
+        case Self.publicLinkKey:
+            guard let host = value(Self.siteKey) else {
+                return nil
+            }
+
+            self = .publicLink(host: host)
         default:
             return nil
         }
@@ -86,6 +95,8 @@ public enum NotificationTarget: Hashable, Sendable {
             return [Self.targetKey: Self.siteKey, Self.siteKey: host]
         case .oldWorkspaces(let host):
             return [Self.targetKey: Self.oldWorkspacesKey, Self.siteKey: host]
+        case .publicLink(let host):
+            return [Self.targetKey: Self.publicLinkKey, Self.siteKey: host]
         }
     }
 }

@@ -175,6 +175,8 @@ struct SiteScreen: View {
     // for a Node.js app, the workspaces (D67). A WordPress site has no .env either.
     private var form: some View {
         Form {
+            PublicLinkBar(site: site)
+
             if kind == .php, site.projectType == .laravel {
                 SiteUseNexusSection(site: site, info: useNexusInfo)
             }
@@ -518,6 +520,8 @@ struct SiteScreen: View {
                         Text(workspace.hosts?.first ?? workspace.folder)
                             .foregroundStyle(.secondary)
                             .rowValue(.middle)
+
+                        PublicLinkMark(links: workspace.share.map { [$0] }?.filter(\.state.isActive) ?? [])
 
                         if removing {
                             removingState
@@ -1023,6 +1027,11 @@ struct SiteScreen: View {
         }
         .screenTitle(site.host, subtitle: subtitle)
         .toolbar {
+            // The design "Site · Public link" puts Share before "Open in browser" (group 4, 4g).
+            ToolbarItem(placement: .primaryAction) {
+                ShareButton(site: site)
+            }
+
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     model.openInBrowser(site)
@@ -1034,7 +1043,7 @@ struct SiteScreen: View {
 
             ToolbarItem(placement: .primaryAction) {
                 MoreMenu {
-                    SiteActions(site: site, includeBrowser: false)
+                    SiteActions(site: site, includeBrowser: false, includeShare: false)
                 }
             }
         }

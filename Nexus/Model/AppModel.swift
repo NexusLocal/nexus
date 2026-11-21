@@ -28,6 +28,9 @@ enum SheetKind: Identifiable {
     case portInUse(service: String, holder: PortHolder)
     // The old workspaces of a site (owner, 2026-11-15). A click on their notification opens it too.
     case oldWorkspaces(host: String)
+    // The confirm sheet of a public link (group 4, decision 3). host is the first host of a site or
+    // of a workspace.
+    case share(host: String)
 
     var id: String {
         switch self {
@@ -38,6 +41,7 @@ enum SheetKind: Identifiable {
         case .importDatabase(let instance, _, let dumpInto): "import-\(instance)\(dumpInto.map { "-\($0)" } ?? "")"
         case .portInUse(let service, _): "port-\(service)"
         case .oldWorkspaces(let host): "old-workspaces-\(host)"
+        case .share(let host): "share-\(host)"
         }
     }
 }
@@ -104,6 +108,7 @@ enum AppPreference {
     static let notifyWorkspaceReady = "notifyWorkspaceReady"
     static let notifyOldWorkspaces = "notifyOldWorkspaces"
     static let notifyNewMail = "notifyNewMail"
+    static let notifyLinkStopped = "notifyLinkStopped"
     static let checkPackageUpdates = "checkPackageUpdates"
     static let installPackageUpdates = "installPackageUpdates"
     static let nexusdRestartBuild = "nexusdRestartBuild"
@@ -128,6 +133,7 @@ enum AppPreference {
             notifyImportDone: true,
             notifyWorkspaceReady: true,
             notifyOldWorkspaces: true,
+            notifyLinkStopped: true,
             checkPackageUpdates: true,
             installPackageUpdates: true,
         ])
@@ -187,6 +193,8 @@ struct AppSettings {
     var tld = NexusVariant.current.tld
     var lanAccess = false
     var devServerStop = DevServerStop.standard
+    var shareDefaults = ShareOptions.standard
+    var ownDomain: OwnDomainInfo?
 }
 
 // Everything that the screens show. Sample data fills it until each area is connected to nexusd.
@@ -199,6 +207,7 @@ final class AppModel {
                 ActivityTracker.log.write("screen", selection.map { "\($0)" } ?? "none")
                 showsPackageCheck = false
                 markedRow = nil
+                sharePanelHost = nil
             }
         }
     }
@@ -217,8 +226,29 @@ final class AppModel {
     var removal: Removal?
     // The worktrees of the workspaces that nexusd removes now. Their rows show "Removing".
     var removingWorktrees: Set<String> = []
+    // The public links (group 4, 4g). startingShares holds each host whose start this app sent and
+    // that has no answer yet. shareFailures holds the reason of each start of this app that failed.
+    // It stays until the next start or OK. sharePanelHost is the host whose Share panel shows.
+    var startingShares: Set<String> = []
+    var shareFailures: [String: String] = [:]
+    var rebuildingShares: Set<String> = []
+    var sharePanelHost: String?
+    // A stop during a start gives a failure that the user asked for. So the app does not show it.
+    @ObservationIgnored var cancelledStarts: Set<String> = []
+    // The state of each link of the last site list, by host and start time. It is nil until the
+    // first list after the launch. It stays over a new connection to nexusd. So the end at a
+    // restart of nexusd gets its notification.
+    @ObservationIgnored var knownLinkStates: [String: ShareState]?
     var search = ""
-    var siteEntries: [SiteEntry] = []
+    var siteEntries: [SiteEntry] = [] {
+        didSet {
+            showLinks(of: siteEntries)
+        }
+    }
+    // The links of the sites and the workspaces by host, also an ended link. hasActivePublicLink
+    // says that a link starts or is open. Each new list of sites makes them once (group 4, 4g).
+    var publicLinksByHost: [String: ShareInfo] = [:]
+    var hasActivePublicLink = false
     // The last site list of nexusd, and the order that the sidebar shows. A change of the order
     // shows at once and goes back to the list of nexusd when nexusd refuses it.
     var siteList: SiteList?
@@ -338,7 +368,7 @@ final class AppModel {
     var dumpRequests: [DumpedRequest] = []
     var dumpState: DumpState?
     var pendingDumpSettings: DumpSettings?
-    var dumpFilter: DumpPlaceChoice?
+    var dumpFilter: DumpFilterChoice?
     var visibleDumpRequests: [DumpedRequest] = []
     var visibleDumpCount = 0
     var dumpPlaceChoices: [DumpPlaceChoice] = []
@@ -355,6 +385,13 @@ final class AppModel {
     // next request with that kind shows it again.
     var chosenDumpTab = DumpEntryTab.dumps
     var openDumpsProblem: String?
+    // The detail of the open request of a public link: its headers, its body and its answer (group 4,
+    // 4f). A new open drops the answer of an earlier one through linkDetailGeneration.
+    var openLinkDetail: ShareRequestDetail?
+    var openLinkDetailProblem: String?
+    var dumpLinkChoices: [DumpFilterChoice] = []
+    @ObservationIgnored var linkDetailGeneration = 0
+    @ObservationIgnored var linkDetailID: String?
     var loadingDumps = false
     @ObservationIgnored var requestedLastNumber: Int?
     @ObservationIgnored var dumpLoadGeneration = 0
@@ -402,6 +439,7 @@ final class AppModel {
         model.visibleDumpRequests = []
         model.visibleDumpCount = 0
         model.dumpPlaceChoices = []
+        model.dumpLinkChoices = []
         model.dumpRequestsByID = [:]
         model.dumpJobsByUUID = [:]
         model.agents = AgentsModel(setup: .standard)
@@ -423,6 +461,8 @@ final class AppModel {
             model.watchPackageUpdates()
             model.watchNewMail()
             model.watchOldWorkspaces()
+            // A newer Nexus can have read tools without an allow rule of Claude Code (group 4, 4f).
+            Task { await model.agents.addNewReadRules() }
         }
 
         return model
@@ -1091,6 +1131,7 @@ final class AppModel {
             // A row that git removed shows "Removing" until this list no longer has its worktree. So
             // the row does not show its old state for a moment.
             removingWorktrees.formIntersection(list.sites.flatMap { $0.workspaces ?? [] }.map(\.worktree))
+            notifyStoppedLinks(in: list)
         case .event(.tasks(let list)):
             show(list)
             restartOldNexusd()

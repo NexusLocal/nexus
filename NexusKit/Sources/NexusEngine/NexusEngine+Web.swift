@@ -15,6 +15,7 @@ struct WebPlan {
     var phpLines: Set<String> = []
     var changedPHPLines: Set<String> = []
     var needsApache = false
+    var apacheChanged = false
     var warnings: [String] = []
     var siteSignature: [String] = []
     var lineFiles: [WebServer: [URL: String]] = [:]
@@ -33,12 +34,15 @@ enum WebChange {
     // A port, a module or the LAN switch changed. nexusd only reloads the running servers. So
     // the services that "Stop all services" stopped stay stopped.
     case setting
+    // A link opened or ended. nexusd reloads only nginx (group 4, 4b).
+    case shares
 
     var reloadCause: String {
         switch self {
         case .sites: "a change of the sites"
         case .automatic: "a change of the parked folders or the workspaces"
         case .setting: "a change of the web settings"
+        case .shares: "a change of the public links"
         }
     }
 }
@@ -251,8 +255,7 @@ extension NexusEngine {
     }
 
     static func url(for host: String, in state: EngineState) -> String {
-        let port = state.ports[ServiceCatalog.httpsPortKey] ?? 443
-        return port == 443 ? "https://\(host)" : "https://\(host):\(port)"
+        "https://\(host)\(NginxSettings.portSuffix(state.ports[ServiceCatalog.httpsPortKey] ?? 443, standard: 443))"
     }
 
     private func webBackend(of site: Site, appPort: Int?, documentRoot: URL, xdebugLines: Set<String>) -> WebBackend? {
@@ -282,6 +285,10 @@ extension NexusEngine {
         let layouts = SiteLayout.of(sites)
         var plan = WebPlan(warnings: resolved.conflicts + workspaces.conflicts.values.sorted(), siteSignature: Self.signature(of: sites, appPorts: appPorts, noticeHosts: workspaces.noticeHosts, layouts: layouts))
         let root = sites.isEmpty ? nil : try certificateAuthority.root()
+        let linkTargets = shareTargets(state, sites: ownSites, sitesOfRecord: workspaces.sitesOfRecord, conflicts: workspaces.conflicts)
+        let linked = linkedShares(state, targets: linkTargets)
+
+        endSharesOfGoneHosts(state, targets: linkTargets)
 
         // A site that cannot run is left out with a warning, so it does not stop the others.
         // Without nginx no site runs. The check below the loop says that. A workspace of a Node.js
@@ -322,7 +329,8 @@ extension NexusEngine {
                 project: layout.projectType,
                 network: layout.network,
                 customLines: linesFile,
-                devServer: runsNoPHP ? nil : devServerFiles(of: site, layout: layout)
+                devServer: runsNoPHP ? nil : devServerFiles(of: site, layout: layout),
+                share: siteShare(for: site.host, in: linked, phpLine: Self.sharePHPLine(of: backend, php: site.php))
             ))
 
             if site.kind == .php, !runsNoPHP {
@@ -345,6 +353,7 @@ extension NexusEngine {
         }
 
         let nginxPorts = try await ports(for: nginx)
+        let nginxModules = Self.nginxModules(of: nginx)
         var apachePort = 0
 
         // Apache gets its file also without Apache sites, so nexus start apache always works.
@@ -353,9 +362,11 @@ extension NexusEngine {
             let modules = ApacheConfig.dependencies.loadOrder(state.apacheModules ?? ApacheConfig.defaultModules, available: Self.apacheModules(of: apache))
             let settings = ApacheSettings(port: apachePort, runtime: apache.folder, runFolder: paths.run, modules: modules)
             try FileManager.default.createDirectory(at: paths.run.appending(path: "apache"), withIntermediateDirectories: true)
+            let previous = try? Data(contentsOf: paths.apacheConfig)
             try writeChecked(try ApacheConfig.render(sites: plan.sites, settings: settings), to: paths.apacheConfig, lines: plan.lineFiles[.apache] ?? [:], in: paths.siteLinesFolder(.apache)) {
                 try checkApache(apache)
             }
+            plan.apacheChanged = previous != (try? Data(contentsOf: paths.apacheConfig))
         }
 
         let settings = NginxSettings(
@@ -365,7 +376,7 @@ extension NexusEngine {
             lanAccess: state.lanAccess,
             runtime: nginx.folder,
             runFolder: paths.run,
-            modules: NginxConfig.dependencies.loadOrder(state.nginxModules, available: Self.nginxModules(of: nginx))
+            modules: Self.modules(NginxConfig.dependencies.loadOrder(state.nginxModules, available: nginxModules), available: nginxModules, withShares: !linked.isEmpty)
         )
 
         let temporaryFolders = ["client_body", "proxy", "fastcgi", "uwsgi", "scgi"].map { paths.run.appending(path: "nginx/\($0)") }
@@ -377,7 +388,16 @@ extension NexusEngine {
         let unknownSitePage = ErrorPages.unknownSite(hosts: plan.sites.compactMap(\.hosts.first), httpsPort: settings.httpsPort)
         _ = try Self.writeIfChanged(unknownSitePage, to: settings.pages.appending(path: ErrorPages.unknownSiteFile))
 
-        try writeChecked(try NginxConfig.render(sites: plan.sites, settings: settings), to: paths.nginxConfig, lines: plan.lineFiles[.nginx] ?? [:], in: paths.siteLinesFolder(.nginx)) {
+        viteAppFolders = Self.viteAppFolders(of: sites)
+
+        let shareBlocks = linked.map { record in
+            shareBlock(for: record, site: plan.sites.first { $0.hosts.first == record.host })
+        }
+
+        watchShareHotFiles(linked, sites: plan.sites)
+
+        try writeShareScripts(shareBlocks, settings: settings)
+        try writeChecked(try NginxConfig.render(sites: plan.sites, shares: shareBlocks, requestScript: paths.shareRequestScript, settings: settings), to: paths.nginxConfig, lines: plan.lineFiles[.nginx] ?? [:], in: paths.siteLinesFolder(.nginx)) {
             try checkNginx(nginx)
         }
 
@@ -438,7 +458,7 @@ extension NexusEngine {
         // No await from here on. So no other write of this PHP version comes between the stub and
         // the pool that names it.
         let dumps = writeDumpFiles(line: line, state: state, keepingStub: poolUsesStub)
-        let fpm = try PHPConfig.fpmConfig(socket: paths.phpSocket(line: line), pidFile: paths.run.appending(path: "php-\(line).pid"), prepend: dumps.stub)
+        let fpm = try PHPConfig.fpmConfig(socket: paths.phpSocket(line: line), pidFile: paths.run.appending(path: "php-\(line).pid"), prepend: dumps.stub, shareSocket: paths.phpShareSocket(line: line), phpIniLoadsXdebug: userLoadsXdebug)
         let xdebugFPM = hasXdebug ? try PHPConfig.fpmConfig(socket: paths.xdebugSocket(line: line), pidFile: paths.run.appending(path: "xdebug-\(line).pid"), prepend: dumps.stub, xdebug: true) : nil
 
         try Self.writeScanFolder(named: PHPConfig.coverageFolderName, iniName: PHPConfig.coverageIniName, ini: PHPConfig.coverageIni, in: folder)
@@ -585,6 +605,21 @@ extension NexusEngine {
 
             for (id, signal) in [(ServiceCatalog.apacheID, SIGUSR1), (ServiceCatalog.nginxID, SIGHUP)] where await supervisor.state(of: id)?.isActive == true {
                 try await reload(id, signal, cause: change.reloadCause)
+            }
+        case .shares:
+            // A link of a WordPress site writes or removes the stub of its PHP version (group 4, 4c).
+            for line in plan.changedPHPLines.sorted() where await supervisor.state(of: ServiceCatalog.phpID(line: line))?.isActive == true {
+                try await reload(ServiceCatalog.phpID(line: line), SIGUSR2, cause: nil)
+            }
+
+            // A link of an Apache site with hidden error details sends PHP to the pool nexus-share
+            // (group 4, 4d).
+            if plan.apacheChanged, await supervisor.state(of: ServiceCatalog.apacheID)?.isActive == true {
+                try await reload(ServiceCatalog.apacheID, SIGUSR1, cause: change.reloadCause)
+            }
+
+            if await supervisor.state(of: ServiceCatalog.nginxID)?.isActive == true {
+                try await reload(ServiceCatalog.nginxID, SIGHUP, cause: change.reloadCause)
             }
         }
 
@@ -844,11 +879,12 @@ extension NexusEngine {
                 workspaceDumpChecking: dumpCheckProgress[site.host],
                 nginxLines: site.nginxLines,
                 apacheLines: site.apacheLines,
-                devServer: site.kind == .php ? devServerInfo(owner: owner) : nil
+                devServer: site.kind == .php ? devServerInfo(owner: owner) : nil,
+                share: activeOrLastShare(host: site.host, in: state).map(shareInfo)
             ))
         }
 
-        return SiteList(sites: sites, layout: layout, parkedFolders: state.parked.map { Self.displayPath($0.folder) }, defaults: state.siteDefaults, tld: state.tld, newWorkspaceDatabases: state.workspaceSettings.newWorkspaceDatabases, oldAfterDays: state.workspaceSettings.oldAfterDays, devServerStop: state.devServerStop, stopIdleAfter: state.workspaceSettings.stopIdleAfter)
+        return SiteList(sites: sites, layout: layout, parkedFolders: state.parked.map { Self.displayPath($0.folder) }, defaults: state.siteDefaults, tld: state.tld, newWorkspaceDatabases: state.workspaceSettings.newWorkspaceDatabases, oldAfterDays: state.workspaceSettings.oldAfterDays, devServerStop: state.devServerStop, stopIdleAfter: state.workspaceSettings.stopIdleAfter, shareDefaults: state.shareDefaults, ownDomain: ownDomainInfo(state))
     }
 
     // A site that the layout does not name yet comes at the end, in the order that the user added

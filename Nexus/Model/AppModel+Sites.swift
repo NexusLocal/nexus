@@ -48,7 +48,8 @@ extension SiteItem {
             workspaceDumpCheck: info.workspaceDumpCheck,
             workspaceDumpChecking: info.workspaceDumpChecking,
             nginxLines: info.nginxLines ?? [],
-            apacheLines: info.apacheLines ?? []
+            apacheLines: info.apacheLines ?? [],
+            share: info.share
         )
     }
 }

@@ -1,4 +1,6 @@
 import AppKit
+import NexusCore
+import NexusIPC
 import Sparkle
 
 // With automatic install, Sparkle downloads an update without a window and installs it only when
@@ -33,6 +35,7 @@ final class UpdateReadyPrompt: NSObject, SPUUpdaterDelegate {
         NSApplication.shared.activate()
 
         if restartNow() {
+            QuitQuestion.skips = true
             install()
             return
         }
@@ -44,10 +47,14 @@ final class UpdateReadyPrompt: NSObject, SPUUpdaterDelegate {
         }
     }
 
+    // A quick link ends at the restart of nexusd (4b). A link on an own domain comes back with its
+    // address (4h). So the line counts only the quick links.
     private func restartNow() -> Bool {
+        let quickLinks = NexusApp.launchModel.activePublicLinks.filter { $0.options.address == .random }.count
+        let linkLine = quickLinks == 0 ? "" : " \(ShareText.updateLine(quickLinks))"
         let alert = NSAlert()
         alert.messageText = "A new version of Nexus"
-        alert.informativeText = "Nexus downloaded version \(version) for you. Restart Nexus to install it. Your sites stop for a few seconds."
+        alert.informativeText = "Nexus downloaded version \(version) for you. Restart Nexus to install it. Your sites stop for a few seconds.\(linkLine)"
         alert.addButton(withTitle: "Restart and install")
         alert.addButton(withTitle: "Not now").keyEquivalent = "\u{1b}"
         alert.accessoryView = whatsNewLink()

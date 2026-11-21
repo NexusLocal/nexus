@@ -152,7 +152,8 @@ public enum HostName {
         return String(collapsed.prefix(63)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 
-    private static func isValidLabel(_ label: Substring) -> Bool {
+    // 1 to 63 characters of a-z, 0-9 and -, without - at the start or at the end.
+    static func isValidLabel(_ label: some StringProtocol) -> Bool {
         guard (1...63).contains(label.utf8.count), label.first != "-", label.last != "-" else {
             return false
         }

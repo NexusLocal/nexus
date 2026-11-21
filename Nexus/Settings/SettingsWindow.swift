@@ -5,7 +5,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 // Other places open a tab with its raw value, for example "mail". A stored value that is no tab,
-// for example of the old Agents tab, gives General.
+// for example of the old Agents tab, gives General. Sharing comes after Network (owner,
+// 2026-11-17).
 enum SettingsTab: String {
     case general
     case sites
@@ -13,6 +14,7 @@ enum SettingsTab: String {
     case databases
     case mail
     case network
+    case sharing
     case certificates
     case updates
     case advanced
@@ -48,6 +50,10 @@ struct SettingsWindow: View {
 
             Tab("Network", systemImage: "network", value: SettingsTab.network) {
                 NetworkSettings()
+            }
+
+            Tab("Sharing", systemImage: PublicLinkMark.systemImage, value: SettingsTab.sharing) {
+                SharingSettingsTab()
             }
 
             Tab("Certificates", systemImage: "checkmark.shield", value: SettingsTab.certificates) {
@@ -114,9 +120,10 @@ private struct GeneralSettings: View {
     @AppStorage(AppPreference.notifyImportDone) private var notifyImportDone = true
     @AppStorage(AppPreference.notifyWorkspaceReady) private var notifyWorkspaceReady = true
     @AppStorage(AppPreference.notifyOldWorkspaces) private var notifyOldWorkspaces = true
+    @AppStorage(AppPreference.notifyLinkStopped) private var notifyLinkStopped = true
 
     private var notifiesOfSomething: Bool {
-        notifyServiceStops || notifyImportDone || notifyWorkspaceReady || notifyOldWorkspaces
+        notifyServiceStops || notifyImportDone || notifyWorkspaceReady || notifyOldWorkspaces || notifyLinkStopped
     }
 
     var body: some View {
@@ -170,6 +177,8 @@ private struct GeneralSettings: View {
                 // The old workspaces of a site (owner, 2026-11-15). Settings > Workspaces has the
                 // days of this notification.
                 Toggle("When workspaces are old", isOn: $notifyOldWorkspaces)
+                // The end of a public link without a click of the user (group 4, 4g).
+                Toggle("When a public link stops", isOn: $notifyLinkStopped)
             } header: {
                 Text("Notifications")
             } footer: {

@@ -57,6 +57,24 @@ struct DumpListTests {
 
         #expect(list.loaded)
         #expect(list.cursor == nil)
+        #expect(list.linkHosts.isEmpty)
+    }
+
+    @Test func theHostsOfTheLinksGoThroughTheCodingAndAnOlderStateHasNone() throws {
+        let list = DumpList(requests: [], settings: DumpSettings(), receiving: true, linkHosts: ["blog.test", "shop.test"])
+        let olderState = #"{"settings":{},"blocked":[],"receiving":true,"loaded":true}"#
+
+        #expect(try roundTrip(list).linkHosts == ["blog.test", "shop.test"])
+        #expect(list.state.linkHosts == ["blog.test", "shop.test"])
+        #expect(try roundTrip(list.state) == list.state)
+        #expect(try NexusMessageCoding.decode(DumpState.self, from: Data(olderState.utf8)).linkHosts.isEmpty)
+    }
+
+    @Test func theDetailOfARequestOfALinkKeepsTheSizeOfItsBody() throws {
+        let detail = ShareRequestDetail(id: "4f2c", requestHeaders: [ShareHeader(name: "Cookie", value: "hidden")], requestBody: nil, requestBodyBytes: 12_000, requestBodyCut: true, status: 200, responseHeaders: [], size: 34)
+
+        #expect(try roundTrip(detail) == detail)
+        #expect(try roundTrip(detail).requestBodyBytes == 12_000)
     }
 
     private func roundTrip<Value: Codable>(_ value: Value) throws -> Value {

@@ -512,4 +512,24 @@ struct CaughtDumpsTests {
 
         #expect(try decoder.decode(CaughtDump.self, from: Data(json.utf8)).id == "65f1c2a9e3b1-4")
     }
+
+    @Test func theLinkOfARequestKeepsItsValuesAndAnOlderRequestHasNone() throws {
+        let link = PublicLinkRequest(host: "shop.test", visitor: "3.18.12.63", size: 34, contentType: "application/json")
+        let request = DumpedRequest(id: "4f2c0d9e8b7a6f5e4d3c2b1a09f8e7d6", kind: .http, method: "POST", target: "/webhooks/stripe", started: Self.started, publicLink: link)
+        let plain = DumpedRequest(id: "a1", kind: .http, method: "GET", target: "/", started: Self.started)
+        let olderJSON = #"{"id":"a1","kind":"http","target":"/","started":0,"dumpCount":0,"hasDD":false}"#
+
+        #expect(try roundTrip(request).publicLink == link)
+        #expect(try JSONDecoder().decode(DumpedRequest.self, from: Data(olderJSON.utf8)).publicLink == nil)
+        #expect(!String(decoding: try JSONEncoder().encode(plain), as: UTF8.self).contains("publicLink"))
+    }
+
+    @Test func aRequestOfALinkStaysInTheListWithoutEntries() {
+        var request = DumpedRequest(id: "l1", kind: .http, method: "POST", target: "/webhooks/stripe", started: Self.started)
+        #expect(!request.staysInList)
+
+        request.publicLink = PublicLinkRequest(host: "shop.test", visitor: nil, size: nil, contentType: nil)
+
+        #expect(request.staysInList)
+    }
 }

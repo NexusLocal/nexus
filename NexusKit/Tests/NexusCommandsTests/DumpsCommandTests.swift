@@ -109,6 +109,7 @@ struct DumpsCommandTests {
         (["dumps", "--clear", "--limit", "5"], "Use --clear alone or with --site."),
         (["dumps", "--limit=-1"], "Give a limit of 0 or more."),
         (["dumps", "--limit", "0"], "Give a limit of 1 or more. Only --follow takes 0."),
+        (["dumps", "--public-link", "--follow"], "Use --public-link without --follow."),
     ])
     func aWrongCombinationSaysWhy(_ arguments: [String], message: String) throws {
         let error = try #require(#expect(throws: (any Error).self) { try parse(arguments) })
@@ -129,6 +130,17 @@ struct DumpsCommandTests {
 
         #expect(list.clear)
         #expect(list.site == "shop.test")
+    }
+
+    @Test func theRequestsOfThePublicLinksParseAlsoWithAClear() throws {
+        let list = try #require(try parse(["dumps", "--public-link", "--site", "shop.test", "--limit", "5", "--json"]) as? DumpsCommand.List)
+        let clear = try #require(try parse(["dumps", "--public-link", "--clear"]) as? DumpsCommand.List)
+
+        #expect(list.publicLink)
+        #expect(list.limit == 5)
+        #expect(list.json)
+        #expect(clear.publicLink)
+        #expect(clear.clear)
     }
 
     @Test func theSettingsParse() throws {

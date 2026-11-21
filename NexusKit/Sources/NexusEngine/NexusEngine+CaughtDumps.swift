@@ -75,6 +75,8 @@ extension NexusEngine {
 
         siteMap.set(buildSiteMap(await stateStore.current()))
         dumpStore.load()
+        // [Q5] A request of a link from the file of an earlier run loses its link (group 4, 4f).
+        dumpStore.endLinkRequests(hosts: nil)
         dumpStore.relocate()
         await startDumpPage()
         await publishDumpList()
@@ -216,7 +218,7 @@ extension NexusEngine {
     // The state is the part of the list that dumpChanges does not carry. A change of it sends the
     // whole list again. loaded is part of it. So the end of the load sends the list again.
     func dumpState(place: DumpPlace?, settings: DumpSettings) -> DumpState {
-        DumpState(settings: settings, blocked: dumpBlocks(in: place), receiving: dumpReceiver?.isListening == true, problem: dumpProblem(settings), loaded: dumpStore.isLoaded, page: dumpPageServer?.url)
+        DumpState(settings: settings, blocked: dumpBlocks(in: place), receiving: dumpReceiver?.isListening == true, problem: dumpProblem(settings), loaded: dumpStore.isLoaded, page: dumpPageServer?.url, linkHosts: linkListHosts)
     }
 
     // A clear before the load would remove nothing. The dumps of the file would then come back.
@@ -332,6 +334,6 @@ extension NexusEngine {
 
 extension DumpState {
     func list(of listing: (requests: [DumpedRequest], cursor: DumpCursor?)) -> DumpList {
-        DumpList(requests: listing.requests, settings: settings, blocked: blocked, receiving: receiving, problem: problem, cursor: listing.cursor, loaded: listing.cursor != nil, page: page)
+        DumpList(requests: listing.requests, settings: settings, blocked: blocked, receiving: receiving, problem: problem, cursor: listing.cursor, loaded: listing.cursor != nil, page: page, linkHosts: linkHosts)
     }
 }

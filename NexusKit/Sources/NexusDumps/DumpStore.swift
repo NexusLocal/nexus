@@ -16,6 +16,9 @@ import Synchronization
 public final class DumpStore: Sendable {
     public static let requestLimit = 500
     public static let byteLimit = 10 * 1024 * 1024
+    // The requests of each public link have their own limit (group 4, 4f). So a busy link never
+    // pushes the requests of the sites out of the list.
+    public static let linkRequestLimit = LinkRequestText.requestLimit
 
     // The number of ends that wait for the first dump of their request. Usually that dump was too
     // large to send. Then it never comes.
@@ -269,6 +272,68 @@ public final class DumpStore: Sendable {
             _ = state.removeRequestsWithTheirDumps([id])
             rewrite(&state)
             return true
+        }
+    }
+
+    // A request of the request log of a link (group 4, 4f). A request that the store knows, also one
+    // in waiting, gets publicLink and keeps its other values. Another request shows as a new request
+    // at the top. Its place comes from locate outside the lock, as for an entry of PHP.
+    public func addLinkRequest(_ header: DumpedRequest) {
+        var located: DumpedRequest?
+
+        while true {
+            let newHeader = located
+
+            let done = state.withLock { state in
+                if newHeader == nil, !state.knows(header.id) {
+                    return false
+                }
+
+                write(state.addLink(header, newHeader: newHeader), into: &state)
+                return true
+            }
+
+            if done {
+                return
+            }
+
+            var placed = header
+            placed.location = locate(placed)
+            located = placed
+        }
+    }
+
+    // The requests of the link of this local host in the list.
+    public func linkRequestCount(host: String) -> Int {
+        state.withLock { state in
+            state.linkCounts[host] ?? 0
+        }
+    }
+
+    // The end of links: each request of these hosts loses publicLink. A request that then does not
+    // stay goes. nil ends the requests of each link. The file then holds no address of a visitor.
+    public func endLinkRequests(hosts: Set<String>?) {
+        state.withLock { state in
+            if state.endLinks(hosts: hosts) {
+                rewrite(&state)
+            }
+        }
+    }
+
+    // Removes the requests of the links of these hosts with their entries. nil removes the requests
+    // of each link. Returns the number of removed requests.
+    @discardableResult
+    public func removeLinkRequests(hosts: Set<String>?) -> Int {
+        state.withLock { state in
+            let ids = state.linkRequestIDs(hosts: hosts)
+
+            if ids.isEmpty {
+                return 0
+            }
+
+            _ = state.removeRequestsWithTheirDumps(ids)
+            rewrite(&state)
+            return ids.count
         }
     }
 
@@ -825,6 +890,9 @@ struct StoreState {
     // The request of each kept job row with a ref, by that ref. A job of a worker finds the request
     // that queued it here.
     var jobRows: [String: String] = [:]
+    // The requests of the list with publicLink, by the local host of the link (group 4, 4f). The
+    // limits read them. So a new entry does not walk the list.
+    var linkCounts: [String: Int] = [:]
 
     // The bytes that a rewrite writes.
     var keptBytes: Int {
@@ -958,6 +1026,108 @@ struct StoreState {
         markChanged(id)
         removeOldDumps()
         return line
+    }
+
+    // Returns the header lines for the file. A request of the list keeps its place in the order. Its
+    // status and its duration come from the line of nginx only when PHP did not send them. A request
+    // in waiting has the end of PHP already. It shows now. newHeader has the place of a request
+    // that the store does not know.
+    mutating func addLink(_ link: DumpedRequest, newHeader: DumpedRequest?) -> [Data] {
+        guard let publicLink = link.publicLink else {
+            return []
+        }
+
+        let line: Data
+
+        if var known = requests[link.id] {
+            known.publicLink = publicLink
+            known.status = known.status ?? link.status
+            known.duration = known.duration ?? link.duration
+            countLink(of: requests[link.id], new: known)
+            requests[link.id] = known
+            line = headerLine(of: known)
+        } else if var waitingHeader = takeWaiting(link.id) {
+            waitingHeader.publicLink = publicLink
+            waitingHeader.status = waitingHeader.status ?? link.status
+            waitingHeader.duration = waitingHeader.duration ?? link.duration
+            line = show(queued(waitingHeader))
+        } else if let newHeader {
+            line = show(newHeader)
+        } else {
+            return []
+        }
+
+        markChanged(link.id)
+        removeOldDumps()
+        return requests[link.id] == nil ? [] : [line]
+    }
+
+    // The requests of the links of these hosts in the order of the list. nil gives the requests of
+    // each link.
+    func linkRequestIDs(hosts: Set<String>?) -> [String] {
+        order.filter { id in
+            guard let host = requests[id]?.publicLink?.host else {
+                return false
+            }
+
+            return hosts?.contains(host) ?? true
+        }
+    }
+
+    // Each request of these hosts loses publicLink. A request without entries then goes. Returns
+    // true when a request changed.
+    mutating func endLinks(hosts: Set<String>?) -> Bool {
+        let ids = linkRequestIDs(hosts: hosts)
+        var gone: [String] = []
+
+        for id in ids {
+            guard var header = requests[id] else {
+                continue
+            }
+
+            header.publicLink = nil
+            countLink(of: requests[id], new: header)
+            requests[id] = header
+            _ = headerLine(of: header)
+            markChanged(id)
+
+            if !header.staysInList {
+                gone.append(id)
+            }
+        }
+
+        var changedWaiting = false
+
+        for index in waiting.indices {
+            guard let host = waiting[index].publicLink?.host, hosts?.contains(host) ?? true else {
+                continue
+            }
+
+            waiting[index].publicLink = nil
+            changedWaiting = true
+        }
+
+        removeRequests(gone)
+        return !ids.isEmpty || changedWaiting
+    }
+
+    // The counts of the links follow each header of the list that gets or loses publicLink.
+    private mutating func countLink(of old: DumpedRequest?, new: DumpedRequest?) {
+        let oldHost = old?.publicLink?.host
+        let newHost = new?.publicLink?.host
+
+        if oldHost == newHost {
+            return
+        }
+
+        if let oldHost {
+            let count = (linkCounts[oldHost] ?? 0) - 1
+            linkCounts[oldHost] = count > 0 ? count : nil
+        }
+
+        if let newHost {
+            linkCounts[newHost, default: 0] += 1
+        }
     }
 
     // Returns the header line for the file when the location of a request of the list changed.
@@ -1108,6 +1278,7 @@ struct StoreState {
 
         var updated = header
         updated.take(countsOf: current)
+        countLink(of: current, new: updated)
         requests[header.id] = updated
         markChanged(header.id)
         return headerLine(of: updated)
@@ -1128,6 +1299,7 @@ struct StoreState {
 
     private mutating func show(_ header: DumpedRequest) -> Data {
         let shown = header.uncounted
+        countLink(of: requests[shown.id], new: shown)
         requests[shown.id] = shown
         order.append(shown.id)
 
@@ -1193,9 +1365,7 @@ struct StoreState {
     // entries. A job without entries counts too. Then the oldest entries go while the entries take
     // more than byteLimit bytes. A request goes from the list when it does not stay (staysInList).
     private mutating func removeOldDumps() {
-        while order.count > DumpStore.requestLimit {
-            _ = removeRequestsWithTheirDumps([order[0]])
-        }
+        removeOldRequests()
 
         var count = 0
         var bytes = dumpBytes
@@ -1213,6 +1383,41 @@ struct StoreState {
         dumps.removeFirst(count)
         dumpBytes = bytes
         forget(old)
+    }
+
+    // The requests of the sites keep the limit of requestLimit. The requests of each public link have
+    // their own limit (group 4, 4f). The oldest go first, each group on its own. A list that is not
+    // longer than the lower limit needs no walk.
+    private mutating func removeOldRequests() {
+        guard order.count > min(DumpStore.requestLimit, DumpStore.linkRequestLimit) else {
+            return
+        }
+
+        var siteExcess = order.count - linkCounts.values.reduce(0, +) - DumpStore.requestLimit
+        var linkExcess = linkCounts.filter { _, count in count > DumpStore.linkRequestLimit }.mapValues { count in count - DumpStore.linkRequestLimit }
+        var oldest: [String] = []
+
+        for id in order {
+            if siteExcess <= 0, linkExcess.isEmpty {
+                break
+            }
+
+            guard let host = requests[id]?.publicLink?.host else {
+                if siteExcess > 0 {
+                    oldest.append(id)
+                    siteExcess -= 1
+                }
+
+                continue
+            }
+
+            if let excess = linkExcess[host] {
+                oldest.append(id)
+                linkExcess[host] = excess > 1 ? excess - 1 : nil
+            }
+        }
+
+        _ = removeRequestsWithTheirDumps(oldest)
     }
 
     // The entries are out of dumps already. Their requests get the values of the entries that
@@ -1264,6 +1469,7 @@ struct StoreState {
         order.removeAll { id in removedIDs.contains(id) }
 
         for id in ids {
+            countLink(of: requests[id], new: nil)
             requests[id] = nil
             headerBytes[id] = nil
             entriesOf[id] = nil

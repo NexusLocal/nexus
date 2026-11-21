@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import NexusCore
+import NexusIPC
 
 // Launch arguments of a debug build that open one screen. They let a check of the look work
 // without clicks: --screen service:mysql --sheet port --appearance light --settings network. The
@@ -13,6 +14,13 @@ import NexusCore
 // shows the screens with another domain. --waits-for-nexusd
 // with --sample shows the banner of a nexusd that still runs an older build. The services of the
 // sample data, such as the port problem of --sheet port, need --sample.
+// --share-state none|download|build|open-link|build-open|failed changes the link of shop.test.
+// --share-panel opens its panel. --public-links many gives 7 links. --sheet share --site shop.test
+// --share-preview warnings|vite-build|own-domain opens the confirm sheet. --alert quit-links shows
+// the question of a quit. --post-notification link-stopped posts the notification after a sleep.
+// --own-domain connected|connecting|failed gives the own domain of 4h. --settings sharing
+// --own-domain-sheet domain|not-on-cloudflare|connect|connected opens its setup at that step. Each
+// of them needs --sample.
 enum DebugLaunch {
     // A check of the look does not get the first run on top of the screen that it checks.
     static var checksTheLook: Bool {
@@ -67,6 +75,10 @@ enum DebugLaunch {
             model.selectedVersion[service.kind] = service.id
         }
 
+        if CommandLine.arguments.contains("--sample") {
+            showPublicLinks(in: model)
+        }
+
         if let json = value(of: "--notification"), let userInfo = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any], let target = NotificationTarget(userInfo: userInfo) {
             model.show(target)
         }
@@ -104,20 +116,64 @@ enum DebugLaunch {
             }
         case "old-workspaces":
             model.sheet = .oldWorkspaces(host: value(of: "--site") ?? "shop.test")
+        case "share":
+            ShareSheet.debugPreview = value(of: "--share-preview")
+            model.sheet = .share(host: value(of: "--site") ?? "shop.test")
         default: break
         }
     }
 
+    // The frames of the public links in nexus.pen (group 4, 4g).
+    private static func showPublicLinks(in model: AppModel) {
+        if let state = value(of: "--share-state") {
+            model.showSampleShareState(state)
+        }
+
+        if value(of: "--public-links") == "many" {
+            model.addSampleLinks()
+        }
+
+        if let state = value(of: "--own-domain") {
+            model.settings.ownDomain = AppModel.sampleOwnDomain(state)
+        }
+
+        OwnDomainSheet.debugStep = value(of: "--own-domain-sheet").flatMap(OwnDomainSheet.Step.init(rawValue:))
+
+        // The popover needs the toolbar of the Site screen. So it opens a moment later.
+        if CommandLine.arguments.contains("--share-panel") {
+            model.selection = .site("shop.test")
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                model.sharePanelHost = "shop.test"
+            }
+        }
+
+        if value(of: "--post-notification") == "link-stopped" {
+            Notifier.post(ShareText.stoppedTitle("shop.test"), ShareText.sleepNotification, target: .publicLink(host: "shop.test"), setting: AppPreference.notifyLinkStopped, category: PublicLinkNotification.categoryID)
+        }
+
+        if value(of: "--alert") == "quit-links" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                _ = QuitQuestion.confirm(linkCount: model.activePublicLinks.count)
+            }
+        }
+    }
+
     // --dumps off|empty|filter|blocked|problem shows a state of "Dumps States" in the design. jobs
-    // adds the job entries of "Dumps Jobs". It needs --sample. The filter is the choice of the
-    // user, so it is not part of the list.
-    // --dump-request sample-order --dump-tab logs opens a request at a tab. --dump-groups-open
-    // opens each group of the Queries tab.
+    // adds the job entries of "Dumps Jobs". link shows "Dumps · Public link" with the filter of the
+    // link of shop.test (group 4, 4f). It needs --sample. The filter is the choice of the user, so
+    // it is not part of the list.
+    // --dump-request sample-order --dump-tab logs opens a request at a tab. --dump-groups-open opens
+    // each group of the Queries tab.
     private static func showDumps(_ state: String, in model: AppModel) {
         model.show(AppModel.sampleDumpList(state))
 
         if state == "filter" {
-            model.filterDumps(by: DumpPlaceChoice(place: DumpPlace(site: "crm.test"), label: "crm.test"))
+            model.filterDumps(by: .place(DumpPlaceChoice(place: DumpPlace(site: "crm.test"), label: "crm.test")))
+        }
+
+        if state == "link" {
+            model.filterDumps(by: .link(host: "shop.test", label: LinkRequestText.filterLabel(host: "shop.test", linkCount: 1)))
         }
 
         if let tab = value(of: "--dump-tab").flatMap(DumpEntryTab.init(rawValue:)) {

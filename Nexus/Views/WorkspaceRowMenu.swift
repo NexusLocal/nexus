@@ -3,7 +3,8 @@ import NexusIPC
 import SwiftUI
 
 // The items of the menu of a workspace row (owner, 2026-11-15). The "..." button and a right click
-// on the row show them. "Stop when idle", "Stop Now" and "Start" come above a divider. A locked
+// on the row show them. "Stop when idle", "Stop Now" and "Start" come above a divider. "Share…"
+// or "Stop Public Link" has its own place between two dividers (group 4, 4g). A locked
 // worktree keeps them. git keeps a locked worktree also with --force. So "Remove Workspace…" is off
 // there, and its help says why.
 struct WorkspaceRowMenu: View {
@@ -34,6 +35,20 @@ struct WorkspaceRowMenu: View {
                 Task { await model.stopWorkspace(workspace, of: site) }
             }
             .disabled(workspace.shownRunState != .running || model.isRemoving(workspace))
+        }
+
+        Divider()
+
+        // The link of the workspace (group 4, 4g).
+        if let link = workspace.share, link.state.isActive {
+            Button("Stop Public Link", systemImage: PublicLinkMark.systemImage) {
+                model.stopShare(host: link.host)
+            }
+        } else if let host = workspace.hosts?.first {
+            Button(ShareText.shareButton, systemImage: PublicLinkMark.systemImage) {
+                model.askToShare(host: host)
+            }
+            .disabled(model.isRemoving(workspace))
         }
 
         Divider()

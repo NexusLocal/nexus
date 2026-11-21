@@ -403,6 +403,119 @@ struct WebConfigTests {
         #expect(plain.contains("    <FilesMatch \"\\.php$\">\n        SetHandler \"proxy:unix:/Nexus/run/php-8.4.sock|fcgi://php-8.4\"\n        ErrorDocument 503"))
     }
 
+    private func linkedSite(_ server: WebServer = .nginx, xdebug: Bool, shareSocket: Bool = true) -> WebSite {
+        let base = xdebug ? debugSite(server, php: "8.5") : site(server)
+        let share = SiteShare(id: "0123456789abcdef0123456789abcdef", fastcgiValues: ["APP_DEBUG": "false"], shareSocket: shareSocket ? URL(filePath: "/Nexus/run/php-share-8.5.sock") : nil)
+
+        return WebSite(hosts: base.hosts, backend: base.backend, certificate: base.certificate, key: base.key, accessLog: base.accessLog, share: share)
+    }
+
+    @Test func aRequestOfALinkWithHiddenErrorsGoesToThePoolOfTheLinks() throws {
+        let config = try NginxConfig.render(sites: [linkedSite(xdebug: false)], settings: nginxSettings())
+
+        #expect(config.contains("""
+                map $nexus_share $nexus_php_0 {
+                    default "unix:/Nexus/run/php-8.5.sock";
+                    "0123456789abcdef0123456789abcdef" "unix:/Nexus/run/php-share-8.5.sock";
+                }
+            """))
+        #expect(config.contains("fastcgi_pass $nexus_php_0;"))
+        #expect(!config.contains("fastcgi_pass \"unix:"))
+    }
+
+    @Test func aRequestOfALinkNeverReachesXdebugAndADebugRequestOfThisMacStillDoes() throws {
+        let config = try NginxConfig.render(sites: [linkedSite(xdebug: true)], settings: nginxSettings())
+
+        #expect(config.contains("""
+                map "$nexus_share|$nexus_xdebug" $nexus_php_0 {
+                    default "unix:/Nexus/run/php-8.5.sock";
+                    "|1" "unix:/Nexus/run/xdebug-8.5.sock";
+                    "0123456789abcdef0123456789abcdef|0" "unix:/Nexus/run/php-share-8.5.sock";
+                    "0123456789abcdef0123456789abcdef|1" "unix:/Nexus/run/php-share-8.5.sock";
+                }
+            """))
+        #expect(config.contains("fastcgi_pass $nexus_php_0;"))
+    }
+
+    @Test func aLinkWithoutThePoolKeepsTheMapOfToday() throws {
+        let linked = try NginxConfig.render(sites: [linkedSite(xdebug: true, shareSocket: false)], settings: nginxSettings())
+        let plain = try NginxConfig.render(sites: [debugSite(.nginx, php: "8.5")], settings: nginxSettings())
+        let withoutXdebug = try NginxConfig.render(sites: [linkedSite(xdebug: false, shareSocket: false)], settings: nginxSettings())
+        let today = try NginxConfig.render(sites: [site(.nginx)], settings: nginxSettings())
+
+        #expect(phpSocketLines(of: linked) == phpSocketLines(of: plain))
+        #expect(phpSocketLines(of: withoutXdebug) == phpSocketLines(of: today))
+        #expect(phpSocketLines(of: linked).contains { $0.contains("xdebug-8.5.sock") })
+    }
+
+    private func phpSocketLines(of config: String) -> [String] {
+        config.split(separator: "\n").map(String.init).filter { $0.contains("nexus_php_") || $0.contains("fastcgi_pass") || $0.contains(".sock") }
+    }
+
+    @Test func anApacheSiteSendsARequestOfALinkWithHiddenErrorsToThePoolOfTheLinksFirst() throws {
+        let settings = ApacheSettings(port: 8081, runtime: URL(filePath: "/Nexus/runtimes/httpd/2.4"), runFolder: run, modules: [])
+
+        let linked = try ApacheConfig.render(sites: [linkedSite(.apache, xdebug: true)], settings: settings)
+        let withoutPool = try ApacheConfig.render(sites: [linkedSite(.apache, xdebug: true, shareSocket: false)], settings: settings)
+        let plain = try ApacheConfig.render(sites: [debugSite(.apache, php: "8.5")], settings: settings)
+
+        #expect(linked.contains("""
+                <FilesMatch "\\.php$">
+                    <If "%{HTTP:X-Nexus-Share-Hide} == '1'">
+                        SetHandler "proxy:unix:/Nexus/run/php-share-8.5.sock|fcgi://php-share-8.5"
+                    </If>
+                    <ElseIf "\(ApacheConfig.xdebugCondition)">
+                        SetHandler "proxy:unix:/Nexus/run/xdebug-8.5.sock|fcgi://xdebug-8.5"
+                    </ElseIf>
+                    <Else>
+                        SetHandler "proxy:unix:/Nexus/run/php-8.5.sock|fcgi://php-8.5"
+                    </Else>
+            """))
+        #expect(withoutPool == plain)
+        #expect(plain.contains("SetEnvIf X-Nexus-Share-Hide \"^1$\" APP_CONFIG_CACHE=/dev/null/nexus-share-config.php APP_DEBUG=false CLOCKWORK_ENABLE=false DEBUGBAR_ENABLED=false NEXUS_SHARE_HIDE_DUMPS=1\n"))
+    }
+
+    @Test func nginxMarksOnlyARequestOfALinkWithHiddenErrorsForApache() throws {
+        let linked = try NginxConfig.render(sites: [linkedSite(.apache, xdebug: false)], settings: nginxSettings())
+        let withoutPool = try NginxConfig.render(sites: [linkedSite(.apache, xdebug: false, shareSocket: false)], settings: nginxSettings())
+        let plain = try NginxConfig.render(sites: [site(.apache)], settings: nginxSettings())
+
+        #expect(linked.contains("    map $nexus_share $nexus_share_0_hide {\n        default \"\";\n        \"0123456789abcdef0123456789abcdef\" \"1\";\n    }"))
+        #expect(linked.contains("proxy_set_header X-Nexus-Share-Hide $nexus_share_0_hide;"))
+        #expect(withoutPool.contains("proxy_set_header X-Nexus-Share-Hide \"\";"))
+        #expect(!withoutPool.contains("$nexus_share_0_hide"))
+        #expect(plain.contains("proxy_set_header X-Nexus-Share-Hide \"\";"))
+    }
+
+    @Test func thePoolOfTheLinksHidesErrorsStartsAProcessOnlyForARequestAndKeepsTheStub() throws {
+        let stub = URL(filePath: "/Nexus/config/php/8.5/nexus-prepend.php")
+        let prepend = "php_value[auto_prepend_file] = \"/Nexus/config/php/8.5/nexus-prepend.php\"\n"
+        let config = try PHPConfig.fpmConfig(socket: URL(filePath: "/Nexus/run/php-8.5.sock"), pidFile: URL(filePath: "/Nexus/run/php-8.5.pid"), prepend: stub, shareSocket: URL(filePath: "/Nexus/run/php-share-8.5.sock"))
+        let withXdebug = try PHPConfig.fpmConfig(socket: URL(filePath: "/Nexus/run/php-8.5.sock"), pidFile: URL(filePath: "/Nexus/run/php-8.5.pid"), prepend: stub, shareSocket: URL(filePath: "/Nexus/run/php-share-8.5.sock"), phpIniLoadsXdebug: true)
+        let debugPool = try PHPConfig.fpmConfig(socket: URL(filePath: "/Nexus/run/xdebug-8.5.sock"), pidFile: URL(filePath: "/Nexus/run/xdebug-8.5.pid"), prepend: stub, xdebug: true, shareSocket: URL(filePath: "/Nexus/run/php-share-8.5.sock"))
+        let share = try #require(config.range(of: "[nexus-share]\n")).upperBound
+
+        #expect(config[share...].hasPrefix("""
+            listen = "/Nexus/run/php-share-8.5.sock"
+            listen.mode = 0600
+            pm = ondemand
+            pm.max_children = 10
+            pm.process_idle_timeout = 60s
+            catch_workers_output = yes
+            decorate_workers_output = no
+            clear_env = no
+            php_admin_value[display_errors] = Off
+            php_admin_value[display_startup_errors] = Off
+
+            """))
+        #expect(config.components(separatedBy: prepend).count == 3)
+        #expect(config.hasSuffix(prepend))
+        #expect(!config.contains("xdebug.start_with_request"))
+        #expect(withXdebug.contains("php_admin_value[display_startup_errors] = Off\nphp_admin_value[xdebug.start_with_request] = \"no\"\n\(prepend)"))
+        #expect(withXdebug.hasSuffix(prepend))
+        #expect(!debugPool.contains("[nexus-share]"))
+    }
+
     @Test func aLineThatLoadsXdebugIsFound() {
         #expect(PHPConfig.userLoadsXdebug(phpIni: "memory_limit = 1G\nzend_extension = xdebug\n", customLines: []))
         #expect(PHPConfig.userLoadsXdebug(phpIni: "zend_extension=\"/opt/lib/xdebug.so\"", customLines: []))
@@ -739,5 +852,148 @@ struct WebConfigTests {
         #expect(fails.contains("<p>Nexus started npm run dev for your request, but it stopped with an error.</p>"))
         #expect(fails.contains("<p>The Site screen of Nexus shows the log of the dev server under Background processes.</p>"))
         #expect(fails.contains("<p>After npm run build the site works without the dev server.</p>"))
+    }
+}
+
+extension WebConfigTests {
+    private static let shareID = "0123456789abcdef0123456789abcdef"
+    private static let realRuntimes = ProcessInfo.processInfo.environment["NEXUS_REAL_RUNTIMES"]
+
+    private func linked(_ backend: WebBackend, values: [String: String] = [:]) -> WebSite {
+        WebSite(
+            hosts: ["shop.test", "www.shop.test"],
+            backend: backend,
+            certificate: URL(filePath: "/Nexus/certs/shop.test.crt"),
+            key: URL(filePath: "/Nexus/certs/shop.test.key"),
+            accessLog: URL(filePath: "/Nexus/logs/sites/shop.test.log"),
+            share: SiteShare(id: Self.shareID, fastcgiValues: values)
+        )
+    }
+
+    private var publicValues: [String: String] {
+        [
+            "NEXUS_SHARE_HOST": "$http_x_nexus_share_host",
+            "HTTP_HOST": "$http_x_nexus_share_host",
+            "SERVER_NAME": "$http_x_nexus_share_host",
+            "SERVER_PORT": "443",
+            "APP_URL": "https://$http_x_nexus_share_host",
+            "SESSION_DOMAIN": "null",
+        ]
+    }
+
+    @Test func aPHPSiteWithAPublicLinkGetsAMapForEachValueAndItsFastCGILinesAfterHTTPProxy() throws {
+        let other = site(.proxy(address: "http://127.0.0.1:3000"))
+        let config = try NginxConfig.render(sites: [other, linked(.php(server: .nginx, documentRoot: URL(filePath: "/Sites/shop/public"), socket: URL(filePath: "/Nexus/run/php-8.5.sock")), values: publicValues)], settings: nginxSettings())
+        let maps = try #require(config.range(of: "    map $nexus_share $nexus_share_1_0 {"))
+        let server = try #require(config.range(of: "server_name shop.test www.shop.test;", range: maps.upperBound..<config.endIndex))
+
+        #expect(maps.lowerBound < server.lowerBound)
+        #expect(config.contains("    map $nexus_share $nexus_share_1_0 {\n        default \"\";\n        \"\(Self.shareID)\" \"https://$http_x_nexus_share_host\";\n    }"))
+        #expect(config.contains("    map $nexus_share $nexus_share_1_1 {\n        default $http_host;\n        \"\(Self.shareID)\" \"$http_x_nexus_share_host\";\n    }"))
+        #expect(config.contains("    map $nexus_share $nexus_share_1_3 {\n        default $server_name;\n"))
+        #expect(config.contains("    map $nexus_share $nexus_share_1_4 {\n        default $server_port;\n        \"\(Self.shareID)\" \"443\";\n    }"))
+        #expect(config.contains("    map $nexus_share $nexus_share_1_5 {\n        default \"\";\n        \"\(Self.shareID)\" \"null\";\n    }"))
+        #expect(config.contains("""
+                        fastcgi_param HTTP_PROXY "";
+                        fastcgi_param APP_URL $nexus_share_1_0 if_not_empty;
+                        fastcgi_param HTTP_HOST $nexus_share_1_1 if_not_empty;
+                        fastcgi_param NEXUS_SHARE_HOST $nexus_share_1_2 if_not_empty;
+                        fastcgi_param SERVER_NAME $nexus_share_1_3 if_not_empty;
+                        fastcgi_param SERVER_PORT $nexus_share_1_4 if_not_empty;
+                        fastcgi_param SESSION_DOMAIN $nexus_share_1_5 if_not_empty;
+                        fastcgi_param HTTP_X_NEXUS_SHARE_REQUEST $nexus_share_request;
+                        fastcgi_pass
+            """))
+    }
+
+    @Test func aValueWithAQuoteOrABackslashOrAnUnsafeKeyGetsNoMap() throws {
+        let values = ["NEXUS_SHARE_HOST": "$http_x_nexus_share_host", "BAD": "a\"b", "SLASH": "a\\b", "BAD.KEY": "x"]
+        let config = try NginxConfig.render(sites: [linked(.php(server: .nginx, documentRoot: URL(filePath: "/Sites/shop/public"), socket: URL(filePath: "/Nexus/run/php-8.5.sock")), values: values)], settings: nginxSettings())
+
+        #expect(config.contains("fastcgi_param NEXUS_SHARE_HOST $nexus_share_0_0 if_not_empty;"))
+        #expect(!config.contains("$nexus_share_0_1"))
+    }
+
+    @Test func aPHPSiteWithoutALinkGetsNoLineOfTheLink() throws {
+        let config = try NginxConfig.render(sites: [site(.nginx)], settings: nginxSettings())
+
+        #expect(!config.contains("$nexus_share_0"))
+        #expect(config.contains("            fastcgi_param HTTP_PROXY \"\";\n            fastcgi_pass"))
+    }
+
+    @Test func anApacheSiteWithALinkSendsPort443AndThePublicHostOnlyForTheLink() throws {
+        let withLink = try NginxConfig.render(sites: [linked(.php(server: .apache, documentRoot: URL(filePath: "/Sites/shop"), socket: URL(filePath: "/Nexus/run/php-8.4.sock")))], settings: nginxSettings())
+        let without = try NginxConfig.render(sites: [site(.apache)], settings: nginxSettings())
+
+        #expect(withLink.contains("    map $nexus_share $nexus_share_0_port {\n        default $server_port;\n        \"\(Self.shareID)\" \"443\";\n    }"))
+        #expect(withLink.contains("    map $nexus_share $nexus_share_0_host {\n        default \"\";\n        \"\(Self.shareID)\" \"$http_x_nexus_share_host\";\n    }"))
+        #expect(withLink.contains("proxy_set_header X-Forwarded-Port $nexus_share_0_port;"))
+        #expect(withLink.contains("proxy_set_header X-Nexus-Share-Host $nexus_share_0_host;"))
+        #expect(!withLink.contains("fastcgi_param"))
+        #expect(without.contains("proxy_set_header X-Forwarded-Port $server_port;"))
+        #expect(without.contains("proxy_set_header X-Nexus-Share-Host \"\";"))
+    }
+
+    @Test func anAppAndAProxySiteWithALinkSendPort443ForTheLink() throws {
+        let app = try NginxConfig.render(sites: [linked(.app(port: 20017, framework: .express))], settings: nginxSettings())
+        let proxy = try NginxConfig.render(sites: [linked(.proxy(address: "http://127.0.0.1:3000"))], settings: nginxSettings())
+
+        #expect(app.contains("proxy_set_header X-Forwarded-Port $nexus_share_0_port;"))
+        #expect(proxy.contains("proxy_set_header X-Forwarded-Port $nexus_share_0_port;"))
+        #expect(!app.contains("X-Nexus-Share-Host"))
+        #expect(!proxy.contains("$nexus_share_0_host"))
+    }
+
+    @Test func apacheGivesPHPThePublicHostOfTheHeaderOfNginx() throws {
+        let config = try ApacheConfig.render(sites: [site(.apache)], settings: ApacheSettings(port: 8081, runtime: URL(filePath: "/Nexus/runtimes/httpd/2.4"), runFolder: run, modules: []))
+
+        #expect(config.contains("RemoteIPInternalProxy 127.0.0.1 ::1\nSetEnvIf X-Nexus-Share-Host \"^([A-Za-z0-9.-]+)$\" NEXUS_SHARE_HOST=$1\n"))
+    }
+
+    @Test(.enabled(if: realRuntimes != nil), .timeLimit(.minutes(1)))
+    func realNginxAcceptsTwoLinksWithNjsAPublicSiteAndALocalApacheSite() throws {
+        let root = URL(filePath: "/tmp/nexus-share-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = URL(filePath: Self.realRuntimes!, directoryHint: .isDirectory).appending(path: "nginx/1.30", directoryHint: .isDirectory)
+        let run = root.appending(path: "run", directoryHint: .isDirectory)
+        let shares = root.appending(path: "data share", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: shares, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: run.appending(path: "nginx/pages"), withIntermediateDirectories: true)
+
+        let certificate = root.appending(path: "site").path(percentEncoded: false)
+        let openssl = Process()
+        openssl.executableURL = URL(filePath: "/usr/bin/openssl")
+        openssl.arguments = ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=shop.test", "-days", "1", "-keyout", "\(certificate).key", "-out", "\(certificate).crt"]
+        openssl.standardOutput = FileHandle.nullDevice
+        openssl.standardError = FileHandle.nullDevice
+        try openssl.run()
+        openssl.waitUntilExit()
+
+        let settings = NginxSettings(httpPort: 30080, httpsPort: 30443, apachePort: 30081, lanAccess: false, runtime: runtime, runFolder: run, modules: ["ngx_http_js_module"])
+        let publicSite = WebSite(hosts: ["shop.test"], backend: .php(server: .nginx, documentRoot: root, socket: URL(filePath: "/tmp/php-8.5.sock")), certificate: URL(filePath: "\(certificate).crt"), key: URL(filePath: "\(certificate).key"), accessLog: root.appending(path: "shop.log"), project: .laravel, share: SiteShare(id: Self.shareID, fastcgiValues: publicValues))
+        let apacheSite = WebSite(hosts: ["blog.test"], backend: .php(server: .apache, documentRoot: root, socket: URL(filePath: "/tmp/php-8.4.sock")), certificate: URL(filePath: "\(certificate).crt"), key: URL(filePath: "\(certificate).key"), accessLog: root.appending(path: "blog.log"), project: .wordpress, share: SiteShare(id: "fedcba9876543210fedcba9876543210"))
+        let blocks = [
+            ShareBlock(id: Self.shareID, host: "shop.test", port: 40_000, mode: .publicHost, options: .standard, extraHosts: ["api.shop.test"], reverb: ShareReverb(port: 8080, key: "app-key", appID: "123456"), visitorLog: root.appending(path: "share-1.jsonl"), rewriteScript: shares.appending(path: "\(Self.shareID).js")),
+            ShareBlock(id: "fedcba9876543210fedcba9876543210", host: "blog.test", port: 40_002, mode: .localHost, options: .standard, redirectHost: "www.blog.test", extraHosts: ["cms.test"], visitorLog: root.appending(path: "share-2.jsonl"), rewriteScript: shares.appending(path: "fedcba9876543210fedcba9876543210.js")),
+        ]
+
+        for block in blocks {
+            try Data(try ShareRewrite.script(for: block, settings: settings).utf8).write(to: try #require(block.rewriteScript))
+        }
+
+        let config = root.appending(path: "nginx.conf")
+        try Data(try NginxConfig.render(sites: [publicSite, apacheSite], shares: blocks, settings: settings).utf8).write(to: config)
+
+        let nginx = Process()
+        let errors = Pipe()
+        nginx.executableURL = runtime.appending(path: "sbin/nginx")
+        nginx.arguments = ["-t", "-p", root.path(percentEncoded: false), "-c", config.path(percentEncoded: false), "-e", "stderr"]
+        nginx.standardOutput = FileHandle.nullDevice
+        nginx.standardError = errors
+        try nginx.run()
+        let output = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        nginx.waitUntilExit()
+
+        #expect(nginx.terminationStatus == 0, "\(output)")
     }
 }

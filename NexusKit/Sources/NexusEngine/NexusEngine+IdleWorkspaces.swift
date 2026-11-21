@@ -386,7 +386,8 @@ extension NexusEngine {
 
     // The check also sends a new site list, because the site list holds the last activity of each
     // workspace in whole minutes. nexusd sends it only when it changed. The main checkout has no
-    // record, so it never stops. A test gives another now.
+    // record, so it never stops. A test gives another now. An open link keeps its workspace awake
+    // (group 4, 4b).
     func checkIdleWorkspaces(now: Date = .now) async {
         publishSiteList()
 
@@ -397,14 +398,16 @@ extension NexusEngine {
             return
         }
 
-        let sitesOfRecord = Dictionary(grouping: resolvedSites(state).map(\.site), by: ProjectFolder.workspaceKey(of:))
+        let sites = resolvedSites(state).map(\.site)
+        let sitesOfRecord = Dictionary(grouping: sites, by: ProjectFolder.workspaceKey(of:))
+        let linked = ownersWithLinks(state, sites: sites)
         var due: [(key: String, name: String)] = []
 
         for key in state.worktrees.keys.sorted() {
             for tracked in trackedWorkspaces(key: key, sites: sitesOfRecord[key] ?? [], state: state) {
                 let workspace = tracked.workspace
 
-                guard workspace.runState == .running, !workspace.keepAwake, workspace.state != .preparing, workspaceStarts[tracked.owner] == nil, !nexusWorks(in: workspace, owner: tracked.owner) else {
+                guard workspace.runState == .running, !workspace.keepAwake, workspace.state != .preparing, workspaceStarts[tracked.owner] == nil, !linked.contains(tracked.owner), !nexusWorks(in: workspace, owner: tracked.owner) else {
                     continue
                 }
 

@@ -1112,12 +1112,14 @@ struct SiteTag: View {
     var isWorkspace = false
     var tint = Tint.accent
     var monospaced = false
+    // An icon before the text, for example the globe of a request of a public link.
+    var systemImage: String?
 
     var body: some View {
         if let text {
             HStack(spacing: 3) {
-                if isWorkspace {
-                    Image(systemName: "arrow.triangle.branch")
+                if let icon = systemImage ?? (isWorkspace ? "arrow.triangle.branch" : nil) {
+                    Image(systemName: icon)
                         .imageScale(.small)
                 }
 
@@ -1132,6 +1134,28 @@ struct SiteTag: View {
         } else {
             Text("No site")
                 .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+}
+
+// The icon of one step of a task with steps: a new site and the start of a public link.
+struct TaskStepIcon: View {
+    let state: TaskStepState
+
+    var body: some View {
+        switch state {
+        case .done:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Color.greenText)
+        case .running:
+            ProgressView()
+                .controlSize(.small)
+        case .failed:
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(Color.redText)
+        case .waiting:
+            Image(systemName: "circle")
                 .foregroundStyle(.tertiary)
         }
     }

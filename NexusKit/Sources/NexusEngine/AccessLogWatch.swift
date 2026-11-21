@@ -2,6 +2,35 @@ import Darwin
 import Foundation
 import NexusCore
 
+// A kqueue source for the writes, the delete and the rename of one log file. AccessLogWatch and
+// ShareLogWatch use it. The source closes its descriptor when it ends.
+enum LogFileSource {
+    static func start(_ path: String, queue: DispatchQueue, onEvent: @escaping (any DispatchSourceFileSystemObject) -> Void) -> (source: any DispatchSourceFileSystemObject, descriptor: Int32)? {
+        let descriptor = Darwin.open(path, O_EVTONLY)
+
+        guard descriptor >= 0 else {
+            return nil
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .extend, .delete, .rename], queue: queue)
+
+        source.setEventHandler { [weak source] in
+            guard let source else {
+                return
+            }
+
+            onEvent(source)
+        }
+
+        source.setCancelHandler {
+            close(descriptor)
+        }
+
+        source.resume()
+        return (source, descriptor)
+    }
+}
+
 // Each access log of nginx with its owner: the main checkout or a workspace (owner, 2026-11-15).
 // nginx keeps a log open and adds a line at the end of each request. FSEvents reports such a line
 // only when nginx closes the file. A kqueue source reports each line at once. Each owner gets at most
@@ -108,35 +137,18 @@ final class AccessLogWatch: @unchecked Sendable {
     }
 
     private func startSource(_ path: String) -> FileSource? {
-        let descriptor = Darwin.open(path, O_EVTONLY)
-
-        guard descriptor >= 0 else {
+        guard let started = LogFileSource.start(path, queue: queue, onEvent: { [weak self] source in self?.handle(source, path: path) }) else {
             return nil
         }
 
         var info = stat()
 
-        guard fstat(descriptor, &info) == 0 else {
-            close(descriptor)
+        guard fstat(started.descriptor, &info) == 0 else {
+            started.source.cancel()
             return nil
         }
 
-        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .extend, .delete, .rename], queue: queue)
-
-        source.setEventHandler { [weak self, weak source] in
-            guard let self, let source else {
-                return
-            }
-
-            self.handle(source, path: path)
-        }
-
-        source.setCancelHandler {
-            close(descriptor)
-        }
-
-        source.resume()
-        return FileSource(source: source, file: FileIdentity(info))
+        return FileSource(source: started.source, file: FileIdentity(info))
     }
 
     private func handle(_ source: any DispatchSourceFileSystemObject, path: String) {

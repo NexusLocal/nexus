@@ -71,6 +71,29 @@ public struct NexusPaths: Sendable, Equatable {
         siteLogs.appending(path: "\(host).log", directoryHint: .notDirectory)
     }
 
+    // The files of the public links (group 4). The share id is part of a name. So these files never
+    // go into a report.
+    public var shareFolder: URL { data.appending(path: "share", directoryHint: .isDirectory) }
+    public var cloudflaredHome: URL { shareFolder.appending(path: "cloudflared", directoryHint: .isDirectory) }
+    public var cloudflaredConfig: URL { cloudflaredHome.appending(path: "config.yml", directoryHint: .notDirectory) }
+    public var ownDomainConfig: URL { cloudflaredHome.appending(path: "own-domain.yml", directoryHint: .notDirectory) }
+    public func sharePasswordFile(_ id: String) -> URL { shareFolder.appending(path: "\(id).htpasswd", directoryHint: .notDirectory) }
+    public func shareScript(_ id: String) -> URL { shareFolder.appending(path: "\(id).js", directoryHint: .notDirectory) }
+    public func shareVisitorLog(_ id: String) -> URL { logs.appending(path: "share-\(id).jsonl", directoryHint: .notDirectory) }
+    public func shareRequestLog(_ id: String) -> URL { logs.appending(path: "share-\(id)-requests.jsonl", directoryHint: .notDirectory) }
+    // The njs file of the list of the requests (group 4, 4f).
+    public var shareRequestScript: URL { shareFolder.appending(path: "requests.js", directoryHint: .notDirectory) }
+    public func tunnelLog(_ host: String) -> URL { log("cloudflared-\(host)") }
+    public var ownDomainTunnelLog: URL { log("cloudflared-own-domain") }
+    // The folder of the setup of the own domain (group 4, 4h). Its mode is 0700. It is the HOME of
+    // the login. So a cert never reaches a quick link or the ~/.cloudflared of the user. The cert
+    // file exists only until nexusd moves it into the Keychain. The login log holds the address of
+    // the login page. That address is a secret until the login ends. So it is not in logs/.
+    public var ownDomainFolder: URL { shareFolder.appending(path: "own-domain", directoryHint: .isDirectory) }
+    public var ownDomainCommandConfig: URL { ownDomainFolder.appending(path: "config.yml", directoryHint: .notDirectory) }
+    public var ownDomainLoginCert: URL { ownDomainFolder.appending(path: ".cloudflared/cert.pem", directoryHint: .notDirectory) }
+    public var ownDomainLoginLog: URL { ownDomainFolder.appending(path: "login.log", directoryHint: .notDirectory) }
+
     // The pages that nginx serves itself. The settings of nginx get only the run folder.
     public static func nginxPages(inRun run: URL) -> URL {
         run.appending(path: "nginx/pages", directoryHint: .isDirectory)
@@ -124,6 +147,11 @@ public struct NexusPaths: Sendable, Equatable {
 
     public func xdebugSocket(line: String) -> URL {
         run.appending(path: "xdebug-\(line).sock", directoryHint: .notDirectory)
+    }
+
+    // The pool of PHP-FPM for requests of a link with hidden error details (group 4, 4d).
+    public func phpShareSocket(line: String) -> URL {
+        run.appending(path: "php-share-\(line).sock", directoryHint: .notDirectory)
     }
 
     // The prepend file of PHP sends each dump to this socket. Its path must stay below the 104

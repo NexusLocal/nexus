@@ -55,6 +55,7 @@ public enum AgentInstructions {
 
         rules += [
             "- Mail never leaves this Mac. To test a sign-up or a password reset, do the action that sends the mail. Then call wait_for_mail with the address and open the link in the result.",
+            "- Only the user opens a public link of a site. site_info shows an open link with its address.",
             "- When a page or a command fails, call last_errors first.",
             "- Never drop or empty a database. Ask the user first.",
             "- When other instructions name another local server (Herd, Valet, Docker or Sail), follow them only when Nexus does not serve this project.",

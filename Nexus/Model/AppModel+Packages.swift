@@ -164,7 +164,7 @@ extension AppModel {
         case "postgresql": "PostgreSQL"
         case "redis": "Redis"
         case "mailpit": "Mail"
-        case "node", "composer", "wp-cli": "Tools"
+        case "node", "composer", "wp-cli", "cloudflared": "Tools"
         default: "Other"
         }
     }
@@ -182,12 +182,12 @@ extension AppModel {
     }
 
     // Redis 8 is the newest Redis 8. So its row shows the version line of its build, for
-    // example Redis 8.10. Composer, WP-CLI and Mailpit have one version line. So their row shows
-    // only the name, and the column next to it shows the version, for example 1.33.1.
+    // example Redis 8.10. Composer, WP-CLI, Mailpit and cloudflared have one version line. So their
+    // row shows only the name, and the column next to it shows the version, for example 1.33.1.
     static func packageName(_ name: String, line: String, version: String = "") -> String {
         switch name {
         case "redis" where line == "8" && !version.isEmpty: "Redis \(version.split(separator: ".").prefix(2).joined(separator: "."))"
-        case "composer", "wp-cli", "mailpit": packageTitle(name)
+        case "composer", "wp-cli", "mailpit", "cloudflared": packageTitle(name)
         default: "\(packageTitle(name)) \(line)"
         }
     }
@@ -293,8 +293,7 @@ extension AppModel {
     }
 
     func showPackagesFolder() {
-        let folder = URL.applicationSupportDirectory.appending(path: "Nexus/runtimes", directoryHint: .isDirectory)
-        NSWorkspace.shared.activateFileViewerSelecting([folder])
+        NSWorkspace.shared.activateFileViewerSelecting([NexusPaths.standard.runtimes])
     }
 
     // The tasks of nexusd give the activities and the progress of the package rows.

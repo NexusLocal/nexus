@@ -1,4 +1,6 @@
 import AppKit
+import NexusCore
+import NexusIPC
 import SwiftUI
 
 // The closed groups and folders of projects, by their id, also after a new launch. A renamed group
@@ -171,6 +173,9 @@ private struct SiteRow: View {
             Label(site.host, systemImage: "globe")
                 .lineLimit(1)
             Spacer()
+            // A link of a workspace also marks its site. The sidebar has no row for a workspace
+            // (owner, 2026-11-20: question 6).
+            PublicLinkMark(links: model.activeLinks(of: site))
             StatusDot(health: model.health(of: site))
         }
         .help(site.problem.map { "\(site.host) does not run. \($0)" } ?? "")
@@ -318,6 +323,7 @@ struct SiteActions: View {
     @Environment(AppModel.self) private var model
     let site: SiteItem
     var includeBrowser = true
+    var includeShare = true
 
     var body: some View {
         if includeBrowser {
@@ -344,6 +350,19 @@ struct SiteActions: View {
 
         Button("Copy URL", systemImage: "link") {
             copyToPasteboard(site.url)
+        }
+
+        // A link of the site stops here. Else the item opens the confirm sheet (group 4, 4g).
+        if includeShare {
+            if let link = model.publicLink(host: site.host), link.state.isActive {
+                Button("Stop public link", systemImage: PublicLinkMark.systemImage) {
+                    model.stopShare(host: link.host)
+                }
+            } else {
+                Button(ShareText.shareButton, systemImage: PublicLinkMark.systemImage) {
+                    model.askToShare(host: site.host)
+                }
+            }
         }
 
         Divider()

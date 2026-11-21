@@ -168,6 +168,7 @@ public struct NexusToolbox: MCPHandler {
         case "php_extensions": try await phpExtensions(arguments)
         case "last_errors": try await lastErrors(arguments)
         case "read_dumps": try await readDumps(arguments, agent: agent)
+        case "read_link_requests": try await readLinkRequests(arguments, agent: agent)
         case "read_log": try await readLog(arguments)
         case "list_mail": try await listMail(arguments)
         case "read_mail": try .value(try await mailReader().read(id: arguments.string("id") ?? "latest", tags: try await mailScope(arguments.string("site")).tags))
@@ -334,7 +335,9 @@ public struct NexusToolbox: MCPHandler {
             throw ToolFailure(DumpList.notLoadedText)
         }
 
-        var requests = Array(list.requests.prefix(limit))
+        // A request of a public link without entries has nothing for read_dumps. read_link_requests
+        // shows it (group 4, 4f).
+        var requests = Array(list.requests.filter { request in request.publicLink == nil || request.entryCount > 0 }.prefix(limit))
         var notes = DumpText.notes(of: list.state, place: scope.place)
 
         if let requestID {
@@ -351,20 +354,33 @@ public struct NexusToolbox: MCPHandler {
         }
 
         let times = DumpTimeText()
+        let blocks = try await newestBlocks(requests) { group in
+            try await caughtEntries(of: group, agent: agent)
+        } text: { request, entries in
+            let tags = QueryTags(entries)
+            let lines = [DumpText.header(of: request, now: now(), times: times)] + DumpText.details(of: request, id: true)
+            return (lines + entries.flatMap { entry in DumpText.lines(of: entry, tags: tags) }).joined(separator: "\n")
+        }
+
+        notes += Self.leftOutNote(requests.count - blocks.count)
+
+        let text = (notes.isEmpty ? [] : [notes.joined(separator: "\n")]) + blocks.reversed()
+        return MCPToolResult(text: text.joined(separator: "\n\n"), structured: nil)
+    }
+
+    // The text of each request within dumpTextLimit. The newest request comes first. Each group of
+    // reads keeps its order in the text. read_dumps and read_link_requests both use it.
+    private func newestBlocks<Detail>(_ newestFirst: [DumpedRequest], read: ([DumpedRequest]) async throws -> [Detail], text: (DumpedRequest, Detail) -> String) async throws -> [String] {
         var blocks: [String] = []
         var size = 0
         var next = 0
 
-        // The newest requests come first. Each group of reads keeps its order in the text.
-        reading: while next < requests.count, Self.dumpTextLimit - size >= Self.smallestBlock {
-            let group = Array(requests[next..<min(next + Self.dumpReadsAtOnce, requests.count)])
+        reading: while next < newestFirst.count, Self.dumpTextLimit - size >= Self.smallestBlock {
+            let group = Array(newestFirst[next..<min(next + Self.dumpReadsAtOnce, newestFirst.count)])
             next += group.count
 
-            for (request, entries) in zip(group, try await caughtEntries(of: group, agent: agent)) {
-                let tags = QueryTags(entries)
-                var lines = [DumpText.header(of: request, now: now(), times: times)] + DumpText.details(of: request, id: true)
-                lines += entries.flatMap { entry in DumpText.lines(of: entry, tags: tags) }
-                var block = lines.joined(separator: "\n")
+            for (request, detail) in zip(group, try await read(group)) {
+                var block = text(request, detail)
 
                 if !blocks.isEmpty, size + block.count > Self.dumpTextLimit {
                     break reading
@@ -379,14 +395,87 @@ public struct NexusToolbox: MCPHandler {
             }
         }
 
-        let leftOut = requests.count - blocks.count
+        return blocks
+    }
 
-        if leftOut > 0 {
-            notes.append("The text leaves out the \(leftOut == 1 ? "oldest request" : "\(leftOut) oldest requests"), because it is too long. Give a lower limit or a request.")
+    private static func leftOutNote(_ leftOut: Int) -> [String] {
+        guard leftOut > 0 else {
+            return []
         }
 
-        let text = (notes.isEmpty ? [] : [notes.joined(separator: "\n")]) + blocks.reversed()
-        return MCPToolResult(text: text.joined(separator: "\n\n"), structured: nil)
+        return ["The text leaves out the \(leftOut == 1 ? "oldest request" : "\(leftOut) oldest requests"), because it is too long. Give a lower limit or a request."]
+    }
+
+    // The requests of the open link of a site with their headers and bodies (group 4, 4f). The text
+    // of each request is complete. The oldest requests go first when the text gets too long, as in
+    // read_dumps.
+    private func readLinkRequests(_ arguments: CallArguments, agent: String) async throws -> MCPToolResult {
+        let limit = min(max(arguments.int("limit") ?? 10, 1), 50)
+        let target = try await target(arguments.string("site"))
+        let link = target.workspace == nil ? target.site.share : target.workspace?.share
+
+        guard let link, link.state.isActive else {
+            throw ToolFailure(ShareText.noOpenLink(target.host))
+        }
+
+        guard link.requestCount != nil else {
+            throw ToolFailure(LinkRequestText.noListForAgent(host: link.host))
+        }
+
+        let list = try await caughtDumpList(place: nil, agent: agent)
+
+        guard list.loaded else {
+            throw ToolFailure(DumpList.notLoadedText)
+        }
+
+        var requests = LinkRequestLines.newest(list.requests, host: link.host, limit: limit)
+
+        if let requestID = arguments.string("request") {
+            guard let request = list.requests.first(where: { $0.id == requestID && $0.publicLink?.host == link.host }) else {
+                throw ToolFailure(LinkRequestText.unknownRequest(requestID, host: link.host))
+            }
+
+            requests = [request]
+        }
+
+        guard !requests.isEmpty else {
+            return MCPToolResult(text: LinkRequestText.noRequests(host: link.host), structured: nil)
+        }
+
+        let times = DumpTimeText()
+        let blocks = try await newestBlocks(Array(requests.reversed())) { group in
+            try await linkDetails(of: group, agent: agent)
+        } text: { request, detail in
+            LinkRequestLines.lines(of: request, detail: detail, now: now(), times: times).joined(separator: "\n")
+        }
+
+        return MCPToolResult(text: (Self.leftOutNote(requests.count - blocks.count) + blocks.reversed()).joined(separator: "\n\n"), structured: nil)
+    }
+
+    // The details of the requests at the same time, in the order of the requests. A detail that
+    // nexusd no longer has is nil. The text then says why.
+    private func linkDetails(of requests: [DumpedRequest], agent: String) async throws -> [ShareRequestDetail?] {
+        try await withThrowingTaskGroup(of: (Int, ShareRequestDetail?).self) { reads in
+            for (index, request) in requests.enumerated() {
+                reads.addTask {
+                    let response = try await send(.fromAgent(agent: agent, request: .shareRequest(id: request.id)))
+
+                    guard case .shareRequest(let detail) = response else {
+                        return (index, nil)
+                    }
+
+                    return (index, detail)
+                }
+            }
+
+            var found = [ShareRequestDetail?](repeating: nil, count: requests.count)
+
+            for try await (index, detail) in reads {
+                found[index] = detail
+            }
+
+            return found
+        }
     }
 
     // A site does not include its workspaces, as in nexus dumps. A session outside the sites reads

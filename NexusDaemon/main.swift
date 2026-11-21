@@ -44,6 +44,7 @@ let engine = NexusEngine(
     dumpLibrarySource: contents?.appending(path: "Resources/php/dumps", directoryHint: .isDirectory),
     servesDumpPage: true,
     activity: activity,
+    cloudflareKeys: LoginCloudflareKeyStore(),
     unregister: BackgroundServices.unregisterAll,
     applyCrashReports: { isOn in CrashReports.apply(process: "nexusd", isOn: isOn) }
 )

@@ -6,7 +6,8 @@ declare(strict_types=1);
  * Nexus runs this file before each PHP script through the stub of the PHP version (see "Stub
  * contract" in docs/dump-viewer-build.md). PHP runs it for every request of every site. So it only
  * defines dump() and dd(). It loads hooks.php only when a switch for queries, log lines or jobs is
- * on. The library loads at the first event.
+ * on. The library loads at the first event. A request of a public link also gets the filters of
+ * WooCommerce (group 4, 4c).
  */
 
 namespace Nexus\Dumps {
@@ -138,6 +139,38 @@ namespace Nexus\Dumps {
     {
         return (SETTINGS[$switch] ?? $switch === 'dumps') === true;
     }
+
+    // WordPress finds wp-config.php in its own folder or in the folder above it.
+    function wordPressConfig(string $folder): ?string
+    {
+        $folder = \rtrim($folder, '/');
+
+        if ($folder === '') {
+            return null;
+        }
+
+        foreach ([$folder, \dirname($folder)] as $candidate) {
+            if (\is_file("{$candidate}/wp-config.php")) {
+                return "{$candidate}/wp-config.php";
+            }
+        }
+
+        return null;
+    }
+
+    // A request of a public link gets the filters of WooCommerce (group 4, 4c). getenv() reads the
+    // value of this request. So PHP does not build $_SERVER for each request.
+    function publicLink(): void
+    {
+        $host = \getenv('NEXUS_SHARE_HOST');
+
+        if (!\is_string($host) || $host === '') {
+            return;
+        }
+
+        library();
+        PublicLink::add($host);
+    }
 }
 
 namespace {
@@ -150,6 +183,10 @@ namespace {
     if (\Nexus\Dumps\userPrepend() !== null) {
         include_once \Nexus\Dumps\userPrepend();
     }
+
+    // The filters of a link need no switch of the dump viewer. So a stub of another version keeps
+    // them.
+    \Nexus\Dumps\publicLink();
 
     if ((\Nexus\Dumps\SETTINGS['version'] ?? null) !== 1) {
         return;

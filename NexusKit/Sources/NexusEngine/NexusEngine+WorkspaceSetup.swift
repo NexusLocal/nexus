@@ -12,6 +12,7 @@ import NexusWorkspaces
 extension NexusEngine {
     private static let firstRedisIndex = 16
     static let firstWorkspacePort = NexusVariant.current.firstWorkspacePort
+    static let firstSharePort = NexusVariant.current.firstSharePort
     static let databasePortName = "database"
 
     // A setup can take long, so it runs next to the watch of the worktrees.
@@ -875,6 +876,9 @@ extension NexusEngine {
             .union(mainProcessPlans.values.flatMap(\.ports.values))
             .union(mainDevServerPlans.values.flatMap(\.ports.values))
             .union(state.databaseRemovals.map(\.server.port))
+            .union(state.shares.filter(\.state.isActive).flatMap { [$0.port] + ($0.metricsPort.map { [$0] } ?? []) })
+            .union(state.ownDomain.map { [$0.metricsPort] } ?? [])
+            .union(ownDomainTunnel.map { Set($0.rules.values) } ?? [])
     }
 
     // A new name gets a port that no record of Nexus holds and that no program on this Mac uses.

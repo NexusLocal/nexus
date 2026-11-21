@@ -69,13 +69,13 @@ public actor NexusEngine {
     private var dnsState: ServiceState = .stopped
     var systemFilesProblem: String?
     var writtenHosts: [String]?
-    private var systemFilesQueue: Task<Void, Never>?
+    private var systemFilesQueue = SerialQueue()
     // The new dev TLD while setTLD runs. Its resolver file exists before the state names it, so
     // a write of the system files in that time must not remove it.
     private var tldInChange: String?
     private var helperRetry: Task<Void, Never>?
     private(set) var uninstalling = false
-    private var webQueue: Task<Void, Never>?
+    private var webQueue = SerialQueue()
     private var watchers: [UUID: AsyncStream<NexusEvent>.Continuation] = [:]
     private var publishedServices: ServiceList?
     private var publishedSites: SiteList?
@@ -203,6 +203,57 @@ public actor NexusEngine {
     // as the key (plan item 3e). The number comes after the start in the supervisor. So each state
     // of that program in the supervisor belongs to that start.
     var serverHandOvers: [String: Int] = [:]
+    // The public links (group 4, 4b). shareStarts holds the start that runs for each target host.
+    // stoppedStarts holds a stop that came before the record of such a start. sharePrograms holds the
+    // program of each link by its share id. notReadySince holds the first check of each link without a
+    // connection. wakeChecks holds the links that the check after a wake reads now. linkPageTimes
+    // holds the last page of each owner that a link gave, for the last activity.
+    var shareStarts: [String: Task<ShareInfo, any Error>] = [:]
+    var stoppedStarts: [String: ShareEndReason] = [:]
+    var sharePrograms: [String: ShareProgram] = [:]
+    var shareVisits: [String: ShareVisits] = [:]
+    var notReadySince: [String: Date] = [:]
+    var wakeChecks: Set<String> = []
+    var endingShares: Set<String> = []
+    var linkPageTimes: [String: Date] = [:]
+    var shareLogWatch: ShareLogWatch?
+    var shareCheck: Task<Void, Never>?
+    var lastConnectionCheck = Date.distantPast
+    var powerWatch: SystemPowerWatch?
+    // The own domain (group 4, 4h). ownDomainSetup holds a setup that runs or that failed.
+    // ownDomainTunnel is the cloudflared of the own-domain links. ownDomainQueue runs one change at
+    // Cloudflare or of the tunnel at a time. ownDomainRulesChanged is true while a job for new rules
+    // waits in that queue. ownDomainGeneration counts the programs of the tunnel.
+    // ownDomainDisconnects counts the Disconnect calls that run. ownDomainLeaving stays true until
+    // the last one ends, so no own-domain link starts while a second call waits for its turn.
+    // cloudflareKeys has no real default, so a test never changes the login keychain by accident.
+    var ownDomainSetup: OwnDomainSetup?
+    var ownDomainTunnel: OwnDomainTunnel?
+    var ownDomainQueue = SerialQueue()
+    var ownDomainRulesChanged = false
+    var ownDomainGeneration = 0
+    var ownDomainDisconnects = 0
+    var ownDomainLeaving: Bool { ownDomainDisconnects > 0 }
+    var ownDomainSeams = OwnDomainSeams.live
+    var cloudflareKeys: any CloudflareKeyStore
+    // Vite Live and Build of the links (group 4, 4e). buildShareOwners holds each owner whose link
+    // uses Build. wantedProcesses makes it from the state. shareBuilds holds the build that runs for
+    // each share id. shareHotWatchers watches the public folder of each Live link. writtenHotTexts
+    // holds the text of public/hot in the last share block. madeBuildOutput holds the share ids whose
+    // build made the output folder. viteAppFolders holds the folder of each Node.js app by its host,
+    // from the last configuration of nginx.
+    var buildShareOwners: Set<String> = []
+    var shareBuilds: [String: Task<Void, any Error>] = [:]
+    var shareHotWatchers: [String: FolderWatcher] = [:]
+    var writtenHotTexts: [String: String] = [:]
+    var madeBuildOutput: Set<String> = []
+    var viteAppFolders: [String: URL] = [:]
+    // The list of the requests of the links (group 4, 4f). linkRequestDetails holds the detail of each
+    // request by the share id. linkListHosts holds the local hosts of the active links with the list
+    // on. The app counts the requests of a link in its dump list.
+    var linkRequestDetails: [String: LinkRequestDetails] = [:]
+    var linkRequestLogWatch: ShareLogWatch?
+    var linkListHosts: [String] = []
     // A client that waits for a server when nexusd stops gets this reason (plan item 3e).
     static let gateEndText = "nexusd stops now. Connect again in a few seconds."
     // The problem of each server of a removed workspace, with its folder as the key.
@@ -225,6 +276,20 @@ public actor NexusEngine {
     // A test gives its own answer for the port of a public/hot. So it needs no listener in the ports
     // of Nexus.
     var hotFilePortAnswers: @Sendable (Int) -> Bool = { PortInspector.acceptsLoopbackConnections($0) }
+    // A test gives its own answers and short times for the links (group 4, 4b).
+    var shareChecks = ShareChecks.live
+    var shareBlockAnswers: @Sendable (Int) -> Bool = { PortInspector.acceptsConnections($0) }
+    var shareCheckInterval: Duration = .seconds(15)
+    var shareWakeLimit: TimeInterval = 90
+    var shareConnectionLimit: TimeInterval = 300
+    var shareWaits = ShareWaits.standard
+    // The plan of 4c for each link by its share id (group 4, 4c).
+    var shareHostPlans: [String: ShareHostPlan] = [:]
+    // A test gives its own answer for the redirect of a site (F1). So it needs no nginx.
+    var shareRedirectProbe: @Sendable (String, Int) async -> String? = { await NexusEngine.redirectProbe(host: $0, httpsPort: $1) }
+    // A test gives its own build and a short time limit (group 4, 4e).
+    var shareBuildCommand: @Sendable (String) -> String = { DevServer.buildCommand(for: $0) }
+    var shareBuildTimeLimit: Duration = .seconds(600)
     // The Redis indexes that nexusd empties now.
     var emptyingRedisIndexes: Set<WorkspaceRedisIndex> = []
     // The downloads and database copies that run now, and the last task list of the watchers.
@@ -236,6 +301,11 @@ public actor NexusEngine {
     var lastBackupRead: BackupRead?
     // Two new Laravel sites share one install of laravel/installer.
     var laravelInstallerInstall: Task<Void, Error>?
+    // The last manifest that nexusd read, with the time of the read. The check of cloudflared
+    // before a link uses it for one hour. Each link that starts during an install of cloudflared
+    // waits for that install (group 4, 4a).
+    var lastManifest: (read: Date, manifest: Manifest)?
+    var cloudflaredInstall: Task<Void, Error>?
     // The databases that a copy writes now, as "<instance> <name>". nexusd refuses a second copy
     // into one of them. It also refuses a second install of a package that it installs now. And
     // it refuses a copy into an instance that an update stops now.
@@ -315,10 +385,12 @@ public actor NexusEngine {
         dumpLibrarySource: URL? = nil,
         servesDumpPage: Bool = false,
         activity: ActivityLog? = nil,
+        cloudflareKeys: any CloudflareKeyStore = NoCloudflareKeyStore(),
         unregister: @escaping @Sendable () -> Void = {},
         applyCrashReports: @escaping @Sendable (Bool) -> Void = { _ in }
     ) {
         self.paths = paths
+        self.cloudflareKeys = cloudflareKeys
         self.servesDumpPage = servesDumpPage
         self.applyCrashReports = applyCrashReports
         self.activity = activity
@@ -600,6 +672,34 @@ public actor NexusEngine {
             case .dumpState(let place):
                 await startDumpPage(portWait: .zero)
                 return .dumpState(dumpState(place: place, settings: await stateStore.current().dumpSettings))
+            case .shares:
+                return .shares(await shareInfos())
+            case .sharePreview(let host):
+                return .sharePreview(try await sharePreview(host: host))
+            case .startShare(let start):
+                // A start can take a minute. So it does not wait in the queue of the changes. It takes
+                // that queue only for the ports and nginx.
+                return .share(try await startShare(start))
+            case .stopShare(let host):
+                return .done(message: await stopShare(host: host))
+            case .stopAllShares(let appQuit):
+                return .done(message: await stopAllShares(reason: appQuit ? .appQuit : .stopped))
+            case .setShareDefaults(let options):
+                return .done(message: try await setShareDefaults(options))
+            case .rebuildShare(let host):
+                return .done(message: try await rebuildShare(host: host))
+            case .shareRequest(let id):
+                return shareRequest(id: id)
+            case .clearLinkRequests(let host):
+                return await clearLinkRequests(host: host)
+            case .checkOwnDomain(let domain):
+                return .ownDomainCheck(try await checkOwnDomain(domain))
+            case .connectOwnDomain(let domain):
+                return .done(message: try await connectOwnDomain(domain))
+            case .cancelOwnDomain:
+                return .done(message: await cancelOwnDomain())
+            case .disconnectOwnDomain:
+                return .ownDomainRemoval(try await disconnectOwnDomain())
             case .fromAgent:
                 return .unreadableRequest
             }
@@ -624,14 +724,7 @@ public actor NexusEngine {
     // requests while one waits for a process. Without the queue, a second change could run in
     // that time and a rollback of the first change could undo it.
     func serialWeb<Result: Sendable>(_ operation: @escaping @Sendable () async throws -> Result) async throws -> Result {
-        let previous = webQueue
-        let turn = Task {
-            await previous?.value
-            return try await operation()
-        }
-
-        webQueue = Task { _ = try? await turn.value }
-        return try await turn.value
+        try await webQueue.run(operation).value
     }
 
     // Starts the DNS server, the web services that the sites need, and every other service that
@@ -643,6 +736,9 @@ public actor NexusEngine {
         // the services also reaches it, before the background processes get SIGKILL.
         await endServicesOfEarlierRun()
         await endProcessesOfEarlierRun()
+        await endSharesOfEarlierRun()
+        removeOwnDomainLeftovers()
+        await forgetLinkRequestsOfEarlierRun()
         await removeClonesOfEarlierRun()
         await beginIdleStops()
         _ = try? await startDNS()
@@ -652,6 +748,8 @@ public actor NexusEngine {
         phpLinesWrittenAtStart = []
         _ = try? await serialWeb { await self.watchParkedFolders() }
         _ = try? await serialWeb { try await self.applyWeb(.automatic) }
+        // The start of the services does not wait for Cloudflare (4h).
+        Task { await self.resumeOwnDomainLinks() }
         _ = try? await serialWeb { await self.prepareDumpLibrary() }
 
         let state = await stateStore.current()
@@ -671,6 +769,12 @@ public actor NexusEngine {
         updateWatch?.cancel()
         devServerCheck?.cancel()
         accessLogWatch?.stop()
+        shareCheck?.cancel()
+        shareLogWatch?.stop()
+        linkRequestLogWatch?.stop()
+        powerWatch?.stop()
+        await stopOwnDomainSetup(within: .seconds(5))
+        stopShareVite()
         helperRetry?.cancel()
         await stopAllForGood(cause: cause)
 
@@ -1075,6 +1179,10 @@ public actor NexusEngine {
     // list (D63). Each one stays in enabledServices or out of it. So "Start stopped services" does
     // not change which services nexusd starts at its next start. Until then, nexusd skips them.
     private func stopAll(cause: String) async throws -> String {
+        // A quick link cannot keep its address after a stop of cloudflared. So each link ends, and
+        // its record says why (owner, review-4ab question 15). This request holds the queue.
+        await endShares(activeShareIDs(), reason: .stopped, holdsWebQueue: true)
+
         let running = try await services().map(\.status).filter(\.state.isActive).map(\.id)
 
         guard !running.isEmpty else {
@@ -1241,14 +1349,20 @@ public actor NexusEngine {
         return Set(keys).union([Self.dnsServiceID])
     }
 
-    // The download is a task that the user can stop (part 6f). An update of a version line that
-    // runs stops its service only for the change of the folder, and starts it again. The task
-    // ends after that change. So the app shows the download until the new folder is in place.
     private func install(name: String, line: String) async throws -> String {
         guard let package = try await manifest().package(named: name, line: line) else {
             throw RuntimeError.unsupported("The manifest has no \(name) \(line).")
         }
 
+        return try await install(package)
+    }
+
+    // The download is a task that the user can stop (part 6f). An update of a version line that
+    // runs stops its service only for the change of the folder, and starts it again. The task
+    // ends after that change. So the app shows the download until the new folder is in place.
+    func install(_ package: ManifestPackage) async throws -> String {
+        let name = package.name
+        let line = package.line
         let current = await installer.installed(name: name, line: line)
         if let current, current.isSameBuild(as: package) {
             return "\(name) \(current.version) is installed already in \(current.folder.path(percentEncoded: false))"
@@ -1392,6 +1506,11 @@ public actor NexusEngine {
             throw RuntimeError.unsupported("The new projects in \(parked.folder.path(percentEncoded: false)) get Apache. Park the folder again with nginx first: nexus unpark, then nexus park --server nginx")
         }
 
+        // cloudflared runs from this folder while a link starts or is open (group 4, 4a).
+        if name == CloudflaredPackage.name, let link = state.shares.first(where: \.state.isActive) {
+            throw RuntimeError.unsupported(ShareText.Cloudflared.inUse(host: link.host))
+        }
+
         if let id = catalog.serviceID(for: runtime), await supervisor.state(of: id)?.isActive == true {
             throw RuntimeError.unsupported("Stop \(id) first. It uses \(name) \(line).")
         }
@@ -1434,8 +1553,10 @@ public actor NexusEngine {
         return "\(name) \(line) is removed. Its data folder stays: \(dataPath)"
     }
 
-    private func manifest() async throws -> Manifest {
-        try await manifestSource.manifest(from: stateStore.current().manifestURL)
+    func manifest() async throws -> Manifest {
+        let manifest = try await manifestSource.manifest(from: stateStore.current().manifestURL)
+        lastManifest = (.now, manifest)
+        return manifest
     }
 }
 
@@ -1731,7 +1852,9 @@ extension NexusEngine {
 private extension NexusRequest {
     var mayChangeSites: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .siteLines, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .oldWorkspaces, .oldWorkspaceNotices, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .useNexusInfo, .useNexus, .siteDatabases, .databaseConnections, .serverDatabases, .createDatabase, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines, .serviceList, .tasks, .dumpList, .clearCaughtDumps, .removeCaughtDump, .removeDumpedRequest, .openCaughtDumpFile, .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps, .requestEntries: false
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .siteLines, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .oldWorkspaces, .oldWorkspaceNotices, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .useNexusInfo, .useNexus, .siteDatabases, .databaseConnections, .serverDatabases, .createDatabase, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines, .serviceList, .tasks, .dumpList, .clearCaughtDumps, .removeCaughtDump, .removeDumpedRequest, .openCaughtDumpFile, .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps, .requestEntries, .shares, .sharePreview, .shareRequest, .checkOwnDomain: false
+        // The app counts the requests of a link in the dump list (group 4, 4f).
+        case .clearLinkRequests: false
         case .fromAgent(_, let inner): inner.mayChangeSites
         default: true
         }
@@ -1844,14 +1967,7 @@ extension NexusEngine {
 
     // Every request to the helper waits for the request before it.
     private func inSystemFilesTurn<Result: Sendable>(_ operation: @escaping @Sendable () async throws -> Result) async throws -> Result {
-        let previous = systemFilesQueue
-        let turn = Task {
-            await previous?.value
-            return try await operation()
-        }
-
-        systemFilesQueue = Task { _ = try? await turn.value }
-        return try await turn.value
+        try await systemFilesQueue.run(operation).value
     }
 
     // The resolver file names the port of the DNS server, so it is only written while the server
@@ -2088,13 +2204,27 @@ extension NexusEngine {
 
 // Removing Nexus.
 extension NexusEngine {
-    // Stops at the first step that fails. The system files go first. So nothing has changed yet
-    // when the helper does not answer. The helper stays registered while its files exist. A
-    // resolver file of an old dev TLD goes too.
+    // Stops at the first step that fails. A connected own domain goes first, because Nexus has no
+    // way to remove its tunnel and its records later (owner, contract 4h question 5). Then the
+    // system files go. So nothing else has changed yet when the helper does not answer. The helper
+    // stays registered while its files exist. A resolver file of an old dev TLD goes too.
     private func uninstall() async throws -> String {
         uninstalling = true
         helperRetry?.cancel()
-        await systemFilesQueue?.value
+
+        var removal: OwnDomainRemoval?
+        let ownDomain = await stateStore.current().ownDomain?.domain
+
+        if let ownDomain {
+            do {
+                removal = try await disconnectOwnDomain()
+            } catch {
+                uninstalling = false
+                throw RuntimeError.unsupported(ShareText.OwnDomain.uninstallStopped(ownDomain, reason: ErrorText.plain(error)))
+            }
+        }
+
+        await systemFilesQueue.last?.value
 
         let resolvers = systemFiles.nexusResolvers
         let systemFileNames = resolvers.map { "/etc/resolver/\($0)" } + ["its /etc/hosts lines"]
@@ -2127,9 +2257,12 @@ extension NexusEngine {
             unregister()
         }
 
-        return """
-            Nexus removed \(EnglishList.joined(systemFileNames + ["its root CA", "its background services"])).
-            The packages and the databases stay in \(paths.root.path(percentEncoded: false)). Remove that folder to remove them too.
-            """
+        let domainItems = ownDomain.map { [ShareText.OwnDomain.uninstallItem($0)] } ?? []
+        let domainLines = ownDomain == nil ? [] : [ShareText.OwnDomain.removeKey] + ShareText.OwnDomain.keptLines(records: removal?.keptRecords ?? [], tunnel: removal?.keptTunnel)
+
+        return ([
+            "Nexus removed \(EnglishList.joined(systemFileNames + domainItems + ["its root CA", "its background services"])).",
+            "The packages and the databases stay in \(paths.root.path(percentEncoded: false)). Remove that folder to remove them too.",
+        ] + domainLines).joined(separator: "\n")
     }
 }

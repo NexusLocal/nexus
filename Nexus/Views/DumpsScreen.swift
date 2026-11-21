@@ -39,7 +39,7 @@ struct DumpsScreen: View {
     }
 
     private var subtitle: String {
-        guard model.catchesAnything else {
+        guard model.showsDumpList else {
             return "All Catch switches are off"
         }
 
@@ -70,7 +70,7 @@ private struct DumpsForm: View {
             } header: {
                 DumpRequestsHeader(confirmsClear: $confirmsClear)
             } footer: {
-                Text("Nexus keeps the newest 500 requests. A click on a file opens it in your editor. Test runs send nothing.")
+                Text(model.dumpFilter?.linkHost == nil ? "Nexus keeps the newest 500 requests. A click on a file opens it in your editor. Test runs send nothing." : LinkRequestText.footer)
             }
         }
         .formStyle(.grouped)
@@ -83,8 +83,13 @@ private struct DumpsForm: View {
         }
     }
 
+    // With the filter of a link, Clear removes the requests of that link (group 4, 4f).
     private var clearTitle: String {
-        model.dumpFilter.map { "Remove the requests of \($0.label)?" } ?? "Remove all requests?"
+        if let host = model.dumpFilter?.linkHost {
+            return LinkRequestText.clearTitle(host: host)
+        }
+
+        return model.dumpFilter.map { "Remove the requests of \($0.label)?" } ?? "Remove all requests?"
     }
 }
 
@@ -175,7 +180,7 @@ private struct DumpRequestsHeader: View {
                 }
                 .disabled(model.visibleDumpRequests.isEmpty)
             }
-            .disabled(!model.catchesAnything)
+            .disabled(!model.showsDumpList)
 
             if let problem = model.dumpState?.problem {
                 WarningBanner(title: "The dump viewer has a problem", message: problem) {}
@@ -188,21 +193,31 @@ private struct DumpRequestsHeader: View {
     }
 }
 
+// The places of the sites, then the public links with a list (group 4, 4f). The tag is the id of a
+// choice, because the label of a link changes with the number of links.
 private struct DumpFilter: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let choices = model.dumpPlaceChoices
+        let choices = model.dumpPlaceChoices.map(DumpFilterChoice.place) + model.dumpLinkChoices
 
-        Picker("Filter", selection: Binding(get: { model.dumpFilter?.place }, set: { place in model.filterDumps(by: choices.first { $0.place == place }) })) {
-            Text("All sites and workspaces").tag(DumpPlace?.none)
+        Picker("Filter", selection: Binding(get: { model.dumpFilter?.id }, set: { id in model.filterDumps(by: choices.first { $0.id == id }) })) {
+            Text("All sites and workspaces").tag(DumpFilterChoice.Key?.none)
 
-            if !choices.isEmpty {
+            if !model.dumpPlaceChoices.isEmpty {
                 Divider()
             }
 
-            ForEach(choices) { choice in
-                Text(choice.label).tag(Optional(choice.place))
+            ForEach(model.dumpPlaceChoices) { choice in
+                Text(choice.label).tag(Optional(DumpFilterChoice.Key.place(choice.place)))
+            }
+
+            if !model.dumpLinkChoices.isEmpty {
+                Divider()
+            }
+
+            ForEach(model.dumpLinkChoices) { choice in
+                Text(choice.label).tag(Optional(choice.id))
             }
         }
         .labelsHidden()
@@ -232,7 +247,7 @@ private struct DumpRequestsContent: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if !model.catchesAnything {
+        if !model.showsDumpList {
             Text("Turn on one of the Catch switches above to see what your sites do.")
                 .foregroundStyle(.secondary)
         } else if !model.visibleDumpRequests.isEmpty {
@@ -243,6 +258,9 @@ private struct DumpRequestsContent: View {
                 .listRowInsets(EdgeInsets())
         } else if model.dumpState?.loaded == false {
             Text("Nexus loads the requests of its last run.")
+                .foregroundStyle(.secondary)
+        } else if let host = model.dumpFilter?.linkHost {
+            Text(LinkRequestText.noRequests(host: host))
                 .foregroundStyle(.secondary)
         } else {
             Text(model.dumpFilter.map { "Nexus has no requests of \($0.label)." } ?? "No dumps yet. Add dump($value) to the code of a site and open the page.")
@@ -270,6 +288,15 @@ private struct DumpRequestRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
+                // The mark of a request through a public link, as in the design "Dumps · Public
+                // link" (group 4, 4f).
+                if let link = request.publicLink {
+                    Image(systemName: "globe")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentText)
+                        .help(LinkRequestText.markHelp(host: link.host))
+                }
+
                 Text(request.displayMethod)
                     .font(.subheadline.monospaced().weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -325,6 +352,7 @@ private struct DumpDetail: View {
         if let request = model.openDumpRequest {
             let tabs = DumpEntryTab.tabs(of: request)
             let tab = tabs.contains(model.chosenDumpTab) ? model.chosenDumpTab : tabs.first ?? .dumps
+            let hasEntries = DumpEntryTab.allCases.contains { kind in kind.count(in: request) > 0 }
 
             VStack(spacing: 0) {
                 if request.kind == .job {
@@ -335,16 +363,36 @@ private struct DumpDetail: View {
 
                 Divider()
 
+                // A request through a public link shows its request and its answer above the tabs
+                // (frame "Dumps · Public link"). Without entries they take the whole pane.
+                if request.publicLink != nil {
+                    if hasEntries {
+                        ScrollView {
+                            LinkRequestData(request: request)
+                        }
+                        .frame(maxHeight: 280)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                        Divider()
+                    } else {
+                        ScrollView {
+                            LinkRequestData(request: request)
+                        }
+                    }
+                }
+
                 if !tabs.isEmpty {
                     DumpTabBar(request: request, tabs: tabs, tab: tab)
 
                     Divider()
                 }
 
-                if tab == .queries {
-                    OpenQueries(droppedQueries: request.droppedQueries)
-                } else {
-                    OpenTabEntries(tab: tab)
+                if request.publicLink == nil || hasEntries {
+                    if tab == .queries {
+                        OpenQueries(droppedQueries: request.droppedQueries)
+                    } else {
+                        OpenTabEntries(tab: tab)
+                    }
                 }
             }
             .id(request.id)
@@ -367,6 +415,11 @@ private struct DumpRequestHead: View {
                     .lineLimit(2)
                     .textSelection(.enabled)
                 Spacer(minLength: 8)
+
+                if let link = request.publicLink {
+                    LinkRequestTag(host: link.host)
+                }
+
                 SiteTag(text: request.placeHost, isWorkspace: request.workspace != nil)
 
                 RowRemoveButton(help: "Remove this request and its entries") {
@@ -392,6 +445,10 @@ private struct DumpRequestHead: View {
 
             if let result = DumpScreenText.result(of: request) {
                 HeaderLine(key: "Status", value: result, keyWidth: 48, truncation: .middle)
+            }
+
+            if let visitor = request.publicLink?.visitor {
+                HeaderLine(key: LinkRequestText.visitorKey, value: visitor, keyWidth: 48, truncation: .middle)
             }
 
             HeaderLine(key: "Time", value: DumpScreenText.date(request.started), keyWidth: 48, truncation: .middle)
@@ -949,8 +1006,9 @@ private struct SourceLink: View {
     }
 }
 
-private extension View {
-    // The box of a dump, the SQL of a query and the context of a log line.
+extension View {
+    // The box of a dump, the SQL of a query, the context of a log line and the body of a request of
+    // a public link.
     func entryBox() -> some View {
         font(.callout.monospaced())
             .frame(maxWidth: .infinity, alignment: .leading)

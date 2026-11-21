@@ -48,6 +48,38 @@ struct ActivitySummaryTests {
         #expect(!NexusRequest.oldWorkspaceNotices.onlyReads)
     }
 
+    @Test func aRequestOfTheLinksNamesOnlyItsHostOrDomain() {
+        let start = ShareStart(host: "shop.test", password: true, label: "shop")
+
+        #expect(NexusRequest.startShare(start).activitySummary == "startShare shop.test")
+        #expect(NexusRequest.stopShare(host: "shop.test").activitySummary == "stopShare shop.test")
+        #expect(NexusRequest.stopAllShares(appQuit: false).activitySummary == "stopAllShares")
+        #expect(NexusRequest.stopAllShares(appQuit: true).activitySummary == "stopAllShares (quit)")
+        #expect(NexusRequest.rebuildShare(host: "shop.test").activitySummary == "rebuildShare shop.test")
+        #expect(NexusRequest.connectOwnDomain(domain: "example.com").activitySummary == "connectOwnDomain example.com")
+        #expect(NexusRequest.setShareDefaults(.standard).activitySummary == "setShareDefaults")
+        #expect(NexusRequest.shareRequest(id: "5f2b").activitySummary == "shareRequest")
+        #expect(NexusRequest.cancelOwnDomain.activitySummary == "cancelOwnDomain")
+    }
+
+    @Test func aClearOfTheRequestsOfALinkNamesItsHostAndDoesNotOnlyRead() {
+        #expect(NexusRequest.clearLinkRequests(host: "shop.test").activitySummary == "clearLinkRequests shop.test")
+        #expect(NexusRequest.clearLinkRequests(host: nil).activitySummary == "clearLinkRequests all")
+        #expect(!NexusRequest.clearLinkRequests(host: "shop.test").onlyReads)
+    }
+
+    @Test func theQuestionsOfTheLinksOnlyRead() {
+        let reads: [NexusRequest] = [.shares, .sharePreview(host: "shop.test"), .shareRequest(id: "5f2b"), .checkOwnDomain(domain: "example.com")]
+        let changes: [NexusRequest] = [.startShare(ShareStart(host: "shop.test")), .stopShare(host: "shop.test"), .stopAllShares(appQuit: false), .setShareDefaults(.standard), .rebuildShare(host: "shop.test"), .connectOwnDomain(domain: "example.com"), .cancelOwnDomain, .disconnectOwnDomain]
+
+        let readAnswers = reads.map(\.onlyReads)
+        let changeAnswers = changes.map(\.onlyReads)
+
+        #expect(readAnswers == Array(repeating: true, count: reads.count))
+        #expect(changeAnswers == Array(repeating: false, count: changes.count))
+        #expect(NexusRequest.startShare(ShareStart(host: "fix.shop.test")).namedWorkspace == nil)
+    }
+
     @Test func aResponseSaysHowItEnded() {
         #expect(NexusResponse.done(message: "ok").activitySummary == "done")
         #expect(!NexusResponse.done(message: "ok").failed)

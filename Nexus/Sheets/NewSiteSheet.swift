@@ -749,7 +749,7 @@ private struct StepList: View {
         VStack(spacing: 0) {
             ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
                 HStack(spacing: 10) {
-                    icon(step.state)
+                    TaskStepIcon(state: step.state)
                         .frame(width: 16)
 
                     Text(step.title)
@@ -776,24 +776,6 @@ private struct StepList: View {
             }
         }
         .background(.fill.quaternary, in: .rect(cornerRadius: 10))
-    }
-
-    @ViewBuilder
-    private func icon(_ state: TaskStepState) -> some View {
-        switch state {
-        case .done:
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(Color.greenText)
-        case .running:
-            ProgressView()
-                .controlSize(.small)
-        case .failed:
-            Image(systemName: "xmark.circle.fill")
-                .foregroundStyle(Color.redText)
-        case .waiting:
-            Image(systemName: "circle")
-                .foregroundStyle(.tertiary)
-        }
     }
 
     private func value(of step: TaskStep) -> String? {

@@ -51,6 +51,35 @@ struct NexusPathsTests {
         #expect(paths.dumpLibrary.path(percentEncoded: false) == "/tmp/Nexus Test/php/dumps/")
     }
 
+    @Test func theFilesOfTheLinksHaveTheirOwnPlaces() {
+        let paths = NexusPaths(root: URL(filePath: "/tmp/Nexus Test", directoryHint: .isDirectory))
+
+        #expect(paths.shareFolder.path(percentEncoded: false) == "/tmp/Nexus Test/data/share/")
+        #expect(paths.cloudflaredHome.path(percentEncoded: false) == "/tmp/Nexus Test/data/share/cloudflared/")
+        #expect(paths.cloudflaredConfig.path(percentEncoded: false) == "/tmp/Nexus Test/data/share/cloudflared/config.yml")
+        #expect(paths.ownDomainConfig.path(percentEncoded: false) == "/tmp/Nexus Test/data/share/cloudflared/own-domain.yml")
+        #expect(paths.sharePasswordFile("abc").path(percentEncoded: false) == "/tmp/Nexus Test/data/share/abc.htpasswd")
+        #expect(paths.shareVisitorLog("abc").path(percentEncoded: false) == "/tmp/Nexus Test/logs/share-abc.jsonl")
+        #expect(paths.shareRequestLog("abc").path(percentEncoded: false) == "/tmp/Nexus Test/logs/share-abc-requests.jsonl")
+        #expect(paths.tunnelLog("shop.test").path(percentEncoded: false) == "/tmp/Nexus Test/logs/cloudflared-shop.test.log")
+        #expect(paths.ownDomainTunnelLog.path(percentEncoded: false) == "/tmp/Nexus Test/logs/cloudflared-own-domain.log")
+    }
+
+    @Test func theSetupOfTheOwnDomainHasItsOwnFolderOutsideTheLogs() {
+        let paths = NexusPaths(root: URL(filePath: "/tmp/Nexus Test", directoryHint: .isDirectory))
+
+        #expect(paths.ownDomainFolder.path(percentEncoded: false) == "/tmp/Nexus Test/data/share/own-domain/")
+        #expect(paths.ownDomainCommandConfig.path(percentEncoded: false) == "/tmp/Nexus Test/data/share/own-domain/config.yml")
+        #expect(paths.ownDomainLoginCert.path(percentEncoded: false) == "/tmp/Nexus Test/data/share/own-domain/.cloudflared/cert.pem")
+        #expect(paths.ownDomainLoginLog.path(percentEncoded: false) == "/tmp/Nexus Test/data/share/own-domain/login.log")
+    }
+
+    @Test func theNjsModuleOfALinkIsInTheFolderOfTheLinks() {
+        let paths = NexusPaths(root: URL(filePath: "/Users/me/Library/Application Support/Nexus Dev", directoryHint: .isDirectory))
+
+        #expect(paths.shareScript("abc").path(percentEncoded: false) == "/Users/me/Library/Application Support/Nexus Dev/data/share/abc.js")
+    }
+
     @Test(arguments: [NexusVariant.release, .dev])
     func theDumpSocketFitsInAUnixSocketPathOfEachVariant(variant: NexusVariant) {
         let paths = NexusPaths(root: .applicationSupportDirectory.appending(path: variant.name, directoryHint: .isDirectory))
@@ -59,6 +88,16 @@ struct NexusPathsTests {
 
         #expect(socket.hasSuffix("/Library/Application Support/\(variant.name)/run/dumps.sock"))
         #expect(socket.utf8.count <= 103)
+    }
+
+    @Test(arguments: [NexusVariant.release, .dev])
+    func thePoolOfTheLinksHasItsOwnSocketThatFitsInAUnixSocketPath(variant: NexusVariant) {
+        let paths = NexusPaths(root: .applicationSupportDirectory.appending(path: variant.name, directoryHint: .isDirectory))
+
+        let socket = paths.phpShareSocket(line: "8.4").path(percentEncoded: false)
+
+        #expect(socket.hasSuffix("/Library/Application Support/\(variant.name)/run/php-share-8.4.sock"))
+        #expect(socket.utf8.count < 104)
     }
 
     @Test func createFoldersMakesEveryFolderInAPathWithSpaces() throws {

@@ -25,6 +25,13 @@ final class PageMode
             return true;
         }
 
+        // A request of a public link with the option "Hide error details and debug tools" shows no
+        // dump in the page (group 4, 4d). The dump viewer still gets each dump. nginx sets the value
+        // only for a request of that link.
+        if (($server['NEXUS_SHARE_HIDE_DUMPS'] ?? '') === '1') {
+            return false;
+        }
+
         if ($isDd) {
             return true;
         }

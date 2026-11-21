@@ -1,4 +1,5 @@
 import Foundation
+import NexusCore
 import Testing
 @testable import NexusIPC
 
@@ -122,6 +123,27 @@ struct NexusdVersionCheckTests {
     ])
     func onlyAQuestionOrAStopOrAStartReachesAnOlderNexusd(request: NexusRequest, safe: Bool) {
         #expect(request.isSafeForAnOlderNexusd == safe)
+    }
+
+    @Test(arguments: [
+        NexusRequest.shares,
+        .sharePreview(host: "shop.test"),
+        .startShare(ShareStart(host: "shop.test")),
+        .stopShare(host: "shop.test"),
+        .stopAllShares(appQuit: true),
+        .setShareDefaults(.standard),
+        .rebuildShare(host: "shop.test"),
+        .shareRequest(id: "5f2b"),
+        .checkOwnDomain(domain: "example.com"),
+        .connectOwnDomain(domain: "example.com"),
+        .cancelOwnDomain,
+        .disconnectOwnDomain,
+        .clearLinkRequests(host: "shop.test"),
+        .clearLinkRequests(host: nil),
+        .fromAgent(agent: "claude", request: .shares),
+    ])
+    func noRequestOfTheLinksReachesAnOlderNexusdAlsoNoQuestion(request: NexusRequest) {
+        #expect(!request.isSafeForAnOlderNexusd)
     }
 
     @Test func theAppStopsWaitingWhenARestartDidNotHelp() {

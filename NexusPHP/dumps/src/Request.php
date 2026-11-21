@@ -18,7 +18,6 @@ final class Request
     public static function describe(array $server, bool $cli): array
     {
         $common = [
-            'id' => self::newId(),
             'root' => self::root($server, $cli),
             'started' => (float) ($server['REQUEST_TIME_FLOAT'] ?? \microtime(true)),
             'pid' => \getmypid() ?: null,
@@ -26,6 +25,7 @@ final class Request
 
         if ($cli) {
             return [
+                'id' => self::newId(),
                 'kind' => 'command',
                 'command' => self::shortened(self::command($server)),
                 'cwd' => \getcwd() ?: null,
@@ -36,6 +36,7 @@ final class Request
         $hostHeader = (string) ($server['HTTP_HOST'] ?? $server['SERVER_NAME'] ?? 'localhost');
 
         return [
+            'id' => self::linkId($server) ?? self::newId(),
             'kind' => 'http',
             'method' => (string) ($server['REQUEST_METHOD'] ?? 'GET'),
             'url' => self::shortened(self::scheme($server)."://{$hostHeader}".($server['REQUEST_URI'] ?? '/')),
@@ -67,6 +68,16 @@ final class Request
     private static function newId(): string
     {
         return \bin2hex(\random_bytes(6));
+    }
+
+    // A request of a public link gets the id of the share block of nginx (group 4, 4f). So the
+    // request list of the link shows the dumps of this request. nginx sets the value only for a
+    // request of an open link.
+    private static function linkId(array $server): ?string
+    {
+        $id = (string) ($server['HTTP_X_NEXUS_SHARE_REQUEST'] ?? '');
+
+        return \preg_match('/\A[0-9a-f]{32}\z/', $id) === 1 ? $id : null;
     }
 
     // The folder as written can pass through a symbolic link into a site. The real path can name a

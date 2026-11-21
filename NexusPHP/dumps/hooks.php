@@ -290,24 +290,6 @@ function isWpCli(): bool
     return $script === 'wp' || \str_ends_with($script, 'wp-cli.phar');
 }
 
-// WordPress finds wp-config.php in its own folder or in the folder above it.
-function wordPressConfig(string $folder): ?string
-{
-    $folder = \rtrim($folder, '/');
-
-    if ($folder === '') {
-        return null;
-    }
-
-    foreach ([$folder, \dirname($folder)] as $candidate) {
-        if (\is_file("{$candidate}/wp-config.php")) {
-            return "{$candidate}/wp-config.php";
-        }
-    }
-
-    return null;
-}
-
 function hookWordPressQueries(?string $config): void
 {
     $definedByNexus = false;

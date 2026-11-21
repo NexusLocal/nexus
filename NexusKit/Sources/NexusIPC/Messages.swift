@@ -73,6 +73,8 @@ public struct SiteInfo: Codable, Sendable, Equatable {
     public let apacheLines: [String]?
     // The dev server of the main checkout of a Laravel site (owner, 2026-11-15).
     public let devServer: DevServerInfo?
+    // share is the public link of the main checkout (group 4). A nexusd from before 4b sends none.
+    public let share: ShareInfo?
 
     public init(
         hosts: [String],
@@ -115,8 +117,10 @@ public struct SiteInfo: Codable, Sendable, Equatable {
         workspaceDumpChecking: WorkspaceDumpProgress? = nil,
         nginxLines: [String]? = nil,
         apacheLines: [String]? = nil,
-        devServer: DevServerInfo? = nil
+        devServer: DevServerInfo? = nil,
+        share: ShareInfo? = nil
     ) {
+        self.share = share
         self.devServer = devServer
         self.workspaceDump = workspaceDump
         self.workspaceDumpURLs = workspaceDumpURLs
@@ -246,6 +250,8 @@ public struct DevServerInfo: Codable, Sendable, Hashable {
         case runs
         case doesNotStart = "does_not_start"
         case outsideNexus = "outside_nexus"
+        // A public link with Build holds back the dev server (group 4, 4e).
+        case pausedForLink = "paused_for_link"
     }
 
     public let command: String
@@ -266,6 +272,7 @@ public struct DevServerInfo: Codable, Sendable, Hashable {
         case .runs: "\(command) runs\(port.map { " on port \($0)" } ?? "")."
         case .doesNotStart: "\(command) does not start. Its log is \(log)."
         case .outsideNexus: "A dev server outside Nexus runs on port \(port.map(String.init) ?? "?"). Nexus starts no second one."
+        case .pausedForLink: "\(command) does not run while a public link of this site uses Build."
         }
     }
 }
@@ -273,7 +280,7 @@ public struct DevServerInfo: Codable, Sendable, Hashable {
 // A newer nexusd can send a state of a dev server, a run state of a workspace or a number of minutes
 // that this app does not know (owner, 2026-11-15). The decoders that Swift writes for SiteList,
 // SiteInfo and WorkspaceInfo call these functions. So such a value gives nil, and the rest of the
-// list still decodes.
+// list still decodes. The same is true for a state or an option of a public link (group 4).
 extension KeyedDecodingContainer {
     func decodeIfPresent(_ type: DevServerInfo.Type, forKey key: Key) throws -> DevServerInfo? {
         try? decode(type, forKey: key)
@@ -288,6 +295,18 @@ extension KeyedDecodingContainer {
     }
 
     func decodeIfPresent(_ type: WorkspaceIdleTime.Type, forKey key: Key) throws -> WorkspaceIdleTime? {
+        try? decode(type, forKey: key)
+    }
+
+    func decodeIfPresent(_ type: ShareInfo.Type, forKey key: Key) throws -> ShareInfo? {
+        try? decode(type, forKey: key)
+    }
+
+    func decodeIfPresent(_ type: ShareOptions.Type, forKey key: Key) throws -> ShareOptions? {
+        try? decode(type, forKey: key)
+    }
+
+    func decodeIfPresent(_ type: OwnDomainInfo.Type, forKey key: Key) throws -> OwnDomainInfo? {
         try? decode(type, forKey: key)
     }
 }
@@ -354,6 +373,8 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
     public let runState: WorkspaceRunState?
     public let keepAwake: Bool?
     public let stoppedAfter: WorkspaceIdleTime?
+    // share is the public link of the workspace (group 4). A nexusd from before 4b sends none.
+    public let share: ShareInfo?
 
     public var id: String { name }
 
@@ -379,8 +400,10 @@ public struct WorkspaceInfo: Codable, Sendable, Hashable, Identifiable {
         devServer: DevServerInfo? = nil,
         runState: WorkspaceRunState? = nil,
         keepAwake: Bool? = nil,
-        stoppedAfter: WorkspaceIdleTime? = nil
+        stoppedAfter: WorkspaceIdleTime? = nil,
+        share: ShareInfo? = nil
     ) {
+        self.share = share
         self.runState = runState
         self.keepAwake = keepAwake
         self.stoppedAfter = stoppedAfter
@@ -606,8 +629,12 @@ public struct SiteList: Codable, Sendable, Equatable {
     // The setting "Stop after", for the footer of the Site screen (owner, 2026-11-15). A nexusd from
     // before this setting sends none.
     public let stopIdleAfter: WorkspaceIdleTime?
+    // Settings > Sharing and the own domain (group 4). ownDomain is nil without a domain. A nexusd
+    // from before 4b sends neither of them.
+    public let shareDefaults: ShareOptions?
+    public let ownDomain: OwnDomainInfo?
 
-    public init(sites: [SiteInfo], layout: [SiteLayoutEntry], parkedFolders: [String], defaults: SiteDefaults, tld: String, newWorkspaceDatabases: WorkspaceDatabaseKind? = nil, oldAfterDays: Int? = nil, devServerStop: DevServerStop? = nil, stopIdleAfter: WorkspaceIdleTime? = nil) {
+    public init(sites: [SiteInfo], layout: [SiteLayoutEntry], parkedFolders: [String], defaults: SiteDefaults, tld: String, newWorkspaceDatabases: WorkspaceDatabaseKind? = nil, oldAfterDays: Int? = nil, devServerStop: DevServerStop? = nil, stopIdleAfter: WorkspaceIdleTime? = nil, shareDefaults: ShareOptions? = nil, ownDomain: OwnDomainInfo? = nil) {
         self.sites = sites
         self.layout = layout
         self.parkedFolders = parkedFolders
@@ -617,6 +644,8 @@ public struct SiteList: Codable, Sendable, Equatable {
         self.oldAfterDays = oldAfterDays
         self.devServerStop = devServerStop
         self.stopIdleAfter = stopIdleAfter
+        self.shareDefaults = shareDefaults
+        self.ownDomain = ownDomain
     }
 }
 
@@ -1455,6 +1484,22 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     // The settings, the blocks of the place, receiving, problem and loaded without the requests.
     // nil gives the blocks of all places.
     case dumpState(place: DumpPlace?)
+    // The public links (group 4). nexusd answers them from 4b on.
+    case shares
+    case sharePreview(host: String)
+    case startShare(ShareStart)
+    case stopShare(host: String)
+    case stopAllShares(appQuit: Bool)
+    case setShareDefaults(ShareOptions)
+    case rebuildShare(host: String)
+    case shareRequest(id: String)
+    // Removes the requests of the public link of a host with their entries. nil removes the requests
+    // of each link (group 4, 4f). The answer is done.
+    case clearLinkRequests(host: String?)
+    case checkOwnDomain(domain: String)
+    case connectOwnDomain(domain: String)
+    case cancelOwnDomain
+    case disconnectOwnDomain
     // A request of a coding agent through nexus mcp. nexusd handles the request inside and names
     // the agent in activity.log.
     indirect case fromAgent(agent: String, request: NexusRequest)
@@ -1615,8 +1660,12 @@ public struct DumpList: Codable, Sendable, Equatable {
     public let cursor: DumpCursor?
     public let loaded: Bool
     public let page: String?
+    // The local hosts of the links that keep a list of the requests, sorted (group 4, 4f). The app
+    // and the page show the list and the filter of a link also without a Catch switch. A list of an
+    // older nexusd has none.
+    public let linkHosts: [String]
 
-    public init(requests: [DumpedRequest], settings: DumpSettings, blocked: [DumpBlock] = [], receiving: Bool, problem: String? = nil, cursor: DumpCursor? = nil, loaded: Bool = true, page: String? = nil) {
+    public init(requests: [DumpedRequest], settings: DumpSettings, blocked: [DumpBlock] = [], receiving: Bool, problem: String? = nil, cursor: DumpCursor? = nil, loaded: Bool = true, page: String? = nil, linkHosts: [String] = []) {
         self.requests = requests
         self.settings = settings
         self.blocked = blocked
@@ -1625,9 +1674,11 @@ public struct DumpList: Codable, Sendable, Equatable {
         self.cursor = cursor
         self.loaded = loaded
         self.page = page
+        self.linkHosts = linkHosts
     }
 
-    // A list of an older nexusd has no cursor. That nexusd sent a list only after its load.
+    // A list of an older nexusd has no cursor and no linkHosts. That nexusd sent a list only after
+    // its load.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
@@ -1639,6 +1690,7 @@ public struct DumpList: Codable, Sendable, Equatable {
         cursor = try container.decodeIfPresent(DumpCursor.self, forKey: .cursor)
         loaded = try container.decodeIfPresent(Bool.self, forKey: .loaded) ?? true
         page = try container.decodeIfPresent(String.self, forKey: .page)
+        linkHosts = try container.decodeIfPresent([String].self, forKey: .linkHosts) ?? []
     }
 
     public var dumpCount: Int {
@@ -1646,7 +1698,7 @@ public struct DumpList: Codable, Sendable, Equatable {
     }
 
     public var state: DumpState {
-        DumpState(settings: settings, blocked: blocked, receiving: receiving, problem: problem, loaded: loaded, page: page)
+        DumpState(settings: settings, blocked: blocked, receiving: receiving, problem: problem, loaded: loaded, page: page, linkHosts: linkHosts)
     }
 }
 
@@ -1662,14 +1714,251 @@ public struct DumpState: Codable, Sendable, Equatable {
     public let problem: String?
     public let loaded: Bool
     public let page: String?
+    // The local hosts of the links that keep a list of the requests (group 4, 4f).
+    public let linkHosts: [String]
 
-    public init(settings: DumpSettings, blocked: [DumpBlock] = [], receiving: Bool, problem: String? = nil, loaded: Bool = true, page: String? = nil) {
+    public init(settings: DumpSettings, blocked: [DumpBlock] = [], receiving: Bool, problem: String? = nil, loaded: Bool = true, page: String? = nil, linkHosts: [String] = []) {
         self.settings = settings
         self.blocked = blocked
         self.receiving = receiving
         self.problem = problem
         self.loaded = loaded
         self.page = page
+        self.linkHosts = linkHosts
+    }
+
+    // A state of an older nexusd has no linkHosts.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        settings = try container.decode(DumpSettings.self, forKey: .settings)
+        blocked = try container.decode([DumpBlock].self, forKey: .blocked)
+        receiving = try container.decode(Bool.self, forKey: .receiving)
+        problem = try container.decodeIfPresent(String.self, forKey: .problem)
+        loaded = try container.decode(Bool.self, forKey: .loaded)
+        page = try container.decodeIfPresent(String.self, forKey: .page)
+        linkHosts = try container.decodeIfPresent([String].self, forKey: .linkHosts) ?? []
+    }
+}
+
+// A link as the app, nexus share list and the MCP server show it (group 4). url is nil while the
+// link starts and after its end, because the address then does not work. endsAt is nil for "When
+// I stop it". password is nil when the option is off. requestCount is nil when the list of the
+// requests is off. usesVite says that the option of Vite applies (4e). liveBlocked is the text of
+// an old Vite version. log is the log file of cloudflared.
+public struct ShareInfo: Codable, Sendable, Hashable {
+    public let host: String
+    public let site: String
+    public let workspace: String?
+    public let url: String?
+    public let state: ShareState
+    public let options: ShareOptions
+    public let started: Date
+    public let endsAt: Date?
+    public let password: String?
+    public let visitors: Int
+    public let lastVisit: Date?
+    public let requestCount: Int?
+    public let usesVite: Bool
+    public let liveBlocked: String?
+    public let log: String
+
+    public init(
+        host: String,
+        site: String,
+        workspace: String? = nil,
+        url: String? = nil,
+        state: ShareState,
+        options: ShareOptions,
+        started: Date,
+        endsAt: Date? = nil,
+        password: String? = nil,
+        visitors: Int = 0,
+        lastVisit: Date? = nil,
+        requestCount: Int? = nil,
+        usesVite: Bool = false,
+        liveBlocked: String? = nil,
+        log: String
+    ) {
+        self.host = host
+        self.site = site
+        self.workspace = workspace
+        self.url = url
+        self.state = state
+        self.options = options
+        self.started = started
+        self.endsAt = endsAt
+        self.password = password
+        self.visitors = visitors
+        self.lastVisit = lastVisit
+        self.requestCount = requestCount
+        self.usesVite = usesVite
+        self.liveBlocked = liveBlocked
+        self.log = log
+    }
+
+    // 4e: the link serves a build of the styles and scripts. The panel then has Build Again.
+    public var buildsAssets: Bool {
+        usesVite && options.viteMode == .build
+    }
+}
+
+// What the confirm sheet needs (group 4). openLink is the link of the host when one is open.
+// refusal is the text of a share that cannot start (4e). extraHosts holds the second local hosts
+// that the link also serves (4c).
+public struct SharePreview: Codable, Sendable, Equatable {
+    public let host: String
+    public let defaults: ShareOptions
+    public let usesVite: Bool
+    public let liveBlocked: String?
+    public let refusal: String?
+    public let warnings: [ShareWarning]
+    public let extraHosts: [String]
+    public let ownDomain: String?
+    public let label: String?
+    public let openLink: ShareInfo?
+
+    public init(
+        host: String,
+        defaults: ShareOptions,
+        usesVite: Bool = false,
+        liveBlocked: String? = nil,
+        refusal: String? = nil,
+        warnings: [ShareWarning] = [],
+        extraHosts: [String] = [],
+        ownDomain: String? = nil,
+        label: String? = nil,
+        openLink: ShareInfo? = nil
+    ) {
+        self.host = host
+        self.defaults = defaults
+        self.usesVite = usesVite
+        self.liveBlocked = liveBlocked
+        self.refusal = refusal
+        self.warnings = warnings
+        self.extraHosts = extraHosts
+        self.ownDomain = ownDomain
+        self.label = label
+        self.openLink = openLink
+    }
+}
+
+// The start of a link (group 4). A nil value takes the default of Settings > Sharing. The app
+// sends each value of the sheet. nexus share sends only the options of the command line.
+public struct ShareStart: Codable, Sendable, Equatable {
+    public let host: String
+    public let duration: ShareDuration?
+    public let password: Bool?
+    public let hidesErrors: Bool?
+    public let viteMode: ShareViteMode?
+    public let keepsRequests: Bool?
+    public let address: ShareAddressKind?
+    public let label: String?
+
+    public init(host: String, duration: ShareDuration? = nil, password: Bool? = nil, hidesErrors: Bool? = nil, viteMode: ShareViteMode? = nil, keepsRequests: Bool? = nil, address: ShareAddressKind? = nil, label: String? = nil) {
+        self.host = host
+        self.duration = duration
+        self.password = password
+        self.hidesErrors = hidesErrors
+        self.viteMode = viteMode
+        self.keepsRequests = keepsRequests
+        self.address = address
+        self.label = label
+    }
+
+    // A value of the start that is nil takes the default of Settings > Sharing.
+    public func options(defaults: ShareOptions) -> ShareOptions {
+        ShareOptions(
+            duration: duration ?? defaults.duration,
+            password: password ?? defaults.password,
+            hidesErrors: hidesErrors ?? defaults.hidesErrors,
+            viteMode: viteMode ?? defaults.viteMode,
+            keepsRequests: keepsRequests ?? defaults.keepsRequests,
+            address: address ?? defaults.address
+        )
+    }
+}
+
+// The details of one request of a link (group 4, 4f). The values of Cookie and Authorization are
+// "Hidden by Nexus". requestBodyBytes is the size of the body. So the app can tell a body that is
+// not text from a body that nginx did not keep and from no body.
+public struct ShareRequestDetail: Codable, Sendable, Equatable {
+    public let id: String
+    public let requestHeaders: [ShareHeader]
+    public let requestBody: String?
+    public let requestBodyBytes: Int?
+    public let requestBodyCut: Bool
+    public let status: Int?
+    public let responseHeaders: [ShareHeader]
+    public let size: Int?
+
+    public init(id: String, requestHeaders: [ShareHeader], requestBody: String? = nil, requestBodyBytes: Int? = nil, requestBodyCut: Bool, status: Int? = nil, responseHeaders: [ShareHeader], size: Int? = nil) {
+        self.id = id
+        self.requestHeaders = requestHeaders
+        self.requestBody = requestBody
+        self.requestBodyBytes = requestBodyBytes
+        self.requestBodyCut = requestBodyCut
+        self.status = status
+        self.responseHeaders = responseHeaders
+        self.size = size
+    }
+}
+
+public struct ShareHeader: Codable, Sendable, Hashable {
+    public let name: String
+    public let value: String
+
+    public init(name: String, value: String) {
+        self.name = name
+        self.value = value
+    }
+}
+
+// The own domain for Settings > Sharing and the setup sheet (group 4, 4h).
+public struct OwnDomainInfo: Codable, Sendable, Hashable {
+    public let domain: String
+    public let tunnelName: String?
+    public let state: OwnDomainState
+    public let addresses: [String]
+
+    public init(domain: String, tunnelName: String? = nil, state: OwnDomainState, addresses: [String] = []) {
+        self.domain = domain
+        self.tunnelName = tunnelName
+        self.state = state
+        self.addresses = addresses
+    }
+
+    // The state of domain. nil for another domain, for example for a setup that nexus share
+    // started. So the sheet acts only on the setup of its own domain.
+    public func state(of domain: String) -> OwnDomainState? {
+        self.domain == domain ? state : nil
+    }
+}
+
+// usesCloudflare is nil when 1.1.1.1 gave no answer (group 4, 4h).
+public struct OwnDomainCheck: Codable, Sendable, Equatable {
+    public let domain: String
+    public let usesCloudflare: Bool?
+    public let nameservers: [String]
+
+    public init(domain: String, usesCloudflare: Bool?, nameservers: [String]) {
+        self.domain = domain
+        self.usesCloudflare = usesCloudflare
+        self.nameservers = nameservers
+    }
+}
+
+// keptRecords holds the records that Nexus did not delete. keptTunnel names the tunnel when
+// Cloudflare refused the key of Nexus.
+public struct OwnDomainRemoval: Codable, Sendable, Equatable {
+    public let removedRecords: [String]
+    public let keptRecords: [String]
+    public let keptTunnel: String?
+
+    public init(removedRecords: [String], keptRecords: [String], keptTunnel: String? = nil) {
+        self.removedRecords = removedRecords
+        self.keptRecords = keptRecords
+        self.keptTunnel = keptTunnel
     }
 }
 
@@ -1722,6 +2011,13 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     // host is the first host of the site or the workspace. A block of the list names this host.
     case dumpPlace(place: DumpPlace, host: String)
     case dumpState(DumpState)
+    // The public links (group 4).
+    case shares([ShareInfo])
+    case share(ShareInfo)
+    case sharePreview(SharePreview)
+    case shareRequest(ShareRequestDetail)
+    case ownDomainCheck(OwnDomainCheck)
+    case ownDomainRemoval(OwnDomainRemoval)
 }
 
 // What the Site screen of a WordPress site shows (Phase 4, 3b). configFile is nil without a

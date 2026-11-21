@@ -109,6 +109,11 @@ public enum ProjectFolder {
         nearestGit(from: path).flatMap { $0.isFolder ? $0.folder : nil }
     }
 
+    // The nearest folder with a .git folder or a .git file: the root of a checkout or a worktree.
+    static func gitRoot(from path: String) -> String? {
+        nearestGit(from: path)?.folder
+    }
+
     private static func nearestGit(from path: String) -> (folder: String, isFolder: Bool)? {
         var current = path
 

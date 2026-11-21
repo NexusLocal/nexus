@@ -42,11 +42,22 @@ extension AppModel {
         case .mail(let id, let tag):
             filterMail(by: tag, opening: id)
             selection = .service(.mail)
+        case .publicLink(let host):
+            guard let place = linkPlace(of: host) else {
+                return
+            }
+
+            selection = .site(place.site)
         }
 
         switch target {
         case .workspace, .database:
             markedRow = target
+        case .publicLink(let host):
+            // The link of a workspace marks its row. The Site screen scrolls to it.
+            if let place = linkPlace(of: host), let workspace = place.workspace {
+                markedRow = .workspace(site: place.site, name: workspace)
+            }
         case .oldWorkspaces(let host):
             // The design "Notifications" in nexus.pen: the sheet of the old workspaces opens over
             // the Site screen.

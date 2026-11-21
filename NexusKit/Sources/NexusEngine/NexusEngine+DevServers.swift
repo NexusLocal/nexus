@@ -125,6 +125,7 @@ extension NexusEngine {
         devServerFailures = devServerFailures.filter { owners.contains($0.key) }
         activityTimes = activityTimes.filter { owners.contains($0.key) }
         lastStarts = lastStarts.filter { owners.contains($0.key) }
+        linkPageTimes = linkPageTimes.filter { owners.contains($0.key) }
     }
 
     // nginx shows the page of the failure only after this record. Without it the wait page loads
@@ -263,7 +264,8 @@ extension NexusEngine {
 
         plannedDevServers[list.owner] = plan
 
-        guard plan.outsidePort == nil, started, devServerFailures[list.owner] == nil else {
+        // A public link with Build holds back the dev server, also for a local page (group 4, 4e).
+        guard plan.outsidePort == nil, started, devServerFailures[list.owner] == nil, !buildShareOwners.contains(list.owner) else {
             return []
         }
 
@@ -409,6 +411,10 @@ extension NexusEngine {
 
         if let outside = plan.outsidePort {
             return DevServerInfo(command: plan.displayName, port: outside, state: .outsideNexus, log: log)
+        }
+
+        if buildShareOwners.contains(owner) {
+            return DevServerInfo(command: plan.displayName, port: plan.port, state: .pausedForLink, log: log)
         }
 
         if devServerFailures[owner] != nil {

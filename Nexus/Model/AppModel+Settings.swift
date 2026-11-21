@@ -69,7 +69,7 @@ enum Notifier {
         await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
     }
 
-    static func post(_ title: String, _ body: String, target: NotificationTarget, setting key: String) {
+    static func post(_ title: String, _ body: String, target: NotificationTarget, setting key: String, category: String? = nil) {
         guard AppPreference.isOn(key) else {
             return
         }
@@ -85,6 +85,11 @@ enum Notifier {
             content.title = title
             content.body = ErrorDetails.split(body).text
             content.userInfo = target.userInfo
+
+            if let category {
+                content.categoryIdentifier = category
+            }
+
             try? await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
         }
     }

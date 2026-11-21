@@ -81,9 +81,11 @@ extension NexusEngine {
         case refused(PageResponse)
     }
 
+    // link is the local host of a public link (group 4, 4f).
     private struct PageClear: Decodable {
         let all: Bool?
         let place: DumpPlace?
+        let link: String?
     }
 
     private struct PageDump: Decodable {
@@ -119,9 +121,19 @@ extension NexusEngine {
             }
 
             return .request(.requestDumps(request: id, afterNumber: after))
+        case ("GET", "/api/link-request"):
+            guard let id = page.query["id"] else {
+                return .refused(.message("Name a request.", status: 400))
+            }
+
+            return .request(.shareRequest(id: id))
         case ("POST", "/api/clear"):
-            guard let body = decoded(PageClear.self, from: page), body.all == true || body.place != nil else {
+            guard let body = decoded(PageClear.self, from: page), body.all == true || body.place != nil || body.link != nil else {
                 return .refused(.message("Name the dumps to clear.", status: 400))
+            }
+
+            if let link = body.link, body.all != true {
+                return .request(.clearLinkRequests(host: link))
             }
 
             return .request(.clearCaughtDumps(place: body.all == true ? nil : body.place))
@@ -166,6 +178,8 @@ extension NexusEngine {
             .message(message, status: 409)
         case .caughtDumps(let dumps):
             .json(dumps)
+        case .shareRequest(let detail):
+            .json(detail)
         default:
             .message("nexusd gave another answer.", status: 500)
         }

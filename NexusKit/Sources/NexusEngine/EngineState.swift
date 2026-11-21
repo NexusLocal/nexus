@@ -69,6 +69,11 @@ public struct EngineState: Codable, Sendable, Equatable {
     public var oldWorkspaceNotices: [String: OldWorkspacesNoticeRecord] = [:]
     // Settings > Sites, Stop a dev server after (owner, 2026-11-15).
     public var devServerStop = DevServerStop.standard
+    // The public links (group 4). An ended link stays until the next link of its host. So the app can
+    // show the reason. shareDefaults holds Settings > Sharing. ownDomain is the domain of 4h.
+    public var shares: [ShareRecord] = []
+    public var shareDefaults = ShareOptions.standard
+    public var ownDomain: OwnDomainRecord?
 
     public init() {}
 
@@ -119,6 +124,10 @@ public struct EngineState: Codable, Sendable, Equatable {
         oldWorkspaceNotices = (try? container.decodeIfPresent([String: OldWorkspacesNoticeRecord].self, forKey: .oldWorkspaceNotices)) ?? defaults.oldWorkspaceNotices
         // An unknown number of minutes gives the default.
         devServerStop = (try? container.decodeIfPresent(DevServerStop.self, forKey: .devServerStop)) ?? defaults.devServerStop
+        // A link or a domain with a value of a newer nexusd must not make the whole file unreadable.
+        shares = (try? container.decodeIfPresent([ShareRecord].self, forKey: .shares)) ?? defaults.shares
+        shareDefaults = (try? container.decodeIfPresent(ShareOptions.self, forKey: .shareDefaults)) ?? defaults.shareDefaults
+        ownDomain = try? container.decodeIfPresent(OwnDomainRecord.self, forKey: .ownDomain)
     }
 }
 

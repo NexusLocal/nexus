@@ -51,6 +51,15 @@ struct NexusVariantTests {
         #expect(WordPressFiles.beforeNexus(for: dev) == "// Before Nexus Dev: ")
     }
 
+    @Test(arguments: [(NexusVariant.release, 18_000), (.dev, 40_000)])
+    func theLinksGetPortsBelowTheAppsAndFarFromTheMetricsPortsOfCloudflared(variant: NexusVariant, first: Int) {
+        let linkPorts = variant.firstSharePort..<(variant.firstSharePort + 1_000)
+
+        #expect(variant.firstSharePort == first)
+        #expect(linkPorts.upperBound <= variant.firstAppPort)
+        #expect((20_241...20_245).allSatisfy { !linkPorts.contains($0) })
+    }
+
     @Test func neitherVariantTakesTheLinesOfTheOtherForItsOwn() {
         let markers: [(NexusVariant) -> String] = [
             ResolverFile.marker(for:),

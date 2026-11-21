@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import NexusTestSupport
 import Synchronization
 import Testing
 @testable import NexusSupervisor
@@ -519,7 +520,7 @@ struct ProcessSupervisorTests {
         #expect(PortInspector.program(at: main.processIdentifier, recordedPath: nil) == .other)
 
         kill(child, SIGKILL)
-        main.waitUntilExit()
+        main.waitForEnd()
 
         #expect(PortInspector.program(at: main.processIdentifier, recordedPath: mainPath) == .ended)
     }
@@ -657,6 +658,44 @@ struct ProcessSupervisorTests {
         let report = SupervisorReport(id: "redis-8.2", pid: nil, ports: [], event: .stopped(cause: "request stop from the app or the nexus command"))
 
         #expect(report.text == "redis-8.2 stopped: request stop from the app or the nexus command")
+    }
+
+    private func oneRun(_ id: String, script: String) -> ServiceDefinition {
+        ServiceDefinition(id: id, displayName: id, executable: URL(filePath: "/bin/sh"), arguments: ["-c", script], logFile: logs.appending(path: "\(id).log"), restartsAfterExit: false)
+    }
+
+    @Test func aProgramWithoutRestartsFailsAtItsFirstEndAndDoesNotStartAgain() async throws {
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let starts = logs.appending(path: "starts.txt")
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+        let reports = Reports()
+        await supervisor.onReport { reports.add($0) }
+
+        try await supervisor.start(oneRun("tunnel", script: "echo start >> '\(starts.path(percentEncoded: false))'; exit 1"))
+        let failed = await waitFor {
+            if case .failed = await supervisor.state(of: "tunnel") {
+                return true
+            }
+
+            return false
+        }
+        try await Task.sleep(for: .seconds(3))
+        let lines = try String(contentsOf: starts, encoding: .utf8).split(separator: "\n")
+
+        #expect(failed)
+        #expect(lines.count == 1)
+        #expect(await supervisor.state(of: "tunnel") == .failed(reason: "The last time it stopped with an error (exit status 1)."))
+        #expect(reports.all.contains { $0.event == .ended(.exit(status: 1), restartAttempt: nil) })
+    }
+
+    @Test func aStopOfAProgramWithoutRestartsGivesStopped() async throws {
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let supervisor = ProcessSupervisor(policy: fastPolicy)
+
+        try await supervisor.start(oneRun("tunnel", script: "exec /bin/sleep 60"))
+        try await supervisor.stop("tunnel", cause: "a test")
+
+        #expect(await supervisor.state(of: "tunnel") == .stopped)
     }
 }
 

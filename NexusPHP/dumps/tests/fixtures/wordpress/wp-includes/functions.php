@@ -11,3 +11,8 @@ function wp_doing_cron(): bool
 {
     return defined('DOING_CRON') && DOING_CRON;
 }
+
+function get_option(string $option): mixed
+{
+    return ['home' => 'https://www.shop.test:30443'][$option] ?? false;
+}

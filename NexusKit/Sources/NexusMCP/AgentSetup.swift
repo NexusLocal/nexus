@@ -380,6 +380,21 @@ public struct AgentSetup: Sendable {
         }
     }
 
+    // The app calls this at each start (owner, 2026-11-20). A connect writes the rules of the read
+    // tools of its own version only. So a newer read tool such as read_dumps or read_link_requests had
+    // no rule. addingStrings adds only the missing rules. A file without a change is not written.
+    public func addNewReadRules(askBeforeLooking: Bool) throws {
+        guard !askBeforeLooking else {
+            return
+        }
+
+        guard state(of: .claudeCode) == .connected else {
+            return
+        }
+
+        try setClaudeCodeRules(askBeforeLooking: false)
+    }
+
     // Only the tools that read. A rule mcp__nexus__* would also skip the question before a change.
     var claudeCodeRuleNames: [String] {
         NexusTools.readToolNames.map { "mcp__\(serverName)__\($0)" }

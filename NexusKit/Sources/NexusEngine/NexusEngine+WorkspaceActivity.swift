@@ -19,10 +19,13 @@ struct TrackedWorkspace: Sendable {
 // the access logs of its hosts, the git times of its worktree and the last command or request that
 // nexusd keeps in memory. Each source costs one stat. So the site list can hold the time.
 extension NexusEngine {
+    // A request through a link writes no line in the access log of the site. So nexusd keeps the time
+    // of such a page in memory (group 4, 4b).
     func lastActivity(of tracked: TrackedWorkspace) -> WorkspaceActivity? {
         let commands = activityTimes[tracked.owner].map { [WorkspaceActivity(date: $0, source: .command)] } ?? []
+        let linkPages = linkPageTimes[tracked.owner].map { [WorkspaceActivity(date: $0, source: .page)] } ?? []
 
-        return WorkspaceActivity.newest(pageActivity(of: tracked.hosts) + Self.gitActivity(of: tracked) + commands)
+        return WorkspaceActivity.newest(pageActivity(of: tracked.hosts) + Self.gitActivity(of: tracked) + commands + linkPages)
     }
 
     func trackedWorkspaces(key: String, sites: [Site], state: EngineState) -> [TrackedWorkspace] {

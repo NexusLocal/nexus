@@ -378,6 +378,13 @@ public actor ProcessSupervisor {
             return
         }
 
+        guard managed.definition.restartsAfterExit else {
+            managed.state = .failed(reason: end.lastEndText)
+            services[id] = managed
+            report(id, pid: pid, .ended(end, restartAttempt: nil))
+            return
+        }
+
         let ranFor = managed.startedAt.map { Date.now.timeIntervalSince($0) } ?? 0
         let stableSeconds = Double(policy.stableAfter.components.seconds)
         managed.quickRestarts = ranFor >= stableSeconds ? 1 : managed.quickRestarts + 1

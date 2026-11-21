@@ -734,6 +734,34 @@ struct NexusEngineTests {
 
         #expect(saved.dumpSettings.catchDumps)
     }
+
+    @Test func aStateFileWithoutTheLinksOrWithLinksOfANewerNexusdGetsTheDefaultsAndKeepsTheRest() throws {
+        let old = try JSONDecoder().decode(EngineState.self, from: Data(#"{"tld":"test"}"#.utf8))
+        let newer = try JSONDecoder().decode(EngineState.self, from: Data(#"{"hosts":["shop.test"],"shares":[{"id":"abc","state":{"paused":{}}}],"shareDefaults":[],"ownDomain":{"domain":"example.com"}}"#.utf8))
+
+        #expect(old.shares.isEmpty)
+        #expect(old.shareDefaults == .standard)
+        #expect(old.ownDomain == nil)
+        #expect(newer.shares.isEmpty)
+        #expect(newer.shareDefaults == .standard)
+        #expect(newer.ownDomain == nil)
+        #expect(newer.hosts == ["shop.test"])
+    }
+
+    @Test func theLinksTheDefaultsAndTheDomainSurviveASaveOfTheState() throws {
+        let started = Date(timeIntervalSince1970: 1_800_000_000)
+        var state = EngineState()
+        state.shares = [
+            ShareRecord(id: "0123456789abcdef0123456789abcdef", host: "shop.test", site: "shop.test", options: .standard, mode: .publicHost, publicHost: "calm-river-tree-lamp.trycloudflare.com", port: 18_000, metricsPort: 18_001, started: started, endsAt: started.addingTimeInterval(28_800), state: .open, usesVite: true),
+            ShareRecord(id: "fedcba9876543210fedcba9876543210", host: "fix.shop.test", site: "shop.test", workspace: "fix", options: .standard, mode: .localHost, started: started, state: .ended(.failed("cloudflared stopped."))),
+        ]
+        state.shareDefaults = ShareOptions(duration: .untilStopped, password: true, hidesErrors: false, viteMode: .build, keepsRequests: true, address: .ownDomain)
+        state.ownDomain = OwnDomainRecord(domain: "example.com", tunnelID: "6ff42ae2-765d-4adf-8112-31c55c1551ef", tunnelName: "nexus-macbook-pro", labels: ["shop.test": "shop"], dnsRecords: ["shop.example.com"], metricsPort: 18_010)
+
+        let saved = try JSONDecoder().decode(EngineState.self, from: JSONEncoder().encode(state))
+
+        #expect(saved == state)
+    }
 }
 
 // The events for the app, restart, and "Stop all services" with "Start stopped services" (D63).

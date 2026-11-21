@@ -1,5 +1,6 @@
 import AppKit
 import NexusCore
+import NexusIPC
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -74,6 +75,11 @@ struct OverviewScreen: View {
 
                 if !model.activities.isEmpty {
                     ActivityList()
+                }
+
+                // Below Activity (owner, 2026-11-17). It shows only while a link starts or is open.
+                if !model.activePublicLinks.isEmpty {
+                    OverviewPublicLinks()
                 }
 
                 VStack(alignment: .leading, spacing: 10) {

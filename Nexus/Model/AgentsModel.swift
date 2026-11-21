@@ -251,6 +251,19 @@ final class AgentsModel {
         }
     }
 
+    // The start of the app adds the rules of new read tools while "Ask me before agents look" is off
+    // (group 4, 4f). A failure shows no alert at the start. The Agents screen still shows the state of
+    // Claude Code. The next connect shows the error. The files are read outside the main thread, as
+    // in load().
+    func addNewReadRules() async {
+        guard let setup else {
+            return
+        }
+
+        let askBeforeLooking = await Task.detached { AgentSettings.load().askBeforeLooking }.value
+        try? await Task.detached { try setup.addNewReadRules(askBeforeLooking: askBeforeLooking) }.value
+    }
+
     // The first run connects the agents that the user selected. The others stay in the list, off.
     // A Mac without agents skips the step. Its list then still fills itself once on the Agents
     // screen. The notice on the Overview is for users who never saw the first run.

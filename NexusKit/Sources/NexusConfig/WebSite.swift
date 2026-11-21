@@ -43,7 +43,8 @@ public struct DevServerFiles: Sendable, Equatable {
 }
 
 // A site as the web servers see it: every name, the backend and the files that it needs. A
-// WordPress site gets the rules of WordPress in nginx.
+// WordPress site gets the rules of WordPress in nginx. share holds the values of an open link of
+// this host (group 4).
 public struct WebSite: Sendable, Equatable {
     public let hosts: [String]
     public let backend: WebBackend
@@ -56,8 +57,9 @@ public struct WebSite: Sendable, Equatable {
     // The file with the custom lines of a PHP site (owner, 2026-11-14). nil without lines.
     public let customLines: URL?
     public let devServer: DevServerFiles?
+    public let share: SiteShare?
 
-    public init(hosts: [String], backend: WebBackend, certificate: URL, key: URL, accessLog: URL, project: PHPProjectType = .other, network: WordPressNetworkKind? = nil, customLines: URL? = nil, devServer: DevServerFiles? = nil) {
+    public init(hosts: [String], backend: WebBackend, certificate: URL, key: URL, accessLog: URL, project: PHPProjectType = .other, network: WordPressNetworkKind? = nil, customLines: URL? = nil, devServer: DevServerFiles? = nil, share: SiteShare? = nil) {
         self.hosts = hosts
         self.backend = backend
         self.certificate = certificate
@@ -67,6 +69,7 @@ public struct WebSite: Sendable, Equatable {
         self.network = network
         self.customLines = customLines
         self.devServer = devServer
+        self.share = share
     }
 
     public var isWordPress: Bool {
@@ -90,8 +93,34 @@ public enum WebConfigPath {
     }
 }
 
-enum ConfigText {
+public enum ConfigText {
     private static let unsafeCharacters = CharacterSet(charactersIn: "\"\\$;{}*?[]").union(.controlCharacters).union(.newlines)
+
+    // nginx unescapes \\ to \ and \" to " in a string with quotes.
+    static func nginxQuoted(_ text: String) -> String {
+        text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    // A host or a path in a regular expression of nginx. quoted(_:) refuses the other characters
+    // that a regular expression reads in a special way.
+    static func regexEscaped(_ text: String) -> String {
+        var escaped = ""
+
+        for character in text {
+            if ".^|+()".contains(character) {
+                escaped.append("\\")
+            }
+
+            escaped.append(character)
+        }
+
+        return escaped
+    }
+
+    // The name of a variable of the environment or of FastCGI.
+    public static func isSafeKey(_ key: String) -> Bool {
+        key.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil
+    }
 
     // nginx reads a $ in a quoted value as a variable. Apache reads *, ? and [ ] in a Directory
     // path as a pattern. Both servers end a value at a quote. So a path with one of these

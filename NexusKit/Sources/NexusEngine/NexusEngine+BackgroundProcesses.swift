@@ -70,13 +70,23 @@ extension NexusEngine {
         return sync
     }
 
-    private func runProcessSync() async {
-        if !observesProcesses {
-            observesProcesses = true
-            await processSupervisor.onChange { [weak self] in
-                Task { await self?.backgroundProcessesChanged() }
+    // processSupervisor has one change handler. The background processes and the links both need it.
+    func observeProcessChanges() async {
+        guard !observesProcesses else {
+            return
+        }
+
+        observesProcesses = true
+        await processSupervisor.onChange { [weak self] in
+            Task {
+                await self?.backgroundProcessesChanged()
+                await self?.shareProgramsChanged()
             }
         }
+    }
+
+    private func runProcessSync() async {
+        await observeProcessChanges()
 
         repeat {
             processSyncAgain = false
@@ -494,9 +504,17 @@ extension NexusEngine {
             return ([:], [:])
         }
 
-        let (_, conflicts, sitesOfRecord, _, _) = workspaceSites(state)
-        let (serverProcesses, serverStopCauses) = workspaceServerProcesses(servers)
-        var wanted = serverProcesses
+        let resolved = resolvedSites(state).map(\.site)
+        let (_, conflicts, sitesOfRecord, _, _) = workspaceSites(state, resolved: resolved)
+        // A public link with Build holds back the dev server of its owner (group 4, 4e).
+        buildShareOwners = Self.buildShareOwners(state.shares, targets: shareTargets(state, sites: resolved, sitesOfRecord: sitesOfRecord, conflicts: conflicts))
+        let serverPlan = workspaceServerProcesses(servers)
+        var serverStopCauses = serverPlan.stopCauses
+        var wanted = serverPlan.processes
+
+        for (id, process) in runningProcesses where process.isDevServer && buildShareOwners.contains(process.owner) {
+            serverStopCauses[id] = Self.shareBuildStopCause
+        }
 
         let hasMainSwitch = { (key: String) in sitesOfRecord[key]?.contains(where: \.runsMainProcesses) == true }
 

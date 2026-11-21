@@ -236,6 +236,8 @@ struct SiteItem: Identifiable, Hashable {
     // The custom lines of nginx and Apache (owner, 2026-11-14).
     var nginxLines: [String] = []
     var apacheLines: [String] = []
+    // The public link of the main checkout (group 4). A workspace has its own in WorkspaceInfo.share.
+    var share: ShareInfo?
 
     var id: String { host }
 

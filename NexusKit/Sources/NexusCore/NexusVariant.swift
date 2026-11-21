@@ -83,4 +83,27 @@ public enum NexusVariant: Sendable {
         case .dev: 42_000
         }
     }
+
+    // The ports of the links: the share block and the metrics server of cloudflared (group 4). They
+    // are below the app ports and far from 20241 to 20245, the default metrics ports of cloudflared.
+    public var firstSharePort: Int {
+        switch self {
+        case .release: 18_000
+        case .dev: 40_000
+        }
+    }
+
+    // The tunnel of the own domain (group 4, 4h). Each Mac and each variant has its own tunnel. The
+    // computer name becomes a-z, 0-9 and -. For example "Jo’s MacBook Pro" gives nexus-jos-macbook-pro.
+    public func tunnelName(computer: String) -> String {
+        let prefix = self == .dev ? "nexus-dev" : "nexus"
+        return "\(prefix)-\(Self.slug(computer))"
+    }
+
+    // At most 40 characters. An empty slug is mac.
+    static func slug(_ name: String) -> String {
+        let label = HostName.label(from: name.filter { $0 != "'" && $0 != "’" })
+        let trimmed = String(label.prefix(40)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return trimmed.isEmpty ? "mac" : trimmed
+    }
 }

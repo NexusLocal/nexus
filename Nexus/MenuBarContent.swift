@@ -1,5 +1,6 @@
 import AppKit
 import NexusCore
+import NexusIPC
 import SwiftUI
 
 struct MenuBarContent: View {
@@ -91,6 +92,15 @@ struct MenuBarContent: View {
                     }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
+                }
+            }
+
+            // The public links (owner, 2026-11-17). This is an exception to D5, because the links
+            // are few and each one must stay visible. The design puts them above the services.
+            if !model.activePublicLinks.isEmpty {
+                MenuBarPublicLinks {
+                    open()
+                    model.selection = .overview
                 }
             }
 

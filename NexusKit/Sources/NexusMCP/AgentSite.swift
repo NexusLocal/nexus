@@ -28,6 +28,39 @@ public struct AgentDatabase: Codable, Sendable, Equatable {
     }
 }
 
+// A public link for an agent (group 4, 4b). An agent can only read it (decision 10). The password
+// itself never goes to an agent. state is starting, open or ended. endsAt is an ISO 8601 time, nil
+// for a link that stays open until the user stops it. ended is the reason of the end.
+public struct AgentPublicLink: Codable, Sendable, Equatable {
+    public let url: String?
+    public let state: String
+    public let endsAt: String?
+    public let password: Bool
+    public let visitors: Int
+    public let requests: Int?
+    public let ended: String?
+
+    public init(_ info: ShareInfo) {
+        url = info.url
+        endsAt = info.endsAt?.formatted(.iso8601)
+        password = info.options.password
+        visitors = info.visitors
+        requests = info.requestCount
+
+        switch info.state {
+        case .starting:
+            state = "starting"
+            ended = nil
+        case .open:
+            state = "open"
+            ended = nil
+        case .ended(let reason):
+            state = "ended"
+            ended = reason.logText
+        }
+    }
+}
+
 public struct AgentWorkspace: Codable, Sendable, Equatable {
     public let name: String
     public let host: String?
@@ -41,6 +74,7 @@ public struct AgentWorkspace: Codable, Sendable, Equatable {
     // workspace. lastActivity is an ISO 8601 time.
     public let runState: String
     public let lastActivity: String?
+    public let publicLink: AgentPublicLink?
 
     public init(_ workspace: WorkspaceInfo) {
         name = workspace.name
@@ -53,6 +87,7 @@ public struct AgentWorkspace: Codable, Sendable, Equatable {
         devServer = AgentSite.devServerText(workspace.devServer, app: workspace.app)
         runState = workspace.resolvedRunState.rawValue
         lastActivity = workspace.lastActivity?.formatted(.iso8601)
+        publicLink = workspace.share.map(AgentPublicLink.init)
     }
 }
 
@@ -105,6 +140,8 @@ public struct AgentSite: Codable, Sendable, Equatable {
     public let workspaces: [AgentWorkspace]
     public let problem: String?
     public let devServer: String?
+    // The link of the workspace of the target, else the link of the site.
+    public let publicLink: AgentPublicLink?
 
     public init(target: SiteTarget, connections: [DatabaseConnectionInfo], mail: SiteMail?, testDatabase: TestDatabaseCheck?) {
         let site = target.site
@@ -126,6 +163,7 @@ public struct AgentSite: Codable, Sendable, Equatable {
         workspaces = target.workspace == nil ? (site.workspaces ?? []).map(AgentWorkspace.init) : []
         problem = target.workspace.flatMap { $0.isolationMessage ?? $0.problem } ?? site.problem
         devServer = target.workspace.map { Self.devServerText($0.devServer, app: $0.app) } ?? Self.devServerText(site.devServer, app: site.kind == .node ? site.app : nil)
+        publicLink = (target.workspace.map(\.share) ?? site.share).map(AgentPublicLink.init)
     }
 
     // The dev server of a Laravel site or the Node.js app (owner, 2026-11-15).
@@ -166,6 +204,7 @@ public struct AgentSiteRow: Codable, Sendable, Equatable {
     public let problem: String?
     public let devServer: String?
     public let workspaces: [AgentWorkspace]
+    public let publicLink: AgentPublicLink?
 
     public init(_ site: SiteInfo) {
         self.site = site.hosts.first ?? ""
@@ -177,5 +216,6 @@ public struct AgentSiteRow: Codable, Sendable, Equatable {
         problem = site.problem
         devServer = AgentSite.devServerText(site.devServer, app: site.kind == .node ? site.app : nil)
         workspaces = (site.workspaces ?? []).map(AgentWorkspace.init)
+        publicLink = site.share.map(AgentPublicLink.init)
     }
 }

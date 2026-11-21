@@ -366,6 +366,8 @@ struct FirstRunPackages {
         FirstRunCategory(title: "Databases", packages: ["mysql", "mariadb", "postgresql"]),
         FirstRunCategory(title: "Services", packages: ["redis", "mailpit"]),
     ]
+    // Nexus installs cloudflared at the first link (group 4, 4a). So the first run does not show it.
+    static let installedByNexus = ["cloudflared"]
 
     let packages: [PackageItem]
     private let rowsByName: [String: [PackageItem]]
@@ -384,10 +386,10 @@ struct FirstRunPackages {
     }
 
     // The step offers every package of the manifest. A package that the layout does not know yet
-    // goes into the category Other at the end.
+    // goes into the category Other at the end. The packages of installedByNexus do not show.
     var categories: [FirstRunCategory] {
         let known = Set(Self.layout.flatMap(\.packages))
-        let others = rowsByName.keys.filter { !known.contains($0) }.sorted()
+        let others = rowsByName.keys.filter { !known.contains($0) && !Self.installedByNexus.contains($0) }.sorted()
         let categories = Self.layout + (others.isEmpty ? [] : [FirstRunCategory(title: "Other", packages: others)])
 
         return categories.compactMap { category in

@@ -21,7 +21,12 @@ struct ManifestTests {
         {"name": "composer", "version": "2.10.3", "line": "2", "revision": 1,
          "url": "https://getcomposer.org/download/2.10.3/composer.phar",
          "sha256": "7a2d379d5b8ffdaa028580ef26494c36d2feef4b178d3dd1473a4d0000000000",
-         "format": "phar", "minimum_macos": "27.0", "architecture": "arm64", "upstream": true}
+         "format": "phar", "minimum_macos": "27.0", "architecture": "arm64", "upstream": true},
+        {"name": "cloudflared", "version": "2026.11.0", "line": "1", "revision": 1,
+         "url": "https://github.com/NexusLocal/binaries/releases/download/cloudflared-2026.11.0-r1/cloudflared-2026.11.0-macos-arm64.tar.xz",
+         "sha256": "fc47b9cab25fded9be33c5b6c48164ee696f89a6ce581d09a52a0c5d22f596a6", "size": 16732184,
+         "format": "tar.xz", "minimum_macos": "27.0", "architecture": "arm64", "license": "Apache-2.0",
+         "lts": false, "security_end": null}
       ]
     }
     """
@@ -30,9 +35,20 @@ struct ManifestTests {
         let manifest = try Manifest.decode(from: Data(json.utf8))
 
         #expect(manifest.schema == 1)
-        #expect(manifest.packages.count == 3)
+        #expect(manifest.packages.count == 4)
         #expect(manifest.packages[0].minimumMacOS == "27.0")
         #expect(manifest.packages[2].format == .phar)
+    }
+
+    @Test func readsTheCloudflaredPackageOfTheOneLine() throws {
+        let manifest = try Manifest.decode(from: Data(json.utf8))
+        let cloudflared = try #require(manifest.package(named: "cloudflared", line: "1"))
+
+        #expect(cloudflared.version == "2026.11.0")
+        #expect(cloudflared.format == .tarXZ)
+        #expect(cloudflared.license == "Apache-2.0")
+        #expect(cloudflared.lts == false)
+        #expect(cloudflared.securityEnd == nil)
     }
 
     @Test func readsTheSupportDataOfAVersionLine() throws {

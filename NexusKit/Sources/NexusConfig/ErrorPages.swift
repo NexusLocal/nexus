@@ -30,6 +30,22 @@ public enum ErrorPages {
         "<!doctype html><meta charset='utf-8'><meta http-equiv='refresh' content='1'><title>\(title)</title><p style='font-family: -apple-system, sans-serif'>\(text)</p>"
     }
 
+    // The pages of a link with the option "Hide error details and debug tools" (group 4, 4d). A
+    // visitor does not know Nexus. So the pages name no host, no path and no command (F13).
+    public static let shareError = plainPage(
+        title: "The site has an error",
+        text: "The site cannot show this page now. The person who shared this link can see the error in Nexus, the app that runs this site on their Mac."
+    )
+
+    public static let shareWaits = waitPage(
+        title: "The site starts",
+        text: "The site does not answer yet. This page tries again each second."
+    )
+
+    static func plainPage(title: String, text: String) -> String {
+        "<!doctype html><meta charset='utf-8'><title>\(title)</title><p style='font-family: -apple-system, sans-serif'>\(text)</p>"
+    }
+
     // The page of a Laravel site while its dev server starts (owner, 2026-11-15). nexusd writes it
     // as a file. So it can have quotes.
     public static func devServerWaits(host: String, command: String) -> String {
@@ -62,7 +78,7 @@ public enum ErrorPages {
     // certificate for an unknown name. A script puts the name of the request in the page as text.
     // So a name with HTML in it does nothing.
     public static func unknownSite(hosts: [String], httpsPort: Int) -> String {
-        let port = httpsPort == 443 ? "" : ":\(httpsPort)"
+        let port = NginxSettings.portSuffix(httpsPort, standard: 443)
         let names = Set(hosts.filter { !$0.hasPrefix("*.") }).sorted()
         let list = names.isEmpty
             ? "<p>Nexus has no sites yet. Add one in Nexus, or run <code>nexus site add &lt;folder&gt;</code> in a terminal.</p>"

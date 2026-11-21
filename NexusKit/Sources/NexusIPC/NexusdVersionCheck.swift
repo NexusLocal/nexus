@@ -113,6 +113,11 @@ extension NexusRequest {
             true
         case .startWorkspace(_, _, let keepAwake):
             keepAwake == nil
+        // An older nexusd cannot decode a case of the public links, also not a read (group 4).
+        case .shares, .sharePreview, .startShare, .stopShare, .stopAllShares, .setShareDefaults, .rebuildShare, .shareRequest, .checkOwnDomain, .connectOwnDomain, .cancelOwnDomain, .disconnectOwnDomain:
+            false
+        case .clearLinkRequests:
+            false
         case .fromAgent(_, let request):
             request.isSafeForAnOlderNexusd
         default:

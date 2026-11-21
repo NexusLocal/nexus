@@ -188,7 +188,7 @@ final class WebServer
 
     private $process;
 
-    public function __construct(string $documentRoot, public readonly string $stub)
+    public function __construct(string $documentRoot, public readonly string $stub, array $environment = [])
     {
         $probe = stream_socket_server('tcp://127.0.0.1:0', $errorCode, $errorText);
 
@@ -201,7 +201,7 @@ final class WebServer
 
         $log = Context::$temp."/web-{$this->port}.log";
         $command = [Context::$php, '-n', '-d', "auto_prepend_file={$stub}", '-S', "127.0.0.1:{$this->port}", '-t', $documentRoot];
-        $process = proc_open($command, [0 => ['file', '/dev/null', 'r'], 1 => ['file', $log, 'a'], 2 => ['file', $log, 'a']], $pipes, $documentRoot, baseEnvironment());
+        $process = proc_open($command, [0 => ['file', '/dev/null', 'r'], 1 => ['file', $log, 'a'], 2 => ['file', $log, 'a']], $pipes, $documentRoot, array_merge(baseEnvironment(), $environment));
 
         if ($process === false) {
             throw new Failure('The PHP web server did not start.');
@@ -551,6 +551,10 @@ function pageModeTable(): void
         ['Never in a command', PageMode::NEVER, [], false, true, true],
         ['unknown mode with a page', 'sometimes', ['HTTP_ACCEPT' => $browser], false, false, true],
         ['unknown mode with JSON', 'sometimes', ['HTTP_ACCEPT' => 'application/json'], false, false, false],
+        ['public link with hidden dumps', PageMode::ALWAYS, ['NEXUS_SHARE_HIDE_DUMPS' => '1', 'HTTP_SEC_FETCH_DEST' => 'document'], false, false, false],
+        ['dd() through a public link with hidden dumps', PageMode::ALWAYS, ['NEXUS_SHARE_HIDE_DUMPS' => '1', 'HTTP_SEC_FETCH_DEST' => 'document'], true, false, false],
+        ['a command with the value', PageMode::ALWAYS, ['NEXUS_SHARE_HIDE_DUMPS' => '1', 'HTTP_SEC_FETCH_DEST' => 'document'], false, true, true],
+        ['another value', PageMode::ALWAYS, ['NEXUS_SHARE_HIDE_DUMPS' => '0'], false, false, true],
     ];
 
     foreach ($rows as [$name, $mode, $server, $isDd, $cli, $expected]) {
@@ -1738,6 +1742,22 @@ function longCommandLine(): void
     same(Request::TEXT_BYTES + strlen(Request::CUT_MARKER), strlen($url), 'The request keeps the start of a long URL');
 }
 
+function linkRequestId(): void
+{
+    $linkId = str_repeat('4f2c0d9e', 4);
+    $web = static fn (string $value): string => Request::describe(['HTTP_HOST' => 'shop.test', 'REQUEST_URI' => '/webhooks/stripe', 'HTTP_X_NEXUS_SHARE_REQUEST' => $value], false)['id'];
+
+    same($linkId, $web($linkId), 'A request of a public link takes the id of nginx');
+
+    foreach ([substr($linkId, 1), strtoupper($linkId), '', $linkId."\n"] as $value) {
+        check(preg_match('/\A[0-9a-f]{12}\z/', $web($value)) === 1, 'A value that is not 32 lowercase hex characters gives a new id');
+    }
+
+    $command = Request::describe(['argv' => ['artisan'], 'HTTP_X_NEXUS_SHARE_REQUEST' => $linkId], true)['id'];
+
+    check(preg_match('/\A[0-9a-f]{12}\z/', $command) === 1, 'A command makes its own id');
+}
+
 function wordPressErrors(WebServer $server): void
 {
     [, $daemon] = scenario(['logs' => true], stub: $server->stub);
@@ -1862,6 +1882,67 @@ function wordPressWithoutSaveQueries(WebServer $server): void
     check(is_file("{$folder}/dumps/blocked-savequeries-127.0.0.1"), 'PHP keeps a stamp for the host and the reason.');
 }
 
+const PUBLIC_HOST = 'calm-river-tree-lamp.trycloudflare.com';
+
+const SWITCHES_OFF = ['dumps' => false, 'queries' => false, 'logs' => false, 'jobs' => false];
+
+function publicUrlOfALink(): void
+{
+    $home = 'https://www.shop.test:30443';
+
+    same('https://'.PUBLIC_HOST.'/checkout/?key=a', \Nexus\Dumps\PublicLink::publicUrl('https://www.shop.test:30443/checkout/?key=a', $home, PUBLIC_HOST), 'A URL with the host of home and the port');
+    same('https://'.PUBLIC_HOST.'/wc-api/nexus_test/', \Nexus\Dumps\PublicLink::publicUrl('https://www.shop.test/wc-api/nexus_test/', $home, PUBLIC_HOST), 'A URL without the port');
+    same('https://'.PUBLIC_HOST, \Nexus\Dumps\PublicLink::publicUrl('https://www.shop.test:30443', $home, PUBLIC_HOST), 'The home itself');
+    same('https://'.PUBLIC_HOST.'/x', \Nexus\Dumps\PublicLink::publicUrl('https://www.shop.test/x', 'https://WWW.Shop.test:30443', PUBLIC_HOST), 'An upper case host of home');
+    same('https://cdn.shop.test/x', \Nexus\Dumps\PublicLink::publicUrl('https://cdn.shop.test/x', $home, PUBLIC_HOST), 'Another host');
+    same('https://www.shop.test.example.com/x', \Nexus\Dumps\PublicLink::publicUrl('https://www.shop.test.example.com/x', $home, PUBLIC_HOST), 'A host that starts with the host of home');
+    same('http://www.shop.test/x', \Nexus\Dumps\PublicLink::publicUrl('http://www.shop.test/x', $home, PUBLIC_HOST), 'Another scheme');
+    same(['url'], \Nexus\Dumps\PublicLink::publicUrl(['url'], $home, PUBLIC_HOST), 'A value that is no string');
+    same(null, \Nexus\Dumps\PublicLink::publicUrl(null, $home, PUBLIC_HOST), 'No value');
+}
+
+function publicLinkFilters(): void
+{
+    $folder = Context::caseFolder();
+    $wordPress = new WebServer(Context::$fixtures.'/wordpress', writeStub("{$folder}/wordpress-stub.php", settings($folder, SWITCHES_OFF)), ['NEXUS_SHARE_HOST' => PUBLIC_HOST]);
+
+    try {
+        $state = state($wordPress->get('/wp-public-link.php', ['Accept' => 'text/html'])['body']);
+    } finally {
+        $wordPress->stop();
+    }
+
+    $plain = new WebServer(Context::$fixtures.'/plain', writeStub("{$folder}/plain-stub.php", settings($folder, SWITCHES_OFF)), ['NEXUS_SHARE_HOST' => PUBLIC_HOST]);
+
+    try {
+        $plainState = state($plain->get('/public-link.php', ['Accept' => 'text/html'])['body']);
+    } finally {
+        $plain->stop();
+    }
+
+    $otherVersion = new WebServer(Context::$fixtures.'/wordpress', writeStub("{$folder}/other-version-stub.php", settings($folder, ['version' => 2] + SWITCHES_OFF)), ['NEXUS_SHARE_HOST' => PUBLIC_HOST]);
+
+    try {
+        $otherVersionState = state($otherVersion->get('/wp-public-link.php', ['Accept' => 'text/html'])['body']);
+    } finally {
+        $otherVersion->stop();
+    }
+
+    same(\Nexus\Dumps\PublicLink::FILTERS, array_keys($state['filters']), 'The page asks each filter of the link');
+    same(array_fill_keys(\Nexus\Dumps\PublicLink::FILTERS, 'https://'.PUBLIC_HOST.'/checkout/order-received/7/?key=a'), $state['filters'], 'Each filter of WooCommerce gives the public URL');
+    same($state['filters'], $otherVersionState['filters'], 'A stub of another version keeps the filters of the link');
+    same(false, $state['dump'], 'With all switches off the stub defines no dump()');
+    same(['wpFilter' => false, 'dump' => false], $plainState, 'A site without WordPress gets no filters');
+}
+
+function wordPressWithoutAPublicLink(WebServer $server): void
+{
+    writeStub($server->stub, settings(Context::caseFolder(), SWITCHES_OFF));
+    $state = state($server->get('/wp-public-link.php', ['Accept' => 'text/html'])['body']);
+
+    same(array_fill_keys(\Nexus\Dumps\PublicLink::FILTERS, 'https://www.shop.test:30443/checkout/order-received/7/?key=a'), $state['filters'], 'Without a link each filter gives the local URL');
+}
+
 function wpCliRunsACronEvent(): void
 {
     [, $daemon, $stub] = scenario(ALL_SWITCHES);
@@ -1952,8 +2033,11 @@ $tests = [
     'Laravel test runs send nothing' => laravelTestRunsSendNothing(...),
     'a WP-CLI cron event' => wpCliRunsACronEvent(...),
     'wp-cron.php from a system crontab' => wpCronFromACrontab(...),
+    'the public URL of a link' => publicUrlOfALink(...),
+    'the filters of WooCommerce for a request of a link' => publicLinkFilters(...),
     'the folder of a relative script' => scriptFolderOfARelativeScript(...),
     'a long command line and a long URL' => longCommandLine(...),
+    'the id of a request of a public link' => linkRequestId(...),
 ];
 
 $webTests = [
@@ -1982,6 +2066,7 @@ $webTests = [
         'the jobs of wp-cron.php' => wordPressCron(...),
         'wp-cron.php with only the jobs switch' => wordPressCronWithOnlyJobs(...),
         'the source of a query or a log line in WordPress' => wordPressSources(...),
+        'the filters of WooCommerce without a link' => wordPressWithoutAPublicLink(...),
     ],
     'wordpress-nosave' => [
         'SAVEQUERIES false in wp-config.php' => wordPressWithoutSaveQueries(...),

@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import NexusSupervisor
+import NexusTestSupport
 import Testing
 @testable import NexusEngine
 
@@ -47,7 +48,7 @@ struct EarlierRunTests {
         let path = try #require(PortInspector.executablePath(of: leftover.processIdentifier))
 
         await NexusEngine.stop(pid: leftover.processIdentifier, path: path, signal: SIGTERM, timeout: .seconds(5))
-        leftover.waitUntilExit()
+        leftover.waitForEnd()
 
         #expect(leftover.terminationReason == .uncaughtSignal)
         #expect(leftover.terminationStatus == SIGTERM)

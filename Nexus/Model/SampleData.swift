@@ -40,14 +40,73 @@ extension AppModel {
     // off, empty, blocked or problem. The state jobs adds the job entries of the frame "Dumps Jobs".
     // The design shows the queries and the jobs switched on. The app gets the list as it gets the
     // first event of nexusd.
+    // The state link adds the requests of a public link of shop.test (group 4, 4f, frame "Dumps ·
+    // Public link"). All Catch switches are off in it. So the list shows because of the link.
     static func sampleDumpList(_ state: String? = nil) -> DumpList {
-        let catches = state != "off"
+        let catches = state != "off" && state != "link"
         let settings = DumpSettings(catchDumps: catches, catchQueries: catches, catchLogs: catches, catchJobs: catches, pageMode: .automatic, commands: true)
         let blocked = state == "blocked" ? sampleDumpBlocks : []
         let problem = state == "problem" ? "Nexus catches no dumps, because it cannot copy the PHP library of the dump viewer from the app. The activity log has the reason." : nil
-        let requests = state == "jobs" ? sampleJobRequests + sampleDumpRequests : sampleDumpRequests
+        let requests = switch state ?? "" {
+        case "jobs": sampleJobRequests + sampleDumpRequests
+        case "link": sampleLinkRequests + sampleDumpRequests
+        default: sampleDumpRequests
+        }
 
-        return DumpList(requests: state == "empty" ? [] : requests, settings: settings, blocked: blocked, receiving: true, problem: problem)
+        return DumpList(requests: state == "empty" ? [] : requests, settings: settings, blocked: blocked, receiving: true, problem: problem, linkHosts: state == "link" ? ["shop.test"] : [])
+    }
+
+    static let sampleLinkHost = "calm-river-tree-lamp.trycloudflare.com"
+
+    // The requests of the public link of shop.test, the newest first.
+    private static let sampleLinkRequests = [
+        DumpedRequest(id: "sample-link-checkout", kind: .http, method: "POST", target: "/checkout", url: "https://\(sampleLinkHost)/checkout", host: "shop.test", site: "shop.test", started: today(14, 25, 2), status: 302, duration: 0.096, placeHost: "shop.test", projectFolder: home("~/Development/shop"), publicLink: PublicLinkRequest(host: "shop.test", visitor: "203.0.113.7", size: 0, contentType: "text/html; charset=UTF-8")),
+        DumpedRequest(id: "sample-link-webhook", kind: .http, method: "POST", target: "/webhooks/stripe", url: "https://\(sampleLinkHost)/webhooks/stripe", host: "shop.test", site: "shop.test", started: today(14, 24, 15), status: 200, duration: 0.064, placeHost: "shop.test", projectFolder: home("~/Development/shop"), publicLink: PublicLinkRequest(host: "shop.test", visitor: "3.18.12.63", size: 18, contentType: "application/json")),
+        DumpedRequest(id: "sample-link-home", kind: .http, method: "GET", target: "/", url: "https://\(sampleLinkHost)/", host: "shop.test", site: "shop.test", started: today(14, 21, 40), status: 200, duration: 0.182, placeHost: "shop.test", projectFolder: home("~/Development/shop"), publicLink: PublicLinkRequest(host: "shop.test", visitor: "203.0.113.7", size: 5_120, contentType: "text/html; charset=UTF-8")),
+    ].map { request in counted(request) }
+
+    // The headers and the bodies of the requests of the link, as nexusd sends them. nexusd wrote
+    // "Hidden by Nexus" for the values of the hidden headers.
+    static func sampleShareRequest(id: String) -> ShareRequestDetail? {
+        let header = { (name: String, value: String) in ShareHeader(name: name, value: value) }
+
+        switch id {
+        case "sample-link-webhook":
+            let body = #"{"id":"evt_1QZx8kLp2fG7","type":"payment_intent.succeeded","data":{"object":{"amount":2450,"currency":"eur"}}}"#
+            return ShareRequestDetail(
+                id: id,
+                requestHeaders: [header("Host", sampleLinkHost), header("User-Agent", "Stripe/1.0 (+https://stripe.com/docs/webhooks)"), header("Content-Type", "application/json; charset=utf-8"), header("Stripe-Signature", "t=1794414394,v1=5257a869e7ecebeda32affa62cdca3fa51cad7e77a0e56ff536d0ce8e108d8bd"), header("Cookie", LinkRequestText.hiddenValue), header("CF-Connecting-IP", "3.18.12.63")],
+                requestBody: body,
+                requestBodyBytes: body.utf8.count,
+                requestBodyCut: false,
+                status: 200,
+                responseHeaders: [header("Content-Type", "application/json"), header("Content-Length", "18"), header("Cache-Control", "no-cache, private")],
+                size: 18
+            )
+        case "sample-link-checkout":
+            let body = "email=ann%40example.com&cart=42&_token=Xq3kR8vLm2"
+            return ShareRequestDetail(
+                id: id,
+                requestHeaders: [header("Host", sampleLinkHost), header("Content-Type", "application/x-www-form-urlencoded"), header("Cookie", LinkRequestText.hiddenValue), header("CF-Connecting-IP", "203.0.113.7")],
+                requestBody: body,
+                requestBodyBytes: body.utf8.count,
+                requestBodyCut: false,
+                status: 302,
+                responseHeaders: [header("Location", "https://\(sampleLinkHost)/thanks"), header("Set-Cookie", LinkRequestText.hiddenValue), header("Content-Type", "text/html; charset=UTF-8")],
+                size: 0
+            )
+        case "sample-link-home":
+            return ShareRequestDetail(
+                id: id,
+                requestHeaders: [header("Host", sampleLinkHost), header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Safari/605.1.15"), header("Accept", "text/html,application/xhtml+xml"), header("Cookie", LinkRequestText.hiddenValue), header("CF-Connecting-IP", "203.0.113.7")],
+                requestBodyCut: false,
+                status: 200,
+                responseHeaders: [header("Content-Type", "text/html; charset=UTF-8"), header("Set-Cookie", LinkRequestText.hiddenValue)],
+                size: 5_120
+            )
+        default:
+            return nil
+        }
     }
 
     private static let sampleDumpBlocks = [
@@ -111,7 +170,7 @@ extension AppModel {
     // The entries as nexusd gives them, with the tree as JSON text: the dumps first, then the
     // queries, the log lines and the job rows.
     static func sampleDumps(of requestID: String) -> [CaughtDump] {
-        guard let request = (sampleDumpRequests + sampleJobRequests).first(where: { $0.id == requestID }) else {
+        guard let request = (sampleDumpRequests + sampleJobRequests + sampleLinkRequests).first(where: { $0.id == requestID }) else {
             return []
         }
 
@@ -290,6 +349,9 @@ extension AppModel {
     ])
 
     private static let sampleDumpContents: [String: [(file: String, line: Int, kind: CaughtDump.Kind, text: String, tree: DumpNode)]] = [
+        "sample-link-webhook": [
+            ("app/Http/Controllers/StripeWebhookController.php", 24, .dump, "\"payment_intent.succeeded\"", DumpNode(kind: .string, value: "payment_intent.succeeded")),
+        ],
         "sample-checkout": [
             ("app/Http/Controllers/CheckoutController.php", 42, .dump, """
                 App\\Models\\Cart {#1287
@@ -449,7 +511,7 @@ extension AppModel {
         site.projectType = .wordpress
         site.backgroundCommands = []
         site.workspaces = [
-            WorkspaceInfo(name: "fix", worktree: "~/Development/blog-fix", folder: "~/Development/blog-fix", branch: "fix", hosts: ["blog-fix.test"], url: "https://blog-fix.test", state: .ready, databases: [WorkspaceDatabaseInfo(name: "blog", instance: "mysql-8.0", port: 20001)], runState: .running, keepAwake: true),
+            WorkspaceInfo(name: "fix", worktree: "~/Development/blog-fix", folder: "~/Development/blog-fix", branch: "fix", hosts: ["blog-fix.test"], url: "https://blog-fix.test", state: .ready, databases: [WorkspaceDatabaseInfo(name: "blog", instance: "mysql-8.0", port: 20001)], runState: .running, keepAwake: true, share: sampleLink(host: "blog-fix.test", site: "blog.test", workspace: "fix", address: "quiet-forest-paper-lake.trycloudflare.com", endsAt: nil, visitors: 0, lastVisit: nil, requests: nil)),
             WorkspaceInfo(name: "ticket-118", worktree: "~/Development/blog/.claude/worktrees/ticket-118", folder: "~/Development/blog/.claude/worktrees/ticket-118", branch: "ticket-118", hosts: ["blog-ticket-118.test"], url: "https://blog-ticket-118.test", state: .ready, runState: .stopped, keepAwake: false, stoppedAfter: .oneHour),
             WorkspaceInfo(name: "ticket-160", worktree: "~/Development/blog/.claude/worktrees/ticket-160", folder: "~/Development/blog/.claude/worktrees/ticket-160", branch: "ticket-160", hosts: ["blog-ticket-160.test"], url: "https://blog-ticket-160.test", state: .ready, locked: "claude agent agent-a1b2"),
         ]
@@ -461,7 +523,92 @@ extension AppModel {
         var site = site("shop.test", folder: "~/Development/shop", aliases: ["www.shop.test"])
         site.nginxLines = ["client_max_body_size 100m;", "location /storage/ {", "    add_header Cache-Control \"public, max-age=3600\";", "}"]
         site.workspaces = sampleShopWorkspaces
+        site.share = sampleShopLink()
         return site
+    }
+
+    // The public links of the sample data (group 4, 4g). The time 18:40 is the time of the frames in
+    // nexus.pen. The words of an address are an example of a quick link.
+    static func sampleLink(host: String, site: String, workspace: String? = nil, address: String, endsAt: Date?, visitors: Int, lastVisit: Date?, requests: Int?, state: ShareState = .open, password: String? = nil, usesVite: Bool = true, viteMode: ShareViteMode = .live, liveBlocked: String? = nil) -> ShareInfo {
+        var options = ShareOptions.standard
+        options.duration = endsAt == nil ? .untilStopped : .eightHours
+        options.password = password != nil
+        options.viteMode = viteMode
+        options.keepsRequests = requests != nil
+
+        return ShareInfo(host: host, site: site, workspace: workspace, url: state == .open ? "https://\(address)" : nil, state: state, options: options, started: .now.addingTimeInterval(-3600), endsAt: endsAt, password: password, visitors: visitors, lastVisit: lastVisit, requestCount: requests, usesVite: usesVite, liveBlocked: liveBlocked, log: "~/Library/Application Support/Nexus/logs/cloudflared-\(host).log")
+    }
+
+    static let samplePassword = "plum-river-42"
+
+    private static let sampleLiveBlocked = "Live is not possible for this site. It has Vite 5.4.21, which lets visitors read files on your Mac. Update Vite in this project to 6.4.6, 7.3.8, 8.1.7 or later to use Live."
+
+    private static func sampleShopLink(state: ShareState = .open, viteMode: ShareViteMode = .live, liveBlocked: String? = nil) -> ShareInfo {
+        sampleLink(host: "shop.test", site: "shop.test", address: "calm-river-tree-lamp.trycloudflare.com", endsAt: today(18, 40, 0), visitors: 2, lastVisit: Date.now.addingTimeInterval(-60), requests: 12, state: state, viteMode: viteMode, liveBlocked: liveBlocked)
+    }
+
+    // The confirm sheet of --sample. --share-preview warnings gives the three warnings of the frame
+    // "Sheet Share Site · Warnings". vite-build gives a site with an old Vite version.
+    // nexusd sends the defaults with Build for an old Vite version. own-domain gives the row Address
+    // with shop on the connected sample domain, or on example.com without one (4h).
+    static func sampleSharePreview(host: String, variant: String?, defaults: ShareOptions, ownDomain: String?) -> SharePreview {
+        var build = defaults
+        build.viteMode = .build
+
+        return switch variant {
+        case "warnings":
+            SharePreview(host: host, defaults: defaults, usesVite: true, warnings: [.sendsRealMail, .oauthLogin, .serverSentEvents])
+        case "vite-build":
+            SharePreview(host: host, defaults: build, usesVite: true, liveBlocked: sampleLiveBlocked)
+        case "own-domain":
+            SharePreview(host: host, defaults: defaults, usesVite: true, ownDomain: ownDomain ?? "example.com", label: "shop")
+        default:
+            SharePreview(host: host, defaults: defaults, usesVite: true, ownDomain: ownDomain, label: ownDomain.map { _ in OwnDomainName.defaultLabel(of: host) })
+        }
+    }
+
+    // The own domain of the sample data for --own-domain connected, connecting or failed (4h).
+    static func sampleOwnDomain(_ state: String) -> OwnDomainInfo? {
+        switch state {
+        case "connected":
+            OwnDomainInfo(domain: "example.com", tunnelName: "nexus-macbook-pro", state: .connected, addresses: ["blog.example.com", "shop.example.com"])
+        case "connecting":
+            OwnDomainInfo(domain: "example.com", state: .connecting(loginPage: "https://dash.cloudflare.com/argotunnel"))
+        case "failed":
+            OwnDomainInfo(domain: "example.com", state: .failed(ShareText.OwnDomain.otherDomain(selected: "other.com", asked: "example.com"), keyMade: true))
+        default:
+            nil
+        }
+    }
+
+    // --share-state changes the link of shop.test for the frame "Share Button States": none,
+    // download, build, open-link, build-open or failed.
+    func showSampleShareState(_ state: String) {
+        let link: ShareInfo? = switch state {
+        case "download": Self.sampleShopLink(state: .starting(.downloadCloudflared))
+        case "build": Self.sampleShopLink(state: .starting(.buildAssets), viteMode: .build)
+        case "open-link": Self.sampleShopLink(state: .starting(.openLink))
+        case "build-open": Self.sampleShopLink(viteMode: .build, liveBlocked: Self.sampleLiveBlocked)
+        default: nil
+        }
+
+        changeSampleLink("shop.test", to: link)
+        shareFailures["shop.test"] = state == "failed" ? ShareText.noAddress : nil
+    }
+
+    // --public-links many gives 7 links, as the text "7 public links are open" of ux-texts.md.
+    func addSampleLinks() {
+        let links = [
+            ("example.test", "bright-stone-river-cloud"),
+            ("my.example.test", "green-hill-lamp-sound"),
+            ("agency.test", "silver-moon-paper-tree"),
+            ("docs.agency.test", "warm-field-glass-bird"),
+            ("crm.test", "open-sky-candle-road"),
+        ]
+
+        for (host, words) in links {
+            changeSampleLink(host, to: Self.sampleLink(host: host, site: host, address: "\(words).trycloudflare.com", endsAt: Self.today(19, 30, 0), visitors: 0, lastVisit: nil, requests: nil))
+        }
     }
 
     // The old workspaces are the rows of "Sheet Old Workspaces" in nexus.pen. ticket-123 had a page
@@ -802,6 +949,7 @@ extension AppModel {
             package("Tools", "Node 26", "26.1.0"),
             package("Tools", "Composer", "2.9.2", .installed),
             package("Tools", "WP-CLI", "2.12.0"),
+            package("Tools", "cloudflared", "2026.11.0", .installed),
         ]
     }
 

@@ -82,6 +82,12 @@ public enum ApacheConfig {
             "",
             "RemoteIPHeader X-Forwarded-For",
             "RemoteIPInternalProxy 127.0.0.1 ::1",
+            // nginx sends the public host of a link in this header, only for a request of that link
+            // (group 4, 4c). PHP gets it as NEXUS_SHARE_HOST, as a PHP site of nginx gets it.
+            "SetEnvIf \(ShareConfig.Header.host.rawValue) \"^([A-Za-z0-9.-]+)$\" NEXUS_SHARE_HOST=$1",
+            // A request of a link with hidden error details gets the values of 4d, as a PHP site of
+            // nginx gets them.
+            "SetEnvIf \(ShareConfig.Header.hide.rawValue) \"^1$\" \(ShareProtection.hiddenErrorValues.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "))",
             "SSLSessionCache none",
             "",
             "<Directory />",
@@ -125,7 +131,7 @@ public enum ApacheConfig {
                 "    </Directory>",
                 "    <FilesMatch \"\\.php$\">",
             ]
-            lines += try phpHandler(socket: socket, xdebugSocket: xdebugSocket)
+            lines += try phpHandler(socket: socket, xdebugSocket: xdebugSocket, shareSocket: site.share?.shareSocket)
             lines += [
                 "        ErrorDocument 503 \"\(ErrorPages.phpWaits)\"",
                 "    </FilesMatch>",
@@ -141,15 +147,31 @@ public enum ApacheConfig {
     // gives Apache the cookie and the query string as they are.
     static let xdebugCondition = #"%{QUERY_STRING} =~ /(^|&)XDEBUG_(SESSION|SESSION_START|TRIGGER)(=|&|$)/ || %{HTTP_COOKIE} =~ /(^|;)\s*XDEBUG_(SESSION|TRIGGER)=/"#
 
-    private static func phpHandler(socket: URL, xdebugSocket: URL?) throws -> [String] {
-        guard let xdebugSocket else {
+    // A request of a link with hidden error details goes to the pool nexus-share (group 4, 4d). So
+    // it never reaches Xdebug, as in nginx.
+    static let shareCondition = "%{HTTP:\(ShareConfig.Header.hide.rawValue)} == '1'"
+
+    private static func phpHandler(socket: URL, xdebugSocket: URL?, shareSocket: URL?) throws -> [String] {
+        let branches = [(shareCondition, shareSocket), (xdebugCondition, xdebugSocket)].compactMap { branch in
+            branch.1.map { (condition: branch.0, socket: $0) }
+        }
+
+        guard !branches.isEmpty else {
             return ["        \(try setHandler(socket))"]
         }
 
-        return [
-            "        <If \"\(xdebugCondition)\">",
-            "            \(try setHandler(xdebugSocket))",
-            "        </If>",
+        var lines: [String] = []
+
+        for (offset, branch) in branches.enumerated() {
+            let tag = offset == 0 ? "If" : "ElseIf"
+            lines += [
+                "        <\(tag) \"\(branch.condition)\">",
+                "            \(try setHandler(branch.socket))",
+                "        </\(tag)>",
+            ]
+        }
+
+        return lines + [
             "        <Else>",
             "            \(try setHandler(socket))",
             "        </Else>",

@@ -89,7 +89,7 @@ struct NexusCommand: AsyncParsableCommand {
         subcommands: [
             Status.self, Start.self, Stop.self, Restart.self, Port.self, Available.self, Installed.self, Install.self, Remove.self,
             Trust.self, Cert.self, Hosts.self, Uninstall.self,
-            SiteCommand.self, WorkspaceCommand.self, OpenSite.self, EditSite.self, Errors.self, New.self, Import.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
+            SiteCommand.self, WorkspaceCommand.self, OpenSite.self, ShareCommand.self, EditSite.self, Errors.self, New.self, Import.self, Park.self, Unpark.self, Ext.self, Ini.self, Module.self, Lan.self, TLD.self,
             Database.self, PHP.self, Debug.self, Composer.self, Node.self, NPM.self, WP.self, MailCommand.self, Sendmail.self, DumpsCommand.self, MCPCommand.self,
         ]
     )

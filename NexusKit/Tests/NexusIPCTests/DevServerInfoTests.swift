@@ -19,6 +19,16 @@ struct DevServerInfoTests {
         #expect(decoded == list)
     }
 
+    @Test func aDevServerThatALinkWithBuildHoldsBackSurvivesTheWire() throws {
+        let list = siteList(state: .pausedForLink)
+        let text = String(decoding: try NexusMessageCoding.encode(list), as: UTF8.self)
+        let decoded = try NexusMessageCoding.decode(SiteList.self, from: Data(text.utf8))
+
+        #expect(text.contains("\"paused_for_link\""))
+        #expect(decoded == list)
+        #expect(decoded.sites.first?.devServer?.text == "npm run dev does not run while a public link of this site uses Build.")
+    }
+
     @Test func aStateAndANumberOfMinutesOfANewerNexusdGiveNilAndTheListStillDecodes() throws {
         let text = String(decoding: try NexusMessageCoding.encode(siteList()), as: UTF8.self)
             .replacing("\"waits_for_page\"", with: "\"sleeps\"")
