@@ -9,7 +9,7 @@ and Redis. These programs are not part of the app. So this file does not name th
 
 | Project | Version | License | Use |
 | --- | --- | --- | --- |
-| [Sentry Cocoa SDK](#sentry-cocoa-sdk) | 9.33.0 | MIT | Crash reports of the app and nexusd |
+| [Sentry Cocoa SDK](#sentry-cocoa-sdk) | 9.34.0 | MIT | Crash reports of the app and nexusd |
 | [Sparkle](#sparkle) | 2.10.1 | MIT | The updates of the app |
 | [Swift Argument Parser](#swift-argument-parser) | 1.8.2 | Apache 2.0 | The arguments of the nexus command |
 | [SwiftASN1](#swiftasn1) | 1.7.4 | Apache 2.0 | The certificates of nexusd |
@@ -25,7 +25,7 @@ at the end of this file.
 
 ## Sentry Cocoa SDK
 
-Version 9.33.0, https://github.com/getsentry/sentry-cocoa
+Version 9.34.0, https://github.com/getsentry/sentry-cocoa
 
 The app and nexusd send crash reports with it. License: MIT.
 
@@ -101,7 +101,7 @@ SentryCrash includes structures and constants from objc4 and CoreFoundation of A
 in SentryCrashObjCApple.h and SentryCrashMach-O.c. Portions Copyright (c) 1999-2007 Apple Inc. All
 Rights Reserved. License: Apple Public Source License 2.0. The source code of these parts is
 available under the terms of this license in the repository of the Sentry Cocoa SDK:
-https://github.com/getsentry/sentry-cocoa (version 9.33.0).
+https://github.com/getsentry/sentry-cocoa (version 9.34.0).
 
 ```
 APPLE PUBLIC SOURCE LICENSE Version 2.0 - August 6, 2003
