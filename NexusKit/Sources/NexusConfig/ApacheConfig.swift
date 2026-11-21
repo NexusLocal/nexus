@@ -129,7 +129,7 @@ public enum ApacheConfig {
                 "        AllowOverride All",
                 "        Require all granted",
                 "    </Directory>",
-                "    <FilesMatch \"\\.php$\">",
+                "    <FilesMatch \"\(phpFiles)\">",
             ]
             lines += try phpHandler(socket: socket, xdebugSocket: xdebugSocket, shareSocket: site.share?.shareSocket)
             lines += [
@@ -142,6 +142,11 @@ public enum ApacheConfig {
 
         return lines.joined(separator: "\n") + "\n"
     }
+
+    // APFS finds /index.php through /index.PHP. Without (?i) Apache sends such a file as text, with
+    // its source. PHP-FPM refuses each extension that is not .php in lower case. So the visitor gets
+    // 403, as from a site in nginx, whose locations ignore case on macOS.
+    static let phpFiles = #"(?i)\.php$"#
 
     // A request that starts an Xdebug session goes to the PHP-FPM with Xdebug, as in nginx. nginx
     // gives Apache the cookie and the query string as they are.

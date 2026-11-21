@@ -436,7 +436,7 @@ struct WebConfigTests {
         let plain = try ApacheConfig.render(sites: [site(.apache, php: "8.4")], settings: settings)
 
         #expect(apache.contains("""
-                <FilesMatch "\\.php$">
+                <FilesMatch "(?i)\\.php$">
                     <If "\(ApacheConfig.xdebugCondition)">
                         SetHandler "proxy:unix:/Nexus/run/xdebug-8.4.sock|fcgi://xdebug-8.4"
                     </If>
@@ -447,7 +447,20 @@ struct WebConfigTests {
             """))
         #expect(!nginx.contains("$nexus_xdebug"))
         #expect(!plain.contains("<If"))
-        #expect(plain.contains("    <FilesMatch \"\\.php$\">\n        SetHandler \"proxy:unix:/Nexus/run/php-8.4.sock|fcgi://php-8.4\"\n        ErrorDocument 503"))
+        #expect(plain.contains("    <FilesMatch \"(?i)\\.php$\">\n        SetHandler \"proxy:unix:/Nexus/run/php-8.4.sock|fcgi://php-8.4\"\n        ErrorDocument 503"))
+    }
+
+    @Test func apacheGivesEachCaseVariantOfDotPHPToPHPSoItNeverSendsTheSource() throws {
+        let pattern = try NSRegularExpression(pattern: ApacheConfig.phpFiles)
+        let matches = { (name: String) in pattern.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil }
+
+        #expect(matches("index.php"))
+        #expect(matches("info.PHP"))
+        #expect(matches("wp-config.Php"))
+        #expect(matches("secret.pHp"))
+        #expect(!matches("style.css"))
+        #expect(!matches("index.php.bak"))
+        #expect(!matches("phpinfo"))
     }
 
     private func linkedSite(_ server: WebServer = .nginx, xdebug: Bool, shareSocket: Bool = true) -> WebSite {
@@ -507,7 +520,7 @@ struct WebConfigTests {
         let plain = try ApacheConfig.render(sites: [debugSite(.apache, php: "8.5")], settings: settings)
 
         #expect(linked.contains("""
-                <FilesMatch "\\.php$">
+                <FilesMatch "(?i)\\.php$">
                     <If "%{HTTP:X-Nexus-Share-Hide} == '1'">
                         SetHandler "proxy:unix:/Nexus/run/php-share-8.5.sock|fcgi://php-share-8.5"
                     </If>

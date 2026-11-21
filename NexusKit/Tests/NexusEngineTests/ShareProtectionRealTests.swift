@@ -64,6 +64,7 @@ struct ShareProtectionRealTests {
         "warn.php": "<?php\necho $undefinedVariable;\necho 'done';\n",
         "status.php": "<?php\nhttp_response_code((int) ($_GET['code'] ?? 200));\necho 'detail of the site';\n",
         "secret.php": "<?php\n// secret source text\necho 'secret ran';\n",
+        "info.PHP": "<?php\n// info source text\necho 'info ran';\n",
         "vendor/autoload.php": "<?php\necho 'vendor ran';\n",
         "vendor/phpunit/x/eval.php": "<?php\necho 'eval ran';\n",
         "vendor/x/app.css": "body { color: red; }\n",
@@ -519,6 +520,34 @@ struct ShareProtectionRealTests {
             #expect(local["APP_DEBUG"] == nil, "\(local)")
             #expect(!isOff(local["display_errors"]), "\(local)")
             #expect(localWarning.body.contains("Warning"), "\(localWarning.body)")
+        }
+    }
+
+    // The site block without a link, as each device of the LAN reaches it. APFS finds a file
+    // through each case variant of its name.
+    @Test(.enabled(if: NexusEngineTests.realRuntimes != nil), .timeLimit(.minutes(3)))
+    func aPHPFileWithAnExtensionInCapitalsShowsNoSourceInNginxOrInApache() async throws {
+        let fixture = try await fixture(hosts: ["shop.test", "apache.test"], apache: true)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        try await base.whileRunning(fixture.engine) {
+            try await addSites(fixture, ["shop.test"])
+            try await addSites(fixture, ["apache.test"], server: .apache)
+
+            for host in ["shop.test", "apache.test"] {
+                for path in ["/info.PHP", "/SECRET.PHP", "/secret.Php", "/Secret.pHp?a=1", "/info.PHP/x", "/secret.PHP/x.js"] {
+                    let answer = siteRequest(fixture, host: host, path)
+
+                    #expect(!answer.body.contains("source text"), "\(host)\(path) gives \(answer.status): \(answer.body)")
+                    #expect([403, 404].contains(answer.status), "\(host)\(path) gives \(answer.status): \(answer.body)")
+                }
+
+                let secret = siteRequest(fixture, host: host, "/secret.php")
+                let info = siteRequest(fixture, host: host, "/info.php")
+
+                #expect(secret.body == "secret ran", "\(host) gives \(secret.status): \(secret.body)")
+                #expect(info.body == "info ran", "\(host) gives \(info.status): \(info.body)")
+            }
         }
     }
 
