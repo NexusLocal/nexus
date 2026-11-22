@@ -7,12 +7,10 @@ needs research and a plan before the work starts.
 
 In this order:
 
-1. **Packages:**
-   - **PHP 8.6**, when Xdebug, Redis, APCu, pcov, igbinary, YAML, Imagick and memcached have
-     releases that support it.
-   - **PostgreSQL extensions:** PostGIS and pgRouting.
-2. **MongoDB.** A database service with versions, as MySQL, MariaDB and PostgreSQL have. Each PHP
-   version gets the `mongodb` extension.
+1. **PHP 8.6**, when Xdebug, Redis, APCu, pcov, igbinary, YAML, Imagick and memcached have releases
+   that support it.
+2. **MongoDB.** A database service with versions, as MySQL, MariaDB and PostgreSQL have. Each
+   workspace gets its own copy, and transactions work.
 3. **Valkey.** The fork of Redis with the BSD license, as a service next to Redis.
 4. **A log viewer** for the logs of your apps.
 
@@ -22,6 +20,8 @@ In this order:
 
 ## Done recently
 
+- **0.7.3:** PostGIS and pgRouting for PostgreSQL 15 to 19, the `mongodb` extension for PHP 8.2 to
+  8.5, and a message for each workspace that shares MongoDB with the main site.
 - **0.7.2:** pgvector for PostgreSQL 15 to 19, `gmp` and `memcached` for PHP 8.2 to 8.5, and
   "Replace only the tables" that changes nothing when something else uses a table of the dump.
 - **0.7.1:** PostgreSQL 19, Server Actions of Next.js, no PHP source on Apache for a file such as
