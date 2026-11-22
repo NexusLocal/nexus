@@ -305,7 +305,7 @@ extension NexusEngineTests {
 
             let unchanged = [
                 ("key", try await load(dump, into: "key", "\(same) CREATE TABLE kept (user_id int REFERENCES users); INSERT INTO kept VALUES (9)"), "Nothing changed."),
-                ("view", try await load(dump, into: "view", "\(same) CREATE VIEW kept AS SELECT * FROM users"), "Nothing changed."),
+                ("view", try await load(dump, into: "view", "\(same) CREATE VIEW kept AS SELECT * FROM users"), "Other parts of view use them: view kept depends on table users. Nothing changed."),
                 ("parts", try await load(dump, into: "parts", "\(same) CREATE TABLE logs_2 PARTITION OF logs FOR VALUES FROM (2) TO (3); INSERT INTO logs VALUES (2)"), "Nothing changed."),
                 ("rows", try await load(rows, into: "rows", same), "Nothing changed."),
                 ("renamed", try await load(dump, into: "renamed", "\(shared) CREATE TABLE users_old (name citext); CREATE INDEX users_name ON users_old (name); CREATE TABLE users (id int); INSERT INTO users VALUES (9)"), "index users_name belongs to table users_old"),

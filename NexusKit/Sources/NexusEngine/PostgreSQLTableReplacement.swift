@@ -300,11 +300,13 @@ extension PostgreSQLTableReplacement {
         """
 
     // A table or a view that goes away although the dump does not have it, and an index or a partition
-    // that goes away while its table stays.
+    // that goes away while its table stays. When the dump drops that table too, the failed drop already
+    // names the cause.
     private static let lost = """
         SELECT kind, name, parent FROM pg_temp.nexus_relations relations
             WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_class WHERE oid = relations.oid)
-                AND (EXISTS (SELECT FROM pg_catalog.pg_class WHERE oid = relations.parent_oid)
+                AND (EXISTS (SELECT FROM pg_catalog.pg_class class WHERE class.oid = relations.parent_oid
+                        AND NOT EXISTS (SELECT FROM pg_temp.nexus_statements WHERE relation_oid = class.oid))
                     OR (kind = 'table' AND NOT EXISTS (SELECT FROM pg_temp.nexus_statements WHERE relation_oid = relations.oid)))
         """
 }
