@@ -73,6 +73,12 @@ extension NexusEngine {
             throw RuntimeError.unsupported(conflict)
         }
 
+        if let useList = plan.replacement.useList {
+            let list = work.appending(path: "restore-\(UUID().uuidString).list")
+            try Data(useList.utf8).write(to: list)
+            plan.useList = list
+        }
+
         let copier = DatabaseCopier(tools: tools, source: client.endpoint, target: client.endpoint, work: work)
         try copier.prepare()
 
@@ -494,7 +500,9 @@ extension NexusEngine {
         case .postgresqlCustom:
             return Command(
                 executable: tools.bin("pg_restore"),
-                arguments: ["--no-owner", "--no-privileges", "-h", endpoint.host, "-p", String(endpoint.port), "-U", endpoint.account.user, "-d", plan.name] + (plan.replacesTables ? ["--clean", "--if-exists"] : []),
+                arguments: ["--no-owner", "--no-privileges", "-h", endpoint.host, "-p", String(endpoint.port), "-U", endpoint.account.user, "-d", plan.name]
+                    + (plan.replacesTables ? ["--clean", "--if-exists"] : [])
+                    + (plan.useList.map { ["-L", $0.path(percentEncoded: false)] } ?? []),
                 environment: ["PGPASSWORD": endpoint.account.password]
             )
         }
@@ -524,6 +532,7 @@ struct DumpLoad: Sendable {
     let replacesTables: Bool
     var links: DumpURLFilter?
     var replacement = PostgreSQLTableReplacement.nothingBlocked
+    var useList: URL?
 }
 
 // nexus dump-filter between the reader and the client, with its plan and the file of its report.
