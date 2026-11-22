@@ -8,11 +8,9 @@ needs research and a plan before the work starts.
 In this order:
 
 1. **Packages:**
-   - **PHP 8.6**, when Xdebug, Redis, APCu, pcov, igbinary, YAML and Imagick have releases that
-     support it.
-   - **More PHP extensions:** `gmp` and `memcached`, in each PHP version where they build and
-     load.
-   - **PostgreSQL extensions:** pgvector, PostGIS and pgRouting.
+   - **PHP 8.6**, when Xdebug, Redis, APCu, pcov, igbinary, YAML, Imagick and memcached have
+     releases that support it.
+   - **PostgreSQL extensions:** PostGIS and pgRouting.
 2. **MongoDB.** A database service with versions, as MySQL, MariaDB and PostgreSQL have. Each PHP
    version gets the `mongodb` extension.
 3. **Valkey.** The fork of Redis with the BSD license, as a service next to Redis.
@@ -24,6 +22,8 @@ In this order:
 
 ## Done recently
 
+- **0.7.2:** pgvector for PostgreSQL 15 to 19, `gmp` and `memcached` for PHP 8.2 to 8.5, and
+  "Replace only the tables" that changes nothing when something else uses a table of the dump.
 - **0.7.1:** PostgreSQL 19, Server Actions of Next.js, no PHP source on Apache for a file such as
   `info.PHP`, and no crash report of Nexus for a crash of a service.
 - **0.7.0:** share a site through a public link, with a password, hidden errors, the requests of
