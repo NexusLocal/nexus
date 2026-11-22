@@ -62,11 +62,13 @@ struct ScramSHA256 {
 
     private static func fields(of message: String) -> [String: String] {
         let pairs = message.split(separator: ",").compactMap { part -> (String, String)? in
-            guard let equals = part.firstIndex(of: "=") else {
+            let words = part.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+
+            guard words.count == 2 else {
                 return nil
             }
 
-            return (String(part[..<equals]), String(part[part.index(after: equals)...]))
+            return (String(words[0]), String(words[1]))
         }
 
         return Dictionary(pairs) { first, _ in first }

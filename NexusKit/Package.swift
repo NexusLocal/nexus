@@ -43,6 +43,8 @@ let package = Package(
         .target(name: "NexusConfig", dependencies: ["NexusCore"]),
         // The receiver and the store of the dumps that the prepend file of PHP sends.
         .target(name: "NexusDumps", dependencies: ["NexusCore"]),
+        // The commands that nexusd sends to a MongoDB server. MongoDB has no small client program.
+        .target(name: "NexusMongoDB", dependencies: ["NexusCore"]),
         .target(name: "NexusTLS", dependencies: [
             "NexusCore",
             .product(name: "X509", package: "swift-certificates"),
@@ -76,6 +78,7 @@ let package = Package(
         .testTarget(name: "NexusDNSTests", dependencies: ["NexusDNS", "NexusTestSupport"]),
         .testTarget(name: "NexusMailTests", dependencies: ["NexusMail"]),
         .testTarget(name: "NexusDumpsTests", dependencies: ["NexusDumps", "NexusCore", "NexusTestSupport"]),
+        .testTarget(name: "NexusMongoDBTests", dependencies: ["NexusMongoDB", "NexusCore"]),
         .testTarget(name: "NexusConfigTests", dependencies: ["NexusConfig", "NexusTestSupport"]),
         .testTarget(name: "NexusLaravelTests", dependencies: ["NexusLaravel", "NexusCore"]),
         .testTarget(name: "NexusWorkspacesTests", dependencies: ["NexusWorkspaces", "NexusCore", "NexusSupervisor"]),

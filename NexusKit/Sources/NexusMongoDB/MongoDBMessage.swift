@@ -15,14 +15,18 @@ enum MongoDBMessage {
     }
 
     static func command(_ document: BSONDocument, id: Int32) throws -> Data {
-        let flags = BSON.littleEndian(UInt32(0))
-        let body = flags + [0] + (try BSON.encode(document))
+        var body = BSON.littleEndian(UInt32(0))
+        body.append(0)
+        body.append(try BSON.encode(document))
 
-        return BSON.littleEndian(Int32(headerSize + body.count))
-            + BSON.littleEndian(id)
-            + BSON.littleEndian(Int32(0))
-            + BSON.littleEndian(operation)
-            + body
+        var message = Data()
+        message.append(BSON.littleEndian(Int32(headerSize + body.count)))
+        message.append(BSON.littleEndian(id))
+        message.append(BSON.littleEndian(Int32(0)))
+        message.append(BSON.littleEndian(operation))
+        message.append(body)
+
+        return message
     }
 
     static func header(_ data: Data) throws -> Header {
