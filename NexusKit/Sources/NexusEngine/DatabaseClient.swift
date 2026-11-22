@@ -92,6 +92,21 @@ struct DatabaseClient {
         try await CommandRunner.pipe(Command(executable: URL(filePath: "/bin/cat"), arguments: [file.path(percentEncoded: false)]), into: client)
     }
 
+    // The answer of a long script of PostgreSQL. An argument has a size limit and a file has none.
+    func output(ofScript sql: String, database: String) async throws -> String {
+        let file = options.deletingLastPathComponent().appending(path: "script-\(UUID().uuidString).sql")
+        guard FileManager.default.createFile(atPath: file.path(percentEncoded: false), contents: Data(sql.utf8), attributes: [.posixPermissions: 0o600]) else {
+            throw RuntimeError.unsupported("Nexus cannot write \(file.path(percentEncoded: false)).")
+        }
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        return try await CommandRunner.run(Command(
+            executable: tools.client,
+            arguments: ["-X", "-q", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1", "-h", endpoint.host, "-p", String(endpoint.port), "-U", endpoint.account.user, "-d", database, "-f", file.path(percentEncoded: false)],
+            environment: postgreSQLEnvironment
+        )).trimmed
+    }
+
     // Each row of the answer, with its columns.
     func rows(_ sql: String, database: String? = nil) async throws -> [[String]] {
         Self.rows(in: try await query(sql, database: database))

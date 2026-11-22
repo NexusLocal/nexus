@@ -63,6 +63,16 @@ extension NexusEngine {
             throw DatabaseTargetExists(description: "\(name) exists on \(server) already. Add --replace-tables or --replace-database, or load the dump into another database with --into.")
         }
 
+        var plan = DumpLoad(file: file, container: container, dump: dump, format: format, name: name, replacesTables: request.existing == .replaceTables)
+
+        if exists, plan.replacesTables, format == .postgresqlCustom {
+            plan.replacement = try await PostgreSQLTableReplacement.check(plan, client: client, tools: tools)
+        }
+
+        if let conflict = plan.replacement.conflictText(dump: shownName, database: name) {
+            throw RuntimeError.unsupported(conflict)
+        }
+
         let copier = DatabaseCopier(tools: tools, source: client.endpoint, target: client.endpoint, work: work)
         try copier.prepare()
 
@@ -80,7 +90,7 @@ extension NexusEngine {
         }
 
         let keptCopy = trashCopy.map { " Nexus put a copy of the old \(name) in the trash: \($0.lastPathComponent)." } ?? ""
-        let plan = DumpLoad(file: file, container: container, dump: dump, format: format, name: name, replacesTables: request.existing == .replaceTables)
+        let load = plan
         let progress = TaskProgress()
         let total = await Self.sqlSize(of: file, container: container)
         progress.update { $0.total = total }
@@ -89,7 +99,7 @@ extension NexusEngine {
             try await runTask(.importDump(file: fileName, instance: instance, name: name), progress: progress, stopped: {
                 exists ? "The import of \(shownName) stopped. \(name) can be incomplete.\(keptCopy)" : "The import of \(shownName) stopped. \(server) has no database \(name)."
             }) { progress in
-                try await self.load(plan, client: client, tools: tools, progress: progress)
+                try await self.load(load, client: client, tools: tools, progress: progress)
             }
         } catch {
             if !exists {
@@ -107,7 +117,7 @@ extension NexusEngine {
         case nil:
             return "\(shownName) is loaded into the new database \(name) on \(server)."
         case .replaceTables:
-            return "\(shownName) is loaded into \(name) on \(server). The tables of the dump replaced their old tables. The other tables stay as they were.\(keptCopy)"
+            return "\(shownName) is loaded into \(name) on \(server). The tables of the dump replaced their old tables. The other tables stay as they were.\(plan.replacement.keptText(database: name))\(keptCopy)"
         case .replaceDatabase:
             return "\(shownName) replaced the database \(name) on \(server).\(keptCopy)"
         }
@@ -286,8 +296,12 @@ extension NexusEngine {
     }
 
     private func load(_ plan: DumpLoad, client: DatabaseClient, tools: DatabaseTools, progress: TaskProgress) async throws {
-        try await Self.pipe(plan, client: client, tools: tools) { done in
-            progress.update { $0.completed = done }
+        do {
+            try await Self.pipe(plan, client: client, tools: tools) { done in
+                progress.update { $0.completed = done }
+            }
+        } catch CommandError.failed(_, _, let output) where plan.replacement.explains(output) {
+            return
         }
     }
 
@@ -509,6 +523,7 @@ struct DumpLoad: Sendable {
     let name: String
     let replacesTables: Bool
     var links: DumpURLFilter?
+    var replacement = PostgreSQLTableReplacement.nothingBlocked
 }
 
 // nexus dump-filter between the reader and the client, with its plan and the file of its report.
