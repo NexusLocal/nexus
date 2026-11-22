@@ -63,21 +63,23 @@ extension NexusEngine {
             throw DatabaseTargetExists(description: "\(name) exists on \(server) already. Add --replace-tables or --replace-database, or load the dump into another database with --into.")
         }
 
-        var plan = DumpLoad(file: file, container: container, dump: dump, format: format, name: name, replacesTables: request.existing == .replaceTables)
+        var plan = DumpLoad(file: file, container: container, dump: dump, format: format, name: name, replacesTables: exists && request.existing == .replaceTables)
+        var keptText = ""
 
-        if exists, plan.replacesTables, format == .postgresqlCustom {
-            plan.replacement = try await PostgreSQLTableReplacement.check(plan, client: client, tools: tools)
+        if plan.replacesTables, format == .postgresqlCustom {
+            let replacement = try await PostgreSQLTableReplacement.check(plan, client: client, tools: tools)
+
+            if let conflict = replacement.conflictText(dump: shownName, database: name) {
+                throw RuntimeError.unsupported(conflict)
+            }
+
+            keptText = replacement.keptText(database: name)
+            plan.replacementScript = try Self.writePrivate(replacement.script, in: work)
+            plan.useList = try replacement.useList.map { try Self.writePrivate($0, in: work) }
         }
 
-        if let conflict = plan.replacement.conflictText(dump: shownName, database: name) {
-            throw RuntimeError.unsupported(conflict)
-        }
-
-        if let useList = plan.replacement.useList {
-            let list = work.appending(path: "restore-\(UUID().uuidString).list")
-            try Data(useList.utf8).write(to: list)
-            plan.useList = list
-        }
+        // An error of this load changes nothing, because it is one transaction.
+        let changesAllOrNothing = plan.replacementScript != nil
 
         let copier = DatabaseCopier(tools: tools, source: client.endpoint, target: client.endpoint, work: work)
         try copier.prepare()
@@ -103,7 +105,11 @@ extension NexusEngine {
 
         do {
             try await runTask(.importDump(file: fileName, instance: instance, name: name), progress: progress, stopped: {
-                exists ? "The import of \(shownName) stopped. \(name) can be incomplete.\(keptCopy)" : "The import of \(shownName) stopped. \(server) has no database \(name)."
+                if changesAllOrNothing {
+                    return "The import of \(shownName) stopped. \(name) did not change."
+                }
+
+                return exists ? "The import of \(shownName) stopped. \(name) can be incomplete.\(keptCopy)" : "The import of \(shownName) stopped. \(server) has no database \(name)."
             }) { progress in
                 try await self.load(load, client: client, tools: tools, progress: progress)
             }
@@ -116,6 +122,10 @@ extension NexusEngine {
                 throw error
             }
 
+            if changesAllOrNothing {
+                throw RuntimeError.unsupported("The dump did not load and \(name) did not change. \(ErrorText.plain(error))")
+            }
+
             throw RuntimeError.unsupported("The dump did not load completely. \(ErrorText.plain(error))\(keptCopy)")
         }
 
@@ -123,7 +133,7 @@ extension NexusEngine {
         case nil:
             return "\(shownName) is loaded into the new database \(name) on \(server)."
         case .replaceTables:
-            return "\(shownName) is loaded into \(name) on \(server). The tables of the dump replaced their old tables. The other tables stay as they were.\(plan.replacement.keptText(database: name))\(keptCopy)"
+            return "\(shownName) is loaded into \(name) on \(server). The tables of the dump replaced their old tables. The other tables stay as they were.\(keptText)\(keptCopy)"
         case .replaceDatabase:
             return "\(shownName) replaced the database \(name) on \(server).\(keptCopy)"
         }
@@ -302,13 +312,18 @@ extension NexusEngine {
     }
 
     private func load(_ plan: DumpLoad, client: DatabaseClient, tools: DatabaseTools, progress: TaskProgress) async throws {
-        do {
-            try await Self.pipe(plan, client: client, tools: tools) { done in
-                progress.update { $0.completed = done }
-            }
-        } catch CommandError.failed(_, _, let output) where plan.replacement.explains(output) {
-            return
+        try await Self.pipe(plan, client: client, tools: tools) { done in
+            progress.update { $0.completed = done }
         }
+    }
+
+    private static func writePrivate(_ text: String, in folder: URL) throws -> URL {
+        let file = folder.appending(path: "import-\(UUID().uuidString).sql")
+        guard FileManager.default.createFile(atPath: file.path(percentEncoded: false), contents: Data(text.utf8), attributes: [.posixPermissions: 0o600]) else {
+            throw RuntimeError.unsupported("Nexus cannot write \(file.path(percentEncoded: false)).")
+        }
+
+        return file
     }
 
     static func reader(of file: URL, container: DumpContainer, dump: String?) -> Command {
@@ -498,12 +513,21 @@ extension NexusEngine {
                 name: "psql"
             )
         case .postgresqlCustom:
+            let connection = ["-h", endpoint.host, "-p", String(endpoint.port), "-U", endpoint.account.user, "-d", plan.name]
+            let environment = ["PGPASSWORD": endpoint.account.password]
+
+            guard let script = plan.replacementScript else {
+                return Command(executable: tools.bin("pg_restore"), arguments: ["--no-owner", "--no-privileges"] + connection, environment: environment)
+            }
+
+            // psql runs both scripts in one session. The script of pg_restore -1 ends with COMMIT.
             return Command(
-                executable: tools.bin("pg_restore"),
-                arguments: ["--no-owner", "--no-privileges", "-h", endpoint.host, "-p", String(endpoint.port), "-U", endpoint.account.user, "-d", plan.name]
-                    + (plan.replacesTables ? ["--clean", "--if-exists"] : [])
-                    + (plan.useList.map { ["-L", $0.path(percentEncoded: false)] } ?? []),
-                environment: ["PGPASSWORD": endpoint.account.password]
+                executable: URL(filePath: "/bin/bash"),
+                arguments: ["-c", #"set -o pipefail; "$1" -1 --no-owner --no-privileges ${2:+-L "$2"} -f - | "${@:3}""#, "load", tools.bin("pg_restore").path(percentEncoded: false),
+                            plan.useList?.path(percentEncoded: false) ?? "", tools.client.path(percentEncoded: false), "-X", "-q", "-v", "ON_ERROR_STOP=1"] + connection
+                    + ["-f", script.path(percentEncoded: false), "-f", "-"],
+                environment: environment,
+                name: "psql"
             )
         }
     }
@@ -531,7 +555,7 @@ struct DumpLoad: Sendable {
     let name: String
     let replacesTables: Bool
     var links: DumpURLFilter?
-    var replacement = PostgreSQLTableReplacement.nothingBlocked
+    var replacementScript: URL?
     var useList: URL?
 }
 

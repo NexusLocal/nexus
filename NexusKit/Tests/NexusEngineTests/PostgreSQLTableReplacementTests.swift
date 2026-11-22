@@ -14,8 +14,10 @@ struct PostgreSQLTableReplacementTests {
         ;
         ; Archive created at 2026-11-22
         ;
+        4; 2615 2200 SCHEMA - public postgres
         5; 2615 16386 SCHEMA - x postgres
         2; 3079 16387 EXTENSION - citext
+        3; 3079 16388 EXTENSION - postgis
         900; 1247 16500 TYPE public mood postgres
         901; 1247 16501 TYPE public size postgres
         240; 1255 16502 FUNCTION public total(public.mood, text) postgres
@@ -34,6 +36,7 @@ struct PostgreSQLTableReplacementTests {
         SELECT pg_catalog.set_config('search_path', '', false);
 
         ALTER TABLE IF EXISTS ONLY public."Odd Name" DROP CONSTRAINT IF EXISTS odd_user_id_fkey;
+        DROP INDEX IF EXISTS public.users_email;
         CREATE OR REPLACE VIEW public.active AS
         SELECT
             NULL::integer AS id,
@@ -45,6 +48,7 @@ struct PostgreSQLTableReplacementTests {
         DROP FUNCTION IF EXISTS public.total(a public.mood, b text);
         DROP TYPE IF EXISTS public.size;
         DROP TYPE IF EXISTS public.mood;
+        DROP EXTENSION IF EXISTS postgis;
         DROP EXTENSION IF EXISTS citext;
         DROP SCHEMA IF EXISTS x;
         --
@@ -60,15 +64,27 @@ struct PostgreSQLTableReplacementTests {
         String(contents.statements.firstIndex { $0.text == text } ?? -1)
     }
 
-    private func failed(_ text: String, state: String = "2BP01", stays: Bool, detail: String) -> [String] {
+    private func failed(_ text: String, state: String = "2BP01", stays: Bool = false, detail: String) -> [String] {
         ["statement", number(text), state, stays ? "t" : "f", detail]
     }
 
+    private func ids(_ useList: String?) -> [String] {
+        (useList ?? "").split(separator: "\n").compactMap { $0.split(separator: ";").first.map(String.init) }
+    }
+
     @Test func theDropStatementsEndBeforeTheFirstObjectAndAViewIsOneStatement() {
-        #expect(contents.statements.count == 11)
-        #expect(contents.statements[1].text == "CREATE OR REPLACE VIEW public.active AS\nSELECT\n    NULL::integer AS id,\n    NULL::bigint AS total;")
-        #expect(contents.statements[1].firstLine == "CREATE OR REPLACE VIEW public.active AS")
-        #expect(contents.statements.compactMap(\.relation) == ["public.users_id_seq", "public.\"Odd Name\"", "public.users"])
+        #expect(contents.statements.count == 13)
+        #expect(contents.statements[2].text == "CREATE OR REPLACE VIEW public.active AS\nSELECT\n    NULL::integer AS id,\n    NULL::bigint AS total;")
+        #expect(contents.statements.compactMap(\.relation) == ["public.users_email", "public.users_id_seq", "public.\"Odd Name\"", "public.users"])
+    }
+
+    @Test func nothingBlockedDropsAllAndLeavesOutNothing() {
+        let replacement = PostgreSQLTableReplacement(contents: contents, answer: [])
+
+        #expect(replacement.conflictText(dump: "shop.dump", database: "shop") == nil)
+        #expect(replacement.keptText(database: "shop") == "")
+        #expect(replacement.useList == nil)
+        #expect(replacement.script.contains("DROP TABLE IF EXISTS public.users;"))
     }
 
     @Test func aForeignKeyOrAViewOfAnotherTableStopsTheImport() throws {
@@ -89,10 +105,13 @@ struct PostgreSQLTableReplacementTests {
         #expect(!text.contains("view v4"))
     }
 
-    @Test func aPartitionThatTheDumpDoesNotHaveStopsTheImport() throws {
-        let replacement = PostgreSQLTableReplacement(contents: contents, answer: [["lost", "public.logs_2", "public.logs"]])
+    @Test func aPartitionOrAnIndexThatTheDumpDoesNotHaveStopsTheImport() {
+        let replacement = PostgreSQLTableReplacement(contents: contents, answer: [
+            ["lost", "table", "public.logs_2", "public.logs"],
+            ["lost", "index", "public.users_email", "public.users_old"],
+        ])
 
-        #expect(try #require(replacement.conflictText(dump: "shop.dump", database: "shop")).contains("table logs_2 is a partition of table logs"))
+        #expect(replacement.conflicts == ["table logs_2 is a partition of table logs", "index users_email belongs to table users_old"])
     }
 
     @Test func rowsWithoutTheirTableStopTheImport() throws {
@@ -101,46 +120,59 @@ struct PostgreSQLTableReplacementTests {
         #expect(try #require(replacement.conflictText(dump: "shop.dump", database: "shop")).contains("The dump has rows without the definition of these tables: users."))
     }
 
-    @Test func sharedObjectsStayAndLeaveTheList() throws {
+    @Test func sharedObjectsStayAndLeaveTheList() {
         let replacement = PostgreSQLTableReplacement(contents: contents, answer: [
-            failed("DROP FUNCTION IF EXISTS public.total(a public.mood, b text);", stays: false, detail: "default value for column n of table public.kept depends on function"),
-            failed("DROP TYPE IF EXISTS public.mood;", stays: false, detail: "column m of table public.kept depends on type public.mood"),
-            failed("DROP EXTENSION IF EXISTS citext;", stays: false, detail: "column name of table public.kept depends on type public.citext"),
-            failed("DROP SCHEMA IF EXISTS x;", stays: false, detail: "table x.kept depends on schema x"),
+            ["extension", "public spatial_ref_sys postgres", "postgis"],
+            failed("DROP FUNCTION IF EXISTS public.total(a public.mood, b text);", detail: "default value for column n of table public.kept depends on function"),
+            failed("DROP TYPE IF EXISTS public.mood;", detail: "column m of table public.kept depends on type public.mood"),
+            failed("DROP EXTENSION IF EXISTS citext;", detail: "column name of table public.kept depends on type public.citext"),
+            failed("DROP SCHEMA IF EXISTS x;", detail: "table x.kept depends on schema x"),
         ])
 
         #expect(replacement.conflictText(dump: "shop.dump", database: "shop") == nil)
         #expect(replacement.kept == ["function total(a mood, b text)", "type mood", "extension citext", "schema x"])
         #expect(replacement.keptText(database: "shop") == " These stay as they were because other parts of shop use them: function total(a mood, b text), type mood, extension citext and 1 more.")
+        #expect(ids(replacement.useList) == ["4", "3", "901", "220", "221", "3400", "3401"])
+        #expect(!replacement.script.contains("DROP TYPE IF EXISTS public.mood;"))
+        #expect(replacement.script.contains("DROP TYPE IF EXISTS public.size;"))
+    }
 
-        let left = try #require(replacement.useList).split(separator: "\n").compactMap { $0.split(separator: ";").first.map(String.init) }
-        #expect(left == ["901", "220", "221", "3400"])
+    @Test func theRowsOfAnExtensionThatStaysStayToo() {
+        let replacement = PostgreSQLTableReplacement(contents: contents, answer: [
+            ["extension", "public spatial_ref_sys postgres", "postgis"],
+            failed("DROP EXTENSION IF EXISTS postgis;", detail: "column place of table public.kept depends on type public.geometry"),
+        ])
+
+        #expect(ids(replacement.useList) == ["4", "5", "2", "900", "901", "240", "220", "221", "3400"])
+    }
+
+    @Test func theSchemaPublicStaysWhenTheDumpDropsIt() {
+        let contents = DumpContents(list: list, script: script.replacingOccurrences(of: "DROP SCHEMA IF EXISTS x;", with: "DROP SCHEMA IF EXISTS x;\nDROP SCHEMA IF EXISTS public;"))
+        let number = String(contents.statements.count - 1)
+        let replacement = PostgreSQLTableReplacement(contents: contents, answer: [["statement", number, "2BP01", "f", "table public.kept depends on schema public"]])
+
+        #expect(replacement.kept == ["schema public"])
+        #expect(!ids(replacement.useList).contains("4"))
+        #expect(ids(replacement.useList).contains("5"))
     }
 
     @Test func aSharedObjectOfAnotherKindInTheDatabaseStopsTheImport() {
         let replacement = PostgreSQLTableReplacement(contents: contents, answer: [
-            failed("DROP TYPE IF EXISTS public.mood;", state: "42809", stays: false, detail: "\"public.mood\" is a domain"),
+            failed("DROP TYPE IF EXISTS public.mood;", state: "42809", detail: "\"public.mood\" is a domain"),
         ])
 
         #expect(replacement.conflicts == ["\"public.mood\" is a domain"])
     }
 
-    @Test func aDropThatFailsWhileItsTableGoesAwayIsHarmless() {
-        let drop = "ALTER TABLE IF EXISTS public.users ALTER COLUMN id DROP DEFAULT;"
-        let sequence = "DROP SEQUENCE IF EXISTS public.users_id_seq;"
+    @Test func aDropThatFailsWhileItsTableGoesAwayIsNoConflict() {
         let replacement = PostgreSQLTableReplacement(contents: contents, answer: [
-            failed(drop, state: "42703", stays: false, detail: "column \"id\" does not exist"),
-            failed(sequence, stays: false, detail: "cannot drop sequence because column id requires it"),
+            failed("ALTER TABLE IF EXISTS public.users ALTER COLUMN id DROP DEFAULT;", state: "42703", detail: "column \"id\" does not exist"),
+            failed("DROP SEQUENCE IF EXISTS public.users_id_seq;", detail: "cannot drop sequence because column id requires it"),
         ])
 
         #expect(replacement.conflicts.isEmpty)
         #expect(replacement.kept.isEmpty)
-        #expect(replacement.explains("Command was: \(drop)\nCommand was: \(sequence)\npg_restore: warning: errors ignored on restore: 2"))
-        #expect(!replacement.explains("Command was: \(drop)\npg_restore: warning: errors ignored on restore: 2"))
-        #expect(!replacement.explains("Command was: \(drop)\nCommand was: \(drop)\npg_restore: warning: errors ignored on restore: 2"))
-        #expect(!replacement.explains("Command was: DROP TABLE IF EXISTS public.users;\npg_restore: warning: errors ignored on restore: 1"))
-        #expect(!replacement.explains("pg_restore: error: connection to server was lost"))
-        #expect(!PostgreSQLTableReplacement.nothingBlocked.explains(""))
+        #expect(replacement.useList == nil)
     }
 }
 
@@ -149,7 +181,7 @@ extension NexusEngineTests {
         realRuntimes.map { FileManager.default.fileExists(atPath: "\($0)/\(runtime)/bin/pg_restore") } ?? false
     }
 
-    @Test(.enabled(if: hasRealRuntime("postgresql/18")), .timeLimit(.minutes(2)))
+    @Test(.enabled(if: hasRealRuntime("postgresql/18")), .timeLimit(.minutes(3)))
     func theTablesOfARealPostgreSQLDumpReplaceOnlyTablesThatNothingElseUses() async throws {
         let id = "postgresql-18"
         let root = shortTemporaryRoot()
@@ -180,8 +212,8 @@ extension NexusEngineTests {
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
             let client = DatabaseClient(tools: tools, endpoint: DatabaseEndpoint(host: "127.0.0.1", port: try await engine.port(of: tools), account: .newInstance), options: work.appending(path: "client.cnf"))
 
-            let shared = "CREATE EXTENSION citext; CREATE TYPE size AS ENUM ('s'); CREATE TYPE mood AS ENUM ('a'); CREATE FUNCTION f(m mood DEFAULT 'a') RETURNS int LANGUAGE sql AS 'SELECT 1'; CREATE SCHEMA x; CREATE COLLATION dutch (provider = icu, locale = 'nl');"
-            let tables = "CREATE TABLE users (id serial PRIMARY KEY, name citext, m mood, s size, n int DEFAULT f(), c text COLLATE dutch); CREATE TABLE x.notes (user_id int REFERENCES users); CREATE VIEW active AS SELECT id, name, count(*) AS total FROM users GROUP BY id; CREATE TABLE logs (day int) PARTITION BY RANGE (day); CREATE TABLE logs_1 PARTITION OF logs FOR VALUES FROM (1) TO (2);"
+            let shared = "CREATE EXTENSION citext; CREATE EXTENSION pg_stat_statements; CREATE TYPE size AS ENUM ('s'); CREATE TYPE mood AS ENUM ('a', 'b'); CREATE FUNCTION f(m mood DEFAULT 'a') RETURNS int LANGUAGE sql AS 'SELECT 1'; CREATE SCHEMA x; CREATE COLLATION dutch (provider = icu, locale = 'nl');"
+            let tables = "CREATE TABLE users (id serial PRIMARY KEY, name citext, m mood, s size, n int DEFAULT f(), c text COLLATE dutch, filler text); CREATE INDEX users_name ON users (name); CREATE TABLE x.notes (user_id int REFERENCES users); CREATE VIEW active AS SELECT id, name, count(*) AS total FROM users GROUP BY id; CREATE TABLE logs (day int) PARTITION BY RANGE (day); CREATE TABLE logs_1 PARTITION OF logs FOR VALUES FROM (1) TO (2);"
             let old = "INSERT INTO users (id, name) VALUES (9, 'Old');"
 
             func run(_ program: String, _ arguments: [String]) async throws {
@@ -189,47 +221,64 @@ extension NexusEngineTests {
             }
 
             try await client.query("CREATE DATABASE source")
-            try await client.query("\(shared) \(tables) INSERT INTO users (name, m) VALUES ('Ann', 'a'), ('Bob', 'a')", database: "source")
+            try await client.query("\(shared) \(tables) INSERT INTO users (name, m) VALUES ('Ann', 'a'), ('Bob', 'b')", database: "source")
             let dump = work.appending(path: "source.dump")
             let rows = work.appending(path: "rows.dump")
+            let onlyPublic = work.appending(path: "public.dump")
             try await run("pg_dump", ["-Fc", "-f", dump.path(percentEncoded: false), "source"])
             try await run("pg_dump", ["-Fc", "--data-only", "-f", rows.path(percentEncoded: false), "source"])
+
+            try await client.query("CREATE DATABASE big")
+            try await client.query("CREATE TABLE users (id int PRIMARY KEY, filler text); INSERT INTO users SELECT n, (SELECT string_agg(md5(random()::text), '') FROM generate_series(1, 20 + n * 0)) FROM generate_series(1, 20000) AS n", database: "big")
+            let big = work.appending(path: "big.dump")
+            try await run("pg_dump", ["-Fc", "-f", big.path(percentEncoded: false), "big"])
+            try await run("pg_dump", ["-Fc", "-n", "public", "-f", onlyPublic.path(percentEncoded: false), "big"])
+            let zip = work.appending(path: "big.zip")
+            _ = try await CommandRunner.run(Command(executable: URL(filePath: "/usr/bin/zip"), arguments: ["-q", "-j", zip.path(percentEncoded: false), big.path(percentEncoded: false)]))
 
             func load(_ file: URL, into name: String, _ setup: String) async throws -> (answer: NexusResponse, users: String) {
                 try await client.query("CREATE DATABASE \(name)")
                 try await client.query(setup, database: name)
                 let answer = await engine.handle(.importDump(DumpImport(file: file.path(percentEncoded: false), target: .instance(id), name: name, existing: .replaceTables)))
-                return (answer, try await client.query("SELECT string_agg(id::text, ',' ORDER BY id) FROM users", database: name))
+                return (answer, try await client.query("SELECT CASE WHEN count(*) > 10 THEN count(*)::text ELSE string_agg(id::text, ',' ORDER BY id) END FROM users", database: name))
             }
 
             let same = "\(shared) \(tables) \(old)"
-            let free = try await load(dump, into: "free", "\(same) CREATE TABLE kept (id int)")
             let sharing = try await load(dump, into: "sharing", "\(same) CREATE TABLE kept (name citext, m mood, n int DEFAULT f(), c text COLLATE dutch); CREATE TABLE x.other (id int)")
-            let olderTable = try await load(dump, into: "older", "\(shared) CREATE TABLE users (id int GENERATED ALWAYS AS IDENTITY, note text); INSERT INTO users (note) VALUES ('old')")
-            let withoutID = try await load(dump, into: "noid", "\(shared) CREATE TABLE users (note text)")
-            let empty = try await load(dump, into: "empty", "SELECT 1")
+            let replaced = [
+                ("free", try await load(dump, into: "free", "\(same) CREATE TABLE kept (id int)"), "1,2"),
+                ("sharing", sharing, "1,2"),
+                ("older", try await load(dump, into: "older", "\(shared) CREATE TABLE users (id int GENERATED ALWAYS AS IDENTITY, note text); INSERT INTO users (note) VALUES ('old')"), "1,2"),
+                ("noid", try await load(dump, into: "noid", "\(shared) CREATE TABLE users (note text)"), "1,2"),
+                ("empty", try await load(dump, into: "empty", "SELECT 1"), "1,2"),
+                ("plain", try await load(big, into: "plain", "CREATE TABLE users (id int); CREATE TABLE kept (id int)"), "20000"),
+                ("zipped", try await load(zip, into: "zipped", "CREATE TABLE users (id int); CREATE TABLE kept (id int)"), "20000"),
+                ("onlypublic", try await load(onlyPublic, into: "onlypublic", "CREATE TABLE users (id int); CREATE TABLE kept (id int)"), "20000"),
+            ]
 
-            for (loaded, name) in [(free, "free"), (sharing, "sharing"), (olderTable, "older"), (withoutID, "noid"), (empty, "empty")] {
-                #expect(loaded.users == "1,2")
+            for (name, loaded, users) in replaced {
+                #expect(loaded.users == users, "\(name)")
                 #expect(Self.message(loaded.answer)?.contains("The other tables stay as they were.") == true, "\(name)")
             }
 
-            #expect(Self.message(free.answer)?.contains("because other parts") == false)
             let stays = try #require(Self.message(sharing.answer))
             #expect(stays.contains("These stay as they were because other parts of sharing use them:"))
             #expect(stays.contains("and 2 more."))
             #expect(try await client.query("SELECT count(*) FROM pg_type WHERE typname = 'mood'", database: "sharing") == "1")
 
-            let blocked = [
-                try await load(dump, into: "key", "\(same) CREATE TABLE kept (user_id int REFERENCES users); INSERT INTO kept VALUES (9)"),
-                try await load(dump, into: "view", "\(same) CREATE VIEW kept AS SELECT * FROM users"),
-                try await load(dump, into: "parts", "\(same) CREATE TABLE logs_2 PARTITION OF logs FOR VALUES FROM (2) TO (3); INSERT INTO logs VALUES (2)"),
-                try await load(rows, into: "rows", same),
+            let unchanged = [
+                ("key", try await load(dump, into: "key", "\(same) CREATE TABLE kept (user_id int REFERENCES users); INSERT INTO kept VALUES (9)"), "Nothing changed."),
+                ("view", try await load(dump, into: "view", "\(same) CREATE VIEW kept AS SELECT * FROM users"), "Nothing changed."),
+                ("parts", try await load(dump, into: "parts", "\(same) CREATE TABLE logs_2 PARTITION OF logs FOR VALUES FROM (2) TO (3); INSERT INTO logs VALUES (2)"), "Nothing changed."),
+                ("rows", try await load(rows, into: "rows", same), "Nothing changed."),
+                ("renamed", try await load(dump, into: "renamed", "\(shared) CREATE TABLE users_old (name citext); CREATE INDEX users_name ON users_old (name); CREATE TABLE users (id int); INSERT INTO users VALUES (9)"), "index users_name belongs to table users_old"),
+                ("taken", try await load(dump, into: "taken", "\(shared) CREATE TABLE users_old (id int CONSTRAINT users_pkey PRIMARY KEY); CREATE TABLE users (id int); INSERT INTO users VALUES (9)"), "did not change."),
+                ("labels", try await load(dump, into: "labels", "\(same.replacingOccurrences(of: "('a', 'b')", with: "('a')")) CREATE TABLE kept (m mood)"), "did not change."),
             ]
 
-            for loaded in blocked {
-                #expect(loaded.users == "9")
-                #expect(Self.failure(loaded.answer)?.contains("Nothing changed.") == true)
+            for (name, loaded, text) in unchanged {
+                #expect(loaded.users == "9", "\(name)")
+                #expect(Self.failure(loaded.answer)?.contains(text) == true, "\(name): \(loaded.answer)")
             }
 
             try await client.query("CREATE DATABASE locked")
