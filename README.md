@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/NexusLocal/nexus/releases/latest/download/Nexus.dmg"><b>Download Nexus</b></a>
   ·
-  <a href="https://github.com/NexusLocal/nexus/releases/latest">What is new</a>
+  <a href="https://github.com/NexusLocal/nexus/releases">What is new</a>
   ·
   <a href="#install">Install</a>
   ·
