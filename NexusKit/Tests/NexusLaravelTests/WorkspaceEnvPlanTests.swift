@@ -300,6 +300,32 @@ struct WorkspaceEnvPlanTests {
         #expect(result.problems == ["The connection mongodb uses MongoDB. Nexus cannot copy a MongoDB database."])
     }
 
+    @Test func aWorkspaceKeyOfTheSiteIsolatesItsMongoDBConnection() {
+        let settings = connection("main", database: keyed(.text("shop"), "DB_DATABASE"))
+            .merging([
+                "database.connections.mongodb.driver": ConfigSetting(value: .text("mongodb")),
+                "database.connections.mongodb.dsn": keyed(.text("mongodb://localhost:27017/shop"), "MONGODB_URI"),
+                "database.default": ConfigSetting(value: .text("main")),
+            ]) { own, _ in own }
+        let configuration = LaravelConfiguration(version: "12.0.0", settings: settings, databaseConnections: ["main", "mongodb"], redisConnections: [])
+        let problems = { (value: String, realMainFolder: String?) in
+            WorkspaceEnvPlan(configuration: configuration, request: WorkspaceEnvRequest(
+                workspace: "ticket-1",
+                mainFolder: "/work/shop",
+                workspaceFolder: "/work/ticket-1",
+                mysqlPorts: [13306],
+                postgresqlPorts: [],
+                redisPorts: [],
+                realMainFolder: realMainFolder,
+                ownKeys: ["MONGODB_URI": value]
+            )).problems
+        }
+
+        #expect(problems("mongodb://localhost:27017/shop_{workspace}", nil).isEmpty)
+        #expect(problems("mongodb://localhost:27017/shop", nil).count == 1)
+        #expect(problems("mongodb://localhost:27017/shop", "/work/main").isEmpty)
+    }
+
     @Test func aDefaultSQLiteFileKeepsItsKeyWhenAMySQLConnectionSharesThatKey() {
         let settings = connection("main", database: keyed(.text("/work/shop/database/database.sqlite"), "DB_DATABASE"), driver: "sqlite")
             .merging(connection("mysql", database: keyed(.text("laravel"), "DB_DATABASE"))) { own, _ in own }

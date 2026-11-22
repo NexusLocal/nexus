@@ -485,7 +485,7 @@ extension NexusEngine {
 
         let probed = try await configuration(of: written.site, folder: written.folder)
         let ownPorts = Set(written.servers.map(\.port))
-        let plan = try await envPlan(workspace: workspace.name, configuration: probed, mainFolder: written.folder, workspaceFolder: written.folder, realMainFolder: written.mainFolder, servers: written.servers)
+        let plan = try await envPlan(workspace: workspace.name, configuration: probed, mainFolder: written.folder, workspaceFolder: written.folder, realMainFolder: written.mainFolder, servers: written.servers, ownKeys: written.ownKeys)
         let newKeys = plan.isolatingKeys.subtracting(written.isolatingKeys).sorted()
         var problems = plan.problems + newKeys.map { "The key \($0) is not in the configuration of the main checkout. So Nexus does not change it." }
 
@@ -594,6 +594,11 @@ extension NexusEngine {
         var wordPress: WordPressWrite?
         // The changes of the .env, for the .env files that a site names as workspace files.
         var envRewrite: (hosts: [HostRewrite], keys: [String: String])?
+        var ownKeys: [String: String] = [:]
+    }
+
+    static func ownKeyValues(of sites: [Site]) -> [String: String] {
+        Dictionary(sites.flatMap { $0.workspaceKeys ?? [] }.map { ($0.key, $0.value) }) { _, last in last }
     }
 
     // Returns nil when the workspace has no .env, so nothing after this step applies to it.
@@ -636,7 +641,7 @@ extension NexusEngine {
         let mainFolder = RealPath.of(main)
         let folder = Self.applicationFolder(mainFolder, of: site, in: workspace)
         let probed = try await configuration(of: site, folder: mainFolder)
-        let plan = try await envPlan(workspace: workspace.name, configuration: probed, mainFolder: mainFolder, workspaceFolder: folder)
+        let plan = try await envPlan(workspace: workspace.name, configuration: probed, mainFolder: mainFolder, workspaceFolder: folder, ownKeys: Self.ownKeyValues(of: sites))
 
         guard let git = await GitTool.executable() else {
             throw RuntimeError.unsupported(GitTool.missing)
@@ -717,7 +722,8 @@ extension NexusEngine {
             mainFolder: mainFolder,
             repositoryHoldsApplication: ProjectFolder.repository(of: site).map { RealPath.contains($0.root, mainFolder) } ?? false,
             warnings: plan.warnings,
-            envRewrite: (hosts, keys)
+            envRewrite: (hosts, keys),
+            ownKeys: Self.ownKeyValues(of: sites)
         )
     }
 
@@ -792,18 +798,19 @@ extension NexusEngine {
     // ports, and a connection on such a port is on a Nexus instance too. A port counts only for the
     // kind of its server. All connections of a default Laravel application read DB_PORT, and a MySQL
     // client that connects to PostgreSQL waits until the probe stops.
-    private func envPlan(workspace: String, configuration: LaravelConfiguration, mainFolder: String, workspaceFolder: String, realMainFolder: String? = nil, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)] = []) async throws -> WorkspaceEnvPlan {
+    private func envPlan(workspace: String, configuration: LaravelConfiguration, mainFolder: String, workspaceFolder: String, realMainFolder: String? = nil, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)] = [], ownKeys: [String: String] = [:]) async throws -> WorkspaceEnvPlan {
         WorkspaceEnvPlan(configuration: configuration, request: try await workspaceEnvRequest(
             workspace: workspace,
             mainFolder: mainFolder,
             workspaceFolder: workspaceFolder,
             realMainFolder: realMainFolder,
-            servers: servers
+            servers: servers,
+            ownKeys: ownKeys
         ))
     }
 
     // The ports of the Nexus instances of each kind, and of the servers of the workspace.
-    func workspaceEnvRequest(workspace: String, mainFolder: String, workspaceFolder: String, realMainFolder: String? = nil, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)]) async throws -> WorkspaceEnvRequest {
+    func workspaceEnvRequest(workspace: String, mainFolder: String, workspaceFolder: String, realMainFolder: String? = nil, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)], ownKeys: [String: String] = [:]) async throws -> WorkspaceEnvRequest {
         let instances = try await databaseAddresses()
         let sockets = Dictionary(instances.map { ($0.port, $0.socket) }) { first, _ in first }
         let redisPorts = Set(try await redisInstances().map(\.port))
@@ -819,7 +826,8 @@ extension NexusEngine {
             redisPorts: redisPorts,
             instanceSockets: sockets,
             realMainFolder: realMainFolder,
-            smtpPort: try await smtpPort(in: await stateStore.current())
+            smtpPort: try await smtpPort(in: await stateStore.current()),
+            ownKeys: ownKeys
         )
     }
 

@@ -17,7 +17,7 @@ extension NexusEngine {
         let mainFolder = folders.application
         let folder = folders.worktree
         let project = NodeProject.read(in: URL(filePath: mainFolder, directoryHint: .isDirectory))
-        let plan = try await nodeEnvPlan(workspace: workspace.name, files: try Self.nodeEnvFiles(in: mainFolder), project: project, mainFolder: mainFolder, workspaceFolder: folder)
+        let plan = try await nodeEnvPlan(workspace: workspace.name, files: try Self.nodeEnvFiles(in: mainFolder), project: project, mainFolder: mainFolder, workspaceFolder: folder, ownKeys: Self.ownKeyValues(of: sites))
 
         guard let git = await GitTool.executable() else {
             throw RuntimeError.unsupported(GitTool.missing)
@@ -143,13 +143,16 @@ extension NexusEngine {
 
     // servers holds the servers of the workspace, for the check of a worktree, as for a Laravel
     // application.
-    func nodeEnvPlan(workspace: String, files: [NodeEnvFile], project: NodeProject?, mainFolder: String, workspaceFolder: String, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)] = []) async throws -> WorkspaceEnvPlan {
-        WorkspaceEnvPlan(nodeFiles: files, usesDatabaseClient: project?.usesDatabaseClient ?? false, usesMongoDB: project?.usesMongoDB ?? false, request: try await workspaceEnvRequest(
-            workspace: workspace,
-            mainFolder: mainFolder,
-            workspaceFolder: workspaceFolder,
-            servers: servers
-        ))
+    func nodeEnvPlan(workspace: String, files: [NodeEnvFile], project: NodeProject?, mainFolder: String, workspaceFolder: String, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)] = [], ownKeys: [String: String] = [:]) async throws -> WorkspaceEnvPlan {
+        let request = try await workspaceEnvRequest(workspace: workspace, mainFolder: mainFolder, workspaceFolder: workspaceFolder, servers: servers, ownKeys: ownKeys)
+
+        return WorkspaceEnvPlan(
+            nodeFiles: files,
+            usesDatabaseClient: project?.usesDatabaseClient ?? false,
+            usesMongoDB: project?.usesMongoDB ?? false,
+            canUseOnlyMongoDB: project?.canUseOnlyMongoDB ?? false,
+            request: request
+        )
     }
 
     // What the env files of each workspace of this Node.js app get, with {workspace} in the values.

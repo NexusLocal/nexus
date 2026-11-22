@@ -46,7 +46,15 @@ struct NodeProjectTests {
         #expect(NodeProject.read(in: plain)?.framework == nil)
     }
 
-    @Test(arguments: ["mongodb", "mongoose", "@mikro-orm/mongodb"])
+    @Test(arguments: [(["@mikro-orm/core", "@mikro-orm/mongodb"], true), (["@prisma/client"], true), (["mongoose", "pg"], false), (["mongoose", "ioredis"], false)])
+    func onlyAnORMOrAMongoDBClientCanUseOnlyMongoDB(clients: [String], isOnly: Bool) throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try makeFolder("app", files: ["package.json": try package(dependencies: Dictionary(uniqueKeysWithValues: clients.map { ($0, "1") }))])
+
+        #expect(NodeProject.read(in: app)?.canUseOnlyMongoDB == isOnly)
+    }
+
+    @Test(arguments: ["mongodb", "mongoose", "@mikro-orm/mongodb", "@payloadcms/db-mongodb"])
     func aMongoDBClientInTheDependenciesUsesMongoDB(client: String) throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let shop = try makeFolder("shop", files: ["package.json": try package(dependencies: [client: "1"])])

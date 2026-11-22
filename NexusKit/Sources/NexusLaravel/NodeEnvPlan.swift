@@ -22,7 +22,8 @@ public struct NodeEnvFile: Sendable, Equatable {
 // Nexus cannot change gives Not isolated (D48). A server that is no Nexus instance gives a warning,
 // because Nexus cannot copy it. The workspace then runs with the server of the main site.
 extension WorkspaceEnvPlan {
-    public init(nodeFiles: [NodeEnvFile], usesDatabaseClient: Bool, usesMongoDB: Bool = false, request: WorkspaceEnvRequest) {
+    // An app with only an ORM that also connects to MongoDB has no other database next to it.
+    public init(nodeFiles: [NodeEnvFile], usesDatabaseClient: Bool, usesMongoDB: Bool = false, canUseOnlyMongoDB: Bool = false, request: WorkspaceEnvRequest) {
         self.init()
 
         let files = nodeFiles.map { EnvFile.values(in: $0.text) }
@@ -46,16 +47,18 @@ extension WorkspaceEnvPlan {
 
         let mongoDBKeys = Set(files.flatMap { file in file.filter { ConnectionURL.isMongoDB($0.value) }.keys })
 
-        if usesDatabaseClient, serverPorts.isEmpty, redisKeys.isEmpty, problems.isEmpty, warnings.isEmpty, mongoDBKeys.isEmpty {
+        let usesOnlyMongoDB = canUseOnlyMongoDB && (usesMongoDB || !mongoDBKeys.isEmpty)
+
+        if usesDatabaseClient, !usesOnlyMongoDB, serverPorts.isEmpty, redisKeys.isEmpty, problems.isEmpty, warnings.isEmpty {
             warnings.append("Nexus found no database key in the env files of the app. When the app reaches a Nexus database in another way, this workspace uses the database of the main site.")
         }
 
-        for key in mongoDBKeys.sorted() {
-            warnings.append("\(key) names a MongoDB server. Nexus cannot copy it, so this workspace shares that server with the main site.")
+        for key in mongoDBKeys.filter({ !request.isOwn($0, mainValue: merged[$0]) }).sorted() {
+            warnings.append("\(key) names a MongoDB server. Nexus cannot copy it. So this workspace shares that server with the main site.")
         }
 
-        if usesMongoDB, mongoDBKeys.isEmpty {
-            warnings.append("The app uses MongoDB, and Nexus found no MongoDB URL in its env files. Nexus cannot copy a MongoDB database. So this workspace can share it with the main site.")
+        if usesMongoDB, mongoDBKeys.isEmpty, !request.ownKeys.keys.contains(where: { $0.uppercased().contains("MONGO") }) {
+            warnings.append("The app uses MongoDB. Nexus found no MongoDB URL in its env files, and it cannot copy a MongoDB database. So this workspace can share it with the main site.")
         }
 
         redisKeys.sort()

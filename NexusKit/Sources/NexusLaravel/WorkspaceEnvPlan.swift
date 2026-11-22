@@ -39,8 +39,11 @@ public struct WorkspaceEnvRequest: Sendable {
     public let realMainFolder: String?
     // The SMTP port of the receiver of nexusd. A workspace always sends its mail there (Phase 3, 3c).
     public let smtpPort: Int?
+    // The workspace keys of the site with their values (D45). With such a key the user isolates a
+    // server that Nexus does not manage.
+    public let ownKeys: [String: String]
 
-    public init(workspace: String, mainFolder: String, workspaceFolder: String, mysqlPorts: Set<Int>, postgresqlPorts: Set<Int>, redisPorts: Set<Int>, instanceSockets: [Int: String] = [:], realMainFolder: String? = nil, smtpPort: Int? = nil) {
+    public init(workspace: String, mainFolder: String, workspaceFolder: String, mysqlPorts: Set<Int>, postgresqlPorts: Set<Int>, redisPorts: Set<Int>, instanceSockets: [Int: String] = [:], realMainFolder: String? = nil, smtpPort: Int? = nil, ownKeys: [String: String] = [:]) {
         self.workspace = workspace
         self.mainFolder = mainFolder
         self.workspaceFolder = workspaceFolder
@@ -50,6 +53,17 @@ public struct WorkspaceEnvRequest: Sendable {
         self.instanceSockets = instanceSockets
         self.realMainFolder = realMainFolder
         self.smtpPort = smtpPort
+        self.ownKeys = ownKeys
+    }
+
+    // A workspace key with the value of the main site isolates nothing. The worktree already has the
+    // value of its key, so the check of a worktree does not compare.
+    func isOwn(_ key: String, mainValue: String?) -> Bool {
+        guard let value = ownKeys[key] else {
+            return false
+        }
+
+        return realMainFolder != nil || value != mainValue
     }
 }
 
@@ -181,9 +195,18 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
         }
 
         // A MongoDB connection can have its database in its URL. config/database.php of a new Laravel
-        // application has no such connection. So a connection that is there is in use.
+        // application has no such connection. So a connection that is there is in use. A workspace key
+        // of the site for this connection gives each workspace its own server or database.
         if driver == "mongodb" {
-            problems.append("The connection \(name) uses MongoDB. Nexus cannot copy a MongoDB database.")
+            let parts = ["dsn", "host", "port", "database"].compactMap { Self.setting($0, at: path, settings: settings) }
+            let isIsolatedByUser = parts.contains { part in
+                part.keys.contains { request.isOwn($0, mainValue: part.value.description) }
+            }
+
+            if !isIsolatedByUser {
+                problems.append("The connection \(name) uses MongoDB. Nexus cannot copy a MongoDB database.")
+            }
+
             return
         }
 
