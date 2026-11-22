@@ -17,9 +17,11 @@ public enum ToggleHelp {
 
     private static let phpExtensions = [
         "apcu": "A cache in the memory of PHP-FPM. Laravel can use it as a cache store.",
+        "gmp": "Calculates with whole numbers of any size. Some packages for encryption use it.",
         "igbinary": "A faster and smaller format to store PHP values, for example in Redis.",
         "imagick": "Changes images with ImageMagick.",
         "mailparse": "Reads the parts of a mail. php-mime-mail-parser needs it.",
+        "memcached": "Connects to a memcached server. Laravel can use it for the cache and sessions. Nexus has no memcached server. It needs igbinary.",
         "opcache": "Keeps compiled PHP code in memory. So each request runs faster.",
         "pcov": "Measures code coverage for tests. It is faster than Xdebug for coverage. Nexus turns it on only for a command with --coverage, --tia or --mutate, for example pest --tia. So other PHP stays fast.",
         "pdo_pgsql": "Connects PDO and Laravel to PostgreSQL.",

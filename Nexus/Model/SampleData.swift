@@ -907,6 +907,8 @@ extension AppModel {
             ToggleItem(name: "apcu", enabled: false, help: "A cache in the memory of PHP-FPM."),
             ToggleItem(name: "imagick", enabled: true, help: "Changes images with ImageMagick."),
             ToggleItem(name: "yaml", enabled: false, help: "Reads and writes YAML."),
+            ToggleItem(name: "gmp", enabled: true, help: "Calculates with whole numbers of any size. Some packages for encryption use it."),
+            ToggleItem(name: "memcached", enabled: false, help: "Connects to a memcached server. Laravel can use it for the cache and sessions. Nexus has no memcached server. It needs igbinary."),
             ToggleItem(name: "xdebug", enabled: false, help: "Step debugger. Only a request that starts a debug session uses Xdebug, for example with the browser extension Xdebug helper. Other requests stay fast. nexus debug runs one command with Xdebug."),
             ToggleItem(name: "pcov", enabled: false, help: "Measures code coverage for tests. It is faster than Xdebug for coverage."),
         ]

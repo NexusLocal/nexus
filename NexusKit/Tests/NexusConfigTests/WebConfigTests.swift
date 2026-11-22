@@ -354,6 +354,15 @@ struct WebConfigTests {
         #expect(loaded == ["igbinary", "apcu", "redis", "xdebug"])
     }
 
+    @Test func memcachedAlsoLoadsIgbinaryAndGoesOffWithIt() {
+        let loaded = PHPConfig.extensionsToLoad(enabled: ["memcached", "apcu"], available: ["memcached", "redis", "igbinary", "apcu"])
+        let off = PHPConfig.dependencies.set("igbinary", on: false, in: ["memcached", "redis", "igbinary", "apcu"])
+
+        #expect(loaded == ["igbinary", "apcu", "memcached"])
+        #expect(off.enabled == ["apcu"])
+        #expect(off.changed == ["igbinary", "memcached", "redis"])
+    }
+
     @Test func redisDoesNotLoadWithoutIgbinary() {
         let loaded = PHPConfig.extensionsToLoad(enabled: ["redis", "apcu"], available: ["redis", "apcu"])
 

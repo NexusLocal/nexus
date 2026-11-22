@@ -8,9 +8,9 @@ import NexusCore
 public enum PHPConfig {
     public static let zendExtensions: Set<String> = ["opcache", "xdebug"]
 
-    public static let dependencies = ToggleDependencies(["redis": ["igbinary"]])
+    public static let dependencies = ToggleDependencies(["memcached": ["igbinary"], "redis": ["igbinary"]])
 
-    public static let defaultExtensions: Set<String> = ["opcache", "apcu", "igbinary", "redis", "imagick", "pgsql", "pdo_pgsql", "yaml", "mailparse", "pcov"]
+    public static let defaultExtensions: Set<String> = ["opcache", "apcu", "gmp", "igbinary", "redis", "imagick", "pgsql", "pdo_pgsql", "yaml", "mailparse", "pcov"]
 
     public static let nexusIniName = "00-nexus.ini"
     public static let customIniName = "99-custom.ini"
