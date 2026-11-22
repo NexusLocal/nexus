@@ -436,6 +436,12 @@ struct OwnDomainEngineTests {
         ((try? String(contentsOf: file, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
     }
 
+    // The activity log writes in the background.
+    private func activityLines(_ fixture: Fixture) async -> [String] {
+        await fixture.engine.activity?.waitForWrites()
+        return lines(of: fixture.activity)
+    }
+
     private func record(_ fixture: Fixture, host: String = "shop.test") async -> ShareRecord? {
         await fixture.engine.stateStore.current().shares.first { $0.host == host }
     }
@@ -512,7 +518,7 @@ struct OwnDomainEngineTests {
             #expect(homes == [fixture.paths.ownDomainFolder.path(percentEncoded: false)])
             #expect(!homes.contains(NSHomeDirectory()))
             #expect(lines(of: fixture.calls) == ["tunnel --config \(fixture.paths.ownDomainCommandConfig.path(percentEncoded: false)) login"])
-            #expect(lines(of: fixture.activity).contains { $0.hasSuffix(ShareText.OwnDomain.connectedLine("example.com", tunnel: Self.tunnelName)) })
+            #expect(await activityLines(fixture).contains { $0.hasSuffix(ShareText.OwnDomain.connectedLine("example.com", tunnel: Self.tunnelName)) })
         }
     }
 
@@ -603,7 +609,7 @@ struct OwnDomainEngineTests {
             #expect(fixture.cloudflare.current.deletedTunnels == ["tunnel-1"])
             #expect(fixture.keys.keys.isEmpty)
             #expect(await fixture.engine.stateStore.current().ownDomain == nil)
-            #expect(lines(of: fixture.activity).contains { $0.hasSuffix(ShareText.OwnDomain.setupTunnelDeletedLine("example.com", tunnel: Self.tunnelName)) })
+            #expect(await activityLines(fixture).contains { $0.hasSuffix(ShareText.OwnDomain.setupTunnelDeletedLine("example.com", tunnel: Self.tunnelName)) })
         }
     }
 
@@ -830,7 +836,7 @@ struct OwnDomainEngineTests {
             #expect(runCalls(fixture) == ["tunnel --no-autoupdate --config \(fixture.paths.ownDomainConfig.path(percentEncoded: false)) --metrics 127.0.0.1:\(tunnel.metricsPort) run"])
             #expect(environment == "\(fixture.paths.cloudflaredHome.path(percentEncoded: false))|token|\(marker)")
             #expect(try String(contentsOf: fixture.paths.ownDomainConfig, encoding: .utf8) == CloudflaredConfig.remoteTunnelFile)
-            #expect(lines(of: fixture.activity).contains { $0.hasSuffix(ShareText.OwnDomain.addedRecordLine(host: "shop.test", domain: "example.com")) })
+            #expect(await activityLines(fixture).contains { $0.hasSuffix(ShareText.OwnDomain.addedRecordLine(host: "shop.test", domain: "example.com")) })
         }
     }
 
@@ -1102,7 +1108,7 @@ struct OwnDomainEngineTests {
             #expect(state.ownDomain == nil)
             #expect(state.shareDefaults.address == .random)
             #expect(await fixture.engine.currentOwnDomainTunnel() == nil)
-            #expect(lines(of: fixture.activity).contains { $0.hasSuffix(ShareText.OwnDomain.removedLine("example.com", tunnel: Self.tunnelName, keptRecords: 1)) })
+            #expect(await activityLines(fixture).contains { $0.hasSuffix(ShareText.OwnDomain.removedLine("example.com", tunnel: Self.tunnelName, keptRecords: 1)) })
         }
     }
 
@@ -1140,7 +1146,7 @@ struct OwnDomainEngineTests {
             #expect(answer == .ownDomainRemoval(OwnDomainRemoval(removedRecords: [], keptRecords: ["shop.example.com"], keptTunnel: Self.tunnelName)))
             #expect(await fixture.engine.stateStore.current().ownDomain == nil)
             #expect(fixture.keys.keys.isEmpty)
-            #expect(lines(of: fixture.activity).contains { $0.hasSuffix(ShareText.OwnDomain.removedWithTunnelLine("example.com", tunnel: Self.tunnelName, keptRecords: 1)) })
+            #expect(await activityLines(fixture).contains { $0.hasSuffix(ShareText.OwnDomain.removedWithTunnelLine("example.com", tunnel: Self.tunnelName, keptRecords: 1)) })
         }
     }
 

@@ -318,7 +318,7 @@ extension NexusEngineTests {
         let client = try #require(PortGateClient(port: port))
 
         #expect(client.received().contains("does not take connections"))
-        #expect(await gate.phase(of: port) == nil)
+        #expect(await eventually { await gate.phase(of: port) == nil })
         #expect(await eventually { PortInspector.isFree(port) })
     }
 
