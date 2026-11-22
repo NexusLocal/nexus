@@ -10,7 +10,7 @@ import Synchronization
 // database that fails is dropped, as after a copy. A database that exists changes only after a
 // choice, and Nexus puts a copy of it in the trash first.
 extension NexusEngine {
-    func importDump(_ request: DumpImport) async throws -> String {
+    func importDump(_ request: DumpImport) async throws -> NexusResponse {
         let file = URL(filePath: request.file, directoryHint: .notDirectory)
         let fileName = file.lastPathComponent
 
@@ -135,11 +135,12 @@ extension NexusEngine {
 
         switch request.existing {
         case nil:
-            return "\(shownName) is loaded into the new database \(name) on \(server)."
+            return .done(message: "\(shownName) is loaded into the new database \(name) on \(server).")
         case .replaceTables:
-            return "\(shownName) is loaded into \(name) on \(server). The tables of the dump replaced their old tables. The other tables stay as they were.\(keptText)\(keptCopy)"
+            let message = "\(shownName) is loaded into \(name) on \(server). The tables of the dump replaced their old tables. The other tables stay as they were.\(keptText)\(keptCopy)"
+            return keptText.isEmpty ? .done(message: message) : .doneWithNotice(message: message)
         case .replaceDatabase:
-            return "\(shownName) replaced the database \(name) on \(server).\(keptCopy)"
+            return .done(message: "\(shownName) replaced the database \(name) on \(server).\(keptCopy)")
         }
     }
 

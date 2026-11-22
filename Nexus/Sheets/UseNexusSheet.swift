@@ -108,7 +108,7 @@ struct UseNexusSheet: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
-            case nil:
+            case .doneWithNotice, nil:
                 EmptyView()
             }
 

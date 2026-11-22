@@ -1823,7 +1823,7 @@ func fail(_ message: String) throws -> Never {
 
 func finish(_ response: NexusResponse) throws {
     switch response {
-    case .done(let message):
+    case .done(let message), .doneWithNotice(let message):
         print(message)
     case NexusResponse.unreadableRequest:
         try fail(NexusResponse.olderNexusdText)

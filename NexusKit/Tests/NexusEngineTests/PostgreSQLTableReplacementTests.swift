@@ -298,6 +298,11 @@ extension NexusEngineTests {
                 #expect(Self.message(loaded.answer)?.contains("The other tables stay as they were.") == true, "\(name)")
             }
 
+            guard case .doneWithNotice = sharing.answer, case .done = replaced[0].1.answer else {
+                Issue.record("wrong kinds of success: \(sharing.answer), \(replaced[0].1.answer)")
+                return
+            }
+
             let stays = try #require(Self.message(sharing.answer))
             #expect(stays.contains("These stay as they were because other parts of sharing use them:"))
             #expect(stays.contains("and 2 more."))
@@ -339,12 +344,13 @@ extension NexusEngineTests {
     }
 
     private static func message(_ response: NexusResponse) -> String? {
-        guard case .done(let message) = response else {
+        switch response {
+        case .done(let message), .doneWithNotice(let message):
+            return message
+        default:
             Issue.record("no success: \(response)")
             return nil
         }
-
-        return message
     }
 
     private static func failure(_ response: NexusResponse) -> String? {

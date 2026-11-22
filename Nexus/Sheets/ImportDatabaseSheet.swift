@@ -67,6 +67,14 @@ struct ImportDatabaseSheet: View {
         importKey.flatMap { model.importResults[$0] }
     }
 
+    private var isDone: Bool {
+        if case .doneWithNotice = importResult {
+            return true
+        }
+
+        return false
+    }
+
     // nexusd starts the task of the copy after its checks. Before that, a stop has no task.
     private var canStop: Bool {
         sampleImporting || startedName.flatMap { model.importTask(instance: instance, name: $0) } != nil
@@ -239,7 +247,7 @@ struct ImportDatabaseSheet: View {
             .scrollDisabled(true)
             .padding(.horizontal, -20)
             .fixedSize(horizontal: false, vertical: true)
-            .disabled(importing)
+            .disabled(importing || isDone)
 
             switch importResult {
             case .failed(let message):
@@ -252,6 +260,18 @@ struct ImportDatabaseSheet: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
+            case .doneWithNotice(let message):
+                Label {
+                    Text(message)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "checkmark.circle")
+                        .foregroundStyle(Color.greenText)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(.fill.quaternary, in: .rect(cornerRadius: 10))
+                .textSelection(.enabled)
             case nil:
                 EmptyView()
             }
@@ -272,6 +292,11 @@ struct ImportDatabaseSheet: View {
                     .disabled(!canStop)
 
                     Button("Close") {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                } else if isDone {
+                    Button("Done") {
                         dismiss()
                     }
                     .keyboardShortcut(.defaultAction)
@@ -722,16 +747,29 @@ private struct DumpSummary: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    // Nexus does not know the tables of a file of pg_dump -Fc.
+    private var knowsTables: Bool {
+        info?.tables != nil
+    }
+
     private var stayText: String {
+        guard knowsTables else {
+            return "The other tables of \(name) stay as they are."
+        }
+
         switch otherTables.count {
-        case 0: "\(name) has no other tables."
-        case 1: "The other table of \(name) stays as it is."
-        default: "The other \(otherTables.count) tables of \(name) stay as they are."
+        case 0: return "\(name) has no other tables."
+        case 1: return "The other table of \(name) stays as it is."
+        default: return "The other \(otherTables.count) tables of \(name) stay as they are."
         }
     }
 
     private var deleteText: String {
         let all = existingTables?.count ?? 0
+
+        guard knowsTables else {
+            return "All tables of \(name) are deleted."
+        }
 
         switch otherTables.count {
         case 0: return "All tables of \(name) are deleted."

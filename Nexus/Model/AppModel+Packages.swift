@@ -429,10 +429,12 @@ extension AppModel {
                     importInSheet = nil
                     sheet = nil
                 }
-                if let service = service(instance) {
-                    loadDatabases(of: service)
+                dumpImportDone(request, file: file)
+            case .answer(.doneWithNotice(let message)):
+                if inSheet {
+                    importResults[key] = .doneWithNotice(message)
                 }
-                Notifier.post("The import is done", "\(file) is in \(request.name) now.", target: .database(instance: instance, name: request.name), setting: AppPreference.notifyImportDone)
+                dumpImportDone(request, file: file)
             case .answer(.stopped(let message)):
                 if inSheet {
                     importResults[key] = .stopped(message)
@@ -447,6 +449,16 @@ extension AppModel {
                 break
             }
         }
+    }
+
+    private func dumpImportDone(_ request: DumpImport, file: String) {
+        let instance = request.target.instanceID
+
+        if let service = service(instance) {
+            loadDatabases(of: service)
+        }
+
+        Notifier.post("The import is done", "\(file) is in \(request.name) now.", target: .database(instance: instance, name: request.name), setting: AppPreference.notifyImportDone)
     }
 
     private func showDumpFailure(_ message: String, file: String, instance: String, key: String, inSheet: Bool) {
@@ -521,6 +533,8 @@ extension AppModel {
 enum ImportResult: Equatable {
     case failed(String)
     case stopped(String)
+    // The import is done, and the sheet stays open until the user has read the message.
+    case doneWithNotice(String)
 }
 
 struct ImportProblem: Error {

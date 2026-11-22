@@ -1964,6 +1964,8 @@ public struct OwnDomainRemoval: Codable, Sendable, Equatable {
 
 public enum NexusResponse: Codable, Sendable, Equatable {
     case done(message: String)
+    // A success with something in the message that the user has to see.
+    case doneWithNotice(message: String)
     case services([ServiceStatus])
     case available([ManifestPackage])
     case installed([InstalledRuntime])
