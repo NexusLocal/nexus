@@ -8,15 +8,21 @@ struct DumpContents: Sendable, Equatable {
         let kind: String?
         let name: String
 
+        // A base type drops its functions, and columns of other tables would go away too. Without
+        // CASCADE the drop fails.
+        let cascades: Bool
+
         private static let relationKinds: Set<String> = ["TABLE", "FOREIGN TABLE", "VIEW", "MATERIALIZED VIEW", "SEQUENCE", "INDEX"]
 
         var relation: String? {
             kind.flatMap { Self.relationKinds.contains($0) ? name : nil }
         }
 
-        init(_ text: String) {
+        init(_ statement: String) {
+            cascades = statement.hasSuffix(" CASCADE;")
+            text = cascades ? "\(statement.dropLast(" CASCADE;".count));" : statement
+
             let match = text.wholeMatch(of: /DROP ([A-Z ]+?) IF EXISTS (.+);/)
-            self.text = text
             kind = match.map { String($0.1) }
             name = match.map { String($0.2) } ?? ""
         }
@@ -40,7 +46,8 @@ struct DumpContents: Sendable, Equatable {
     }
 
     // The drop statements come before the first object. A view that needs the primary key of a table
-    // first becomes a view without that need, in a statement of more than one line.
+    // first becomes a view without that need, in a statement of more than one line. lo_unlink drops a
+    // large object.
     static func dropStatements(in script: String) -> [String] {
         var statements: [String] = []
         var current: [Substring] = []
@@ -50,7 +57,7 @@ struct DumpContents: Sendable, Equatable {
                 break
             }
 
-            if current.isEmpty, !["DROP ", "ALTER ", "CREATE OR REPLACE VIEW "].contains(where: line.hasPrefix) {
+            if current.isEmpty, !["DROP ", "ALTER ", "CREATE OR REPLACE VIEW ", "SELECT pg_catalog.lo_unlink("].contains(where: line.hasPrefix) {
                 continue
             }
 

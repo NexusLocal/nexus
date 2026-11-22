@@ -106,7 +106,7 @@ extension NexusEngine {
         do {
             try await runTask(.importDump(file: fileName, instance: instance, name: name), progress: progress, stopped: {
                 if changesAllOrNothing {
-                    return "The import of \(shownName) stopped. \(name) did not change."
+                    return "The import of \(shownName) stopped. \(name) did not change.\(keptCopy)"
                 }
 
                 return exists ? "The import of \(shownName) stopped. \(name) can be incomplete.\(keptCopy)" : "The import of \(shownName) stopped. \(server) has no database \(name)."
@@ -122,8 +122,12 @@ extension NexusEngine {
                 throw error
             }
 
+            if changesAllOrNothing, case CommandError.failed(_, _, let output) = error, output.contains(PostgreSQLTableReplacement.lockTableIsFull) {
+                throw RuntimeError.unsupported("\(PostgreSQLTableReplacement.tooManyTables)\(keptCopy)")
+            }
+
             if changesAllOrNothing {
-                throw RuntimeError.unsupported("The dump did not load and \(name) did not change. \(ErrorText.plain(error))")
+                throw RuntimeError.unsupported("The dump did not load and \(name) did not change. \(ErrorText.plain(error))\(keptCopy)")
             }
 
             throw RuntimeError.unsupported("The dump did not load completely. \(ErrorText.plain(error))\(keptCopy)")
@@ -339,7 +343,9 @@ extension NexusEngine {
         let reader = reader(of: plan.file, container: plan.container, dump: plan.dump)
         let counted = Mutex<Int64>(0)
 
-        try await CommandRunner.pipe(reader, into: loader(for: plan, client: client, tools: tools)) { data in
+        // The load in one transaction ends with COMMIT. So its success counts, also when the reader then
+        // fails on data that the load does not need.
+        try await CommandRunner.pipe(reader, into: loader(for: plan, client: client, tools: tools), secondDecides: plan.replacementScript != nil) { data in
             read(counted.withLock { value in
                 value += Int64(data.count)
                 return value

@@ -161,7 +161,26 @@ struct PostgreSQLTableReplacementTests {
             failed("DROP TYPE IF EXISTS public.mood;", state: "42809", detail: "\"public.mood\" is a domain"),
         ])
 
-        #expect(replacement.conflicts == ["\"public.mood\" is a domain"])
+        #expect(replacement.refusals == ["\"public.mood\" is a domain"])
+        #expect(replacement.conflictText(dump: "shop.dump", database: "shop")?.contains("PostgreSQL cannot drop the old objects: \"public.mood\" is a domain. Nothing changed.") == true)
+    }
+
+    @Test func aBaseTypeThatIsInUseStopsTheImport() {
+        let contents = DumpContents(list: list, script: script.replacingOccurrences(of: "public.mood;", with: "public.mood CASCADE;"))
+        let number = String(contents.statements.firstIndex { $0.cascades } ?? -1)
+        let replacement = PostgreSQLTableReplacement(contents: contents, answer: [["statement", number, "2BP01", "f", "function bt_in(cstring) depends on type public.mood"]])
+
+        #expect(contents.statements.allSatisfy { !$0.text.contains("CASCADE") })
+        #expect(replacement.conflicts == ["function bt_in(cstring) depends on type mood"])
+        #expect(replacement.kept.isEmpty)
+    }
+
+    @Test func theRowsOfAnExtensionThatTheDumpDoesNotMakeStay() {
+        let contents = DumpContents(list: list, script: script.replacingOccurrences(of: "DROP EXTENSION IF EXISTS postgis;\n", with: ""))
+        let replacement = PostgreSQLTableReplacement(contents: contents, answer: [["extension", "public spatial_ref_sys postgres", "postgis"]])
+
+        #expect(!ids(replacement.useList).contains("3401"))
+        #expect(ids(replacement.useList).contains("3400"))
     }
 
     @Test func aDropThatFailsWhileItsTableGoesAwayIsNoConflict() {
@@ -236,6 +255,21 @@ extension NexusEngineTests {
             let zip = work.appending(path: "big.zip")
             _ = try await CommandRunner.run(Command(executable: URL(filePath: "/usr/bin/zip"), arguments: ["-q", "-j", zip.path(percentEncoded: false), big.path(percentEncoded: false)]))
 
+            let compressed = work.appending(path: "garbage.dump.gz")
+            _ = try await CommandRunner.run(Command(executable: URL(filePath: "/bin/bash"), arguments: ["-c", #"/usr/bin/gzip -c "$1" > "$2" && printf 'no gzip data' >> "$2""#, "make", big.path(percentEncoded: false), compressed.path(percentEncoded: false)]))
+
+            let withObject = "CREATE TABLE users (id int, document oid); INSERT INTO users VALUES (9, lo_from_bytea(4242, 'old'))"
+            try await client.query("CREATE DATABASE objects")
+            try await client.query("CREATE TABLE users (id int, document oid); INSERT INTO users VALUES (1, lo_from_bytea(4242, 'new')), (2, NULL)", database: "objects")
+            let objects = work.appending(path: "objects.dump")
+            try await run("pg_dump", ["-Fc", "-f", objects.path(percentEncoded: false), "objects"])
+
+            let baseType = "CREATE TYPE bt; CREATE FUNCTION bt_in(cstring) RETURNS bt AS 'int4in' LANGUAGE internal IMMUTABLE STRICT; CREATE FUNCTION bt_out(bt) RETURNS cstring AS 'int4out' LANGUAGE internal IMMUTABLE STRICT; CREATE TYPE bt (INPUT = bt_in, OUTPUT = bt_out, LIKE = int4); CREATE TABLE users (id int, b bt);"
+            try await client.query("CREATE DATABASE basetype")
+            try await client.query(baseType, database: "basetype")
+            let base = work.appending(path: "base.dump")
+            try await run("pg_dump", ["-Fc", "-f", base.path(percentEncoded: false), "basetype"])
+
             func load(_ file: URL, into name: String, _ setup: String) async throws -> (answer: NexusResponse, users: String) {
                 try await client.query("CREATE DATABASE \(name)")
                 try await client.query(setup, database: name)
@@ -254,6 +288,9 @@ extension NexusEngineTests {
                 ("plain", try await load(big, into: "plain", "CREATE TABLE users (id int); CREATE TABLE kept (id int)"), "20000"),
                 ("zipped", try await load(zip, into: "zipped", "CREATE TABLE users (id int); CREATE TABLE kept (id int)"), "20000"),
                 ("onlypublic", try await load(onlyPublic, into: "onlypublic", "CREATE TABLE users (id int); CREATE TABLE kept (id int)"), "20000"),
+                ("garbage", try await load(compressed, into: "garbage", "CREATE TABLE users (id int); CREATE TABLE kept (id int)"), "20000"),
+                ("largeobject", try await load(objects, into: "largeobject", withObject), "1,2"),
+                ("extrakey", try await load(dump, into: "extrakey", "\(same) ALTER TABLE x.notes ADD UNIQUE (user_id); ALTER TABLE users ADD COLUMN note int REFERENCES x.notes (user_id)"), "1,2"),
             ]
 
             for (name, loaded, users) in replaced {
@@ -273,6 +310,8 @@ extension NexusEngineTests {
                 ("rows", try await load(rows, into: "rows", same), "Nothing changed."),
                 ("renamed", try await load(dump, into: "renamed", "\(shared) CREATE TABLE users_old (name citext); CREATE INDEX users_name ON users_old (name); CREATE TABLE users (id int); INSERT INTO users VALUES (9)"), "index users_name belongs to table users_old"),
                 ("taken", try await load(dump, into: "taken", "\(shared) CREATE TABLE users_old (id int CONSTRAINT users_pkey PRIMARY KEY); CREATE TABLE users (id int); INSERT INTO users VALUES (9)"), "did not change."),
+                ("standalone", try await load(big, into: "standalone", "CREATE TABLE everyone (id int) PARTITION BY RANGE (id); CREATE TABLE users PARTITION OF everyone DEFAULT; INSERT INTO everyone VALUES (9)"), "table users is a partition of table everyone"),
+                ("base", try await load(base, into: "base", "\(baseType) INSERT INTO users VALUES (9, '1'); CREATE TABLE kept (b bt)"), "Nothing changed."),
                 ("labels", try await load(dump, into: "labels", "\(same.replacingOccurrences(of: "('a', 'b')", with: "('a')")) CREATE TABLE kept (m mood)"), "did not change."),
             ]
 
@@ -280,6 +319,9 @@ extension NexusEngineTests {
                 #expect(loaded.users == "9", "\(name)")
                 #expect(Self.failure(loaded.answer)?.contains(text) == true, "\(name): \(loaded.answer)")
             }
+
+            #expect(try await client.query("SELECT count(*) FROM information_schema.columns WHERE table_name = 'kept'", database: "base") == "1")
+            #expect(try await client.query("SELECT convert_from(lo_get(4242), 'UTF8')", database: "largeobject") == "new")
 
             try await client.query("CREATE DATABASE locked")
             try await client.query(same, database: "locked")

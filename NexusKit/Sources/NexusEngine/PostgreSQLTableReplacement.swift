@@ -9,8 +9,11 @@ import NexusSupervisor
 // itself. The check runs them in a transaction that it does not commit. The load runs them again in
 // one transaction with the rest of the dump, so an error leaves the database as it was.
 struct PostgreSQLTableReplacement: Sendable, Equatable {
-    // What PostgreSQL says about a table that it cannot replace.
+    // What uses a table of the dump.
     var conflicts: [String] = []
+
+    // Why PostgreSQL cannot drop an object that nothing uses.
+    var refusals: [String] = []
 
     // The tables with rows in the dump and no definition in the dump.
     var tablesWithoutDefinition: [String] = []
@@ -37,11 +40,15 @@ struct PostgreSQLTableReplacement: Sendable, Equatable {
             return "Nexus cannot replace only the tables of \(dump). The dump has rows without the definition of these tables: \(Self.short(tablesWithoutDefinition)). \(advice)"
         }
 
-        guard !conflicts.isEmpty else {
+        if !conflicts.isEmpty {
+            return "Nexus cannot replace only the tables of \(dump). Other parts of \(database) use them: \(Self.short(conflicts)). \(advice)"
+        }
+
+        guard !refusals.isEmpty else {
             return nil
         }
 
-        return "Nexus cannot replace only the tables of \(dump). Other parts of \(database) use them: \(Self.short(conflicts)). \(advice)"
+        return "Nexus cannot replace only the tables of \(dump). PostgreSQL cannot drop the old objects: \(Self.short(refusals)). \(advice)"
     }
 
     func keptText(database: String) -> String {
@@ -51,7 +58,7 @@ struct PostgreSQLTableReplacement: Sendable, Equatable {
     static func check(_ plan: DumpLoad, client: DatabaseClient, tools: DatabaseTools) async throws -> PostgreSQLTableReplacement {
         let contents = DumpContents(
             list: try await restoreOutput(of: plan, "-l", tools: tools),
-            script: try await restoreOutput(of: plan, "--clean --if-exists --schema-only --no-owner --no-privileges -f -", tools: tools)
+            script: try await restoreOutput(of: plan, "--clean --if-exists --no-owner --no-privileges -f - 2>/dev/null | /usr/bin/awk '/^-- Name:/ { exit } { print }'", tools: tools)
         )
 
         do {
@@ -59,12 +66,17 @@ struct PostgreSQLTableReplacement: Sendable, Equatable {
             return PostgreSQLTableReplacement(contents: contents, answer: answer)
         } catch CommandError.failed(_, _, let output) where output.contains("lock timeout") {
             throw RuntimeError.unsupported("Another program uses a table of \(plan.name) now. Close its connection and import the dump again. Nothing changed.")
-        } catch CommandError.failed(_, _, let output) where output.contains("out of shared memory") {
-            throw RuntimeError.unsupported("The dump has too many tables to check them in one step. Nothing changed. Replace the whole database or load the dump into another database.")
+        } catch CommandError.failed(_, _, let output) where output.contains(lockTableIsFull) {
+            throw RuntimeError.unsupported(tooManyTables)
         }
     }
 
-    // pg_restore stops before the end of its input. So only its own exit status counts.
+    static let lockTableIsFull = "out of shared memory"
+    static let tooManyTables = "The dump has too many tables to replace them in one step. Nothing changed. Replace the whole database or load the dump into another database."
+
+    // pg_restore stops before the end of its input. So only its own exit status counts. The script
+    // has the rows of the dump too, so it ends at the first object. The list already shows that
+    // pg_restore can read the dump.
     private static func restoreOutput(of plan: DumpLoad, _ options: String, tools: DatabaseTools) async throws -> String {
         try await CommandRunner.run(Command(
             executable: URL(filePath: "/bin/bash"),
@@ -98,8 +110,9 @@ struct PostgreSQLTableReplacement: Sendable, Equatable {
 
                 let statement = contents.statements[number]
                 let shared = statement.kind.map(Self.sharedKinds.contains) ?? false
+                let inUse = row[2] == Self.dependentObjectsStillExist
 
-                if shared, row[2] == Self.dependentObjectsStillExist, let entry = contents.entry(of: number) {
+                if shared, inUse, !statement.cascades, let entry = contents.entry(of: number) {
                     kept.append("\(statement.kind?.lowercased() ?? "") \(Self.shown(statement.name))")
                     keptNumbers.insert(number)
                     keptEntries.insert(entry)
@@ -114,16 +127,23 @@ struct PostgreSQLTableReplacement: Sendable, Equatable {
                 // The other statements are about a part of a table, and the table goes away. When such
                 // a part stays, the load fails and changes nothing.
                 if shared || (statement.relation != nil && row[3] == "t") {
-                    let users = row[4].split(separator: "\u{1F}").map { Self.shown(String($0)) }
-                    conflicts += users.filter { !conflicts.contains($0) }
+                    let causes = row[4].split(separator: "\u{1F}").map { Self.shown(String($0)) }
+
+                    if inUse {
+                        conflicts += causes.filter { !conflicts.contains($0) }
+                    } else {
+                        refusals += causes.filter { !refusals.contains($0) }
+                    }
                 }
             default:
                 continue
             }
         }
 
-        let keptRows = Set(extensionRows.filter { keptExtensions.contains($0.value) }.keys)
-        useList = keptEntries.isEmpty ? nil : contents.useList(without: keptEntries, rows: keptRows)
+        // The rows of an extension stay when the load does not make that extension again.
+        let newExtensions = Set(contents.statements.filter { $0.kind == "EXTENSION" }.map { $0.name.trimmingCharacters(in: CharacterSet(charactersIn: "\"")) }).subtracting(keptExtensions)
+        let keptRows = Set(extensionRows.filter { !newExtensions.contains($0.value) }.keys)
+        useList = keptEntries.isEmpty && keptRows.isEmpty ? nil : contents.useList(without: keptEntries, rows: keptRows)
         script = Self.loadScript(contents, skipping: keptNumbers)
     }
 
@@ -132,7 +152,7 @@ struct PostgreSQLTableReplacement: Sendable, Equatable {
             return "index \(name) belongs to table \(parent)"
         }
 
-        return parent.isEmpty ? "table \(name) goes away with them" : "table \(name) is a partition of table \(parent)"
+        return parent == "-" ? "\(name) goes away with them" : "table \(name) is a partition of table \(parent)"
     }
 
     // PostgreSQL names at most 100 objects and then gives a line such as "and 20 other objects".
@@ -161,7 +181,7 @@ extension PostgreSQLTableReplacement {
         \(drops)
         SELECT 'statement', number, state, EXISTS (SELECT FROM pg_catalog.pg_class WHERE oid = relation_oid), detail
             FROM pg_temp.nexus_statements WHERE state IS NOT NULL ORDER BY number;
-        SELECT 'lost', kind, name, COALESCE(parent, '') FROM (\(lost)) AS lost;
+        SELECT 'lost', kind, name, COALESCE(parent, '-') FROM (\(lost)) AS lost;
 
         """
     }
@@ -200,7 +220,7 @@ extension PostgreSQLTableReplacement {
         return """
             SET LOCAL client_min_messages = error;
             SET LOCAL search_path = '';
-            CREATE TEMP TABLE nexus_statements (number int, statement text, relation text, relation_oid oid, state text, detail text);
+            CREATE TEMP TABLE nexus_statements (number int, statement text, relation text, relation_oid oid, done boolean NOT NULL DEFAULT false, state text, detail text);
             \(statements.isEmpty ? "" : "INSERT INTO pg_temp.nexus_statements (number, statement, relation) VALUES\n\(statements.joined(separator: ",\n"));")
             UPDATE pg_temp.nexus_statements SET relation_oid = pg_catalog.to_regclass(relation);
             CREATE TEMP TABLE nexus_relations AS
@@ -239,38 +259,52 @@ extension PostgreSQLTableReplacement {
             """
     }
 
+    // The database can have a foreign key between two tables of the dump that the dump does not have.
+    // Other uses that the dump does not know need another order, so a drop of an object in use runs
+    // again after the drops that worked.
     private static let drops = """
         DO $nexus_drops$
         DECLARE
             entry record;
+            worked boolean;
             found_state text;
             found_detail text;
             found_message text;
         BEGIN
-            FOR entry IN SELECT * FROM pg_temp.nexus_statements ORDER BY number LOOP
-                BEGIN
-                    EXECUTE entry.statement;
-                EXCEPTION
-                    WHEN out_of_memory OR lock_not_available OR deadlock_detected THEN
-                        RAISE;
-                    WHEN OTHERS THEN
-                        GET STACKED DIAGNOSTICS found_state = RETURNED_SQLSTATE, found_detail = PG_EXCEPTION_DETAIL, found_message = MESSAGE_TEXT;
-                        UPDATE pg_temp.nexus_statements
-                            SET state = found_state, detail = pg_catalog.translate(COALESCE(NULLIF(found_detail, ''), found_message), E'\\n\\t', pg_catalog.chr(31) || ' ')
-                            WHERE number = entry.number;
-                END;
+            FOR entry IN SELECT conrelid::pg_catalog.regclass AS relation, conname FROM pg_catalog.pg_constraint
+                WHERE contype = 'f' AND conparentid = 0
+                    AND conrelid IN (SELECT relation_oid FROM pg_temp.nexus_statements) AND confrelid IN (SELECT relation_oid FROM pg_temp.nexus_statements) LOOP
+                EXECUTE pg_catalog.format('ALTER TABLE %s DROP CONSTRAINT %I', entry.relation, entry.conname);
+            END LOOP;
+            LOOP
+                worked := false;
+                FOR entry IN SELECT * FROM pg_temp.nexus_statements WHERE NOT done AND (state IS NULL OR state = '2BP01') ORDER BY number LOOP
+                    BEGIN
+                        EXECUTE entry.statement;
+                        UPDATE pg_temp.nexus_statements SET done = true, state = NULL, detail = NULL WHERE number = entry.number;
+                        worked := true;
+                    EXCEPTION
+                        WHEN out_of_memory OR lock_not_available OR deadlock_detected THEN
+                            RAISE;
+                        WHEN OTHERS THEN
+                            GET STACKED DIAGNOSTICS found_state = RETURNED_SQLSTATE, found_detail = PG_EXCEPTION_DETAIL, found_message = MESSAGE_TEXT;
+                            UPDATE pg_temp.nexus_statements
+                                SET state = found_state, detail = pg_catalog.translate(COALESCE(NULLIF(found_detail, ''), found_message), E'\\n\\t', pg_catalog.chr(31) || ' ')
+                                WHERE number = entry.number;
+                    END;
+                END LOOP;
+                EXIT WHEN NOT worked OR NOT EXISTS (SELECT FROM pg_temp.nexus_statements WHERE state = '2BP01');
             END LOOP;
         END
         $nexus_drops$;
         """
 
-    // A table, a view or an index that goes away although the dump does not have it.
+    // A table or a view that goes away although the dump does not have it, and an index or a partition
+    // that goes away while its table stays.
     private static let lost = """
         SELECT kind, name, parent FROM pg_temp.nexus_relations relations
             WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_class WHERE oid = relations.oid)
-                AND CASE kind
-                    WHEN 'index' THEN EXISTS (SELECT FROM pg_catalog.pg_class WHERE oid = relations.parent_oid)
-                    ELSE NOT EXISTS (SELECT FROM pg_temp.nexus_statements WHERE relation_oid = relations.oid)
-                END
+                AND (EXISTS (SELECT FROM pg_catalog.pg_class WHERE oid = relations.parent_oid)
+                    OR (kind = 'table' AND NOT EXISTS (SELECT FROM pg_temp.nexus_statements WHERE relation_oid = relations.oid)))
         """
 }

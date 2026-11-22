@@ -134,8 +134,9 @@ public enum CommandRunner {
     // cut input, so the error of the first is the cause. With an observer, nexusd passes each
     // part of the data on itself. The observer sees each part first, for example to count the
     // bytes of a dump.
-    // A file takes the output of the second command, and the file must exist.
-    public static func pipe(_ first: Command, into second: Command, writingTo file: URL? = nil, observer: (@Sendable (Data) -> Void)? = nil) async throws {
+    // A file takes the output of the second command, and the file must exist. secondDecides is for a
+    // second command that knows when it has all the data. Its success is then the success of both.
+    public static func pipe(_ first: Command, into second: Command, writingTo file: URL? = nil, secondDecides: Bool = false, observer: (@Sendable (Data) -> Void)? = nil) async throws {
         let fileHandle = try file.map { try FileHandle(forWritingTo: $0) }
         let firstErrors = try OutputFile()
         let secondOutput = try OutputFile()
@@ -177,6 +178,10 @@ public enum CommandRunner {
         } onCancel: {
             ProcessGroup.signal(producer, first.stopSignal)
             ProcessGroup.signal(consumer, second.stopSignal)
+        }
+
+        if secondDecides, !consumerEnd.failed {
+            return
         }
 
         try Task.checkCancellation()
