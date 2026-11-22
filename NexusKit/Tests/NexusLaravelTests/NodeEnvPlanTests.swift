@@ -13,9 +13,9 @@ struct NodeEnvPlanTests {
         redisPorts: [16379]
     )
 
-    private func plan(_ files: [String: String], usesDatabaseClient: Bool = true) -> WorkspaceEnvPlan {
+    private func plan(_ files: [String: String], usesDatabaseClient: Bool = true, usesMongoDB: Bool = false) -> WorkspaceEnvPlan {
         let ordered = NodeEnvFile.names.compactMap { name in files[name].map { NodeEnvFile(name: name, text: $0) } }
-        return WorkspaceEnvPlan(nodeFiles: ordered, usesDatabaseClient: usesDatabaseClient, request: request)
+        return WorkspaceEnvPlan(nodeFiles: ordered, usesDatabaseClient: usesDatabaseClient, usesMongoDB: usesMongoDB, request: request)
     }
 
     @Test func aDatabaseURLOnANexusInstanceGetsTheServerOfTheWorkspace() {
@@ -93,6 +93,36 @@ struct NodeEnvPlanTests {
 
         #expect(withClient.warnings.count == 1)
         #expect(withoutClient.warnings.isEmpty)
+    }
+
+    @Test(arguments: [
+        "mongodb://localhost:27017/shop",
+        "MongoDB://localhost:27017/shop",
+        "mongodb+srv://shop:secret@cluster.example.net/shop",
+        "mongodb://db1.example.com:27017,db2.example.com:27017/shop?replicaSet=rs0",
+    ])
+    func aMongoDBURLGivesAWarning(url: String) {
+        let plan = plan([".env": "DATABASE_URL=\(url)\n", ".env.local": "DATABASE_URL=\(url)\n"], usesMongoDB: true)
+
+        #expect(plan.serverURLKeys.isEmpty)
+        #expect(plan.problems.isEmpty)
+        #expect(plan.warnings == ["DATABASE_URL names a MongoDB server. Nexus cannot copy it, so this workspace shares that server with the main site."])
+    }
+
+    @Test func aMongoDBURLNextToANexusServerGivesAWarning() {
+        let plan = plan([".env": "DATABASE_URL=postgresql://shop@localhost:15432/shop\nMONGODB_URI=mongodb://localhost:27017/logs\n"])
+
+        #expect(plan.serverURLKeys == ["DATABASE_URL"])
+        #expect(plan.problems.isEmpty)
+        #expect(plan.warnings == ["MONGODB_URI names a MongoDB server. Nexus cannot copy it, so this workspace shares that server with the main site."])
+    }
+
+    @Test func anAppWithAMongoDBClientAndNoURLGivesAWarning() {
+        let plan = plan([".env": "DATABASE_URL=postgresql://shop@localhost:15432/shop\nMONGO_HOST=127.0.0.1\nMONGO_PORT=27017\n"], usesMongoDB: true)
+
+        #expect(plan.serverURLKeys == ["DATABASE_URL"])
+        #expect(plan.problems.isEmpty)
+        #expect(plan.warnings == ["The app uses MongoDB, and Nexus found no MongoDB URL in its env files. Nexus cannot copy a MongoDB database. So this workspace can share it with the main site."])
     }
 
     @Test func aURLThatFollowsThePortKeyIsIsolated() {

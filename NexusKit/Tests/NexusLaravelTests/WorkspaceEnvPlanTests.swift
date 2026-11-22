@@ -280,6 +280,26 @@ struct WorkspaceEnvPlanTests {
         #expect(plan(settings, connections: ["old", "main"]).problems.isEmpty)
     }
 
+    @Test func aDefaultMongoDBConnectionIsNotIsolated() {
+        let result = plan(connection("main", database: keyed(.text("shop"), "MONGODB_DATABASE"), driver: "mongodb"))
+
+        #expect(result.keys.isEmpty)
+        #expect(result.problems == ["The connection main uses MongoDB. Nexus cannot copy a MongoDB database."])
+    }
+
+    @Test func anotherMongoDBConnectionIsNotIsolatedAlsoWithItsDatabaseInTheURL() {
+        let settings = connection("main", database: keyed(.text("shop"), "DB_DATABASE"))
+            .merging([
+                "database.connections.mongodb.driver": ConfigSetting(value: .text("mongodb")),
+                "database.connections.mongodb.dsn": keyed(.text("mongodb://localhost:27017/shop"), "MONGODB_URI"),
+            ]) { own, _ in own }
+
+        let result = plan(settings, connections: ["main", "mongodb"])
+
+        #expect(result.serverPortKeys == [13306: ["DB_PORT"]])
+        #expect(result.problems == ["The connection mongodb uses MongoDB. Nexus cannot copy a MongoDB database."])
+    }
+
     @Test func aDefaultSQLiteFileKeepsItsKeyWhenAMySQLConnectionSharesThatKey() {
         let settings = connection("main", database: keyed(.text("/work/shop/database/database.sqlite"), "DB_DATABASE"), driver: "sqlite")
             .merging(connection("mysql", database: keyed(.text("laravel"), "DB_DATABASE"))) { own, _ in own }

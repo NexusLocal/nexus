@@ -165,6 +165,8 @@ public struct NodeProject: Sendable, Equatable {
         "sequelize", "typeorm", "kysely", "@mikro-orm/core", "ioredis", "redis", "bullmq",
     ]
 
+    static let mongoDBClients: Set<String> = ["mongodb", "mongoose", "@mikro-orm/mongodb"]
+
     // Prisma and Drizzle Kit apply the migrations of a project without a question.
     static let migrationPrograms: [(dependency: String, program: String)] = [
         ("prisma", "prisma migrate deploy"),
@@ -181,6 +183,10 @@ public struct NodeProject: Sendable, Equatable {
         self.migrationProgram = migrationProgram
         self.hasBuildScript = hasBuildScript
         self.dependencyNames = dependencyNames
+    }
+
+    public var usesMongoDB: Bool {
+        !Self.mongoDBClients.isDisjoint(with: dependencyNames)
     }
 
     public var command: String? {

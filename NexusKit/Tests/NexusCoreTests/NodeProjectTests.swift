@@ -46,6 +46,18 @@ struct NodeProjectTests {
         #expect(NodeProject.read(in: plain)?.framework == nil)
     }
 
+    @Test(arguments: ["mongodb", "mongoose", "@mikro-orm/mongodb"])
+    func aMongoDBClientInTheDependenciesUsesMongoDB(client: String) throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shop = try makeFolder("shop", files: ["package.json": try package(dependencies: [client: "1"])])
+        let development = try makeFolder("development", files: ["package.json": try package(devDependencies: [client: "1"])])
+        let plain = try makeFolder("plain", files: ["package.json": try package(dependencies: ["pg": "8"])])
+
+        #expect(NodeProject.read(in: shop)?.usesMongoDB == true)
+        #expect(NodeProject.read(in: development)?.usesMongoDB == true)
+        #expect(NodeProject.read(in: plain)?.usesMongoDB == false)
+    }
+
     @Test func theLockFilePicksThePackageManager() throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let pnpm = try makeFolder("pnpm", files: ["package.json": try package(scripts: ["dev": "vite"]), "pnpm-lock.yaml": "", "package-lock.json": "{}"])

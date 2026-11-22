@@ -176,7 +176,18 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
         let settings = configuration.settings
         let path = "database.connections.\(name)"
 
-        guard let driver = settings["\(path).driver"]?.value.description, let setting = settings["\(path).database"] else {
+        guard let driver = settings["\(path).driver"]?.value.description else {
+            return
+        }
+
+        // A MongoDB connection can have its database in its URL. config/database.php of a new Laravel
+        // application has no such connection. So a connection that is there is in use.
+        if driver == "mongodb" {
+            problems.append("The connection \(name) uses MongoDB. Nexus cannot copy a MongoDB database.")
+            return
+        }
+
+        guard let setting = settings["\(path).database"] else {
             return
         }
 

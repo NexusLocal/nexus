@@ -22,6 +22,7 @@ public enum ToggleHelp {
         "imagick": "Changes images with ImageMagick.",
         "mailparse": "Reads the parts of a mail. php-mime-mail-parser needs it.",
         "memcached": "Connects to a memcached server. Laravel can use it for the cache and sessions. Nexus has no memcached server. It needs igbinary.",
+        "mongodb": "Connects to a MongoDB server. mongodb/laravel-mongodb needs it. Nexus has no MongoDB server.",
         "opcache": "Keeps compiled PHP code in memory. So each request runs faster.",
         "pcov": "Measures code coverage for tests. It is faster than Xdebug for coverage. Nexus turns it on only for a command with --coverage, --tia or --mutate, for example pest --tia. So other PHP stays fast.",
         "pdo_pgsql": "Connects PDO and Laravel to PostgreSQL.",

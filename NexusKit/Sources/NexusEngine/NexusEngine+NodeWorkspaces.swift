@@ -17,7 +17,7 @@ extension NexusEngine {
         let mainFolder = folders.application
         let folder = folders.worktree
         let project = NodeProject.read(in: URL(filePath: mainFolder, directoryHint: .isDirectory))
-        let plan = try await nodeEnvPlan(workspace: workspace.name, files: try Self.nodeEnvFiles(in: mainFolder), usesDatabaseClient: project?.usesDatabaseClient ?? false, mainFolder: mainFolder, workspaceFolder: folder)
+        let plan = try await nodeEnvPlan(workspace: workspace.name, files: try Self.nodeEnvFiles(in: mainFolder), project: project, mainFolder: mainFolder, workspaceFolder: folder)
 
         guard let git = await GitTool.executable() else {
             throw RuntimeError.unsupported(GitTool.missing)
@@ -129,7 +129,7 @@ extension NexusEngine {
     func checkNodeEnvFiles(of written: WrittenEnv, in workspace: inout Workspace) async throws {
         let ownPorts = Set(written.servers.map(\.port))
         let project = NodeProject.read(in: URL(filePath: written.folder, directoryHint: .isDirectory))
-        let plan = try await nodeEnvPlan(workspace: workspace.name, files: try Self.nodeEnvFiles(in: written.folder), usesDatabaseClient: project?.usesDatabaseClient ?? false, mainFolder: written.folder, workspaceFolder: written.folder, servers: written.servers)
+        let plan = try await nodeEnvPlan(workspace: workspace.name, files: try Self.nodeEnvFiles(in: written.folder), project: project, mainFolder: written.folder, workspaceFolder: written.folder, servers: written.servers)
         let wrongPorts = plan.serverPorts.filter { !ownPorts.contains($0) }
         let newKeys = plan.serverURLKeys.union(plan.serverPortKeys.values.joined()).subtracting(written.isolatingKeys).sorted()
         var problems = plan.problems
@@ -143,8 +143,8 @@ extension NexusEngine {
 
     // servers holds the servers of the workspace, for the check of a worktree, as for a Laravel
     // application.
-    func nodeEnvPlan(workspace: String, files: [NodeEnvFile], usesDatabaseClient: Bool, mainFolder: String, workspaceFolder: String, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)] = []) async throws -> WorkspaceEnvPlan {
-        WorkspaceEnvPlan(nodeFiles: files, usesDatabaseClient: usesDatabaseClient, request: try await workspaceEnvRequest(
+    func nodeEnvPlan(workspace: String, files: [NodeEnvFile], project: NodeProject?, mainFolder: String, workspaceFolder: String, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)] = []) async throws -> WorkspaceEnvPlan {
+        WorkspaceEnvPlan(nodeFiles: files, usesDatabaseClient: project?.usesDatabaseClient ?? false, usesMongoDB: project?.usesMongoDB ?? false, request: try await workspaceEnvRequest(
             workspace: workspace,
             mainFolder: mainFolder,
             workspaceFolder: workspaceFolder,
@@ -157,7 +157,7 @@ extension NexusEngine {
         let mainFolder = RealPath.of(URL(filePath: ProjectFolder.projectFolder(of: site), directoryHint: .isDirectory))
         let files = try Self.nodeEnvFiles(in: mainFolder)
         let project = NodeProject.read(in: URL(filePath: mainFolder, directoryHint: .isDirectory))
-        let plan = try await nodeEnvPlan(workspace: WorkspaceKeys.workspacePlaceholder, files: files, usesDatabaseClient: project?.usesDatabaseClient ?? false, mainFolder: mainFolder, workspaceFolder: "{worktree}")
+        let plan = try await nodeEnvPlan(workspace: WorkspaceKeys.workspacePlaceholder, files: files, project: project, mainFolder: mainFolder, workspaceFolder: "{worktree}")
         let hosts = Workspace.hostPairs(of: sites, workspace: WorkspaceKeys.workspacePlaceholder, tld: tld).map { HostRewrite(from: $0.from, to: $0.to) }
         let own = sites.flatMap { $0.workspaceKeys ?? [] }
         let ownNames = Set(own.map(\.key))

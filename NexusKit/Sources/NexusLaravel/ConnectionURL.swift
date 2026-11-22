@@ -52,6 +52,12 @@ public struct ConnectionURL: Sendable, Equatable {
         namesSocket = components.queryItems?.contains { ["host", "socket", "socketpath"].contains($0.name.lowercased()) } ?? false
     }
 
+    // Nexus has no MongoDB server, so such a URL is no ConnectionURL. A URL of MongoDB Atlas starts
+    // with mongodb+srv, and a URL with more than one server is no URL for URLComponents.
+    public static func isMongoDB(_ value: String) -> Bool {
+        ["mongodb://", "mongodb+srv://"].contains { value.lowercased().hasPrefix($0) }
+    }
+
     public var isReadable: Bool {
         !usesVariables && !host.isEmpty
     }
