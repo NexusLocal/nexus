@@ -9,8 +9,7 @@ In this order:
 
 1. **PHP 8.6**, when Xdebug, Redis, APCu, pcov, igbinary, YAML, Imagick and memcached have releases
    that support it.
-2. **Valkey.** The fork of Redis with the BSD license, as a service next to Redis.
-3. **A log viewer** for the logs of your apps.
+2. **A log viewer** for the logs of your apps.
 
 ## Later
 
