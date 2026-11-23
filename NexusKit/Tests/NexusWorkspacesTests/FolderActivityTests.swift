@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import NexusWorkspaces
 
@@ -58,11 +59,19 @@ struct FolderActivityTests {
         try setOld(vendor)
         let clock = ContinuousClock()
         let start = clock.now
+        let lastWrite = Mutex(start)
 
-        let writer = Task.detached {
-            for index in 0..<6 {
-                try? Data("<?php".utf8).write(to: vendor.appending(path: "laravel/file-\(index).php"))
-                try? await Task.sleep(for: .milliseconds(200))
+        let writer = Task {
+            await withCheckedContinuation { (finished: CheckedContinuation<Void, Never>) in
+                Thread.detachNewThread {
+                    for index in 0..<6 {
+                        try? Data("<?php".utf8).write(to: vendor.appending(path: "laravel/file-\(index).php"))
+                        lastWrite.withLock { $0 = clock.now }
+                        Thread.sleep(forTimeInterval: 0.2)
+                    }
+
+                    finished.resume()
+                }
             }
         }
 
@@ -73,9 +82,10 @@ struct FolderActivityTests {
         }
 
         await FolderActivity.waitUntilQuiet([vendor.path(percentEncoded: false)], quiet: .milliseconds(1500), interval: .milliseconds(100))
+        let end = clock.now
         await writer.value
 
-        #expect(clock.now - start >= .milliseconds(2500))
-        #expect(clock.now - start < .seconds(6))
+        #expect(end - lastWrite.withLock { $0 } >= .milliseconds(1500))
+        #expect(end - start < .seconds(6))
     }
 }

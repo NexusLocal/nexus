@@ -9,14 +9,14 @@ public enum PageClient {
         public let body: String
     }
 
-    public static func get(_ path: String, port: Int, host: String? = nil) throws -> Answer {
-        try exchange("GET \(path) HTTP/1.1\r\nHost: \(host ?? "127.0.0.1:\(port)")\r\n\r\n", port: port)
+    public static func get(_ path: String, port: Int, host: String? = nil) async throws -> Answer {
+        try await exchange("GET \(path) HTTP/1.1\r\nHost: \(host ?? "127.0.0.1:\(port)")\r\n\r\n", port: port)
     }
 
-    public static func post(_ path: String, json: String, port: Int, token: String, origin: String? = nil) throws -> Answer {
+    public static func post(_ path: String, json: String, port: Int, token: String, origin: String? = nil) async throws -> Answer {
         var head = "POST \(path) HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nContent-Type: application/json\r\nX-Nexus-Token: \(token)\r\n"
         head += "Origin: \(origin ?? "http://127.0.0.1:\(port)")\r\nContent-Length: \(Data(json.utf8).count)\r\n\r\n"
-        return try exchange(head + json, port: port)
+        return try await exchange(head + json, port: port)
     }
 
     // An open connection to /api/events. readLine gives the lines of the events.
@@ -26,7 +26,28 @@ public enum PageClient {
         return socket
     }
 
-    private static func exchange(_ request: String, port: Int) throws -> Answer {
+    // The "event:" line and the "data:" line of the first event that a new page gets.
+    public static func firstEvent(port: Int) async throws -> [String] {
+        try await onOwnThread {
+            let socket = try events(port: port)
+            defer { socket.close() }
+            var lines: [String] = []
+
+            while lines.count < 2, let line = try socket.readLine().map({ String(decoding: $0, as: UTF8.self) }) {
+                if line.hasPrefix("event:") || !lines.isEmpty {
+                    lines.append(line)
+                }
+            }
+
+            return lines
+        }
+    }
+
+    private static func exchange(_ request: String, port: Int) async throws -> Answer {
+        try await onOwnThread { try blockingExchange(request, port: port) }
+    }
+
+    private static func blockingExchange(_ request: String, port: Int) throws -> Answer {
         let socket = try LineSocket.connect(port: port, timeout: 5)
         defer { socket.close() }
         try socket.write(Data(request.utf8))

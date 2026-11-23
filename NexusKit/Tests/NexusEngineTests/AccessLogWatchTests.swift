@@ -6,6 +6,7 @@ import Testing
 struct AccessLogWatchTests {
     private final class Reports: Sendable {
         let owners = Mutex<[String]>([])
+        let times = Mutex<[ContinuousClock.Instant]>([])
 
         var count: Int {
             owners.withLock { $0.count }
@@ -13,6 +14,10 @@ struct AccessLogWatchTests {
 
         var list: [String] {
             owners.withLock { $0 }
+        }
+
+        var gaps: [Duration] {
+            times.withLock { times in zip(times, times.dropFirst()).map { $1 - $0 } }
         }
     }
 
@@ -39,6 +44,7 @@ struct AccessLogWatchTests {
     private func watch(_ reports: Reports) -> AccessLogWatch {
         AccessLogWatch { owner in
             reports.owners.withLock { $0.append(owner) }
+            reports.times.withLock { $0.append(.now) }
         }
     }
 
@@ -70,18 +76,16 @@ struct AccessLogWatchTests {
         defer { watch.stop() }
 
         watch.watch([log.path(percentEncoded: false): "shop\n"])
-        let start = ContinuousClock.now
         try addLine(to: handle)
-        #expect(await eventually { reports.count == 1 })
+        try #require(await eventually { reports.count == 1 })
+        let firstReport = try #require(reports.times.withLock { $0.first })
 
         try addLine(to: handle)
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(reports.count == 1)
-
-        try await Task.sleep(until: start + .milliseconds(1200))
+        try await Task.sleep(until: firstReport + .milliseconds(1200))
         try addLine(to: handle)
 
         #expect(await eventually { reports.count == 2 })
+        #expect(reports.gaps.allSatisfy { $0 >= .milliseconds(950) })
     }
 
     @Test func aLogThatIsNotThereGetsAFileThatReportsItsLines() async throws {

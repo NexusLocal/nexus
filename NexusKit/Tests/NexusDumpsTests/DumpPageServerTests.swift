@@ -58,12 +58,12 @@ struct DumpPageServerTests {
         #expect(guarding.refusal(of: request(method: "DELETE"))?.status == 405)
     }
 
-    @Test func theServerAnswersOnlyWithTheHostOfTheServer() throws {
+    @Test func theServerAnswersOnlyWithTheHostOfTheServer() async throws {
         let server = try server()
         defer { server.stop() }
 
-        let answer = try PageClient.get("/api/dumps?request=a1", port: server.port)
-        let otherHost = try PageClient.get("/api/dumps?request=a1", port: server.port, host: "rebound.example")
+        let answer = try await PageClient.get("/api/dumps?request=a1", port: server.port)
+        let otherHost = try await PageClient.get("/api/dumps?request=a1", port: server.port, host: "rebound.example")
 
         #expect(answer.status == 200)
         #expect(answer.body == #"{"message":"GET /api/dumps a1"}"#)
@@ -72,13 +72,13 @@ struct DumpPageServerTests {
         #expect(otherHost.status == 403)
     }
 
-    @Test func aPostReachesTheHandlerOnlyWithTheToken() throws {
+    @Test func aPostReachesTheHandlerOnlyWithTheToken() async throws {
         let server = try server()
         defer { server.stop() }
 
-        let accepted = try PageClient.post("/api/clear", json: #"{"all":true}"#, port: server.port, token: "secret")
-        let refused = try PageClient.post("/api/clear", json: #"{"all":true}"#, port: server.port, token: "guess")
-        let otherOrigin = try PageClient.post("/api/clear", json: #"{"all":true}"#, port: server.port, token: "secret", origin: "http://evil.example")
+        let accepted = try await PageClient.post("/api/clear", json: #"{"all":true}"#, port: server.port, token: "secret")
+        let refused = try await PageClient.post("/api/clear", json: #"{"all":true}"#, port: server.port, token: "guess")
+        let otherOrigin = try await PageClient.post("/api/clear", json: #"{"all":true}"#, port: server.port, token: "secret", origin: "http://evil.example")
 
         #expect(accepted.status == 200)
         #expect(accepted.body == #"{"message":"POST /api/clear "}"#)
@@ -124,12 +124,12 @@ struct DumpPageServerTests {
         #expect(!html.contains("innerHTML"))
     }
 
-    @Test func theServerAnswersThePageOfTheLogsWithItsTokenAndANonce() throws {
+    @Test func theServerAnswersThePageOfTheLogsWithItsTokenAndANonce() async throws {
         let server = try server { _ in .message("The handler does not answer the page.", status: 500) }
         defer { server.stop() }
 
-        let page = try PageClient.get("/logs", port: server.port)
-        let otherHost = try PageClient.get("/logs", port: server.port, host: "rebound.example")
+        let page = try await PageClient.get("/logs", port: server.port)
+        let otherHost = try await PageClient.get("/logs", port: server.port, host: "rebound.example")
         let policy = page.headers["content-security-policy"] ?? ""
         let nonce = policy.firstMatch(of: /script-src 'nonce-([0-9a-f]+)'/).map { String($0.1) } ?? "none"
 
@@ -141,12 +141,12 @@ struct DumpPageServerTests {
         #expect(otherHost.body.contains("/logs."))
     }
 
-    @Test func anOpenOfTheLogsNeedsTheTokenAndNamesThePageOfTheLogs() throws {
+    @Test func anOpenOfTheLogsNeedsTheTokenAndNamesThePageOfTheLogs() async throws {
         let server = try server()
         defer { server.stop() }
 
-        let refused = try PageClient.post("/api/logs/open", json: #"{"place":"shop.test","file":"a1","offset":0}"#, port: server.port, token: "guess")
-        let accepted = try PageClient.post("/api/logs/open", json: #"{"place":"shop.test","file":"a1","offset":0}"#, port: server.port, token: "secret")
+        let refused = try await PageClient.post("/api/logs/open", json: #"{"place":"shop.test","file":"a1","offset":0}"#, port: server.port, token: "guess")
+        let accepted = try await PageClient.post("/api/logs/open", json: #"{"place":"shop.test","file":"a1","offset":0}"#, port: server.port, token: "secret")
 
         #expect(refused.status == 403)
         #expect(refused.body.contains("Load the page of the logs again."))
@@ -164,11 +164,11 @@ struct DumpPageServerTests {
         #expect(logs.contains(#"<a class="segment" href="/logs" aria-current="page">Logs</a>"#))
     }
 
-    @Test func theServerAnswersThePageItselfWithItsTokenAndANonce() throws {
+    @Test func theServerAnswersThePageItselfWithItsTokenAndANonce() async throws {
         let server = try server { _ in .message("The handler does not answer the page.", status: 500) }
         defer { server.stop() }
 
-        let page = try PageClient.get("/", port: server.port)
+        let page = try await PageClient.get("/", port: server.port)
         let policy = page.headers["content-security-policy"] ?? ""
         let nonce = policy.firstMatch(of: /script-src 'nonce-([0-9a-f]+)'/).map { String($0.1) } ?? "none"
 

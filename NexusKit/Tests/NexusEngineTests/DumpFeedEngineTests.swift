@@ -915,20 +915,11 @@ extension NexusEngineTests {
             let server = try #require(await engine.dumpPageServer)
             let dumpState = await engine.dumpState(place: nil, settings: DumpSettings())
 
-            let events = try PageClient.events(port: server.port)
-            defer { events.close() }
-            var firstEvent: [String] = []
-
-            while firstEvent.count < 2, let line = try events.readLine().map({ String(decoding: $0, as: UTF8.self) }) {
-                if line.hasPrefix("event:") || !firstEvent.isEmpty {
-                    firstEvent.append(line)
-                }
-            }
-
-            let refused = try PageClient.post("/api/remove-dump", json: #"{"number":1}"#, port: server.port, token: "guess")
-            let removed = try PageClient.post("/api/remove-dump", json: #"{"number":1}"#, port: server.port, token: server.token)
-            let dumps = try PageClient.get("/api/dumps?request=s1", port: server.port)
-            let unknown = try PageClient.get("/api/nothing", port: server.port)
+            let firstEvent = try await PageClient.firstEvent(port: server.port)
+            let refused = try await PageClient.post("/api/remove-dump", json: #"{"number":1}"#, port: server.port, token: "guess")
+            let removed = try await PageClient.post("/api/remove-dump", json: #"{"number":1}"#, port: server.port, token: server.token)
+            let dumps = try await PageClient.get("/api/dumps?request=s1", port: server.port)
+            let unknown = try await PageClient.get("/api/nothing", port: server.port)
 
             #expect(arrived)
             #expect(dumpState.page == "http://127.0.0.1:\(server.port)/")

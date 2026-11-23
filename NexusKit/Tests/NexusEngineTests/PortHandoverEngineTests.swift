@@ -3,10 +3,11 @@ import Foundation
 import NexusCore
 import NexusIPC
 import NexusSupervisor
+import NexusTestSupport
 import Testing
 @testable import NexusEngine
 
-private final class PortGateClient {
+private final class PortGateClient: Sendable {
     private let descriptor: Int32
 
     init?(port: Int) {
@@ -35,7 +36,11 @@ private final class PortGateClient {
         _ = bytes.withUnsafeBytes { Darwin.send(descriptor, $0.baseAddress, bytes.count, 0) }
     }
 
-    func received() -> String {
+    func received() async throws -> String {
+        try await onOwnThread { [self] in blockingReceived() }
+    }
+
+    private func blockingReceived() -> String {
         var interval = timeval(tv_sec: 5, tv_usec: 0)
         setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &interval, socklen_t(MemoryLayout<timeval>.size))
         var data: [UInt8] = []
@@ -317,7 +322,7 @@ extension NexusEngineTests {
 
         let client = try #require(PortGateClient(port: port))
 
-        #expect(client.received().contains("does not take connections"))
+        #expect(try await client.received().contains("does not take connections"))
         #expect(await eventually { await gate.phase(of: port) == nil })
         #expect(await eventually { PortInspector.isFree(port) })
     }

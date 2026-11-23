@@ -95,11 +95,11 @@ extension NexusEngineTests {
             let offset = try #require(row["offset"] as? UInt64)
             let body = { (target: String) in #"{"place":"shop.test","file":"\#(file)","offset":\#(offset)\#(target)}"# }
 
-            let page = try PageClient.get("/logs", port: server.port)
-            let withoutToken = try PageClient.post("/api/logs/open", json: body(#","exception":0,"frame":0"#), port: server.port, token: "guess")
-            let outside = try PageClient.post("/api/logs/open", json: body(#","exception":0,"frame":1"#), port: server.port, token: server.token)
-            let frame = try PageClient.post("/api/logs/open", json: body(#","exception":0,"frame":0"#), port: server.port, token: server.token)
-            let log = try PageClient.post("/api/logs/open", json: body(""), port: server.port, token: server.token)
+            let page = try await PageClient.get("/logs", port: server.port)
+            let withoutToken = try await PageClient.post("/api/logs/open", json: body(#","exception":0,"frame":0"#), port: server.port, token: "guess")
+            let outside = try await PageClient.post("/api/logs/open", json: body(#","exception":0,"frame":1"#), port: server.port, token: server.token)
+            let frame = try await PageClient.post("/api/logs/open", json: body(#","exception":0,"frame":0"#), port: server.port, token: server.token)
+            let log = try await PageClient.post("/api/logs/open", json: body(""), port: server.port, token: server.token)
             let otherPlace = await engine.answerDumpPage(PageRequest(method: "POST", path: "/api/logs/open", body: Data(#"{"place":"blog.test","file":"\#(file)","offset":\#(offset)}"#.utf8)))
 
             #expect(page.status == 200)
