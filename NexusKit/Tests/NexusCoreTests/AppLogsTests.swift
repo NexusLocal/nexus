@@ -202,6 +202,15 @@ struct AppLogsTests {
         #expect(detail.context?.children?.map(\.key) == ["seconds", "trace_id"])
     }
 
+    // A log can hold any text, also a broken pair of escapes. The reader must not stop nexusd.
+    @Test func aHighSurrogateWithoutItsLowSurrogateGivesAQuestionMark() {
+        let escape = "\\" + "u"
+        let text = #"[2026-11-23 14:16:55] local.INFO: Bad text {"a":"\#(escape)d83d\#(escape)0041","b":"\#(escape)d83d\#(escape)de00"}"#
+        let detail = LogEntryParser.detail(of: text, kind: .app, isCut: false)
+
+        #expect(detail.context?.children?.map(\.value) == ["?A", String(Character(Unicode.Scalar(0x1F600)!))])
+    }
+
     @Test func aPHPErrorShowsItsFileAndLine() {
         let summary = LogEntryParser.summary(of: #"NOTICE: PHP message: PHP Warning:  Undefined array key "price" in /w/shop/functions.php on line 212"#, kind: .phpErrors)
 

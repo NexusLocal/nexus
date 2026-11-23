@@ -634,7 +634,8 @@ struct JSONScanner {
                     index += 4
                     var scalar = code
 
-                    if (0xD800...0xDBFF).contains(code), index + 6 <= bytes.count, bytes[index] == UInt8(ascii: "\\"), bytes[index + 1] == UInt8(ascii: "u"), let low = UInt32(String(decoding: bytes[(index + 2)..<(index + 6)], as: UTF8.self), radix: 16) {
+                    // A high surrogate without a low surrogate after it stays alone and gives a ?.
+                    if (0xD800...0xDBFF).contains(code), index + 6 <= bytes.count, bytes[index] == UInt8(ascii: "\\"), bytes[index + 1] == UInt8(ascii: "u"), let low = UInt32(String(decoding: bytes[(index + 2)..<(index + 6)], as: UTF8.self), radix: 16), (0xDC00...0xDFFF).contains(low) {
                         scalar = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
                         index += 6
                     }
