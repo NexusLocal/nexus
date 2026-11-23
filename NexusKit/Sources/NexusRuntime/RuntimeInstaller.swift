@@ -145,15 +145,8 @@ public actor RuntimeInstaller {
     }
 
     public func prepare(_ package: ManifestPackage, progress: @escaping @Sendable (DownloadProgress) -> Void = { _ in }) async throws -> PreparedRuntime {
-        let download = try await downloader.download(package.url, progress: progress)
+        let (download, actual) = try await checkedDownload(of: package, progress: progress)
         defer { try? fileManager.removeItem(at: download) }
-
-        try Task.checkCancellation()
-
-        let actual = try FileChecksum.sha256(of: download)
-        guard actual == package.sha256.lowercased() else {
-            throw RuntimeError.checksumMismatch(expected: package.sha256, actual: actual)
-        }
 
         let staging = paths.runtimeStaging.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
@@ -181,6 +174,36 @@ public actor RuntimeInstaller {
         } catch {
             try? fileManager.removeItem(at: staging)
             throw error
+        }
+    }
+
+    // A server can fail for a short time, or send a broken file. So a failed download, or a file with
+    // another SHA-256, comes one more time. A stop of the user ends the download at once.
+    private func checkedDownload(of package: ManifestPackage, progress: @escaping @Sendable (DownloadProgress) -> Void) async throws -> (file: URL, sha256: String) {
+        var isSecondTry = false
+
+        while true {
+            do {
+                let download = try await downloader.download(package.url, progress: progress)
+
+                do {
+                    try Task.checkCancellation()
+
+                    let actual = try FileChecksum.sha256(of: download)
+                    guard actual == package.sha256.lowercased() else {
+                        throw RuntimeError.checksumMismatch(expected: package.sha256, actual: actual)
+                    }
+
+                    return (download, actual)
+                } catch {
+                    try? fileManager.removeItem(at: download)
+                    throw error
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch where !isSecondTry && !Task.isCancelled {
+                isSecondTry = true
+            }
         }
     }
 

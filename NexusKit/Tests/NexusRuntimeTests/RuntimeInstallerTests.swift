@@ -23,6 +23,42 @@ struct EndlessDownloader: PackageDownloader {
     }
 }
 
+// Fails the first downloads that the test gives, then copies the file. A broken download gives a
+// file with other bytes.
+final class FailingDownloader: PackageDownloader, Sendable {
+    enum Failure {
+        case error
+        case brokenFile
+    }
+
+    private let failures: Mutex<[Failure]>
+    private let count = Mutex(0)
+
+    init(_ failures: [Failure]) {
+        self.failures = Mutex(failures)
+    }
+
+    var downloads: Int {
+        count.withLock { $0 }
+    }
+
+    func download(_ url: URL, progress: @escaping @Sendable (DownloadProgress) -> Void) async throws -> URL {
+        count.withLock { $0 += 1 }
+        let copy = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+
+        switch failures.withLock({ $0.isEmpty ? nil : $0.removeFirst() }) {
+        case .error:
+            throw RuntimeError.httpStatus(504, url)
+        case .brokenFile:
+            try Data("broken".utf8).write(to: copy)
+        case nil:
+            try FileManager.default.copyItem(at: url, to: copy)
+        }
+
+        return copy
+    }
+}
+
 struct RuntimeInstallerTests {
     private let workspace: URL
     private let paths: NexusPaths
@@ -156,6 +192,29 @@ struct RuntimeInstallerTests {
 
         #expect(await installer.installed(name: "demo", line: "1.0") == nil)
         #expect(!FileManager.default.fileExists(atPath: paths.runtime("demo", line: "1.0").path(percentEncoded: false)))
+    }
+
+    @Test(arguments: [FailingDownloader.Failure.error, .brokenFile])
+    func aFailedDownloadComesASecondTime(_ failure: FailingDownloader.Failure) async throws {
+        let downloader = FailingDownloader([failure])
+        let installer = RuntimeInstaller(paths: paths, downloader: downloader)
+
+        try await installer.install(try makePackage(version: "1.0.1"))
+
+        #expect(downloader.downloads == 2)
+        #expect(await installer.installed(name: "demo", line: "1.0")?.version == "1.0.1")
+    }
+
+    @Test func aDownloadThatFailsTwiceInstallsNothing() async throws {
+        let downloader = FailingDownloader([.brokenFile, .brokenFile])
+        let installer = RuntimeInstaller(paths: paths, downloader: downloader)
+
+        await #expect(throws: RuntimeError.self) {
+            try await installer.install(try makePackage(version: "1.0.1"))
+        }
+
+        #expect(downloader.downloads == 2)
+        #expect(await installer.installed(name: "demo", line: "1.0") == nil)
     }
 
     @Test func aPatchUpdateReplacesTheLineFolder() async throws {
