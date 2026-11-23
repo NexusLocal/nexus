@@ -145,19 +145,3 @@ public final class AppLogReader: @unchecked Sendable {
         return formatter.string(from: Date(timeIntervalSince1970: seconds))
     }
 }
-
-extension SiteInfo {
-    public var logPlaces: [LogPlace] {
-        LogPlace.places(of: LogPlace.Source(
-            hosts: hosts,
-            folder: folder,
-            kind: kind,
-            projectType: projectType,
-            php: php,
-            appLog: app?.log,
-            workspaces: (workspaces ?? []).map { workspace in
-                LogPlace.Source.Workspace(name: workspace.name, hosts: workspace.hosts ?? [], folder: workspace.folder, worktree: workspace.worktree, appLog: workspace.app?.log)
-            }
-        ))
-    }
-}
