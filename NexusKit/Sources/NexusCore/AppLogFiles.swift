@@ -304,6 +304,25 @@ public enum LogFolders {
     }
 }
 
+extension LogPlace {
+    // The zone of the times in the log files of the app. A Laravel project writes the time of its
+    // APP_TIMEZONE. Another PHP project with the files of Laravel (.env with APP_TIMEZONE, or
+    // config/app.php) does too. Each other log has the time of the Mac, or a zone in its lines.
+    public var appLogZone: TimeZone {
+        let project = URL(filePath: projectFolder, directoryHint: .isDirectory)
+
+        switch kind {
+        case .laravel:
+            return LaravelTimeZone.of(project: project)
+        case .php:
+            let hasLaravelFiles = EnvFile.values(of: project.appending(path: ".env"))["APP_TIMEZONE"] != nil || FileManager.default.fileExists(atPath: project.appending(path: "config/app.php").path(percentEncoded: false))
+            return hasLaravelFiles ? LaravelTimeZone.of(project: project) : .current
+        case .wordpress, .node, .proxy:
+            return .current
+        }
+    }
+}
+
 // The time zone of the times in a Laravel log: APP_TIMEZONE of .env, else the value in
 // config/app.php, else UTC as in Laravel.
 public enum LaravelTimeZone {

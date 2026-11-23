@@ -51,7 +51,7 @@ public final class AppLogReader: @unchecked Sendable {
             throw ToolFailure(file.map { "\(place.id) has no log \($0). \(found)" } ?? found)
         }
 
-        let zone = place.kind == .laravel ? LaravelTimeZone.of(project: URL(filePath: place.projectFolder, directoryHint: .isDirectory)) : TimeZone.current
+        let zone = place.appLogZone
         self.place = place
         files = chosen
         indices = chosen.map { LogIndex(file: $0, zone: $0.kind == .app ? zone : .current) }

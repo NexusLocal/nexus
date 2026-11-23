@@ -182,7 +182,7 @@ final class LogsModel {
             query.fileID = nil
         }
 
-        let laravelZone = place.kind == .laravel ? LaravelTimeZone.of(project: URL(filePath: place.projectFolder, directoryHint: .isDirectory)) : TimeZone.current
+        let laravelZone = place.appLogZone
         var kept: [String: LogIndex] = [:]
         var newZones: [String: TimeZone] = [:]
 

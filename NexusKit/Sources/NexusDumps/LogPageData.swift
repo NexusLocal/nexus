@@ -233,7 +233,7 @@ public final class LogPageStore: Sendable {
     // The zone of a Laravel log comes from its .env, as on the Logs screen. A changed zone or
     // changed folders of the PHP errors give a new index.
     func indices(of place: LogPlace, files: [LogFile]) -> [Opened] {
-        let laravelZone = place.kind == .laravel ? LaravelTimeZone.of(project: URL(filePath: place.projectFolder, directoryHint: .isDirectory)) : TimeZone.current
+        let laravelZone = place.appLogZone
         let now = Date.now
 
         let opened = state.withLock { state in
