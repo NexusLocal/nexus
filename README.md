@@ -28,8 +28,8 @@
 ## Why Nexus
 
 - 🔒 **HTTPS for every site.** Each site gets a `.test` domain with a trusted certificate.
-- ⚡ **Every service in one click.** PHP, Node, nginx, Apache, MySQL, MariaDB, PostgreSQL, Redis, DNS
-  and mail. Choose the versions that you need.
+- ⚡ **Every service in one click.** PHP, Node, nginx, Apache, MySQL, MariaDB, PostgreSQL, MongoDB,
+  Redis, DNS and mail. Choose the versions that you need.
 - 🌳 **A workspace for each branch.** Each branch gets its own database server, domain, Redis indexes
   and workers. It starts with a copy of your data, an empty database or your own dump file. So
   several Claude Code sessions can work at the same time. A workspace that nobody uses stops by
@@ -101,11 +101,15 @@ In a Laravel application:
 A WordPress site gets its own database and its own domain in WordPress. Its plugins and WP-Cron write
 only into that copy. A Node.js app gets its own database too.
 
+A MongoDB connection gets the same URL with the port of the workspace, for example in `MONGODB_URI`.
+A URL of MongoDB Atlas (`mongodb+srv`) stays as it is. So that workspace shares the Atlas database
+with the main site, and Nexus tells you so.
+
 Each workspace server uses about 200 MB of memory.
 
-For the clone, Nexus freezes MySQL and MariaDB for about a second. A writer waits and then continues.
-PostgreSQL needs no freeze. When the freeze fails, the workspace shows Not isolated with the reason.
-Retry tries again. A workspace that is not isolated runs no programs and no commands.
+For the clone, Nexus freezes MySQL, MariaDB and MongoDB for about a second. A writer waits and then
+continues. PostgreSQL needs no freeze. When the freeze fails, the workspace shows Not isolated with
+the reason. Retry tries again. A workspace that is not isolated runs no programs and no commands.
 
 A database name stays the same in a workspace. So a command that connects itself must use
 `{port:database}`, the port of the database server of the workspace.
@@ -247,7 +251,8 @@ them on the Site screen or with `nexus site lines`. Nexus checks them before it 
 ## Bring a database
 
 Open a database service in the app and choose Import database. Copy a database from another server,
-or load a dump file: `.sql`, `.sql.gz`, or a `.zip` or `.tar` with a dump. In the terminal:
+for example from Docker or MongoDB Atlas. Or load a dump file: `.sql`, `.sql.gz`, a `.zip` or `.tar`
+with a dump, or an archive of `mongodump --archive`. In the terminal:
 
 ```sh
 nexus db copy shop --to mysql-8.4         # from another server
@@ -257,6 +262,9 @@ nexus db import ~/Downloads/shop.sql.gz   # into the database of the site in thi
 Nexus reads the other server and changes nothing on it. A database that exists changes only after
 your choice. Nexus then puts a copy of the old database in the trash first. The default account of a
 new instance is `root` without a password.
+
+Each MongoDB runs as a replica set of one server. So transactions work, for example
+`DB::transaction` of Laravel and the nested writes of Prisma.
 
 ## Command line
 
