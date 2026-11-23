@@ -14,6 +14,7 @@ enum SidebarItem: Hashable {
     case agents
     case commandLine
     case dumps
+    case logs
     case packages
 }
 
@@ -403,6 +404,8 @@ final class AppModel {
     @ObservationIgnored var showsDumps = false
     // The coding agents and their entry of Nexus. They need no nexusd.
     var agents = AgentsModel(setup: nil)
+    // The Logs screen reads the log files of the apps itself (group 7).
+    var logs = LogsModel()
     // The project folders whose tests keep the development database after "Keep it as it is".
     var keptTestDatabases = Set(UserDefaults.standard.stringArray(forKey: AppPreference.keptTestDatabases) ?? [])
 

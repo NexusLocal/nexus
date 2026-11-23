@@ -196,6 +196,13 @@ enum DebugLaunch {
         case ("agents", _): return .agents
         case ("command-line", _): return .commandLine
         case ("dumps", _): return .dumps
+        case ("logs", let host?):
+            // --screen logs:shop.test opens the Logs screen on that site, when the site loads.
+            if parts.count == 2 {
+                UserDefaults.standard.set(host, forKey: LogsModel.chosenPlaceKey)
+            }
+
+            return .logs
         case ("packages", _): return .packages
         default: return .overview
         }

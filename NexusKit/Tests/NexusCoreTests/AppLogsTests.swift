@@ -160,8 +160,8 @@ struct AppLogsTests {
         let error = LogEntryParser.summary(of: index.text(of: entries[0], limit: 32_000).text, kind: .app)
         #expect(error.message == "SQLSTATE[23000]: Duplicate entry '1042'")
         #expect(error.exceptionClass == "QueryException")
-        #expect(error.sourceFile == "/w/shop/vendor/laravel/framework/src/Illuminate/Database/Connection.php")
-        #expect(error.sourceLine == 825)
+        #expect(error.sourceFile == "/w/shop/app/Models/Order.php")
+        #expect(error.sourceLine == 131)
 
         let info = LogEntryParser.summary(of: index.text(of: entries[1], limit: 32_000).text, kind: .app)
         #expect(info.message == "Order 1042 paid with iDEAL.")

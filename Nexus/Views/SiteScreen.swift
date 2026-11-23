@@ -401,7 +401,7 @@ struct SiteScreen: View {
 
                     Button("Show log") {
                         if let log = site.app?.log {
-                            NSWorkspace.shared.open(URL(filePath: log))
+                            model.showLogs(of: site.host, file: log)
                         }
                     }
                     .disabled(!hasAppLog)

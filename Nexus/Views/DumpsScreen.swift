@@ -1024,8 +1024,9 @@ extension View {
 
 // A node of the tree. The top node starts open, as in the design, unless it has very many items.
 // A node that refers to an object above has no children, so a loop in the data cannot make the
-// tree endless. The children are lazy, so a large open node draws only the rows that show.
-private struct DumpTreeNode: View {
+// tree endless. The children are lazy, so a large open node draws only the rows that show. The
+// Logs screen shows the context of an entry with it too.
+struct DumpTreeNode: View {
     let node: DumpNode
     @State private var isExpanded: Bool
 

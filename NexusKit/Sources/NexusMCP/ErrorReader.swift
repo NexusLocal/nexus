@@ -90,15 +90,8 @@ public enum ErrorReader {
         }
     }
 
-    // A folder in each form that a log can use: with /private in front, without it, and as its
-    // real path. Each form ends with a slash. So /w/shop does not match /w/shop-admin. The longest
-    // form comes first. So a replacement does not leave /private behind.
     static func folderPrefixes(of folder: String) -> [String] {
-        let other = folder.hasPrefix("/private/") ? String(folder.dropFirst(8)) : "/private\(folder)"
-
-        return Set([folder, other, RealPath.of(URL(filePath: folder, directoryHint: .isDirectory))])
-            .map { $0.hasSuffix("/") ? $0 : "\($0)/" }
-            .sorted { $0.count > $1.count }
+        LogFolders.prefixes(of: folder)
     }
 
     public static func errors(in sources: Sources, limit: Int) -> [SiteError] {

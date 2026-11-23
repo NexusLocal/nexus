@@ -41,6 +41,75 @@ public struct LogPlace: Codable, Sendable, Hashable, Identifiable {
     public var label: String {
         workspace == nil ? id : "\(id) (workspace of \(siteHost))"
     }
+
+    // The parts of a site and of its workspaces that the Logs screen needs. The app and nexusd
+    // each have their own type of a site.
+    public struct Source: Sendable {
+        public struct Workspace: Sendable {
+            let name: String
+            let hosts: [String]
+            let folder: String
+            let worktree: String
+            let appLog: String?
+
+            public init(name: String, hosts: [String], folder: String, worktree: String, appLog: String?) {
+                self.name = name
+                self.hosts = hosts
+                self.folder = folder
+                self.worktree = worktree
+                self.appLog = appLog
+            }
+        }
+
+        let hosts: [String]
+        let folder: String
+        let kind: SiteKind
+        let projectType: PHPProjectType?
+        let php: String
+        let appLog: String?
+        let workspaces: [Workspace]
+
+        public init(hosts: [String], folder: String, kind: SiteKind, projectType: PHPProjectType?, php: String, appLog: String?, workspaces: [Workspace]) {
+            self.hosts = hosts
+            self.folder = folder
+            self.kind = kind
+            self.projectType = projectType
+            self.php = php
+            self.appLog = appLog
+            self.workspaces = workspaces
+        }
+    }
+
+    // The site first, then each workspace.
+    public static func places(of source: Source) -> [LogPlace] {
+        guard let host = source.hosts.first else {
+            return []
+        }
+
+        let kind: Kind
+
+        switch source.kind {
+        case .node: kind = .node
+        case .proxy: kind = .proxy
+        case .php:
+            switch source.projectType {
+            case .laravel: kind = .laravel
+            case .wordpress, .bedrock: kind = .wordpress
+            case .other, nil: kind = .php
+            }
+        }
+
+        func projectFolder(_ folder: String) -> String {
+            ProjectFolder.projectFolder(ofSiteFolder: URL(filePath: folder, directoryHint: .isDirectory))
+        }
+
+        let php = kind == .node || kind == .proxy ? nil : source.php
+        let site = LogPlace(id: host, siteHost: host, workspace: nil, kind: kind, folder: source.folder, projectFolder: projectFolder(source.folder), php: php, hosts: source.hosts, otherFolders: source.workspaces.map(\.worktree), appLog: source.appLog)
+
+        return [site] + source.workspaces.map { workspace in
+            LogPlace(id: workspace.hosts.first ?? workspace.name, siteHost: host, workspace: workspace.name, kind: kind, folder: workspace.folder, projectFolder: projectFolder(workspace.folder), php: php, hosts: workspace.hosts, otherFolders: [], appLog: workspace.appLog)
+        }
+    }
 }
 
 // One log of a place. A Laravel log can have entries of other formats too, so the parser looks at

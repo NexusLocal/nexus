@@ -70,6 +70,56 @@ public struct LogEntryDetail: Sendable, Equatable {
     public let exceptions: [LogException]
     public let context: DumpNode?
     public let ids: [LogID]
+    // The channel of Monolog, such as local or testing, and the time as the log wrote it.
+    public var channel: String? = nil
+    public var logTime: String? = nil
+
+    // A text for a coding agent: the message, the exception with the frames of the app, and the
+    // context as JSON lines.
+    public func markdown(level: String, time: String, file: String, project: String) -> String {
+        var lines = ["**\(level.isEmpty ? "log" : level)** \(time) in `\(file)`", "", "```", message, "```"]
+
+        for exception in exceptions {
+            let place = exception.file.map { " at `\(LogEntryParser.relative($0, to: project)):\(exception.line ?? 0)`" } ?? ""
+            lines += ["", "**\(exception.className)**\(place)", ""]
+
+            for frame in exception.frames where !frame.isVendor {
+                let file = frame.file.map { "\(LogEntryParser.relative($0, to: project)):\(frame.line ?? 0) " } ?? ""
+                lines.append("- `#\(frame.number ?? 0)` \(file)`\(frame.call)`")
+            }
+
+            let vendor = exception.frames.filter(\.isVendor).count
+
+            if vendor > 0 {
+                lines.append("- \(Count.text(vendor, "frame")) in vendor/ left out")
+            }
+        }
+
+        if let context, let children = context.children, !children.isEmpty {
+            lines += ["", "Context:", "```"]
+            lines += children.map { "\($0.key ?? ""): \(LogEntryText.plain($0))" }
+            lines.append("```")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+}
+
+public enum LogEntryText {
+    // A value of the context on one line, as JSON without quotes around the keys.
+    public static func plain(_ node: DumpNode) -> String {
+        switch node.kind {
+        case .string:
+            return "\"\(node.value ?? "")\""
+        case .array:
+            let children = node.children ?? []
+            let keyed = children.contains { $0.index != true }
+            let parts = children.map { keyed ? "\($0.key ?? ""): \(plain($0))" : plain($0) }
+            return keyed ? "{\(parts.joined(separator: ", "))}" : "[\(parts.joined(separator: ", "))]"
+        default:
+            return node.value ?? ""
+        }
+    }
 }
 
 public enum LogEntryParser {
@@ -97,7 +147,10 @@ public enum LogEntryParser {
 
         if let marker = firstLine.range(of: #"[object] ("#) {
             let className = String(firstLine[marker.upperBound...].prefix { $0 != "(" })
-            let source = exceptionSource(in: body)
+            // An exception of Laravel often starts in vendor/. The row shows the first line of the
+            // app, because that is the line to fix.
+            let origin = exceptionSource(in: body)
+            let source = origin.flatMap { $0.file.contains("/vendor/") ? firstAppFrame(in: body) ?? $0 : $0 }
             let pairs = context.flatMap { range in parseJSON(String(body[range])) }.map { pairsPreview($0) } ?? []
             return LogEntrySummary(message: cut(message), exceptionClass: className.split(separator: "\\").last.map(String.init), sourceFile: source?.file, sourceLine: source?.line, context: pairs)
         }
@@ -112,6 +165,18 @@ public enum LogEntryParser {
     }
 
     public static func detail(of text: String, kind: LogFile.Kind, isCut: Bool) -> LogEntryDetail {
+        var detail = parsedDetail(of: text, kind: kind, isCut: isCut)
+        let header = split(text, kind: kind).header
+
+        if let match = header.firstMatch(of: #/^\[([^\]]+)\](?: ([\w-]+)\.[A-Z]+:)?/#) {
+            detail.logTime = String(match.output.1)
+            detail.channel = match.output.2.map(String.init)
+        }
+
+        return detail
+    }
+
+    private static func parsedDetail(of text: String, kind: LogFile.Kind, isCut: Bool) -> LogEntryDetail {
         let (_, body) = split(text, kind: kind)
 
         if kind == .requests {
@@ -230,6 +295,24 @@ public enum LogEntryParser {
         }
 
         return (String(match.output.1), line)
+    }
+
+    static func firstAppFrame(in body: String) -> (file: String, line: Int)? {
+        guard let trace = body.range(of: "\n[stacktrace]\n") else {
+            return nil
+        }
+
+        for line in body[trace.upperBound...].split(separator: "\n") {
+            guard line.hasPrefix("#") else {
+                break
+            }
+
+            if let frame = frame(String(line)), let file = frame.file, let number = frame.line, !frame.isVendor {
+                return (file, number)
+            }
+        }
+
+        return nil
     }
 
     // [object] (Class(code: 0): message at /path:12)\n[stacktrace]\n#0 ...\n[previous exception] ...

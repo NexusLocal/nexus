@@ -312,6 +312,8 @@ struct MainWindow: View {
             CommandLineScreen()
         case .dumps:
             DumpsScreen()
+        case .logs:
+            LogsScreen()
         case .packages:
             PackagesScreen()
         case .overview, nil:

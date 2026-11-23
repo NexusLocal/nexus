@@ -663,7 +663,8 @@ nonisolated enum LogTail {
 
     // A log can be replaced or truncated. So the watch starts again on the new file. After a
     // cancel no new watch starts, because only the cancel handler of a source closes its file.
-    private final class Watcher: @unchecked Sendable {
+    // The Logs screen watches each of its files with it too.
+    final class Watcher: @unchecked Sendable {
         private let file: URL
         private let changed: @Sendable () -> Void
         private let queue = DispatchQueue(label: "nexus.log-tail")

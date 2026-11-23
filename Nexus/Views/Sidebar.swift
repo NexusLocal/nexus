@@ -107,6 +107,9 @@ struct Sidebar: View {
                 Label("Dumps", systemImage: "ladybug")
                     .tag(SidebarItem.dumps)
 
+                Label("Logs", systemImage: "list.bullet.rectangle")
+                    .tag(SidebarItem.logs)
+
                 HStack {
                     Label("Packages", systemImage: "shippingbox")
                     Spacer()
@@ -346,6 +349,10 @@ struct SiteActions: View {
             Button("Open in \(editor.name)", systemImage: "chevron.left.forwardslash.chevron.right") {
                 model.open(site, in: editor)
             }
+        }
+
+        Button("Show logs", systemImage: "list.bullet.rectangle") {
+            model.showLogs(of: site.host)
         }
 
         Button("Copy URL", systemImage: "link") {
