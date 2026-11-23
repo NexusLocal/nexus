@@ -130,13 +130,14 @@ public enum NexusTools {
         NexusToolSpec(
             name: "read_log",
             title: "Read a log",
-            summary: "The last lines of a log of a site, a service or Nexus.",
+            summary: "The last lines of a log of a site, its app, a service or Nexus.",
             level: .read,
-            description: "The last lines of one log of Nexus: the access log of a site, PHP-FPM, nginx, Apache, a service, a Node.js app or Nexus itself. Without `log`, it lists the logs.",
+            description: "The last lines of one log of Nexus: the log files of the app of a site (Laravel storage/logs, WordPress debug.log), the access log of a site, PHP-FPM, nginx, Apache, a service, a Node.js app or Nexus itself. Without `log`, it lists the logs. For the app of a site, each line is one entry with its time, level, message, exception and line of the app, oldest first.",
             properties: [
-                "log": ["type": "string", "description": "The name of a log from the list, for example php-8.5, nginx, access:shop.test or nexus."],
-                "lines": ["type": "integer", "minimum": 1, "maximum": 500, "description": "The number of lines. The default is 50."],
-                "contains": ["type": "string", "description": "Only the lines with this text."],
+                "log": ["type": "string", "description": "The name of a log from the list, for example shop.test (all log files of the app of shop.test), shop.test/laravel.log, php-8.5, nginx, access:shop.test or nexus."],
+                "lines": ["type": "integer", "minimum": 1, "maximum": 500, "description": "The number of lines or entries. The default is 50."],
+                "contains": ["type": "string", "description": "Only the lines or entries with this text, without a difference between capitals and small letters in the log of an app."],
+                "level": ["type": "string", "enum": ["error", "warning", "info", "debug"], "description": "Only for the log of an app: this level and the more serious ones. error also gives critical, alert and emergency."],
             ],
             required: []
         ),

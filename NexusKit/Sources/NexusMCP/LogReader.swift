@@ -44,10 +44,21 @@ public enum LogReader {
             logs.append(info("app:\(host)", about: "The output of the Node.js app of \(host)", file: URL(filePath: log)))
         }
 
+        // The log files of the apps, as on the Logs screen (group 7).
+        for place in sites.flatMap(\.logPlaces) {
+            for file in AppLogFiles.files(of: place, paths: paths) where file.kind == .app {
+                logs.append(info("\(place.id)/\(file.name)", about: "A log of the app of \(place.id), one entry for each line of the result", file: URL(filePath: file.path)))
+            }
+        }
+
         return logs
     }
 
-    public static func read(_ name: String, lines count: Int, containing filter: String?, paths: NexusPaths, sites: [SiteInfo]) -> LogLines? {
+    public static func read(_ name: String, lines count: Int, containing filter: String?, level: LogLevelGroup? = nil, paths: NexusPaths, sites: [SiteInfo]) throws -> LogLines? {
+        if let appLog = try appLog(name, lines: count, containing: filter, level: level, paths: paths, sites: sites) {
+            return appLog
+        }
+
         guard let log = logs(paths: paths, sites: sites).first(where: { $0.name == name }) else {
             return nil
         }
@@ -78,6 +89,45 @@ public enum LogReader {
 
         let note = lines.count < min(wantedLines, matching.count) ? "Only the last \(Count.text(lines.count, "line")) fit in one result. Use contains to find a line." : nil
         return LogLines(log: name, file: log.file, lines: lines, note: note)
+    }
+
+    // shop.test gives the entries of all log files of the app of shop.test, newest last.
+    // shop.test/laravel.log gives one file. The level keeps that level and the more serious ones.
+    static func appLog(_ name: String, lines count: Int, containing filter: String?, level: LogLevelGroup?, paths: NexusPaths, sites: [SiteInfo]) throws -> LogLines? {
+        let places = sites.flatMap(\.logPlaces)
+        let place = places.first { name == $0.id || name.hasPrefix("\($0.id)/") }
+
+        guard let place else {
+            return nil
+        }
+
+        let file = name == place.id ? nil : String(name.dropFirst(place.id.count + 1))
+        let reader = try AppLogReader(place: place, paths: paths, file: file)
+        let wanted = min(max(count, 1), mostLines)
+        let entries = reader.entries(count: wanted, level: level, containing: filter)
+        var lines: [String] = []
+        var length = 0
+
+        for entry in entries.reversed() {
+            let text = String(entry.text.prefix(lineLength))
+
+            guard length + text.count < resultLength else {
+                break
+            }
+
+            length += text.count
+            lines.insert(text, at: 0)
+        }
+
+        let note: String? = if lines.isEmpty {
+            "No entries match."
+        } else if lines.count < entries.count {
+            "Only the newest \(Count.text(lines.count, "entry", plural: "entries")) fit in one result. Use contains or level to find an entry."
+        } else {
+            nil
+        }
+
+        return LogLines(log: name, file: reader.files.map(\.path).joined(separator: ", "), lines: lines, note: note)
     }
 
     static func appLogs(_ sites: [SiteInfo]) -> [(String, String)] {

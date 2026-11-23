@@ -248,6 +248,25 @@ struct AppLogsTests {
         #expect(names == ["laravel.log", "browser.log", "cronjobs/import.log"])
     }
 
+    // NEXUS_REAL_LOG names a large real log. The test prints the times of the index and a search.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["NEXUS_REAL_LOG"] != nil))
+    func aRealLogGetsItsIndexAndASearch() throws {
+        let url = URL(filePath: try #require(ProcessInfo.processInfo.environment["NEXUS_REAL_LOG"]))
+        let index = LogIndex(file: logFile(url), zone: .gmt)
+        let clock = ContinuousClock()
+
+        let quick = clock.measure { index.update() }
+        let full = clock.measure { index.update(progress: { _ in }) }
+        var found: Set<UInt64>?
+        let search = clock.measure { found = index.search("text that is not in the log") }
+        let snapshot = index.snapshot
+        let browse = clock.measure { _ = LogBrowser.result(of: [snapshot], query: LogQuery(), searchHits: nil, limit: 1000) }
+
+        print("entries \(snapshot.count), quick \(quick), full \(full), search \(search), result \(browse)")
+        #expect(snapshot.isComplete)
+        #expect(found == [])
+    }
+
     @Test func wpDebugLogCanNameAPath() {
         let folder = URL(filePath: "/w/blog", directoryHint: .isDirectory)
 

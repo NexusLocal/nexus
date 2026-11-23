@@ -305,7 +305,15 @@ public struct NexusToolbox: MCPHandler {
             return try .value(LogList(logs: LogReader.logs(paths: paths, sites: sites)))
         }
 
-        guard let lines = LogReader.read(name, lines: arguments.int("lines") ?? LogReader.defaultLines, containing: arguments.string("contains"), paths: paths, sites: sites) else {
+        let level = try arguments.string("level").map { text in
+            guard let level = LogLevelGroup(rawValue: text.lowercased()) else {
+                throw ToolFailure("Give level as error, warning, info or debug.")
+            }
+
+            return level
+        }
+
+        guard let lines = try LogReader.read(name, lines: arguments.int("lines") ?? LogReader.defaultLines, containing: arguments.string("contains"), level: level, paths: paths, sites: sites) else {
             throw ToolFailure("Nexus has no log \(name). Call read_log without log to see the logs.")
         }
 
@@ -950,6 +958,21 @@ public struct NexusToolbox: MCPHandler {
         }
 
         return target
+    }
+
+    // The place of the Logs screen for nexus logs: a host, a folder, or the current folder.
+    public func logPlace(_ site: String?) async throws -> LogPlace {
+        let target = try await target(site)
+
+        guard let place = target.site.logPlaces.first(where: { $0.id == target.host }) else {
+            throw ToolFailure("Nexus finds no logs of \(target.host).")
+        }
+
+        return place
+    }
+
+    public var nexusPaths: NexusPaths {
+        paths
     }
 
     static func isFolder(_ value: String) -> Bool {

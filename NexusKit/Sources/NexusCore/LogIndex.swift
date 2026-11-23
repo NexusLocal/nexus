@@ -29,6 +29,14 @@ public final class LogIndex: @unchecked Sendable {
         public let isComplete: Bool
         public let bytes: UInt64
 
+        public init(file: LogFile, closed: [Entry], last: Entry?, isComplete: Bool, bytes: UInt64) {
+            self.file = file
+            self.closed = closed
+            self.last = last
+            self.isComplete = isComplete
+            self.bytes = bytes
+        }
+
         public var count: Int {
             closed.count + (last == nil ? 0 : 1)
         }
