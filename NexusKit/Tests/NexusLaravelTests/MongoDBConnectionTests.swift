@@ -111,6 +111,23 @@ struct MongoDBConnectionTests {
         #expect(UseNexusPlan.mongoDBURL(port: 27017, account: .newInstance, database: "shop") == "mongodb://127.0.0.1:27017/shop")
     }
 
+    @Test func aConnectionWithAListOfHostsGetsTheHostAndThePortOfNexus() throws {
+        let settings = [
+            "database.default": setting(.text("mongodb"), "DB_CONNECTION"),
+            "database.connections.mongodb.driver": ConfigSetting(value: .text("mongodb")),
+            "database.connections.mongodb.host.0": setting(.text("localhost"), "MONGODB_HOST"),
+            "database.connections.mongodb.port": setting(.number(27018), "MONGODB_PORT"),
+            "database.connections.mongodb.database": setting(.text("shop"), "MONGODB_DATABASE"),
+        ]
+
+        let database = try #require(plan(settings, env: "MONGODB_HOST=localhost\nMONGODB_PORT=27018\n").database)
+
+        #expect(database.choices.first?.changes == [
+            EnvValueChange(key: "MONGODB_HOST", oldValue: "localhost", newValue: "127.0.0.1"),
+            EnvValueChange(key: "MONGODB_PORT", oldValue: "27018", newValue: "27017"),
+        ])
+    }
+
     @Test(arguments: ["mongodb://127.0.0.1:27017", "mongodb+srv://ann@cluster0.example.net"])
     func aMongoDBOfNexusOrOfAtlasNeedsNoChange(_ dsn: String) {
         #expect(plan(settings(dsn: dsn)).database == nil)

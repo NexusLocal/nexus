@@ -331,14 +331,15 @@ public struct UseNexusPlan: Sendable, Equatable {
         }
 
         let user = server.account.password.isEmpty ? "" : server.account.user
-        let host = text(setting("host")?.value)
+        let hostSetting = LaravelMongoDBConnection.hostSetting(path: path, settings: settings)
+        let host = text(hostSetting?.value)
         var needed: [NeededChange] = []
 
         if host.contains(":") {
-            needed.append((setting("host"), "\(WorkspaceEnvPlan.serverHost):\(server.port)"))
+            needed.append((hostSetting, "\(WorkspaceEnvPlan.serverHost):\(server.port)"))
         } else {
             if host != WorkspaceEnvPlan.serverHost {
-                needed.append((setting("host"), WorkspaceEnvPlan.serverHost))
+                needed.append((hostSetting, WorkspaceEnvPlan.serverHost))
             }
 
             if (WorkspaceEnvPlan.port(path, settings: settings) ?? DatabaseKind.mongodb.standardPort) != server.port {

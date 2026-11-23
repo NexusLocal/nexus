@@ -7,12 +7,23 @@ import Testing
 
 struct MongoDBTransferTests {
     @Test(arguments: [
-        ("mongodb+srv://ann@cluster0.example.net/shop?retryWrites=true", "mongodb+srv://ann@cluster0.example.net/?retryWrites=true"),
+        ("mongodb+srv://ann@cluster0.example.net/shop?retryWrites=true", "mongodb+srv://ann@cluster0.example.net/?retryWrites=true&authSource=shop"),
+        ("mongodb://127.0.0.1:27018/shop?authSource=admin", "mongodb://127.0.0.1:27018/?authSource=admin"),
+        ("mongodb://ann@a:27017,b:27017/shop", "mongodb://ann@a:27017,b:27017/?authSource=shop"),
         ("mongodb://127.0.0.1:27018/shop", "mongodb://127.0.0.1:27018/"),
         ("mongodb://127.0.0.1:27018", "mongodb://127.0.0.1:27018/"),
     ])
-    func theURLOfTheOtherServerLosesItsDatabase(_ value: String, server: String) {
-        #expect(MongoDBTransfer.serverURL(value) == server)
+    func theURLOfTheOtherServerLosesItsDatabaseAndKeepsItsLogin(_ value: String, server: String) {
+        #expect(MongoDBTransfer.source(url: value, password: "") == MongoDBTransfer.Endpoint(url: server, password: ""))
+    }
+
+    @Test func aPasswordInTheURLGoesIntoTheConfigFile() {
+        let endpoint = MongoDBTransfer.source(url: "mongodb://app:s%40cret@127.0.0.1:27018/shop", password: "typed")
+
+        #expect(endpoint == MongoDBTransfer.Endpoint(url: "mongodb://app@127.0.0.1:27018/?authSource=shop", password: "s@cret"))
+        #expect(endpoint.user == "app")
+        #expect(endpoint.authenticationDatabase == "shop")
+        #expect(MongoDBTransfer.Endpoint(url: "mongodb://127.0.0.1:27018/", password: "").authenticationDatabase == "admin")
     }
 
     @Test func aLocalServerWithAPasswordHasItsUserInTheDatabaseAdmin() {
@@ -37,9 +48,9 @@ struct MongoDBTransferTests {
         let withPassword = NexusEngine.mongoDBSource(DatabaseServer(account: DatabaseAccount(user: "", password: "other"), url: "mongodb://ann:secret@127.0.0.1:27018"))
         let fromHost = NexusEngine.mongoDBSource(DatabaseServer(host: "127.0.0.1", port: 27018, account: DatabaseAccount(user: "root", password: "pw")))
 
-        #expect(withoutPassword.url == "mongodb+srv://ann@cluster0.example.net/")
+        #expect(withoutPassword.url == "mongodb+srv://ann@cluster0.example.net/?authSource=shop")
         #expect(withoutPassword.password == "secret")
-        #expect(withPassword.password == "")
+        #expect(withPassword == MongoDBTransfer.Endpoint(url: "mongodb://ann@127.0.0.1:27018/", password: "secret"))
         #expect(fromHost.url == "mongodb://root@127.0.0.1:27018/")
         #expect(fromHost.password == "pw")
     }
@@ -51,6 +62,7 @@ struct MongoDBTransferTests {
         (["DB_CONNECTION": "mongodb", "DB_DATABASE": "app"], "app"),
         (["MONGODB_URI": "mongodb://127.0.0.1:27018/shop"], nil),
         (["MONGODB_URI": "mongodb+srv://ann@cluster0.example.net/shop"], nil),
+        (["DB_CONNECTION": "mongodb", "DB_URI": "mongodb+srv://cluster0.example.net", "DB_DATABASE": "shop"], nil),
         (["DB_CONNECTION": "mysql", "DB_DATABASE": "shop"], nil),
     ] as [([String: String], String?)])
     func aSiteUsesADatabaseOfAMongoDBWhenItsKeysReachThePort(_ env: [String: String], database: String?) {

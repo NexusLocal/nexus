@@ -64,11 +64,16 @@ public struct LaravelMongoDBConnection: Equatable, Sendable {
             return
         }
 
-        let hostValue = (settings["\(path).host.0"] ?? WorkspaceEnvPlan.setting("host", at: path, settings: settings))?.value.description ?? WorkspaceEnvPlan.serverHost
+        let hostValue = Self.hostSetting(path: path, settings: settings)?.value.description ?? WorkspaceEnvPlan.serverHost
         let parts = hostValue.split(separator: ":", maxSplits: 1).map(String.init)
 
         host = parts.first ?? WorkspaceEnvPlan.serverHost
         port = parts.count == 2 ? Int(parts[1]) : WorkspaceEnvPlan.port(path, settings: settings) ?? DatabaseKind.mongodb.standardPort
         database = named
+    }
+
+    // The host can be a list of hosts. The first one counts.
+    static func hostSetting(path: String, settings: [String: ConfigSetting]) -> ConfigSetting? {
+        settings["\(path).host.0"] ?? WorkspaceEnvPlan.setting("host", at: path, settings: settings)
     }
 }

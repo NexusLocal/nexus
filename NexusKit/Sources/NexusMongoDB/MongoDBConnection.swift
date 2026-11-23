@@ -9,6 +9,10 @@ public actor MongoDBConnection {
     private let descriptor: Int32
     private var nextID: Int32 = 1
     private var isClosed = false
+    // The actor can start a second command while the first one waits for its answer. Both would
+    // then read from the same socket. So a command waits until the command before it ends.
+    private var isBusy = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
 
     private init(descriptor: Int32) {
         self.descriptor = descriptor
@@ -21,13 +25,14 @@ public actor MongoDBConnection {
     }
 
     // A server without a password has no users, and it needs no login. The timeout is for each read
-    // and for each write.
-    public static func connect(port: Int, account: DatabaseAccount? = nil, timeout: TimeInterval = 10) async throws -> MongoDBConnection {
+    // and for each write. The users of Nexus are in the database admin. A user of another server can
+    // be in another database.
+    public static func connect(port: Int, account: DatabaseAccount? = nil, authenticationDatabase: String = "admin", timeout: TimeInterval = 10) async throws -> MongoDBConnection {
         let descriptor = try await onOwnThread { try open(port: port, timeout: timeout) }
         let connection = MongoDBConnection(descriptor: descriptor)
 
         if let account, !account.password.isEmpty {
-            try await connection.logIn(account)
+            try await connection.logIn(account, on: authenticationDatabase)
         }
 
         return connection
@@ -35,6 +40,9 @@ public actor MongoDBConnection {
 
     @discardableResult
     public func run(_ command: BSONDocument, on database: String = "admin") async throws -> BSONDocument {
+        await takeTurn()
+        defer { endTurn() }
+
         guard !isClosed else {
             throw MongoDBError.connection("The connection is closed.")
         }
@@ -78,7 +86,26 @@ public actor MongoDBConnection {
         close(descriptor)
     }
 
-    private func logIn(_ account: DatabaseAccount) async throws {
+    private func takeTurn() async {
+        guard isBusy else {
+            isBusy = true
+            return
+        }
+
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    // The next command gets the turn at once, so isBusy stays true for it.
+    private func endTurn() {
+        guard !waiting.isEmpty else {
+            isBusy = false
+            return
+        }
+
+        waiting.removeFirst().resume()
+    }
+
+    private func logIn(_ account: DatabaseAccount, on database: String) async throws {
         let scram = ScramSHA256(user: account.user, password: account.password)
 
         do {
@@ -87,13 +114,13 @@ public actor MongoDBConnection {
                 "mechanism": .string("SCRAM-SHA-256"),
                 "payload": .binary(Data(scram.firstMessage.utf8)),
                 "options": .document(["skipEmptyExchange": .bool(true)]),
-            ])
+            ], on: database)
             let answer = try scram.answer(to: try Self.payload(of: start))
             let end = try await run([
                 "saslContinue": .int32(1),
                 "conversationId": start["conversationId"] ?? .int32(1),
                 "payload": .binary(Data(answer.message.utf8)),
-            ])
+            ], on: database)
 
             guard end["done"]?.bool == true, ScramSHA256.serverSignature(in: try Self.payload(of: end)) == answer.serverSignature else {
                 throw MongoDBError.loginFailed

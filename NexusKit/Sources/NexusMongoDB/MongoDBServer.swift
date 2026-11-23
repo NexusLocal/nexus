@@ -163,10 +163,9 @@ public struct MongoDBServer: Sendable {
         try await connection.run(["fsyncUnlock": .int32(1)])
     }
 
-    // The number of locks of the server.
-    public func lockCount() async throws -> Int {
-        let answer = try await connection.run(["currentOp": .int32(1)])
-        return answer["fsyncLock"]?.bool == true ? 1 : 0
+    // currentOp tells only whether the server has a lock, not how many.
+    public func isLocked() async throws -> Bool {
+        try await connection.run(["currentOp": .int32(1)])["fsyncLock"]?.bool == true
     }
 
     // MARK: The account

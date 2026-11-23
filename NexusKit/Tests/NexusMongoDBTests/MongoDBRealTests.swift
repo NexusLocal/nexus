@@ -79,14 +79,14 @@ struct MongoDBRealTests {
         try await server.connection.run(["insert": .string("items"), "documents": .array((0..<100).map { .document(["n": .int32($0)]) })], on: "shop")
 
         #expect(try await server.databases().map(\.name) == ["shop"])
-        #expect(try await server.lockCount() == 0)
+        #expect(try await !server.isLocked())
 
         try await server.lock()
-        #expect(try await server.lockCount() == 1)
+        #expect(try await server.isLocked())
         try FileManager.default.copyItem(at: mainFolder, to: cloneFolder)
         try await server.unlock()
 
-        #expect(try await server.lockCount() == 0)
+        #expect(try await !server.isLocked())
 
         try FileManager.default.removeItem(at: cloneFolder.appending(path: "mongod.lock"))
 

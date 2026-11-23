@@ -157,11 +157,16 @@ extension NexusEngine {
 
     // A MongoDB connection is often a second connection next to MySQL. So its keys count also when
     // DB_CONNECTION names another driver. The keys are those of the docs of Laravel and of MongoDB.
+    // A URL decides alone, also a URL of Atlas that names no server on this Mac.
     static func mongoDBDatabase(in env: [String: String], port: Int) -> String? {
         let isDefault = env["DB_CONNECTION"] == "mongodb"
         let named = env["MONGODB_DATABASE"] ?? (isDefault ? env["DB_DATABASE"] : nil)
 
-        if let value = env["MONGODB_URI"] ?? env["DB_URI"], let url = MongoDBURL(value) {
+        if let value = env["MONGODB_URI"] ?? env["DB_URI"].flatMap({ ConnectionURL.isMongoDB($0) ? $0 : nil }) {
+            guard let url = MongoDBURL(value) else {
+                return nil
+            }
+
             let database = named ?? url.database
             return url.isLocal && url.port == port && !database.isEmpty ? database : nil
         }

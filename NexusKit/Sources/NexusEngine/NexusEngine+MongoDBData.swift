@@ -6,6 +6,7 @@ import NexusLaravel
 import NexusMongoDB
 import NexusRuntime
 import NexusSupervisor
+import Synchronization
 
 // mongodump and mongorestore of the package mongodb-tools. A password goes in a config file in a
 // private folder, so it does not show in the process list. The caller removes that folder.
@@ -13,24 +14,58 @@ struct MongoDBTransfer {
     let tools: DatabaseTools
     let work: URL
 
-    // A URL of a server and the password that goes with it. An empty password adds no config file.
-    struct Endpoint {
+    // A URL of a server without a password, and the password that goes with it. An empty password
+    // adds no config file.
+    struct Endpoint: Equatable {
         let url: String
         let password: String
-    }
 
-    // mongodump refuses a database in the URL next to its option --db. So the URL loses its path,
-    // and its settings stay.
-    static func serverURL(_ value: String) -> String {
-        guard let schemeEnd = value.range(of: "://") else {
-            return value
+        // The user and the settings of the URL, for the own client of Nexus.
+        var user: String? {
+            URLComponents(string: url)?.user
         }
 
+        var authenticationDatabase: String {
+            URLComponents(string: url)?.queryItems?.first { $0.name.lowercased() == "authsource" }?.value ?? "admin"
+        }
+    }
+
+    // The URL of another server, also with mongodb+srv or a list of servers. A password in the URL
+    // would show in the process list, so it goes into the config file. mongodump refuses a database
+    // in the URL next to its option --db. The URL spec of MongoDB logs in to that database when the
+    // URL has a user and no authSource. So the database then moves into authSource.
+    static func source(url value: String, password typed: String) -> Endpoint {
+        guard let schemeEnd = value.range(of: "://") else {
+            return Endpoint(url: value, password: typed)
+        }
+
+        let scheme = value[..<schemeEnd.upperBound]
         let rest = value[schemeEnd.upperBound...]
         let authority = rest.prefix { $0 != "/" && $0 != "?" }
-        let query = rest.firstIndex(of: "?").map { String(rest[$0...]) } ?? ""
+        let afterAuthority = rest.dropFirst(authority.count)
+        let database = afterAuthority.dropFirst().prefix { $0 != "?" }
+        var query = afterAuthority.firstIndex(of: "?").map { String(afterAuthority[afterAuthority.index(after: $0)...]) } ?? ""
 
-        return "\(value[..<schemeEnd.upperBound])\(authority)/\(query)"
+        var servers = authority
+        var password = typed
+
+        if let at = authority.lastIndex(of: "@") {
+            let userInfo = authority[..<at]
+            let user = userInfo.prefix { $0 != ":" }
+
+            if userInfo.count > user.count {
+                password = String(userInfo.dropFirst(user.count + 1)).removingPercentEncoding ?? typed
+            }
+
+            servers = "\(user)@\(authority[authority.index(after: at)...])"
+        }
+
+        // The Go driver of mongodump refuses authSource in a URL without a user.
+        if !database.isEmpty, authority.contains("@"), !query.lowercased().contains("authsource=") {
+            query += query.isEmpty ? "authSource=\(database)" : "&authSource=\(database)"
+        }
+
+        return Endpoint(url: "\(scheme)\(servers)/\(query.isEmpty ? "" : "?\(query)")", password: password)
     }
 
     // A local server of Nexus. Its user is in the database admin.
@@ -333,24 +368,55 @@ extension NexusEngine {
         let transfer = MongoDBTransfer(tools: tools, work: work)
         let dump = try transfer.dumpCommand(source, database: database)
         let restore = try transfer.restoreCommand(try await mongoDBEndpoint(tools), from: database, as: name, drop: false)
+        let archive = work.appending(path: "source.archive.gz")
 
-        if replaces {
-            try await dropMongoDBDatabase(name, tools: tools)
+        guard FileManager.default.createFile(atPath: archive.path(percentEncoded: false), contents: nil, attributes: [.posixPermissions: 0o600]) else {
+            throw RuntimeError.unsupported("Nexus cannot write \(archive.path(percentEncoded: false)).")
         }
 
+        let dropped = Mutex(false)
+        let dumped = Mutex<Int64>(0)
         let task = TaskWork.copyDatabase(database: database, instance: request.instance, name: name)
-        let stopped = replaces
-            ? "The copy of \(database) stopped. \(request.instance) has no database \(name) now, because the copy dropped the old one first."
-            : "The copy of \(database) stopped. \(request.instance) has no database \(name)."
+        let stopped = { @Sendable in
+            dropped.withLock { $0 }
+                ? "The copy of \(database) stopped. \(request.instance) has no database \(name) now, because the copy dropped the old one first."
+                : "The copy of \(database) stopped. \(request.instance) did not change."
+        }
 
+        // The dump of the other server comes first. A wrong name or a server that does not answer then
+        // costs no old copy. mongodump writes an empty archive for a database that does not exist.
         do {
-            try await runTask(task, stopped: { stopped }) { progress in
-                try await CommandRunner.pipe(dump, into: restore) { data in
+            try await runTask(task, stopped: stopped) { progress in
+                try await CommandRunner.pipe(dump, into: Command(executable: URL(filePath: "/usr/bin/gzip")), writingTo: archive) { data in
+                    dumped.withLock { $0 += Int64(data.count) }
                     progress.update { $0.completed += Int64(data.count) }
+                }
+
+                guard try await self.mongoDBArchiveCollections(of: archive, container: .gzip).contains(where: { $0.database == database }) else {
+                    throw RuntimeError.unsupported("The other server has no database \(database), or \(database) has no collections. \(request.instance) did not change.")
+                }
+
+                if replaces {
+                    try await self.dropMongoDBDatabase(name, tools: tools)
+                    dropped.withLock { $0 = true }
+                }
+
+                let size = dumped.withLock { $0 }
+                progress.update { values in
+                    values.completed = 0
+                    values.total = size
+                }
+
+                try await CommandRunner.pipe(Self.reader(of: archive, container: .gzip, dump: nil), into: restore) { data in
+                    progress.update { $0.completed = min($0.completed + Int64(data.count), size) }
                 }
             }
         } catch {
-            await Task { try? await self.dropMongoDBDatabase(name, tools: tools) }.value
+            // Before the drop, the old database stays as it was.
+            if !replaces || dropped.withLock({ $0 }) {
+                await Task { try? await self.dropMongoDBDatabase(name, tools: tools) }.value
+            }
+
             throw error
         }
 
@@ -365,16 +431,15 @@ extension NexusEngine {
             """
     }
 
-    // The sheet gives the server as a URL, the command line can give a host and a port. The password
-    // goes with the URL only when the URL has none.
+    // The sheet gives the server as a URL, the command line can give a host and a port. A password in
+    // the URL wins over the typed one.
     static func mongoDBSource(_ server: DatabaseServer) -> MongoDBTransfer.Endpoint {
         guard let url = server.url, !url.isEmpty else {
             let user = server.account.password.isEmpty ? "" : "\(MongoDBTransfer.encodedUser(server.account.user))@"
             return MongoDBTransfer.Endpoint(url: "mongodb://\(user)\(server.host):\(server.port ?? DatabaseKind.mongodb.standardPort)/", password: server.account.password)
         }
 
-        let hasPassword = URLComponents(string: url)?.password?.isEmpty == false
-        return MongoDBTransfer.Endpoint(url: MongoDBTransfer.serverURL(url), password: hasPassword ? "" : server.account.password)
+        return MongoDBTransfer.source(url: url, password: server.account.password)
     }
 
     // Only a server on this Mac without TLS answers the own client of Nexus. For another server, the
@@ -386,11 +451,10 @@ extension NexusEngine {
             throw RuntimeError.unsupported("Nexus can list the databases only of a MongoDB on this Mac. Type the name of the database.")
         }
 
-        let user = URLComponents(string: source.url)?.user ?? server.account.user
-        let account = source.password.isEmpty ? nil : DatabaseAccount(user: user, password: source.password)
+        let account = source.password.isEmpty ? nil : DatabaseAccount(user: source.user ?? server.account.user, password: source.password)
 
         do {
-            let mongo = MongoDBServer(try await MongoDBConnection.connect(port: url.port, account: account))
+            let mongo = MongoDBServer(try await MongoDBConnection.connect(port: url.port, account: account, authenticationDatabase: source.authenticationDatabase))
             let databases = try await mongo.databases()
             await mongo.connection.disconnect()
             return databases.map { DatabaseSize(name: $0.name, bytes: $0.bytes) }

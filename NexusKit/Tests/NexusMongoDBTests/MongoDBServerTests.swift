@@ -149,7 +149,8 @@ struct MongoDBMessageTests {
 }
 
 // Accepts one connection and answers each command with the next answer. Without an answer it closes
-// the connection, or it stays silent.
+// the connection, or it stays silent. Only the thread of the server closes the listener. A close in
+// stop() can come before that thread calls accept, and another test can then get the same descriptor.
 private final class FakeServer: @unchecked Sendable {
     let port: Int
     private let listener: Int32
@@ -157,6 +158,7 @@ private final class FakeServer: @unchecked Sendable {
     private var received: [BSONDocument] = []
     private var client: Int32 = -1
     private var isStopped = false
+    private var hasAccepted = false
 
     init(answers: [BSONDocument], isSilent: Bool = false) throws {
         let descriptor = try IPv4Socket.listener(on: 0, host: IPv4Socket.loopback, backlog: 1)
@@ -177,29 +179,54 @@ private final class FakeServer: @unchecked Sendable {
         lock.withLock { received }
     }
 
+    // A server that has not accepted yet gets a connection of its own, so its accept returns.
     func stop() {
-        lock.withLock {
+        let wakesServer = lock.withLock {
             guard !isStopped else {
-                return
+                return false
             }
 
             isStopped = true
-            close(listener)
 
             if client >= 0 {
                 shutdown(client, SHUT_RDWR)
             }
+
+            return !hasAccepted
+        }
+
+        if wakesServer, let socket = try? IPv4Socket.connectToLoopback(port: port) {
+            close(socket)
         }
     }
 
     private func serve(_ answers: [BSONDocument], isSilent: Bool) {
-        let connection = accept(listener, nil, nil)
+        var connection: Int32
+
+        repeat {
+            connection = accept(listener, nil, nil)
+        } while connection < 0 && errno == EINTR
+
+        close(listener)
 
         guard connection >= 0 else {
             return
         }
 
-        lock.withLock { client = connection }
+        let isStopped = lock.withLock {
+            hasAccepted = true
+
+            if !self.isStopped {
+                client = connection
+            }
+
+            return self.isStopped
+        }
+
+        guard !isStopped else {
+            close(connection)
+            return
+        }
 
         var rest = answers[...]
 
@@ -229,6 +256,10 @@ private final class FakeServer: @unchecked Sendable {
 
         while position < count {
             let received = buffer.withUnsafeMutableBytes { recv(connection, $0.baseAddress?.advanced(by: position), count - position, 0) }
+
+            if received < 0, errno == EINTR {
+                continue
+            }
 
             guard received > 0 else {
                 return nil

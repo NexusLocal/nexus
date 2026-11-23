@@ -67,6 +67,8 @@ extension NexusEngineTests {
             let replaced = await engine.handle(.importDump(DumpImport(file: archive.path(percentEncoded: false), target: .instance(id), name: "imported", existing: .replaceDatabase)))
             let trash = (try? FileManager.default.contentsOfDirectory(atPath: paths.trash.path(percentEncoded: false))) ?? []
             let copied = await engine.handle(.copyDatabase(DatabaseCopy(source: DatabaseServer(port: port, account: DatabaseAccount(user: "", password: ""), url: "mongodb://127.0.0.1:\(port)/shop"), database: "shop", instance: id, name: "copied")))
+            let missingSource = DatabaseServer(port: port, account: DatabaseAccount(user: "", password: ""), url: "mongodb://127.0.0.1:\(port)")
+            let refusedCopy = await engine.handle(.copyDatabase(DatabaseCopy(source: missingSource, database: "missing", instance: id, name: "copied", replace: true)))
             let after = await engine.handle(.databaseSizes(instance: id))
 
             let account = DatabaseAccount(user: "nexus", password: "s3cret\"pw")
@@ -111,6 +113,7 @@ extension NexusEngineTests {
             if case .done = replaced {} else { Issue.record("the replace failed: \(replaced)") }
             #expect(trash.contains { $0.hasSuffix("-\(id)-imported.archive.gz") })
             if case .done = copied {} else { Issue.record("the copy failed: \(copied)") }
+            if case .failure = refusedCopy {} else { Issue.record("a copy of a missing database did not stop: \(refusedCopy)") }
 
             guard case .databaseSizes(let sizes) = after else {
                 Issue.record("no sizes: \(after)")

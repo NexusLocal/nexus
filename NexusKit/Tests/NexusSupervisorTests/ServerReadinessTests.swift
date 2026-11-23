@@ -26,9 +26,12 @@ struct ServerReadinessTests {
         return descriptor
     }
 
+    // The check of each test connects. So accept returns, and the thread closes the listener. A close
+    // in the test can come before accept, and another test can then get the same descriptor.
     private func serve(_ listener: Int32, greeting: [UInt8]) {
         Thread.detachNewThread {
             let client = accept(listener, nil, nil)
+            close(listener)
 
             guard client >= 0 else {
                 return
@@ -52,7 +55,6 @@ struct ServerReadinessTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         let path = folder.appending(path: "s.sock").path(percentEncoded: false)
         let listener = try unixListener(at: path)
-        defer { close(listener) }
 
         serve(listener, greeting: [0x0A])
 
@@ -64,7 +66,6 @@ struct ServerReadinessTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         let path = folder.appending(path: "s.sock").path(percentEncoded: false)
         let listener = try unixListener(at: path)
-        defer { close(listener) }
 
         serve(listener, greeting: [])
         let start = ContinuousClock.now
