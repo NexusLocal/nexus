@@ -157,9 +157,11 @@ extension NexusEngineTests {
         let library = try #require(await engine.installedDumpLibrary)
         let stubText = try text(of: stub)
 
+        let errorLog = await engine.paths.phpErrorLog(line: "8.5").path(percentEncoded: false)
+
         #expect(firstWrite)
         #expect(!secondWrite)
-        #expect(try text(of: folder.appending(path: "php-fpm.conf")).hasSuffix("php_value[auto_prepend_file] = \"\(stubPath)\"\n"))
+        #expect(try text(of: folder.appending(path: "php-fpm.conf")).hasSuffix("php_value[auto_prepend_file] = \"\(stubPath)\"\nphp_value[error_log] = \"\(errorLog)\"\n"))
         #expect(try text(of: folder.appending(path: "dumps.d/00-nexus-dumps.ini")).contains("\nauto_prepend_file = \"\(stubPath)\"\n"))
         #expect(!(try text(of: folder.appending(path: "conf.d/00-nexus.ini")).contains("auto_prepend_file")))
         #expect(stubText.contains("'socket' => '\(paths.dumpSocket.path(percentEncoded: false))',"))
@@ -197,8 +199,9 @@ extension NexusEngineTests {
 
         _ = try await writeConfig(engine)
         let stubText = try text(of: folder.appending(path: PHPConfig.dumpStubName))
+        let errorLog = await engine.paths.phpErrorLog(line: "8.5").path(percentEncoded: false)
 
-        #expect(try text(of: folder.appending(path: "php-fpm.conf")).hasSuffix("php_value[auto_prepend_file] = \"\(stubPath)\"\n"))
+        #expect(try text(of: folder.appending(path: "php-fpm.conf")).hasSuffix("php_value[auto_prepend_file] = \"\(stubPath)\"\nphp_value[error_log] = \"\(errorLog)\"\n"))
         #expect(try text(of: folder.appending(path: "dumps.d/00-nexus-dumps.ini")).contains("\nauto_prepend_file = \"\(stubPath)\"\n"))
         #expect(await engine.commandDumpsFolder(line: "8.5") != nil)
         #expect(stubText.contains("    'dumps' => false,\n    'queries' => true,\n    'logs' => false,\n    'jobs' => false,\n"))
