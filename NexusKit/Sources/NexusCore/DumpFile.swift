@@ -73,15 +73,22 @@ public enum DumpArchive {
 
 // What a dump holds. pg_dump -Fc starts with PGDMP. A plain dump of PostgreSQL has its own header,
 // COPY ... FROM stdin or the schema pg_catalog. A dump of MySQL or MariaDB has backticks or
-// ENGINE=.
+// ENGINE=. An archive of mongodump starts with its magic number.
 public enum DumpFormat: String, Codable, Sendable {
     case mysql
     case postgresql
     case postgresqlCustom = "postgresql_custom"
+    case mongodb
+
+    public static let mongoDBMagic: [UInt8] = [0x6D, 0xE2, 0x99, 0x81]
 
     public static func of(start: Data) -> DumpFormat? {
         if start.starts(with: Array("PGDMP".utf8)) {
             return .postgresqlCustom
+        }
+
+        if start.starts(with: mongoDBMagic) {
+            return .mongodb
         }
 
         let text = String(decoding: start, as: UTF8.self)
@@ -98,10 +105,18 @@ public enum DumpFormat: String, Codable, Sendable {
     }
 
     public func fits(_ kind: DatabaseKind) -> Bool {
-        self == .mysql ? kind.usesMySQLProtocol : kind == .postgresql
+        switch self {
+        case .mysql: kind.usesMySQLProtocol
+        case .postgresql, .postgresqlCustom: kind == .postgresql
+        case .mongodb: kind == .mongodb
+        }
     }
 
     public var displayName: String {
-        self == .mysql ? "MySQL or MariaDB" : "PostgreSQL"
+        switch self {
+        case .mysql: "MySQL or MariaDB"
+        case .postgresql, .postgresqlCustom: "PostgreSQL"
+        case .mongodb: "MongoDB"
+        }
     }
 }

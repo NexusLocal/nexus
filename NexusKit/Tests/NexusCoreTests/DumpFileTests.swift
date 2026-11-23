@@ -48,5 +48,12 @@ struct DumpFileTests {
         #expect(!DumpFormat.mysql.fits(.postgresql))
         #expect(DumpFormat.postgresqlCustom.fits(.postgresql))
         #expect(!DumpFormat.postgresql.fits(.mysql))
+        #expect(DumpFormat.mongodb.fits(.mongodb))
+        #expect(!DumpFormat.mongodb.fits(.postgresql))
+        #expect(!DumpFormat.postgresql.fits(.mongodb))
+    }
+
+    @Test func anArchiveOfMongodumpStartsWithItsMagicNumber() {
+        #expect(DumpFormat.of(start: Data([0x6D, 0xE2, 0x99, 0x81, 0x68, 0x00, 0x00, 0x00])) == .mongodb)
     }
 }

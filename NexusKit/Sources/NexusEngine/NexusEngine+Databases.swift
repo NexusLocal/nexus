@@ -7,16 +7,20 @@ import NexusRuntime
 import NexusSupervisor
 import Synchronization
 
+// The client reads a dump into the server, and dump writes one. MongoDB has both in the package
+// mongodb-tools.
 struct DatabaseTools {
     let id: String
     let kind: DatabaseKind
     let runtime: InstalledRuntime
+    var mongoDBTools: URL? = nil
 
     var client: URL {
         switch kind {
         case .mysql: bin("mysql")
         case .mariadb: bin("mariadb")
         case .postgresql: bin("psql")
+        case .mongodb: mongoDBTool("mongorestore")
         }
     }
 
@@ -25,11 +29,16 @@ struct DatabaseTools {
         case .mysql: bin("mysqldump")
         case .mariadb: bin("mariadb-dump")
         case .postgresql: bin("pg_dump")
+        case .mongodb: mongoDBTool("mongodump")
         }
     }
 
     func bin(_ name: String) -> URL {
         runtime.folder.appending(path: "bin/\(name)")
+    }
+
+    func mongoDBTool(_ name: String) -> URL {
+        (mongoDBTools ?? runtime.folder).appending(path: "bin/\(name)")
     }
 }
 
@@ -53,7 +62,8 @@ extension NexusEngine {
                 return nil
             }
 
-            return DatabaseTools(id: id, kind: kind, runtime: runtime)
+            let mongoDBTools = kind == .mongodb ? paths.runtime(MongoDBToolsPackage.name, line: MongoDBToolsPackage.line) : nil
+            return DatabaseTools(id: id, kind: kind, runtime: runtime, mongoDBTools: mongoDBTools)
         }
     }
 
@@ -100,6 +110,11 @@ extension NexusEngine {
     // and moves it into place only when it succeeds. So a failed one leaves nothing that blocks
     // the next try.
     func prepareDatabase(_ tools: DatabaseTools) async throws {
+        if tools.kind == .mongodb {
+            try await prepareMongoDB(tools)
+            return
+        }
+
         let line = tools.runtime.line
         let socket = paths.databaseSocket(tools.kind, line: line, port: try await port(of: tools))
 
@@ -141,7 +156,12 @@ extension NexusEngine {
     }
 
     static func holdsDatabase(_ folder: URL, kind: DatabaseKind) -> Bool {
-        let marker = kind.usesMySQLProtocol ? "mysql" : "PG_VERSION"
+        let marker = switch kind {
+        case .mysql, .mariadb: "mysql"
+        case .postgresql: "PG_VERSION"
+        case .mongodb: "WiredTiger"
+        }
+
         return FileManager.default.fileExists(atPath: folder.appending(path: marker).path(percentEncoded: false))
     }
 
@@ -205,10 +225,12 @@ extension NexusEngine {
             }
 
             return try await CommandRunner.run(Command(executable: tools.bin("initdb"), arguments: arguments, workingDirectory: tools.runtime.folder))
+        case .mongodb:
+            throw RuntimeError.unsupported("mongod makes its data folder at its first start.")
         }
     }
 
-    private static func writePrivate(_ contents: String, to file: URL) throws {
+    static func writePrivate(_ contents: String, to file: URL) throws {
         guard FileManager.default.createFile(atPath: file.path(percentEncoded: false), contents: Data(contents.utf8), attributes: [.posixPermissions: 0o600]) else {
             throw RuntimeError.unsupported("Nexus cannot write \(file.path(percentEncoded: false)).")
         }
@@ -221,6 +243,10 @@ extension NexusEngine {
     func copyDatabase(_ request: DatabaseCopy) async throws -> String {
         guard let tools = await databaseRuntime(request.instance) else {
             throw RuntimeError.unsupported("Nexus has no database instance \(request.instance). See: nexus db list")
+        }
+
+        if tools.kind == .mongodb {
+            return try await copyMongoDB(request, tools: tools)
         }
 
         let database = try DatabaseName.validated(request.database)

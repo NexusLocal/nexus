@@ -1054,6 +1054,7 @@ public actor NexusEngine {
 
         try await waitForConnections(definition)
         try await waitForQueries(id, definition)
+        try await openMongoDB(id, definition)
         return "\(definition.displayName) runs on port \(EnglishList.joined(definition.ports.map(String.init)))."
     }
 
@@ -1411,6 +1412,12 @@ public actor NexusEngine {
             let installed = "\(runtime.name) \(runtime.version) is installed in \(folder)"
             let message = name == "mailpit" ? await receiveMail(after: installed) : installed
             servicesChanged()
+
+            // A failure comes again at the first import, copy or dump, which need the tools.
+            if name == "mongodb" {
+                Task { try? await self.ensureMongoDBTools() }
+            }
+
             return message
         }
 
@@ -1535,6 +1542,12 @@ public actor NexusEngine {
         }
 
         try await installer.remove(name: name, line: line)
+
+        // The tools came with the first MongoDB, and the Packages screen does not show them.
+        if name == "mongodb", otherLines.isEmpty {
+            try? await installer.remove(name: MongoDBToolsPackage.name, line: MongoDBToolsPackage.line)
+        }
+
         servicesChanged()
 
         if name == "mailpit", await mailRuntime() == nil {

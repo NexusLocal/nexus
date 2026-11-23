@@ -251,7 +251,7 @@ public enum SiteTemplateCommands {
         case .mysql: "mysql"
         case .mariadb: "mariadb"
         case .postgresql: "pgsql"
-        case nil: "sqlite"
+        case .mongodb, nil: "sqlite"
         }
     }
 

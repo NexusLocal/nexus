@@ -4,8 +4,9 @@ import Testing
 
 struct SiteDatabasesTests {
     private let instances = [
-        SiteDatabases.Instance(id: "mysql-8.0", usesMySQLProtocol: true, port: 3306),
-        SiteDatabases.Instance(id: "postgresql-17", usesMySQLProtocol: false, port: 15432),
+        SiteDatabases.Instance(id: "mysql-8.0", kind: .mysql, port: 3306),
+        SiteDatabases.Instance(id: "postgresql-17", kind: .postgresql, port: 15432),
+        SiteDatabases.Instance(id: "mongodb-8.0", kind: .mongodb, port: 27017),
     ]
 
     private func setting(_ value: ConfigValue, _ key: String?) -> ConfigSetting {
@@ -100,8 +101,8 @@ struct SiteDatabasesTests {
         let configuration = LaravelConfiguration(version: "12.0.0", settings: settings.merging(["database.default": ConfigSetting(value: .text("mysql"))]) { own, _ in own }, databaseConnections: ["mysql"], redisConnections: [])
 
         let databases = SiteDatabases.list(configuration, instances: [
-            SiteDatabases.Instance(id: "mysql-8.0", usesMySQLProtocol: true, port: 8889, socket: "/nexus/run/mysql-8.0.sock"),
-            SiteDatabases.Instance(id: "mysql-8.4", usesMySQLProtocol: true, port: 13306, socket: "/nexus/run/mysql-8.4.sock"),
+            SiteDatabases.Instance(id: "mysql-8.0", kind: .mysql, port: 8889, socket: "/nexus/run/mysql-8.0.sock"),
+            SiteDatabases.Instance(id: "mysql-8.4", kind: .mysql, port: 13306, socket: "/nexus/run/mysql-8.4.sock"),
         ])
 
         #expect(databases.map(\.instance) == ["mysql-8.4"])

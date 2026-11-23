@@ -11,15 +11,15 @@ extension Database {
     struct Import: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Loads a dump file into the database of the site or the workspace of the current folder, for example: nexus db import ~/Downloads/shop.sql.gz",
-            discussion: "Nexus reads a .sql or .sql.gz file, and a .zip, .tar or .tar.gz file with such a dump in it. For PostgreSQL it also reads a file of pg_dump -Fc. A database that exists changes only with --replace-tables or --replace-database. Nexus then puts a copy of the old database in the trash first."
+            discussion: "Nexus reads a .sql or .sql.gz file, and a .zip, .tar or .tar.gz file with such a dump in it. For PostgreSQL it also reads a file of pg_dump -Fc. For MongoDB it reads a file of mongodump --archive, with or without --gzip. A database that exists changes only with --replace-tables or --replace-database. Nexus then puts a copy of the old database in the trash first."
         )
 
         @Argument(help: "The dump file.") var file: String
         @Option(help: "The database. The default is the database of the site or the workspace.") var into: String?
         @Option(help: "The host of a site or a workspace. The default is the site or the workspace of the current folder.") var site: String?
         @Option(help: "An instance instead of a site, as nexus db list shows it. Give the database with --into.") var instance: String?
-        @Option(help: "The dump in a .zip or .tar file that holds more than one.") var dump: String?
-        @Flag(help: "The tables of the dump replace their old tables. The other tables stay.") var replaceTables = false
+        @Option(help: "The dump in a .zip or .tar file that holds more than one. For MongoDB: the database in an archive that holds more than one.") var dump: String?
+        @Flag(help: "The tables of the dump replace their old tables. The other tables stay. For MongoDB: the collections.") var replaceTables = false
         @Flag(help: "Nexus drops the database first and loads the dump into an empty database.") var replaceDatabase = false
 
         func validate() throws {

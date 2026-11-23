@@ -41,6 +41,26 @@ package enum IPv4Socket {
         return descriptor
     }
 
+    // A port on 127.0.0.1 that macOS gives out as free now. Another program can take it before the
+    // caller binds it, but that is rare.
+    package static func freeLoopbackPort() throws -> Int {
+        let descriptor = try listener(on: 0, host: loopback, backlog: 1)
+        defer { close(descriptor) }
+
+        var local = sockaddr_in()
+        var size = socklen_t(MemoryLayout<sockaddr_in>.size)
+
+        let found = withUnsafeMutablePointer(to: &local) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(descriptor, $0, &size) }
+        }
+
+        guard found == 0 else {
+            throw SocketError.system("getsockname", errno)
+        }
+
+        return Int(UInt16(bigEndian: local.sin_port))
+    }
+
     // SO_REUSEADDR, as the database servers set it. So a listener on all addresses and one on
     // 127.0.0.1 can hold one port, and closed connections that wait on the port after a restart do
     // not block the bind.

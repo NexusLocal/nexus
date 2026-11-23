@@ -2,6 +2,7 @@ import Foundation
 import NexusConfig
 import NexusCore
 import NexusMail
+import NexusMongoDB
 import NexusRuntime
 import NexusSupervisor
 
@@ -217,14 +218,35 @@ public struct ServiceCatalog: Sendable {
             return nil
         }
 
-        let extra = kind.usesMySQLProtocol
-            ? ["--innodb-buffer-pool-size=33554432", "--performance-schema=OFF", "--key-buffer-size=8388608", "--table-open-cache=400"]
-            : ["-c", "shared_buffers=32MB"]
+        let extra = switch kind {
+        case .mysql, .mariadb: ["--innodb-buffer-pool-size=33554432", "--performance-schema=OFF", "--key-buffer-size=8388608", "--table-open-cache=400"]
+        case .postgresql: ["-c", "shared_buffers=32MB"]
+        case .mongodb: ["--wiredTigerCacheSizeGB", MongoDBConfig.workspaceCacheSizeGB]
+        }
 
         return databaseDefinition(kind, id: id, displayName: "\(kind.displayName) \(runtime.version) of a workspace", runtime: runtime, port: port, data: folder, socket: paths.workspaceDatabaseSocket(kind, line: runtime.line, port: port), logFile: paths.log(instance), extra: extra, environment: environment, activityName: "\(instance) of the workspace \(workspace)")
     }
 
     private func databaseDefinition(_ kind: DatabaseKind, id: String, displayName: String, runtime: InstalledRuntime, port: Int, data: URL, socket: URL, logFile: URL, extra: [String], environment: [String: String] = [:], activityName: String? = nil) -> ServiceDefinition {
+        if kind == .mongodb {
+            let keyFile = MongoDBConfig.keyFile(in: data)
+            let hasKey = FileManager.default.fileExists(atPath: keyFile.path(percentEncoded: false))
+
+            return ServiceDefinition(
+                id: id,
+                displayName: displayName,
+                executable: runtime.folder.appending(path: "bin/mongod"),
+                arguments: MongoDBConfig.serverArguments(config: paths.databaseConfig(kind, line: runtime.line), data: data, port: port, replicaSet: MongoDBServer.replicaSet, keyFile: hasKey ? keyFile : nil) + extra,
+                environment: environment,
+                workingDirectory: data,
+                ports: [port],
+                logFile: logFile,
+                startTimeout: Self.databaseStartTimeout,
+                stopTimeout: Self.databaseStopTimeout,
+                activityName: activityName
+            )
+        }
+
         guard kind.usesMySQLProtocol else {
             return ServiceDefinition(
                 id: id,

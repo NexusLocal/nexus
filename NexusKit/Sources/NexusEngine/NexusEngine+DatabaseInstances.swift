@@ -23,6 +23,12 @@ extension NexusEngine {
             return state.newInstanceAccount
         }
 
+        // Nexus stores the account of each MongoDB before its first start. So only a lost state
+        // comes here.
+        guard tools.kind != .mongodb else {
+            return .newInstance
+        }
+
         try await stateStore.update { state in
             if state.databaseAccounts[tools.id] == nil {
                 state.databaseAccounts[tools.id] = .standard
@@ -46,6 +52,10 @@ extension NexusEngine {
     // The system databases of the server are left out. MySQL keeps the sizes of its tables for a
     // day by default. The session asks for the current sizes.
     func databaseSizes(_ id: String) async throws -> [DatabaseSize] {
+        if let tools = await databaseRuntime(id), tools.kind == .mongodb {
+            return try await mongoDBSizes(tools)
+        }
+
         let (tools, client, work) = try await runningClient(id)
         defer { try? FileManager.default.removeItem(at: work) }
 
@@ -67,6 +77,10 @@ extension NexusEngine {
     func sourceDatabases(_ server: DatabaseServer, instance: String) async throws -> [DatabaseSize] {
         guard let tools = await databaseRuntime(instance) else {
             throw RuntimeError.unsupported("Nexus has no database instance \(instance). See: nexus db list")
+        }
+
+        if tools.kind == .mongodb {
+            return try await mongoDBSourceDatabases(server)
         }
 
         let endpoint = DatabaseEndpoint(host: server.host, port: server.port ?? tools.kind.standardPort, account: server.account, socket: server.socket)
@@ -115,6 +129,13 @@ extension NexusEngine {
         for (site, _) in resolvedSites(await stateStore.current()) {
             let env = EnvFile.values(of: site.folder.appending(path: ".env")).filter { !$0.value.isEmpty }
 
+            if kind == .mongodb {
+                if let database = Self.mongoDBDatabase(in: env, port: port) {
+                    users[database, default: []].append(site.host)
+                }
+                continue
+            }
+
             guard let connection = env["DB_CONNECTION"], kind.laravelConnections.contains(connection), let database = env["DB_DATABASE"] else {
                 continue
             }
@@ -134,9 +155,40 @@ extension NexusEngine {
         return users
     }
 
+    // A MongoDB connection is often a second connection next to MySQL. So its keys count also when
+    // DB_CONNECTION names another driver. The keys are those of the docs of Laravel and of MongoDB.
+    static func mongoDBDatabase(in env: [String: String], port: Int) -> String? {
+        let isDefault = env["DB_CONNECTION"] == "mongodb"
+        let named = env["MONGODB_DATABASE"] ?? (isDefault ? env["DB_DATABASE"] : nil)
+
+        if let value = env["MONGODB_URI"] ?? env["DB_URI"], let url = MongoDBURL(value) {
+            let database = named ?? url.database
+            return url.isLocal && url.port == port && !database.isEmpty ? database : nil
+        }
+
+        guard isDefault, let named else {
+            return nil
+        }
+
+        let host = env["DB_HOST"] ?? WorkspaceEnvPlan.serverHost
+        let sitePort = env["DB_PORT"].flatMap { Int($0) } ?? DatabaseKind.mongodb.standardPort
+        return WorkspaceEnvPlan.localHosts.contains(host.lowercased()) && sitePort == port ? named : nil
+    }
+
     // The instance must run, because the account lives in its data.
     func setAccount(_ id: String, _ account: DatabaseAccount) async throws -> String {
         let new = try DatabaseUser.validated(account)
+
+        if let tools = await databaseRuntime(id), tools.kind == .mongodb {
+            try await setMongoDBAccount(tools, from: try await self.account(of: tools), to: new)
+
+            guard !new.password.isEmpty else {
+                return "\(id) needs no login now. Remove the user and the password from the MongoDB connection of your sites too."
+            }
+
+            return "\(id) has the user \(new.user) with the password \(new.password) now. Put them in the MongoDB connection of your sites too."
+        }
+
         let (tools, client, work) = try await runningClient(id)
         defer { try? FileManager.default.removeItem(at: work) }
 
@@ -173,6 +225,10 @@ extension NexusEngine {
             throw RuntimeError.unsupported("Nexus has no database instance \(id). See: nexus db list")
         }
 
+        guard tools.kind.usesSQL else {
+            throw Self.needsSQL(tools)
+        }
+
         guard await supervisor.state(of: id)?.isActive == true else {
             throw RuntimeError.unsupported("Start \(id) first.")
         }
@@ -192,9 +248,17 @@ extension NexusEngine {
         return (tools, client, work)
     }
 
+    static func needsSQL(_ tools: DatabaseTools) -> RuntimeError {
+        .unsupported("\(tools.id) is \(tools.kind.displayName), and this action needs SQL. Nexus cannot do it with \(tools.kind.displayName) yet.")
+    }
+
     // The option file holds the password, so it goes in a private folder. The caller removes that
     // folder.
     func preparedClient(_ tools: DatabaseTools, endpoint: DatabaseEndpoint) throws -> (DatabaseClient, URL) {
+        guard tools.kind.usesSQL else {
+            throw Self.needsSQL(tools)
+        }
+
         let work = paths.run.appending(path: ".account-\(UUID().uuidString)", directoryHint: .isDirectory)
 
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

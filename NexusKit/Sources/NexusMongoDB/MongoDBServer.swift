@@ -29,6 +29,10 @@ public struct MongoDBServer: Sendable {
         self.connection = connection
     }
 
+    public func version() async throws -> String? {
+        try await connection.run(["buildInfo": .int32(1)])["version"]?.string
+    }
+
     public func isPrimary() async throws -> Bool {
         try await connection.run(["hello": .int32(1)])["isWritablePrimary"]?.bool ?? false
     }
@@ -47,6 +51,30 @@ public struct MongoDBServer: Sendable {
 
     public func dropDatabase(_ name: String) async throws {
         try await connection.run(["dropDatabase": .int32(1)], on: name)
+    }
+
+    // The collections and views of a database, sorted by name. A database that does not exist has
+    // none. The system collections of MongoDB are left out.
+    public func collections(of database: String) async throws -> [String] {
+        let answer = try await connection.run(["listCollections": .int32(1), "nameOnly": .bool(true), "authorizedCollections": .bool(true)], on: database)
+        let names = try await allDocuments(of: answer, on: database).compactMap { $0["name"]?.string }
+
+        return names.filter { !$0.hasPrefix("system.") }.sorted()
+    }
+
+    // The answer of a command with a cursor has the first batch. getMore gives the next ones until
+    // the id of the cursor is 0.
+    private func allDocuments(of answer: BSONDocument, on database: String) async throws -> [BSONDocument] {
+        var cursor = answer["cursor"]?.document
+        var documents = (cursor?["firstBatch"]?.array ?? []).compactMap(\.document)
+
+        while let id = cursor?["id"], id.int64 != 0, let namespace = cursor?["ns"]?.string {
+            let collection = String(namespace.dropFirst(database.count + 1))
+            cursor = try await connection.run(["getMore": id, "collection": .string(collection)], on: database)["cursor"]?.document
+            documents += (cursor?["nextBatch"]?.array ?? []).compactMap(\.document)
+        }
+
+        return documents
     }
 
     // MARK: The replica set
@@ -150,8 +178,14 @@ public struct MongoDBServer: Sendable {
         do {
             try await connection.run(["updateUser": .string(account.user), "pwd": password])
         } catch MongoDBError.command(_, _, Self.userNotFound) {
-            try await connection.run(["createUser": .string(account.user), "pwd": password, "roles": .array([.string("root")])])
+            try await createUser(account)
         }
+    }
+
+    // The localhost exception of a server with a login and no user permits only this command. So the
+    // first user comes without the check of setUser.
+    public func createUser(_ account: DatabaseAccount) async throws {
+        try await connection.run(["createUser": .string(account.user), "pwd": .string(account.password), "roles": .array([.string("root")])])
     }
 
     public func dropUser(_ name: String) async throws {

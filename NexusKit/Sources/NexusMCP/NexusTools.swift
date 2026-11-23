@@ -198,7 +198,7 @@ public enum NexusTools {
             level: .change,
             description: "Installs a version of PHP, Node.js or a service, for example PHP 8.4 or Redis 7.4. This can take a minute.",
             properties: [
-                "package": ["type": "string", "description": "The package as list_packages gives it, for example php, node, mysql, mariadb, postgresql, redis or mailpit."],
+                "package": ["type": "string", "description": "The package as list_packages gives it, for example php, node, mysql, mariadb, postgresql, mongodb, redis or mailpit."],
                 "version": ["type": "string", "description": "The version line, for example 8.4."],
             ],
             required: ["package", "version"]

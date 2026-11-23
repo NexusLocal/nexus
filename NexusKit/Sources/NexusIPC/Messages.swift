@@ -810,15 +810,23 @@ public struct DatabaseInstance: Codable, Sendable, Equatable {
 extension DatabaseKind {
     // Without a database, a PostgreSQL client opens the database with the name of the user,
     // and initdb makes no database root. So PostgreSQL opens the database postgres. An empty
-    // password gives no password in the link.
+    // password gives no password in the link. A MongoDB without a password has no user, and a
+    // user in the link makes the client log in. So its link then has no user.
     public func url(port: Int, account: DatabaseAccount, database: String? = nil) -> URL? {
         var components = URLComponents()
         components.scheme = urlScheme
-        components.user = account.user
+        components.user = self == .mongodb && account.password.isEmpty ? nil : account.user
         components.password = account.password.isEmpty ? nil : account.password
         components.host = "127.0.0.1"
         components.port = port
         components.path = (database ?? (self == .postgresql ? "postgres" : nil)).map { "/\($0)" } ?? ""
+
+        // The user of a MongoDB is in the database admin. A client looks for it in the database of
+        // the link without this setting.
+        if self == .mongodb, !account.password.isEmpty, database != nil {
+            components.queryItems = [URLQueryItem(name: "authSource", value: "admin")]
+        }
+
         return components.url
     }
 }
@@ -923,11 +931,13 @@ public struct PortConflict: Error, Codable, Sendable, Equatable, CustomStringCon
 public enum DatabaseApp: String, Codable, Sendable, CaseIterable {
     case tablePlus = "table_plus"
     case sequelAce = "sequel_ace"
+    case compass = "mongodb_compass"
 
     public var name: String {
         switch self {
         case .tablePlus: "TablePlus"
         case .sequelAce: "Sequel Ace"
+        case .compass: "MongoDB Compass"
         }
     }
 
@@ -935,11 +945,16 @@ public enum DatabaseApp: String, Codable, Sendable, CaseIterable {
         switch self {
         case .tablePlus: "com.tinyapp.TablePlus"
         case .sequelAce: "com.sequel-ace.sequel-ace"
+        case .compass: "com.mongodb.compass"
         }
     }
 
     public func opens(_ kind: DatabaseKind) -> Bool {
-        self == .tablePlus || kind.usesMySQLProtocol
+        switch self {
+        case .tablePlus: true
+        case .sequelAce: kind.usesMySQLProtocol
+        case .compass: kind == .mongodb
+        }
     }
 }
 
@@ -952,12 +967,16 @@ public struct DatabaseServer: Codable, Sendable, Equatable {
     // A socket file wins over the host and the port. Only MySQL and MariaDB read it. PostgreSQL
     // has the folder of its socket in host.
     public var socket: String?
+    // Only MongoDB reads a URL, for example mongodb+srv:// of MongoDB Atlas. It wins over the host,
+    // the port and the user. The password of the account goes with it when the URL has none.
+    public var url: String?
 
-    public init(host: String = "127.0.0.1", port: Int? = nil, account: DatabaseAccount = .standard, socket: String? = nil) {
+    public init(host: String = "127.0.0.1", port: Int? = nil, account: DatabaseAccount = .standard, socket: String? = nil, url: String? = nil) {
         self.host = host
         self.port = port
         self.account = account
         self.socket = socket
+        self.url = url
     }
 }
 

@@ -27,6 +27,10 @@ extension NexusEngine {
     }
 
     func serverDatabases(_ target: DatabaseTarget) async throws -> [DatabaseSize] {
+        if case .instance(let id) = target, let tools = await databaseRuntime(id), tools.kind == .mongodb {
+            return try await mongoDBSizes(tools)
+        }
+
         let (tools, client, work) = try await client(for: target)
         defer { try? FileManager.default.removeItem(at: work) }
 
@@ -35,6 +39,11 @@ extension NexusEngine {
 
     func createDatabase(_ name: String, on target: DatabaseTarget) async throws -> String {
         let validated = try DatabaseName.validated(name)
+
+        if await databaseRuntime(target.instanceID)?.kind == .mongodb {
+            return "MongoDB makes the database \(validated) at the first write into it. So Nexus makes nothing now. Put \(validated) in the connection of your site."
+        }
+
         let (tools, client, work) = try await client(for: target)
         defer { try? FileManager.default.removeItem(at: work) }
 

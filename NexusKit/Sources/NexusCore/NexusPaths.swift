@@ -177,21 +177,23 @@ public struct NexusPaths: Sendable, Equatable {
     }
 
     public func databaseConfig(_ kind: DatabaseKind, line: String) -> URL {
-        config.appending(path: "\(kind.rawValue)/\(line)/my.cnf", directoryHint: .notDirectory)
+        let name = kind == .mongodb ? "mongod.conf" : "my.cnf"
+        return config.appending(path: "\(kind.rawValue)/\(line)/\(name)", directoryHint: .notDirectory)
     }
 
     public func redisConfig(line: String) -> URL {
         config.appending(path: "redis/\(line)/redis.conf", directoryHint: .notDirectory)
     }
 
-    // PostgreSQL gets only a folder and names its socket after the port.
+    // PostgreSQL gets only a folder and names its socket after the port. MongoDB runs without a
+    // socket, so its name is only a name that no other server uses.
     public func databaseSocket(_ kind: DatabaseKind, line: String, port: Int) -> URL {
-        let name = kind.usesMySQLProtocol ? "\(kind.rawValue)-\(line).sock" : ".s.PGSQL.\(port)"
+        let name = kind == .postgresql ? ".s.PGSQL.\(port)" : "\(kind.rawValue)-\(line).sock"
         return run.appending(path: name, directoryHint: .notDirectory)
     }
 
     public func workspaceDatabaseSocket(_ kind: DatabaseKind, line: String, port: Int) -> URL {
-        guard kind.usesMySQLProtocol else {
+        guard kind != .postgresql else {
             return databaseSocket(kind, line: line, port: port)
         }
 

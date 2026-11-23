@@ -129,6 +129,11 @@ public struct UseNexusPlan: Sendable, Equatable {
 
         addAppURL(configuration.settings, input: input, values: values)
         addDatabase(configuration.settings, input: input, values: values)
+
+        if database == nil {
+            addMongoDB(configuration, input: input, values: values)
+        }
+
         addRedis(configuration, input: input, values: values)
     }
 
@@ -206,7 +211,7 @@ public struct UseNexusPlan: Sendable, Equatable {
         }
 
         let address = ConnectionAddress(path: path, driver: driver, settings: settings)
-        let servers = input.databaseServers.filter { $0.kind.usesMySQLProtocol == kind.usesMySQLProtocol }
+        let servers = input.databaseServers.filter { $0.kind.laravelConnections == kind.laravelConnections }
 
         guard address.isOnThisMac, !servers.isEmpty, !servers.contains(where: { address.reaches(port: $0.port, socket: $0.socket) }) else {
             return
@@ -281,6 +286,109 @@ public struct UseNexusPlan: Sendable, Equatable {
             let clientHost = host.lowercased() == "localhost" ? WorkspaceEnvPlan.serverHost : host
             return Source(kind: kind, host: clientHost, port: tcpPort, socket: nil, account: account)
         }
+    }
+
+    // A MongoDB connection is often a second connection next to SQL. So it gets the database part
+    // when the default connection needs no change. A second run of "Use Nexus" then changes the
+    // other connection. Only a server on this Mac counts, as for SQL, and not a URL of MongoDB Atlas.
+    private mutating func addMongoDB(_ configuration: LaravelConfiguration, input: Input, values: [String: String]) {
+        let settings = configuration.settings
+        let servers = input.databaseServers.filter { $0.kind == .mongodb }
+        let defaultConnection = Self.text(settings["database.default"]?.value)
+        let names = configuration.databaseConnections.filter { $0 == defaultConnection } + configuration.databaseConnections.filter { $0 != defaultConnection }
+
+        for name in names {
+            let path = "database.connections.\(name)"
+
+            guard let server = LaravelMongoDBConnection(path: path, settings: settings), let port = server.port, ConnectionURL.isLocal(server.host), !servers.contains(where: { $0.port == port }) else {
+                continue
+            }
+
+            let choices = servers.compactMap { Self.mongoDBChoice(of: $0, path: path, settings: settings, values: values) }
+
+            guard !choices.isEmpty else {
+                continue
+            }
+
+            let host = server.host.lowercased() == "localhost" ? WorkspaceEnvPlan.serverHost : server.host
+            let source = Source(kind: .mongodb, host: host, port: port, socket: nil, account: Self.mongoDBAccount(path: path, settings: settings))
+
+            database = Database(connection: name, name: try? DatabaseName.validated(server.database), source: source, choices: Self.ordered(choices, kind: .mongodb, oldVersion: nil))
+            return
+        }
+    }
+
+    // A connection with dsn gets a new URL. A connection with host and port gets new values of
+    // these keys. A MongoDB of Nexus without a password has no user.
+    private static func mongoDBChoice(of server: Server, path: String, settings: [String: ConfigSetting], values: [String: String]) -> Choice? {
+        func setting(_ name: String) -> ConfigSetting? {
+            WorkspaceEnvPlan.setting(name, at: path, settings: settings)
+        }
+
+        if let dsn = setting("dsn"), !text(dsn.value).isEmpty {
+            let database = MongoDBURL(text(dsn.value))?.database ?? ""
+            return changes([(dsn, mongoDBURL(port: server.port, account: server.account, database: database))], values: values).map { Choice(server: server, changes: $0) }
+        }
+
+        let user = server.account.password.isEmpty ? "" : server.account.user
+        let host = text(setting("host")?.value)
+        var needed: [NeededChange] = []
+
+        if host.contains(":") {
+            needed.append((setting("host"), "\(WorkspaceEnvPlan.serverHost):\(server.port)"))
+        } else {
+            if host != WorkspaceEnvPlan.serverHost {
+                needed.append((setting("host"), WorkspaceEnvPlan.serverHost))
+            }
+
+            if (WorkspaceEnvPlan.port(path, settings: settings) ?? DatabaseKind.mongodb.standardPort) != server.port {
+                needed.append((setting("port"), String(server.port)))
+            }
+        }
+
+        if text(setting("username")?.value) != user {
+            needed.append((setting("username"), user))
+        }
+
+        if text(setting("password")?.value) != server.account.password {
+            needed.append((setting("password"), server.account.password))
+        }
+
+        return changes(needed, values: values).map { Choice(server: server, changes: $0) }
+    }
+
+    // The user of a MongoDB of Nexus is in the database admin. The URL spec of MongoDB needs the
+    // slash before the options.
+    static func mongoDBURL(port: Int, account: DatabaseAccount, database: String) -> String {
+        var components = URLComponents()
+        components.scheme = "mongodb"
+        components.host = WorkspaceEnvPlan.serverHost
+        components.port = port
+
+        guard !account.password.isEmpty else {
+            components.path = database.isEmpty ? "" : "/\(database)"
+            return components.string ?? ""
+        }
+
+        components.user = account.user
+        components.password = account.password
+        components.path = "/\(database)"
+        components.queryItems = [URLQueryItem(name: "authSource", value: "admin")]
+        return components.string ?? ""
+    }
+
+    // The account of the old server, from the URL or from username and password.
+    private static func mongoDBAccount(path: String, settings: [String: ConfigSetting]) -> DatabaseAccount {
+        let dsn = text(WorkspaceEnvPlan.value("dsn", at: path, settings: settings))
+
+        if let components = URLComponents(string: dsn), let user = components.user {
+            return DatabaseAccount(user: user, password: components.password ?? "")
+        }
+
+        return DatabaseAccount(
+            user: text(WorkspaceEnvPlan.value("username", at: path, settings: settings)),
+            password: text(WorkspaceEnvPlan.value("password", at: path, settings: settings))
+        )
     }
 
     // The newest running server, else the newest one. Each key changes one time, also when more

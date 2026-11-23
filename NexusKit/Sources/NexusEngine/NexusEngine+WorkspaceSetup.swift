@@ -815,14 +815,14 @@ extension NexusEngine {
         let sockets = Dictionary(instances.map { ($0.port, $0.socket) }) { first, _ in first }
         let redisPorts = Set(try await redisInstances().map(\.port))
         let mysqlServers = servers.filter(\.tools.kind.usesMySQLProtocol).map(\.port)
-        let postgresqlServers = servers.filter { !$0.tools.kind.usesMySQLProtocol }.map(\.port)
+        let postgresqlServers = servers.filter { $0.tools.kind == .postgresql }.map(\.port)
 
         return WorkspaceEnvRequest(
             workspace: workspace,
             mainFolder: mainFolder,
             workspaceFolder: workspaceFolder,
             mysqlPorts: Set(instances.filter(\.tools.kind.usesMySQLProtocol).map(\.port)).union(mysqlServers),
-            postgresqlPorts: Set(instances.filter { !$0.tools.kind.usesMySQLProtocol }.map(\.port)).union(postgresqlServers),
+            postgresqlPorts: Set(instances.filter { $0.tools.kind == .postgresql }.map(\.port)).union(postgresqlServers),
             redisPorts: redisPorts,
             instanceSockets: sockets,
             realMainFolder: realMainFolder,

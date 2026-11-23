@@ -1656,7 +1656,7 @@ struct Database: AsyncParsableCommand {
     }
 
     struct List: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Lists the MySQL, MariaDB and PostgreSQL instances.")
+        static let configuration = CommandConfiguration(abstract: "Lists the MySQL, MariaDB, PostgreSQL and MongoDB instances.")
 
         func run() async throws {
             let instances = try await databaseInstances()
@@ -1677,7 +1677,7 @@ struct Database: AsyncParsableCommand {
     struct Copy: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Copies a database from another server into a Nexus instance, for example: nexus db copy shop --to mysql-8.4",
-            discussion: "Nexus makes a dump on the other server and restores it into the instance. It only reads the other server. The default source is root/root on 127.0.0.1, on the standard port of the instance: 3306 for MySQL and MariaDB, 5432 for PostgreSQL."
+            discussion: "Nexus makes a dump on the other server and restores it into the instance. It only reads the other server. The default source is root/root on 127.0.0.1, on the standard port of the instance: 3306 for MySQL and MariaDB, 5432 for PostgreSQL. For MongoDB the default is no login on port 27017, and --from-url takes a URL, for example of MongoDB Atlas."
         )
 
         @Argument(help: "The database on the other server.") var database: String
@@ -1685,12 +1685,16 @@ struct Database: AsyncParsableCommand {
         @Option(name: .customLong("as"), help: "The name of the copy. The default is the name of the original.") var name: String?
         @Option(help: "The host of the other server.") var fromHost = "127.0.0.1"
         @Option(help: "The port of the other server.") var fromPort: Int?
-        @Option(help: "The user on the other server.") var fromUser = DatabaseAccount.standard.user
-        @Option(help: "The password on the other server.") var fromPassword = DatabaseAccount.standard.password
+        @Option(help: "The user on the other server.") var fromUser: String?
+        @Option(help: "The password on the other server.") var fromPassword: String?
+        @Option(help: "Only for MongoDB: the URL of the other server, for example mongodb+srv://ann@cluster0.example.net. --from-password gives the password when the URL has none.") var fromURL: String?
         @Flag(help: "Drop the database in the Nexus instance first when it exists.") var replace = false
 
         func run() async throws {
-            let source = DatabaseServer(host: fromHost, port: fromPort, account: DatabaseAccount(user: fromUser, password: fromPassword))
+            let isMongoDB = try await databaseInstances().first { $0.id == to }?.kind == .mongodb
+            let standard = isMongoDB ? DatabaseAccount(user: "", password: "") : .standard
+            let account = DatabaseAccount(user: fromUser ?? standard.user, password: fromPassword ?? standard.password)
+            let source = DatabaseServer(host: fromHost, port: fromPort, account: account, url: fromURL)
             print("Nexus copies \(database) now. A large database can take some minutes.")
             try finish(try await send(.copyDatabase(DatabaseCopy(source: source, database: database, instance: to, name: name, replace: replace))))
         }
@@ -1709,11 +1713,11 @@ struct Database: AsyncParsableCommand {
     }
 
     struct Open: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Opens an instance in TablePlus or Sequel Ace, for example: nexus db open mysql-8.4 shop")
+        static let configuration = CommandConfiguration(abstract: "Opens an instance in TablePlus, Sequel Ace or MongoDB Compass, for example: nexus db open mysql-8.4 shop")
 
         @Argument(help: "The instance, as nexus db list shows it.") var instance: String
         @Argument(help: "The database to open.") var database: String?
-        @Option(help: "table_plus or sequel_ace. The default is the first one that is installed.") var app: DatabaseApp?
+        @Option(help: "table_plus, sequel_ace or mongodb_compass. The default is the first one that is installed.") var app: DatabaseApp?
 
         func run() async throws {
             guard let found = try await databaseInstances().first(where: { $0.id == instance }) else {

@@ -11,13 +11,13 @@ public enum SiteDatabases {
     // socket is the socket file of the instance. PostgreSQL names it after its port.
     public struct Instance: Sendable {
         public let id: String
-        public let usesMySQLProtocol: Bool
+        public let kind: DatabaseKind
         public let port: Int
         public let socket: String?
 
-        public init(id: String, usesMySQLProtocol: Bool, port: Int, socket: String? = nil) {
+        public init(id: String, kind: DatabaseKind, port: Int, socket: String? = nil) {
             self.id = id
-            self.usesMySQLProtocol = usesMySQLProtocol
+            self.kind = kind
             self.port = port
             self.socket = socket
         }
@@ -55,7 +55,7 @@ public enum SiteDatabases {
     private static func keys(of name: String, settings: [String: ConfigSetting]) -> Set<String> {
         let path = "database.connections.\(name)"
 
-        return Set(["host", "port", "database"].compactMap { WorkspaceEnvPlan.setting($0, at: path, settings: settings) }.flatMap(\.keys))
+        return Set(["dsn", "host", "port", "database"].compactMap { WorkspaceEnvPlan.setting($0, at: path, settings: settings) }.flatMap(\.keys))
     }
 
     // The default connection shows also without a database name, because the application uses
@@ -63,8 +63,12 @@ public enum SiteDatabases {
     private static func database(_ name: String, isDefault: Bool, settings: [String: ConfigSetting], instances: [Instance]) -> SiteDatabase? {
         let path = "database.connections.\(name)"
 
-        guard let driver = settings["\(path).driver"]?.value.description, ["mysql", "mariadb", "pgsql"].contains(driver) else {
+        guard let driver = settings["\(path).driver"]?.value.description, ["mysql", "mariadb", "pgsql", "mongodb"].contains(driver) else {
             return nil
+        }
+
+        if driver == "mongodb" {
+            return mongoDB(name, isDefault: isDefault, settings: settings, instances: instances)
         }
 
         let database = WorkspaceEnvPlan.value("database", at: path, settings: settings)?.description ?? ""
@@ -75,10 +79,27 @@ public enum SiteDatabases {
 
         let port = WorkspaceEnvPlan.port(path, settings: settings)
         let host = WorkspaceEnvPlan.value("host", at: path, settings: settings)?.description ?? WorkspaceEnvPlan.serverHost
-        let usesMySQLProtocol = driver != "pgsql"
         let address = ConnectionAddress(path: path, driver: driver, settings: settings)
-        let instance = instances.first { $0.usesMySQLProtocol == usesMySQLProtocol && address.reaches(port: $0.port, socket: $0.socket) }
+        let instance = instances.first { $0.kind.laravelConnections.contains(driver) && address.reaches(port: $0.port, socket: $0.socket) }
 
         return SiteDatabase(connection: name, database: database, host: host, port: port, instance: instance?.id)
+    }
+
+    // The package mongodb/laravel-mongodb reads the server from dsn, or from host and port. The
+    // database comes from database, else from the URL.
+    private static func mongoDB(_ name: String, isDefault: Bool, settings: [String: ConfigSetting], instances: [Instance]) -> SiteDatabase? {
+        guard let server = LaravelMongoDBConnection(path: "database.connections.\(name)", settings: settings) else {
+            return nil
+        }
+
+        guard isDefault || !server.database.isEmpty else {
+            return nil
+        }
+
+        let instance = instances.first { instance in
+            instance.kind == .mongodb && server.port == instance.port && ConnectionURL.isLocal(server.host)
+        }
+
+        return SiteDatabase(connection: name, database: server.database, host: server.host, port: server.port, instance: instance?.id)
     }
 }

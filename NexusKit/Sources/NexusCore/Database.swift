@@ -5,10 +5,16 @@ public enum DatabaseKind: String, Codable, Sendable, CaseIterable {
     case mysql
     case mariadb
     case postgresql
+    case mongodb
 
-    // gzip compresses each dump. MySQL and MariaDB write text, and pg_dump writes its own format.
+    // gzip compresses each dump. MySQL and MariaDB write text, pg_dump writes its own format and
+    // mongodump writes an archive.
     public var dumpExtension: String {
-        usesMySQLProtocol ? "sql.gz" : "dump.gz"
+        switch self {
+        case .mysql, .mariadb: "sql.gz"
+        case .postgresql: "dump.gz"
+        case .mongodb: "archive.gz"
+        }
     }
 
     public var displayName: String {
@@ -16,6 +22,7 @@ public enum DatabaseKind: String, Codable, Sendable, CaseIterable {
         case .mysql: "MySQL"
         case .mariadb: "MariaDB"
         case .postgresql: "PostgreSQL"
+        case .mongodb: "MongoDB"
         }
     }
 
@@ -23,23 +30,45 @@ public enum DatabaseKind: String, Codable, Sendable, CaseIterable {
         switch self {
         case .mysql, .mariadb: 3306
         case .postgresql: 5432
+        case .mongodb: 27017
         }
     }
 
     // MySQL and MariaDB use the same protocol and the same tools, so a dump goes from one to
     // the other.
     public var usesMySQLProtocol: Bool {
-        self != .postgresql
+        self == .mysql || self == .mariadb
+    }
+
+    // MongoDB has no SQL. Nexus talks to it with its own client and with mongodump and
+    // mongorestore.
+    public var usesSQL: Bool {
+        self != .mongodb
     }
 
     public var urlScheme: String {
-        usesMySQLProtocol ? "mysql" : "postgresql"
+        switch self {
+        case .mysql, .mariadb: "mysql"
+        case .postgresql: "postgresql"
+        case .mongodb: "mongodb"
+        }
     }
 
     // The values of DB_CONNECTION in a Laravel .env that reach this kind of server.
     public var laravelConnections: Set<String> {
-        usesMySQLProtocol ? ["mysql", "mariadb"] : ["pgsql"]
+        switch self {
+        case .mysql, .mariadb: ["mysql", "mariadb"]
+        case .postgresql: ["pgsql"]
+        case .mongodb: ["mongodb"]
+        }
     }
+}
+
+// mongodump and mongorestore of the MongoDB Database Tools. Nexus installs this package with the
+// first MongoDB. One version of the tools works with each version line of the server.
+public enum MongoDBToolsPackage {
+    public static let name = "mongodb-tools"
+    public static let line = "100"
 }
 
 // A new database instance gets root without a password (D35). The account root with the

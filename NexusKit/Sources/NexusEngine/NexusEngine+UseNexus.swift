@@ -2,6 +2,7 @@ import Foundation
 import NexusCore
 import NexusIPC
 import NexusLaravel
+import NexusMongoDB
 import NexusRuntime
 import NexusSupervisor
 
@@ -93,7 +94,7 @@ extension NexusEngine {
 
                 try await copy(name, from: part.source, to: id)
                 step = .copied
-            } else if !exists {
+            } else if !exists, choice.server.kind.usesSQL {
                 _ = try await createDatabase(name, on: .instance(id))
                 step = .made
             }
@@ -221,6 +222,10 @@ extension NexusEngine {
             return (nil, false)
         }
 
+        if tools.kind == .mongodb {
+            return await oldMongoDB(source, database: name)
+        }
+
         let endpoint = DatabaseEndpoint(host: source.host, port: source.port, account: source.account, socket: source.socket, connectTimeout: Self.oldServerTimeout)
         let sql = tools.kind.usesMySQLProtocol
             ? "SELECT VERSION(), (\(Self.countOfSchema(name ?? "")))"
@@ -248,7 +253,28 @@ extension NexusEngine {
         return try? await databaseExists(name, on: id)
     }
 
+    // The own client of Nexus reads the old MongoDB, with a login only when the old account has a
+    // password.
+    private func oldMongoDB(_ source: UseNexusPlan.Source, database name: String?) async -> (version: String?, holdsDatabase: Bool) {
+        let account = source.account.password.isEmpty ? nil : source.account
+
+        guard let connection = try? await MongoDBConnection.connect(port: source.port, account: account, timeout: TimeInterval(Self.oldServerTimeout)) else {
+            return (nil, false)
+        }
+
+        let server = MongoDBServer(connection)
+        let version = try? await server.version()
+        let databases = (try? await server.databases().map(\.name)) ?? []
+        await connection.disconnect()
+
+        return (version, name.map(databases.contains) ?? false)
+    }
+
     private func databaseExists(_ name: String, on id: String) async throws -> Bool {
+        if let tools = await databaseRuntime(id), tools.kind == .mongodb {
+            return try await !withMongoDB(tools) { try await $0.collections(of: name) }.isEmpty
+        }
+
         let (_, client, work) = try await runningClient(id)
         defer { try? FileManager.default.removeItem(at: work) }
 

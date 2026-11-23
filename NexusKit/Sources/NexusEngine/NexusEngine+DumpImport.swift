@@ -19,9 +19,18 @@ extension NexusEngine {
         }
 
         let container = DumpContainer.of(fileName)
+        let instance = request.target.instanceID
+
+        if let tools = await databaseRuntime(instance), tools.kind == .mongodb {
+            if case .instance = request.target, await supervisor.state(of: instance)?.isActive != true {
+                _ = try await serialWeb { try await self.start(instance) }
+            }
+
+            return try await importMongoDBDump(request, tools: tools, file: file, container: container)
+        }
+
         let dump = try await chosenDump(in: file, container: container, wanted: request.dump)
         let name = try DatabaseName.validated(request.name)
-        let instance = request.target.instanceID
         let server = request.target.serverName
 
         if case .instance = request.target, await supervisor.state(of: instance)?.isActive != true {
@@ -156,6 +165,17 @@ extension NexusEngine {
         }
 
         let container = DumpContainer.of(fileName)
+
+        if !container.isArchive, try await dumpFormat(of: file, container: container, dump: nil) == .mongodb {
+            let info = DumpInfo(format: .mongodb, bytes: Self.fileSize(file) ?? 0)
+
+            if let target = inspection.target, let kind = await databaseRuntime(target.instanceID)?.kind, kind != .mongodb {
+                return DumpInfo(format: .mongodb, bytes: info.bytes, problem: "\(fileName) is a dump of MongoDB. Choose an instance of MongoDB.")
+            }
+
+            return try await inspectMongoDBDump(inspection, file: file, container: container, info: info)
+        }
+
         let dumps = try await archiveDumps(in: file, container: container)
         var info = DumpInfo(dumps: dumps, bytes: Self.fileSize(file) ?? 0)
 
@@ -223,7 +243,7 @@ extension NexusEngine {
             pattern = "^CREATE TABLE (IF NOT EXISTS )?`[^`]+`"
         case .postgresql:
             pattern = "^CREATE TABLE [^ (]+"
-        case .postgresqlCustom:
+        case .postgresqlCustom, .mongodb:
             return nil
         }
 
@@ -346,7 +366,7 @@ extension NexusEngine {
 
         // The load in one transaction ends with COMMIT. So its success counts, also when the reader then
         // fails on data that the load does not need.
-        try await CommandRunner.pipe(reader, into: loader(for: plan, client: client, tools: tools), secondDecides: plan.replacementScript != nil) { data in
+        try await CommandRunner.pipe(reader, into: try loader(for: plan, client: client, tools: tools), secondDecides: plan.replacementScript != nil) { data in
             read(counted.withLock { value in
                 value += Int64(data.count)
                 return value
@@ -494,10 +514,12 @@ extension NexusEngine {
         publishSites()
     }
 
-    static func loader(for plan: DumpLoad, client: DatabaseClient, tools: DatabaseTools) -> Command {
+    static func loader(for plan: DumpLoad, client: DatabaseClient, tools: DatabaseTools) throws -> Command {
         let endpoint = client.endpoint
 
         switch plan.format {
+        case .mongodb:
+            throw RuntimeError.unsupported("An archive of mongodump goes into MongoDB through mongorestore, not through SQL.")
         case .mysql:
             let filter = [importFilter(prefix: nil, toMySQL: tools.kind == .mysql)] + (plan.replacesTables ? [replaceTablesFilter] : [])
             let links = plan.links.map { links in

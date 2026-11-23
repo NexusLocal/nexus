@@ -56,7 +56,7 @@ let package = Package(
         .target(name: "NexusIPC", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusMail"]),
         .target(name: "NexusLaravel", dependencies: ["NexusCore", "NexusSupervisor"]),
         .target(name: "NexusWorkspaces", dependencies: ["NexusCore", "NexusSupervisor"]),
-        .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig", "NexusLaravel", "NexusWorkspaces", "NexusMail", "NexusDumps", "CBzip2"]),
+        .target(name: "NexusEngine", dependencies: ["NexusCore", "NexusRuntime", "NexusSupervisor", "NexusIPC", "NexusDNS", "NexusTLS", "NexusConfig", "NexusLaravel", "NexusWorkspaces", "NexusMail", "NexusDumps", "NexusMongoDB", "CBzip2"]),
         // The MCP server of nexus mcp, the tools that agents call, and the setup of each agent.
         // The app uses the setup and the settings of the agents.
         .target(name: "NexusMCP", dependencies: ["NexusCore", "NexusIPC", "NexusLaravel", "NexusMail", "NexusRuntime", "NexusSupervisor", "NexusWorkspaces"]),
@@ -74,7 +74,7 @@ let package = Package(
         ]),
         .testTarget(name: "NexusRuntimeTests", dependencies: ["NexusRuntime", "NexusTestSupport"]),
         .testTarget(name: "NexusSupervisorTests", dependencies: ["NexusSupervisor", "NexusCore", "NexusTestSupport"]),
-        .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusMail", "NexusTestSupport", "CBzip2"]),
+        .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusMail", "NexusMongoDB", "NexusTestSupport", "CBzip2"]),
         .testTarget(name: "NexusDNSTests", dependencies: ["NexusDNS", "NexusTestSupport"]),
         .testTarget(name: "NexusMailTests", dependencies: ["NexusMail"]),
         .testTarget(name: "NexusDumpsTests", dependencies: ["NexusDumps", "NexusCore", "NexusTestSupport"]),

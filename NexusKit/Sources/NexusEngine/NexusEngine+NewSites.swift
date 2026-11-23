@@ -688,6 +688,10 @@ extension NexusEngine {
             throw RuntimeError.unsupported("WordPress needs MySQL or MariaDB. \(id) is \(instance.kind.displayName).")
         }
 
+        guard instance.kind.usesSQL else {
+            throw RuntimeError.unsupported("laravel new cannot set up \(instance.kind.displayName). Choose MySQL, MariaDB or PostgreSQL, or no database. Add the MongoDB connection to the site after that.")
+        }
+
         // An instance that starts now is active. runningClient waits for its port.
         if await supervisor.state(of: id)?.isActive != true {
             _ = try await serialWeb { try await self.start(id) }

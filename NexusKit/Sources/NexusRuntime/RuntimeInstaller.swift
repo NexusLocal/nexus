@@ -161,6 +161,10 @@ public actor RuntimeInstaller {
         do {
             try await unpack(download, of: package, into: staging)
 
+            for path in Self.unusedFiles(of: package.name) {
+                try? fileManager.removeItem(at: staging.appending(path: path))
+            }
+
             let runtime = InstalledRuntime(
                 name: package.name,
                 line: package.line,
@@ -178,6 +182,12 @@ public actor RuntimeInstaller {
             try? fileManager.removeItem(at: staging)
             throw error
         }
+    }
+
+    // The archive of MongoDB comes straight from MongoDB. It also has mongos, 341 MB in 9.0, and a
+    // script that installs Compass. Nexus runs only mongod.
+    static func unusedFiles(of package: String) -> [String] {
+        package == "mongodb" ? ["bin/mongos", "bin/install_compass"] : []
     }
 
     @discardableResult
