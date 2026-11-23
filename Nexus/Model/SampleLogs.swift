@@ -39,7 +39,10 @@ enum SampleLogs {
             line(now - Double(2400 - index * 60), "local", "ERROR", "[browser] Uncaught TypeError: Cannot read properties of undefined (reading 'total')", #"{"url":"https://shop.test/checkout"}"#)
         }.joined()
         try? Data(browser.utf8).write(to: logs.appending(path: "browser.log"))
-        try? Data("Starting import of feed suppliers/acme.xml (12400 items)\nImported 12400 items\nDone\n".utf8).write(to: logs.appending(path: "cronjobs/import.log"))
+        let importLog = logs.appending(path: "cronjobs/import.log")
+        try? Data("Starting import of feed suppliers/acme.xml (12400 items)\nImported 12400 items\nDone\n".utf8).write(to: importLog)
+        // Lines without a time sort at the last change of their file. An older change keeps the exception on top.
+        try? FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: now - 1800)], ofItemAtPath: importLog.path(percentEncoded: false))
 
         if CommandLine.arguments.contains("--sample-large-log") {
             // About 1.5 million lines of 3 seconds each end near now.

@@ -159,6 +159,8 @@ an N+1 query. A click on a file opens your code editor at that line.
 
 ## 📜 The logs of your apps
 
+![The Logs screen with a QueryException, its stack trace and the level filter](.github/logs.png)
+
 The Logs screen under Tools shows the log files of the app of each site and workspace: `storage/logs`
 of Laravel, the `debug.log` of WordPress, the PHP errors with their time, the output of a Node.js
 app and the requests. A new entry shows at once. "Show logs" in the menu of a site opens it.
