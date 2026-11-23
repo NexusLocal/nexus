@@ -340,7 +340,6 @@ final class LogsModel {
         }
 
         countProgress = 0
-        let token = generation
 
         Task.detached(priority: .utility) {
             for index in incomplete {
@@ -353,10 +352,11 @@ final class LogsModel {
                 }
             }
 
+            // A search must also read the rest of the file.
             await MainActor.run { [weak self] in
                 self?.countProgress = nil
 
-                if self?.generation == token || self?.query.searchText == nil {
+                if self?.query.searchText == nil {
                     self?.refresh()
                 } else {
                     self?.runSearch()
