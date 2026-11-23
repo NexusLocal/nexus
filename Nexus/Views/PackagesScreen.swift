@@ -136,6 +136,14 @@ private struct PackageRow: View {
     @Environment(AppModel.self) private var model
     let package: PackageItem
 
+    private var requiredHelp: String {
+        guard package.required else {
+            return ""
+        }
+
+        return package.package == MongoDBToolsPackage.name ? "Each MongoDB needs \(package.name)." : "Nexus needs \(package.name)."
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             Text(package.name)
@@ -180,7 +188,7 @@ private struct PackageRow: View {
                 model.removal = .package(package)
             }
             .disabled(package.required)
-            .help(package.required ? "Nexus needs \(package.name)." : "")
+            .help(requiredHelp)
         case .update(let version):
             Button(version == package.version ? "Update" : "Update to \(version)") {
                 model.install(package)

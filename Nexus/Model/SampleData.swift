@@ -968,7 +968,7 @@ extension AppModel {
             package("MongoDB", "MongoDB 7.0", "7.0.48"),
             package("MongoDB", "MongoDB 8.0", "8.0.38", .installed),
             package("MongoDB", "MongoDB 9.0", "9.0.8"),
-            PackageItem(section: "MongoDB", package: MongoDBToolsPackage.name, line: MongoDBToolsPackage.line, name: "MongoDB Tools", version: "100.20.1", state: .installed),
+            PackageItem(section: "MongoDB", package: MongoDBToolsPackage.name, line: MongoDBToolsPackage.line, name: "MongoDB Tools", version: "100.20.1", state: .installed, required: true),
             package("Redis", "Redis 7.2", "7.2.11"),
             package("Redis", "Redis 8.2", "8.2.3", .installed),
             package("Redis", "Redis 8.10", "8.10.0"),

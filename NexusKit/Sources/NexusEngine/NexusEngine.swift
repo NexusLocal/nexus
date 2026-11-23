@@ -310,6 +310,8 @@ public actor NexusEngine {
     // waits for that install (group 4, 4a).
     var lastManifest: (read: Date, manifest: Manifest)?
     var cloudflaredInstall: Task<Void, Error>?
+    // Two MongoDB installs at the same time share one install of the MongoDB tools.
+    var mongoDBToolsInstall: Task<Void, Error>?
     // The databases that a copy writes now, as "<instance> <name>". nexusd refuses a second copy
     // into one of them. It also refuses a second install of a package that it installs now. And
     // it refuses a copy into an instance that an update stops now.
@@ -1408,21 +1410,18 @@ public actor NexusEngine {
         let folder = runtime.folder.path(percentEncoded: false)
 
         // The list goes out after the mail receiver starts. So it shows the state of the receiver.
+        // The tools belong to each MongoDB. They come here when they are not there yet.
+        let tools = name == "mongodb" ? await installToolsOfMongoDB() : ""
+
         guard let current else {
             let installed = "\(runtime.name) \(runtime.version) is installed in \(folder)"
             let message = name == "mailpit" ? await receiveMail(after: installed) : installed
             servicesChanged()
-
-            // A failure comes again at the first import, copy or dump, which need the tools.
-            if name == "mongodb" {
-                Task { try? await self.ensureMongoDBTools() }
-            }
-
-            return message
+            return message + tools
         }
 
         servicesChanged()
-        return "\(runtime.name) \(runtime.line) is updated from \(current.version) to \(runtime.version) in \(folder)"
+        return "\(runtime.name) \(runtime.line) is updated from \(current.version) to \(runtime.version) in \(folder)\(tools)"
     }
 
     private func replaceRuntime(with prepared: PreparedRuntime) async throws -> InstalledRuntime {
@@ -1502,6 +1501,10 @@ public actor NexusEngine {
         // A new project in a parked folder gets the settings of that folder.
         if name == "php", let parked = state.parked.first(where: { $0.php == line }) {
             throw RuntimeError.unsupported("The new projects in \(parked.folder.path(percentEncoded: false)) get PHP \(line). Park the folder again with another PHP version first: nexus unpark, then nexus park --php <version>")
+        }
+
+        if name == MongoDBToolsPackage.name, let mongoDB = await installer.installedRuntimes().first(where: { $0.name == "mongodb" }) {
+            throw RuntimeError.unsupported("MongoDB \(mongoDB.line) needs the MongoDB tools for its imports and dumps. They go with the last MongoDB: nexus remove mongodb <version>")
         }
 
         let otherLines = await installer.installedRuntimes().filter { $0.name == name && $0.line != line }

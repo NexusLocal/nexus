@@ -134,8 +134,9 @@ struct MongoDBTransfer {
 }
 
 extension NexusEngine {
-    // The tools come with the first MongoDB. An install that failed then comes again at the first
-    // import, copy or dump.
+    // Each install of a MongoDB installs the tools when they are not there. All versions of MongoDB
+    // share them. An install that failed comes again at the first import, copy or dump. A second
+    // call during an install waits for that install.
     func ensureMongoDBTools() async throws {
         let mongodump = paths.runtime(MongoDBToolsPackage.name, line: MongoDBToolsPackage.line).appending(path: "bin/mongodump")
 
@@ -143,11 +144,33 @@ extension NexusEngine {
             return
         }
 
-        guard let package = try await manifest().package(named: MongoDBToolsPackage.name, line: MongoDBToolsPackage.line) else {
-            throw RuntimeError.unsupported("Nexus needs mongodump and mongorestore of the package \(MongoDBToolsPackage.name), but the manifest has no such package yet.")
+        if let running = mongoDBToolsInstall {
+            try await running.value
+            return
         }
 
-        _ = try await install(package)
+        let install = Task {
+            guard let package = try await self.manifest().package(named: MongoDBToolsPackage.name, line: MongoDBToolsPackage.line) else {
+                throw RuntimeError.unsupported("Nexus needs mongodump and mongorestore of the package \(MongoDBToolsPackage.name), but the manifest has no such package yet.")
+            }
+
+            _ = try await self.install(package)
+        }
+
+        mongoDBToolsInstall = install
+        defer { mongoDBToolsInstall = nil }
+
+        try await install.value
+    }
+
+    // A failure leaves the server in place, because it runs without the tools.
+    func installToolsOfMongoDB() async -> String {
+        do {
+            try await ensureMongoDBTools()
+            return ""
+        } catch {
+            return " The MongoDB tools did not install, so imports and dumps do not work yet. Nexus tries again at the first import. \(ErrorText.plain(error))"
+        }
     }
 
     func mongoDBEndpoint(_ tools: DatabaseTools) async throws -> MongoDBTransfer.Endpoint {

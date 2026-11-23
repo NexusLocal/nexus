@@ -106,11 +106,17 @@ extension AppModel {
             items.append(packageItem(name: runtime.name, line: runtime.line, offered: nil, installed: runtime))
         }
 
-        packages = items
+        // The MongoDB tools come with each MongoDB. Without a MongoDB their row is of no use.
+        packages = items.filter { $0.package != MongoDBToolsPackage.name || $0.isInstalled || hasMongoDB }
     }
 
-    // Only nginx is required, because every site runs behind it (D56). A user of only Node.js needs
-    // no PHP and no Composer. nexusd refuses to remove a PHP version that a site uses.
+    private var hasMongoDB: Bool {
+        installedRuntimes.contains { $0.name == "mongodb" }
+    }
+
+    // nginx is required, because every site runs behind it (D56). The MongoDB tools are required
+    // while a MongoDB is installed. A user of only Node.js needs no PHP and no Composer. nexusd
+    // refuses to remove a PHP version that a site uses.
     private func packageItem(name: String, line: String, offered: ManifestPackage?, installed: InstalledRuntime?) -> PackageItem {
         let version = installed?.version ?? offered?.version ?? ""
         let task = tasks.first { task in
@@ -142,7 +148,7 @@ extension AppModel {
             version: version,
             state: state,
             lts: offered?.lts ?? false,
-            required: name == "nginx",
+            required: name == "nginx" || name == MongoDBToolsPackage.name && hasMongoDB,
             taskID: task?.id,
             downloadSize: offered?.size
         )
