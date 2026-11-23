@@ -54,12 +54,13 @@ final class BackgroundServices {
 final class BackgroundServiceRegistration {
     private let service: SMAppService
     private let name: String
+    private let label: String?
 
     private(set) var status: SMAppService.Status = .notRegistered
     private(set) var lastError: String?
 
     static func daemon() -> BackgroundServiceRegistration {
-        BackgroundServiceRegistration(service: .agent(plistName: "\(NexusIdentifiers.daemon).plist"), name: "Background service")
+        BackgroundServiceRegistration(service: .agent(plistName: "\(NexusIdentifiers.daemon).plist"), name: "Background service", label: NexusIdentifiers.daemon)
     }
 
     static func helper() -> BackgroundServiceRegistration {
@@ -70,9 +71,10 @@ final class BackgroundServiceRegistration {
         BackgroundServiceRegistration(service: .mainApp, name: "Start at login")
     }
 
-    private init(service: SMAppService, name: String) {
+    private init(service: SMAppService, name: String, label: String? = nil) {
         self.service = service
         self.name = name
+        self.label = label
     }
 
     var isEnabled: Bool {
@@ -96,6 +98,10 @@ final class BackgroundServiceRegistration {
     func registerIfNeeded() {
         status = service.status
 
+        #if DEBUG
+        renewLaunchRecordAfterABuild()
+        #endif
+
         guard status != .enabled, status != .requiresApproval else {
             return
         }
@@ -109,6 +115,42 @@ final class BackgroundServiceRegistration {
 
         status = service.status
     }
+
+    #if DEBUG
+    // The launch record of the Nexus Dev nexusd can hold the code hash of the build that macOS
+    // registered. After the next build macOS then refuses each start of nexusd ("needs LWCR
+    // update", exit 78), and a toggle in Login Items does not help. A new registration writes the
+    // record of this build. nexusd needs no approval of the user. A release has the stable
+    // signature of the team, so it never needs this.
+    private func renewLaunchRecordAfterABuild() {
+        guard let label, status == .enabled else {
+            return
+        }
+
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(filePath: "/bin/launchctl")
+        process.arguments = ["print", "gui/\(getuid())/\(label)"]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+
+        guard (try? process.run()) != nil else {
+            return
+        }
+
+        let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+
+        guard text.contains("spawn failed"), text.contains("needs LWCR update") else {
+            return
+        }
+
+        ActivityTracker.log.write("background", "Nexus Dev registers nexusd again, because macOS kept the launch record of an older build")
+        try? service.unregister()
+        try? service.register()
+        status = service.status
+    }
+    #endif
 
     func refresh() {
         let current = service.status
