@@ -66,7 +66,12 @@ struct FolderActivityTests {
             }
         }
 
-        try await Task.sleep(for: .milliseconds(50))
+        let firstFile = vendor.appending(path: "laravel/file-0.php").path(percentEncoded: false)
+
+        while !FileManager.default.fileExists(atPath: firstFile) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
         await FolderActivity.waitUntilQuiet([vendor.path(percentEncoded: false)], quiet: .milliseconds(1500), interval: .milliseconds(100))
         await writer.value
 
