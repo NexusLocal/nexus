@@ -31,8 +31,9 @@ public struct LogFrame: Sendable, Equatable {
         self.call = call
     }
 
+    // A frame without a file, such as {main}, is not in vendor/.
     public var isVendor: Bool {
-        file?.contains("/vendor/") ?? true
+        file?.contains("/vendor/") ?? false
     }
 }
 

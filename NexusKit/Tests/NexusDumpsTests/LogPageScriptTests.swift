@@ -114,7 +114,7 @@ struct LogPageScriptTests {
 
     @Test func theFramesInVendorFormOneRowUntilAClick() throws {
         let context = try page()
-        let frames = #"[{"file":"/w/app/Order.php","vendor":false},{"file":"/w/vendor/a.php","vendor":true},{"file":"/w/vendor/b.php","vendor":true},{"file":null,"vendor":true}]"#
+        let frames = #"[{"file":"/w/app/Order.php","vendor":false},{"file":"/w/vendor/a.php","vendor":true},{"file":"/w/vendor/b.php","vendor":true},{"file":null,"vendor":false}]"#
 
         #expect(run("JSON.stringify(frameGroups(value, false).map((group) => group.frame ? group.index : `v${group.vendor}@${group.first}`))", with: frames, in: context) == #"[0,"v2@1",3]"#)
         #expect(run("frameGroups(value, true).length", with: frames, in: context) == "4")

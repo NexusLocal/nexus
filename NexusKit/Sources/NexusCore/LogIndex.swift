@@ -28,13 +28,22 @@ public final class LogIndex: @unchecked Sendable {
         // false while the index holds only the end of the file.
         public let isComplete: Bool
         public let bytes: UInt64
+        // The last change of the file. An entry with no time above it sorts at this time.
+        public let modified: Double?
 
-        public init(file: LogFile, closed: [Entry], last: Entry?, isComplete: Bool, bytes: UInt64) {
+        public init(file: LogFile, closed: [Entry], last: Entry?, isComplete: Bool, bytes: UInt64, modified: Double? = nil) {
             self.file = file
             self.closed = closed
             self.last = last
             self.isComplete = isComplete
             self.bytes = bytes
+            self.modified = modified
+        }
+
+        // The time by which an entry sorts. An entry with no time and no entry with a time above it
+        // gets the last change of the file, so it does not sort as 1970.
+        public func sortDate(of entry: Entry) -> Double {
+            entry.date ?? (entry.sortDate > 0 ? entry.sortDate : modified ?? 0)
         }
 
         public var count: Int {
@@ -103,6 +112,7 @@ public final class LogIndex: @unchecked Sendable {
         var mode = Mode.undecided
         var lastDate = 0.0
         var isComplete = true
+        var modified: Double?
     }
 
     public let file: LogFile
@@ -123,7 +133,7 @@ public final class LogIndex: @unchecked Sendable {
     public var snapshot: Snapshot {
         lock.withLock {
             let last = state.open.flatMap { qualifies($0) ? $0.entry : nil }
-            return Snapshot(file: file, closed: state.entries, last: last, isComplete: state.isComplete, bytes: state.scanned)
+            return Snapshot(file: file, closed: state.entries, last: last, isComplete: state.isComplete, bytes: state.scanned, modified: state.modified)
         }
     }
 
@@ -153,6 +163,7 @@ public final class LogIndex: @unchecked Sendable {
             }
 
             current.identity = identity
+            current.modified = Double(status.st_mtimespec.tv_sec)
 
             guard let handle = FileHandle(forReadingAtPath: path) else {
                 return change
@@ -167,6 +178,7 @@ public final class LogIndex: @unchecked Sendable {
                 if decided == .lines, current.scanned > 0 {
                     current = State()
                     current.identity = identity
+                    current.modified = Double(status.st_mtimespec.tv_sec)
                     change = .replaced
                 }
 
@@ -185,6 +197,7 @@ public final class LogIndex: @unchecked Sendable {
             if !current.isComplete {
                 var full = State()
                 full.identity = identity
+                full.modified = current.modified
                 full.mode = current.mode
                 scan(handle: handle, state: &full, to: size, skipFirstLine: false, progress: progress)
                 lock.withLock { state = full }

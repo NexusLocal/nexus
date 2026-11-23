@@ -122,6 +122,11 @@ extension CommandSection {
             CommandItem(command: "nexus dumps open", help: "Opens the web page of the dumps in the browser."),
             CommandItem(command: "nexus dumps settings --page never", help: "Keeps each dump() out of the web page. automatic shows it only in a normal page, and always also in an API answer. Without options the command shows the settings."),
         ]),
+        CommandSection(title: "Logs", commands: [
+            CommandItem(command: "nexus logs", help: "Shows the 20 newest entries of the log files of the app of the site or the workspace of the current folder, the newest last: the time, the level, the message, the exception with the line of the app and a short context. --lines changes the number. --json prints one JSON line for each entry."),
+            CommandItem(command: "nexus logs shop.test --level error --follow", help: "Shows only errors and worse of one site or workspace. With --follow it stays open and shows each new entry."),
+            CommandItem(command: "nexus logs --search 1042", help: "Shows the entries with this text in any of the log files. --file laravel.log or --file \"PHP errors\" reads one file."),
+        ]),
         CommandSection(title: "Coding agents", commands: [
             CommandItem(command: "nexus mcp", help: "The MCP server of Nexus. A coding agent such as Claude Code, Codex or Cursor starts it. The Agents screen of the app connects the agents."),
             CommandItem(command: "nexus mcp status", help: "Shows which coding agents are on this Mac and which ones use Nexus."),

@@ -310,7 +310,7 @@ final class LogsModel {
                 return nil
             }
 
-            let day = LogTimeText.dayTitle(of: row.entry.date ?? row.entry.sortDate)
+            let day = LogTimeText.dayTitle(of: row.entry.date ?? row.sortDate)
             let title = day == lastDay ? nil : day
             lastDay = day
             return LogRowItem(row: row, file: file, summary: summaries[row.id] ?? LogEntrySummary(message: ""), dayTitle: title)
@@ -584,6 +584,11 @@ nonisolated enum LogTimeText {
 
         let name = calendar.isDate(date, equalTo: .now, toGranularity: .year) ? day.string(from: date) : dayWithYear.string(from: date)
         return "on \(name) at \(time.string(from: date))"
+    }
+
+    // The HH:mm:ss of a time as the log wrote it, also of 2026-11-23T14:18:31.123456+01:00.
+    static func clock(in logTime: String) -> String {
+        logTime.firstMatch(of: #/\d{2}:\d{2}:\d{2}/#).map { String($0.output) } ?? logTime
     }
 
     // UTC for the zone of UTC and GMT, else a short name such as CET.

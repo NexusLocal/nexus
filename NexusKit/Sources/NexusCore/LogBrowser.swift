@@ -34,6 +34,8 @@ public struct LogRow: Sendable, Identifiable, Equatable {
     public let count: Int
     // The time of the oldest entry of the group.
     public let firstDate: Double?
+    // The time by which the row sorts, also for an entry without a time (Snapshot.sortDate).
+    public let sortDate: Double
 
     public var id: String {
         "\(fileID)#\(entry.offset)"
@@ -63,7 +65,7 @@ public enum LogBrowser {
     // searchHits holds the offsets of the entries with the search text for each file. nil when
     // there is no search.
     public static func result(of snapshots: [LogIndex.Snapshot], query: LogQuery, searchHits: [String: Set<UInt64>]?, limit: Int) -> LogResult {
-        var candidates: [(fileID: String, entry: LogIndex.Entry, order: Int)] = []
+        var candidates: [(fileID: String, entry: LogIndex.Entry, order: Int, sortDate: Double)] = []
         var levelCounts: [LogLevelGroup: Int] = [:]
         var hiddenTestRuns = 0
         var hiddenByMessage: [UInt64: Int] = [:]
@@ -98,12 +100,12 @@ public enum LogBrowser {
                     return
                 }
 
-                candidates.append((snapshot.file.id, entry, order))
+                candidates.append((snapshot.file.id, entry, order, snapshot.sortDate(of: entry)))
             }
         }
 
         candidates.sort { left, right in
-            left.entry.sortDate != right.entry.sortDate ? left.entry.sortDate > right.entry.sortDate : left.order > right.order
+            left.sortDate != right.sortDate ? left.sortDate > right.sortDate : left.order > right.order
         }
 
         var rows: [LogRow] = []
@@ -111,25 +113,25 @@ public enum LogBrowser {
 
         if query.groupsEqualEntries {
             var groups: [UInt64: (index: Int, count: Int, first: Double?)] = [:]
-            var newest: [(fileID: String, entry: LogIndex.Entry)] = []
+            var newest: [(fileID: String, entry: LogIndex.Entry, sortDate: Double)] = []
 
             for candidate in candidates {
                 if let known = groups[candidate.entry.hash] {
                     groups[candidate.entry.hash] = (known.index, known.count + 1, candidate.entry.date ?? known.first)
                 } else {
                     groups[candidate.entry.hash] = (newest.count, 1, candidate.entry.date)
-                    newest.append((candidate.fileID, candidate.entry))
+                    newest.append((candidate.fileID, candidate.entry, candidate.sortDate))
                 }
             }
 
             rowCount = newest.count
             rows = newest.prefix(limit).map { item in
                 let group = groups[item.entry.hash]!
-                return LogRow(fileID: item.fileID, entry: item.entry, count: group.count, firstDate: group.first)
+                return LogRow(fileID: item.fileID, entry: item.entry, count: group.count, firstDate: group.first, sortDate: item.sortDate)
             }
         } else {
             rowCount = candidates.count
-            rows = candidates.prefix(limit).map { LogRow(fileID: $0.fileID, entry: $0.entry, count: 1, firstDate: $0.entry.date) }
+            rows = candidates.prefix(limit).map { LogRow(fileID: $0.fileID, entry: $0.entry, count: 1, firstDate: $0.entry.date, sortDate: $0.sortDate) }
         }
 
         return LogResult(rows: rows, rowCount: rowCount, matching: candidates.count, total: total, levelCounts: levelCounts, hiddenTestRuns: hiddenTestRuns, hiddenByMessage: hiddenByMessage)

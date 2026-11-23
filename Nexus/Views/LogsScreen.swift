@@ -749,7 +749,7 @@ private struct LogDetailHead: View {
         let logs = model.logs
 
         if let logTime = item.detail.logTime, file.kind == .app, logs.timeZone(of: file).secondsFromGMT() != TimeZone.current.secondsFromGMT() {
-            Text("\(String(logTime.suffix(8))) \(LogTimeText.zoneName(logs.timeZone(of: file))) in the log")
+            Text("\(LogTimeText.clock(in: logTime)) \(LogTimeText.zoneName(logs.timeZone(of: file))) in the log")
                 .foregroundStyle(.tertiary)
         }
     }
@@ -777,7 +777,7 @@ private struct LogExceptionBlock: View {
 
     var body: some View {
         let project = model.logs.place?.projectFolder ?? ""
-        let vendorCount = exception.frames.filter { $0.isVendor && $0.file != nil }.count
+        let vendorCount = exception.frames.filter(\.isVendor).count
 
         VStack(alignment: .leading, spacing: 6) {
             Text(isPrevious ? "Previous exception" : "Exception")
@@ -861,7 +861,7 @@ enum LogFrameGroup {
         var first = 0
 
         for (index, frame) in frames.enumerated() {
-            if frame.isVendor, frame.file != nil {
+            if frame.isVendor {
                 if run == 0 {
                     first = index
                 }

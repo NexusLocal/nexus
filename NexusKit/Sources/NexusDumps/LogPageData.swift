@@ -576,7 +576,7 @@ struct LogPageRow: Encodable {
         length = row.entry.length
         line = row.entry.line
         time = row.entry.date.map { $0 * 1000 }
-        sortTime = row.entry.sortDate * 1000
+        sortTime = row.sortDate * 1000
         level = row.entry.level
         group = row.group
         testRun = row.entry.isTestRun

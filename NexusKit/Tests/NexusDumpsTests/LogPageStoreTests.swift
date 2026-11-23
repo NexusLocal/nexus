@@ -49,6 +49,8 @@ struct LogPageStoreTests {
         let log = logs.appending(path: "laravel.log")
         try Data(logText(root: root).utf8).write(to: log)
         try Data("Starting import\n".utf8).write(to: logs.appending(path: "import.log"))
+        // A line without a time sorts at the last change of its file: here before all entries.
+        try manager.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_795_430_000)], ofItemAtPath: logs.appending(path: "import.log").path(percentEncoded: false))
         let place = LogPlace(id: "shop.test", siteHost: "shop.test", workspace: nil, kind: .laravel, folder: root + "/public", projectFolder: root, php: nil, hosts: [], otherFolders: [], appLog: nil)
         return Project(place: place, root: root, log: log, paths: NexusPaths(root: folder.appending(path: "nexus")))
     }
@@ -163,7 +165,7 @@ struct LogPageStoreTests {
         #expect(exception["namespace"] as? String == "Illuminate\\Database\\")
         #expect(exception["shortName"] as? String == "QueryException")
         #expect(exception["shortFile"] as? String == "app/Models/Order.php")
-        #expect(frames.map { $0["vendor"] as? Bool } == [true])
+        #expect(frames.map { $0["vendor"] as? Bool } == [false])
         #expect((detail["text"] as? String)?.hasPrefix("[2026-11-23 13:03:00] local.ERROR:") == true)
         #expect((infoDetail["context"] as? [String: Any])?["children"] as? [[String: Any]] != nil)
         #expect((infoDetail["ids"] as? [[String: String]]) == [["key": "trace_id", "value": "9f2c41d0"]])

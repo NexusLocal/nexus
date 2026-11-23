@@ -415,7 +415,7 @@ public enum LogPage {
       let first = 0;
 
       frames.forEach((frame, index) => {
-        if (frame.vendor && frame.file != null) {
+        if (frame.vendor) {
           if (run === 0) {
             first = index;
           }
@@ -441,7 +441,7 @@ public enum LogPage {
 
     // "2 frames of the app, 31 in vendor/".
     function stackText(frames) {
-      const vendor = frames.filter((frame) => frame.vendor && frame.file != null).length;
+      const vendor = frames.filter((frame) => frame.vendor).length;
       return `${count(frames.length - vendor, "frame")} of the app, ${vendor} in vendor/`;
     }
 
