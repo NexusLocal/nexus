@@ -159,7 +159,12 @@ public enum AppLogFiles {
             files += laravelLogs(in: project.appending(path: "storage/logs", directoryHint: .isDirectory))
         case .wordpress:
             files += wordPressLogs(folder: URL(filePath: place.folder, directoryHint: .isDirectory), project: project)
-        case .php, .node, .proxy:
+        case .php:
+            // Craft CMS, Statamic and a Laravel project that Nexus does not see as Laravel write to
+            // storage/logs. Symfony writes var/log with the format of Monolog.
+            files += laravelLogs(in: project.appending(path: "storage/logs", directoryHint: .isDirectory))
+            files += laravelLogs(in: project.appending(path: "var/log", directoryHint: .isDirectory))
+        case .node, .proxy:
             break
         }
 

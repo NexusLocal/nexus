@@ -294,6 +294,20 @@ struct AppLogsTests {
         #expect(index.snapshot.entries.map(\.level) == ["warning"])
     }
 
+    @Test func anotherPHPProjectShowsStorageLogsAndVarLog() throws {
+        let project = FileManager.default.temporaryDirectory.appending(path: "nexus-logs-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: project.appending(path: "storage/logs"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: project.appending(path: "var/log"), withIntermediateDirectories: true)
+        try Data("a\n".utf8).write(to: project.appending(path: "storage/logs/web.log"))
+        try Data("a\n".utf8).write(to: project.appending(path: "var/log/dev.log"))
+        let path = project.path(percentEncoded: false)
+        let place = LogPlace(id: "craft.test", siteHost: "craft.test", workspace: nil, kind: .php, folder: path + "web", projectFolder: path, php: nil, hosts: [], otherFolders: [], appLog: nil)
+
+        let names = AppLogFiles.files(of: place, paths: NexusPaths(root: project.appending(path: "nexus"))).map(\.name)
+
+        #expect(names == ["web.log", "dev.log"])
+    }
+
     @Test func wpDebugLogCanNameAPath() {
         let folder = URL(filePath: "/w/blog", directoryHint: .isDirectory)
 
