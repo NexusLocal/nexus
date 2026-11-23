@@ -13,10 +13,7 @@ public struct MongoDBURL: Equatable, Sendable {
             return nil
         }
 
-        let authority = value.dropFirst("mongodb://".count).prefix { $0 != "/" && $0 != "?" }
-        let servers = authority.split(separator: "@").last ?? ""
-
-        guard !servers.contains(","), let components = URLComponents(string: value), let host = components.host, !host.isEmpty else {
+        guard !Self.namesServers(value), let components = URLComponents(string: value), let host = components.host, !host.isEmpty else {
             return nil
         }
 
@@ -31,10 +28,23 @@ public struct MongoDBURL: Equatable, Sendable {
 
     // The first server of a URL, without the user and the password. So a screen can show it.
     static func firstServer(_ value: String) -> String {
+        String(servers(in: value).split(separator: ",").first ?? "")
+    }
+
+    // A list of servers, as in mongodb://127.0.0.1:27017,127.0.0.1:27018/app.
+    static func namesServers(_ value: String) -> Bool {
+        servers(in: value).contains(",")
+    }
+
+    // The host of each server, without its port.
+    static func hosts(in value: String) -> [String] {
+        servers(in: value).split(separator: ",").map { WorkspaceEnvPlan.split(host: String($0)).host }
+    }
+
+    private static func servers(in value: String) -> Substring {
         let afterScheme = value.split(separator: "://", maxSplits: 1).last ?? ""
         let authority = afterScheme.prefix { $0 != "/" && $0 != "?" }
-        let servers = authority.split(separator: "@").last ?? ""
-        return String(servers.split(separator: ",").first ?? "")
+        return authority.split(separator: "@").last ?? ""
     }
 }
 

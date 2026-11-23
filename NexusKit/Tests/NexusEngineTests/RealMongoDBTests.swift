@@ -192,7 +192,7 @@ extension NexusEngineTests {
     }
 
     // A runtime folder with the metadata of an install and a link to a real bin folder.
-    private func installLinked(_ name: String, line: String, bin: URL, paths: NexusPaths) throws {
+    func installLinked(_ name: String, line: String, bin: URL, paths: NexusPaths) throws {
         let folder = paths.runtime(name, line: line)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(at: folder.appending(path: "bin"), withDestinationURL: bin)

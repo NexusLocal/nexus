@@ -27,8 +27,8 @@ extension NexusEngine {
     }
 
     func serverDatabases(_ target: DatabaseTarget) async throws -> [DatabaseSize] {
-        if case .instance(let id) = target, let tools = await databaseRuntime(id), tools.kind == .mongodb {
-            return try await mongoDBSizes(tools)
+        if await databaseRuntime(target.instanceID)?.kind == .mongodb {
+            return try await mongoDBSizes(at: try await mongoDBAddress(target))
         }
 
         let (tools, client, work) = try await client(for: target)
@@ -101,6 +101,12 @@ extension NexusEngine {
     }
 
     private func workspaceClient(host: String, name: String, instance: String) async throws -> (DatabaseTools, DatabaseClient, URL) {
+        let (tools, server) = try await runningWorkspaceServer(host: host, name: name, instance: instance)
+        let (client, work) = try serverClient(tools, server)
+        return (tools, client, work)
+    }
+
+    func runningWorkspaceServer(host: String, name: String, instance: String) async throws -> (DatabaseTools, WorkspaceDatabaseServer) {
         let (key, workspace) = try await workspaceOfSite(host: host, name: name)
 
         guard let tools = await databaseRuntime(instance) else {
@@ -122,7 +128,6 @@ extension NexusEngine {
             throw RuntimeError.unsupported("The database server of the workspace \(name) does not run. See: nexus workspace list")
         }
 
-        let (client, work) = try serverClient(tools, server)
-        return (tools, client, work)
+        return (tools, server)
     }
 }

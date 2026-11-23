@@ -224,8 +224,8 @@ extension NexusEngine {
 
         info.tables = collections.filter { $0.database == database }.map(\.name)
 
-        if case .instance(let id) = inspection.target, let name = inspection.name.flatMap({ try? DatabaseName.validated($0) }), let tools = await databaseRuntime(id) {
-            let existing = try? await withMongoDB(tools) { try await $0.collections(of: name) }
+        if let target = inspection.target, let name = inspection.name.flatMap({ try? DatabaseName.validated($0) }), let address = try? await mongoDBAddress(target) {
+            let existing = try? await withMongoDB(at: address) { try await $0.collections(of: name) }
             info.existingTables = existing?.isEmpty == false ? existing : nil
         }
 
@@ -234,11 +234,12 @@ extension NexusEngine {
 
     // nexus db import and the sheet with a file of mongodump --archive, with or without --gzip.
     // Replace the tables drops only the collections of the archive. A new database that fails is
-    // dropped. An old database goes into the trash before each change.
+    // dropped. An old database goes into the trash before each change. A workspace has the names of
+    // the main site on a server of its own. So its trash copy and its reservation get the name of
+    // the workspace too.
     func importMongoDBDump(_ request: DumpImport, tools: DatabaseTools, file: URL, container: DumpContainer) async throws -> NexusResponse {
-        guard case .instance(let instance) = request.target else {
-            throw RuntimeError.unsupported("A workspace has no MongoDB server of its own yet. Import the dump into the instance.")
-        }
+        let instance = request.target.instanceID
+        let server = request.target.serverName
 
         guard !container.isArchive else {
             throw RuntimeError.unsupported("Nexus reads an archive of mongodump only as a file of its own, not in a .zip or .tar file.")
@@ -265,27 +266,36 @@ extension NexusEngine {
 
         try await ensureMongoDBTools()
 
-        let reserved = try reserveCopyTarget(name, on: instance, for: "import")
-        defer { copyTargets.remove(reserved) }
+        let address = try await mongoDBAddress(request.target)
+        let ownName: String
 
-        let exists = try await !withMongoDB(tools) { try await $0.collections(of: name) }.isEmpty
-
-        if exists, request.existing == nil {
-            throw DatabaseTargetExists(description: "\(name) exists on \(instance) already. Add --replace-tables or --replace-database, or load the dump into another database with --into.")
+        if case .workspace(_, let workspace, _) = request.target {
+            ownName = Workspace.databaseName(name, workspace: workspace)
+        } else {
+            ownName = name
         }
 
-        let trashCopy = exists ? try await writeMongoDBDump(of: name, tools: tools, instance: instance) : nil
+        let reserved = try reserveCopyTarget(ownName, on: instance, for: "import")
+        defer { copyTargets.remove(reserved) }
+
+        let exists = try await !withMongoDB(at: address) { try await $0.collections(of: name) }.isEmpty
+
+        if exists, request.existing == nil {
+            throw DatabaseTargetExists(description: "\(name) exists on \(server) already. Add --replace-tables or --replace-database, or load the dump into another database with --into.")
+        }
+
+        let trashCopy = exists ? try await writeMongoDBDump(of: name, as: ownName, at: address, instance: instance) : nil
         let keptCopy = trashCopy.map { " Nexus put a copy of the old \(name) in the trash: \($0.lastPathComponent)." } ?? ""
 
         if exists, request.existing == .replaceDatabase {
-            try await dropMongoDBDatabase(name, tools: tools)
+            try await dropMongoDBDatabase(name, at: address)
         }
 
         let work = try mongoDBWork()
         defer { try? FileManager.default.removeItem(at: work) }
 
         let transfer = MongoDBTransfer(tools: tools, work: work)
-        let restore = try transfer.restoreCommand(try await mongoDBEndpoint(tools), from: source, as: name, drop: request.existing == .replaceTables)
+        let restore = try transfer.restoreCommand(MongoDBTransfer.local(port: address.port, account: address.account), from: source, as: name, drop: request.existing == .replaceTables)
         let reader = Self.reader(of: file, container: container, dump: nil)
         let progress = TaskProgress()
         let shownName = "\(fileName) (\(source))"
@@ -294,7 +304,7 @@ extension NexusEngine {
 
         do {
             try await runTask(.importDump(file: fileName, instance: instance, name: name), progress: progress, stopped: {
-                exists ? "The import of \(shownName) stopped. \(name) can be incomplete.\(keptCopy)" : "The import of \(shownName) stopped. \(instance) has no database \(name)."
+                exists ? "The import of \(shownName) stopped. \(name) can be incomplete.\(keptCopy)" : "The import of \(shownName) stopped. \(server) has no database \(name)."
             }) { progress in
                 try await CommandRunner.pipe(reader, into: restore) { data in
                     progress.update { $0.completed += Int64(data.count) }
@@ -302,7 +312,7 @@ extension NexusEngine {
             }
         } catch {
             guard exists else {
-                await Task { try? await self.dropMongoDBDatabase(name, tools: tools) }.value
+                await Task { try? await self.dropMongoDBDatabase(name, at: address) }.value
                 throw error
             }
 
@@ -311,28 +321,58 @@ extension NexusEngine {
 
         switch request.existing {
         case nil:
-            return .done(message: "\(shownName) is loaded into the new database \(name) on \(instance).")
+            return .done(message: "\(shownName) is loaded into the new database \(name) on \(server).")
         case .replaceTables:
-            return .done(message: "\(shownName) is loaded into \(name) on \(instance). The collections of the dump replaced their old collections. The other collections stay as they were.\(keptCopy)")
+            return .done(message: "\(shownName) is loaded into \(name) on \(server). The collections of the dump replaced their old collections. The other collections stay as they were.\(keptCopy)")
         case .replaceDatabase:
-            return .done(message: "\(shownName) replaced the database \(name) on \(instance).\(keptCopy)")
+            return .done(message: "\(shownName) replaced the database \(name) on \(server).\(keptCopy)")
+        }
+    }
+
+    // nexus db restore with a dump of writeMongoDBDump. Such a dump has one database. A restore that
+    // fails leaves no part of the database.
+    func restoreMongoDBDump(_ dump: URL, as name: String, at address: MongoDBAddress) async throws {
+        guard try await withMongoDB(at: address, { try await $0.collections(of: name) }).isEmpty else {
+            throw RuntimeError.unsupported("\(address.name) has a database \(name) already. Give the restore another name with --as.")
+        }
+
+        try await ensureMongoDBTools()
+
+        guard let source = MongoDBArchive.databases(of: try await mongoDBArchiveCollections(of: dump, container: .gzip)).first else {
+            throw RuntimeError.unsupported("\(dump.lastPathComponent) has no collections.")
+        }
+
+        let work = try mongoDBWork()
+        defer { try? FileManager.default.removeItem(at: work) }
+
+        let restore = try MongoDBTransfer(tools: address.tools, work: work).restoreCommand(MongoDBTransfer.local(port: address.port, account: address.account), from: source, as: name, drop: false)
+
+        do {
+            try await CommandRunner.pipe(Self.reader(of: dump, container: .gzip, dump: nil), into: restore)
+        } catch {
+            await Task { try? await self.dropMongoDBDatabase(name, at: address) }.value
+            throw error
         }
     }
 
     func dropMongoDBDatabase(_ name: String, tools: DatabaseTools) async throws {
-        try await withMongoDB(tools) { try await $0.dropDatabase(name) }
+        try await dropMongoDBDatabase(name, at: try await mongoDBAddress(of: tools))
+    }
+
+    func dropMongoDBDatabase(_ name: String, at address: MongoDBAddress) async throws {
+        try await withMongoDB(at: address) { try await $0.dropDatabase(name) }
     }
 
     // An archive with gzip, as mongodump --archive --gzip writes it. The file gets its name only when
-    // it is complete.
-    func writeMongoDBDump(of name: String, tools: DatabaseTools, instance: String) async throws -> URL {
+    // it is complete. A dump of a workspace has the name of the workspace in fileName.
+    func writeMongoDBDump(of name: String, as fileName: String, at address: MongoDBAddress, instance: String, workspace: String? = nil) async throws -> URL {
         try await ensureMongoDBTools()
 
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd-HHmmss"
 
-        let file = Self.freeFile(named: "\(formatter.string(from: .now))-\(instance)-\(name)", extension: DatabaseKind.mongodb.dumpExtension, in: paths.trash)
+        let file = Self.freeFile(named: "\(formatter.string(from: .now))-\(instance)-\(fileName)", extension: DatabaseKind.mongodb.dumpExtension, in: paths.trash)
         let partial = file.deletingLastPathComponent().appending(path: "\(file.lastPathComponent).partial")
         let work = try mongoDBWork()
         defer {
@@ -346,9 +386,9 @@ extension NexusEngine {
             throw RuntimeError.unsupported("Nexus cannot write \(partial.path(percentEncoded: false)).")
         }
 
-        let dump = try MongoDBTransfer(tools: tools, work: work).dumpCommand(try await mongoDBEndpoint(tools), database: name)
+        let dump = try MongoDBTransfer(tools: address.tools, work: work).dumpCommand(MongoDBTransfer.local(port: address.port, account: address.account), database: name)
 
-        try await runTask(.dumpDatabase(name: name, instance: instance), stopped: { "The dump of \(name) stopped. \(instance) keeps the database." }) { progress in
+        try await runTask(.dumpDatabase(name: name, instance: instance, workspace: workspace), stopped: { "The dump of \(name) stopped. \(address.name) keeps the database." }) { progress in
             try await CommandRunner.pipe(dump, into: Command(executable: URL(filePath: "/usr/bin/gzip")), writingTo: partial) { data in
                 progress.update { $0.completed += Int64(data.count) }
             }

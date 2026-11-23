@@ -53,7 +53,7 @@ extension NexusEngine {
     // day by default. The session asks for the current sizes.
     func databaseSizes(_ id: String) async throws -> [DatabaseSize] {
         if let tools = await databaseRuntime(id), tools.kind == .mongodb {
-            return try await mongoDBSizes(tools)
+            return try await mongoDBSizes(at: try await mongoDBAddress(of: tools))
         }
 
         let (tools, client, work) = try await runningClient(id)

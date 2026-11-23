@@ -125,11 +125,14 @@ extension NexusEngine {
 
     // After the install, the worktree can have its own env files, for example a tracked
     // .env.development of its branch. A key there that still leads to a server of the main site
-    // gives Not isolated. The servers of the workspace count as Nexus instances here.
+    // gives Not isolated. The servers of the workspace count as Nexus instances here. A branch can
+    // also add a database client, such as mongoose. Its warning then comes from the worktree
+    // (owner, 2026-11-23).
     func checkNodeEnvFiles(of written: WrittenEnv, in workspace: inout Workspace) async throws {
         let ownPorts = Set(written.servers.map(\.port))
         let project = NodeProject.read(in: URL(filePath: written.folder, directoryHint: .isDirectory))
         let plan = try await nodeEnvPlan(workspace: workspace.name, files: try Self.nodeEnvFiles(in: written.folder), project: project, mainFolder: written.folder, workspaceFolder: written.folder, servers: written.servers)
+        workspace.warnings += plan.warnings.filter { !written.warnings.contains($0) && !workspace.warnings.contains($0) }
         let wrongPorts = plan.serverPorts.filter { !ownPorts.contains($0) }
         let newKeys = plan.serverURLKeys.union(plan.serverPortKeys.values.joined()).subtracting(written.isolatingKeys).sorted()
         var problems = plan.problems

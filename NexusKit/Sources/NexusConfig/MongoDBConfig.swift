@@ -24,18 +24,21 @@ public enum MongoDBConfig {
     // workspaces.
     public static let workspaceCacheSizeGB = "0.25"
 
-    // Without --nounixsocket, mongod makes a socket file in /tmp. Without the setting for the
-    // diagnostic data, mongod writes statistics into its data folder all the time.
-    public static func serverArguments(config: URL?, data: URL, port: Int, replicaSet: String?, keyFile: URL?) -> [String] {
+    // Without --nounixsocket, mongod makes a socket file in /tmp. With a socket folder, mongod makes
+    // mongodb-<port>.sock in that folder, only for its owner. A path of more than 104 bytes stops
+    // mongod. Without the setting for the diagnostic data, mongod writes statistics into its data
+    // folder all the time.
+    public static func serverArguments(config: URL?, data: URL, port: Int, replicaSet: String?, keyFile: URL?, socketFolder: URL? = nil) -> [String] {
         var arguments = config.map { ["--config", $0.path(percentEncoded: false)] } ?? []
 
         arguments += [
             "--dbpath", data.path(percentEncoded: false),
             "--port", String(port),
             "--bind_ip", "127.0.0.1",
-            "--nounixsocket",
-            "--setParameter", "diagnosticDataCollectionEnabled=false",
         ]
+
+        arguments += socketFolder.map { ["--unixSocketPrefix", $0.path(percentEncoded: false)] } ?? ["--nounixsocket"]
+        arguments += ["--setParameter", "diagnosticDataCollectionEnabled=false"]
 
         if let replicaSet {
             arguments += ["--replSet", replicaSet]

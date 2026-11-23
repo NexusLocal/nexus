@@ -224,10 +224,13 @@ public struct ServiceCatalog: Sendable {
         case .mongodb: ["--wiredTigerCacheSizeGB", MongoDBConfig.workspaceCacheSizeGB]
         }
 
-        return databaseDefinition(kind, id: id, displayName: "\(kind.displayName) \(runtime.version) of a workspace", runtime: runtime, port: port, data: folder, socket: paths.workspaceDatabaseSocket(kind, line: runtime.line, port: port), logFile: paths.log(instance), extra: extra, environment: environment, activityName: "\(instance) of the workspace \(workspace)")
+        let socket = paths.workspaceDatabaseSocket(kind, line: runtime.line, port: port)
+
+        return databaseDefinition(kind, id: id, displayName: "\(kind.displayName) \(runtime.version) of a workspace", runtime: runtime, port: port, data: folder, socket: socket, logFile: paths.log(instance), extra: extra, environment: environment, activityName: "\(instance) of the workspace \(workspace)", mongoDBSocketFolder: socket.deletingLastPathComponent())
     }
 
-    private func databaseDefinition(_ kind: DatabaseKind, id: String, displayName: String, runtime: InstalledRuntime, port: Int, data: URL, socket: URL, logFile: URL, extra: [String], environment: [String: String] = [:], activityName: String? = nil) -> ServiceDefinition {
+    // Only the MongoDB server of a workspace has a socket (NexusPaths.workspaceDatabaseSocket).
+    private func databaseDefinition(_ kind: DatabaseKind, id: String, displayName: String, runtime: InstalledRuntime, port: Int, data: URL, socket: URL, logFile: URL, extra: [String], environment: [String: String] = [:], activityName: String? = nil, mongoDBSocketFolder: URL? = nil) -> ServiceDefinition {
         if kind == .mongodb {
             let keyFile = MongoDBConfig.keyFile(in: data)
             let hasKey = FileManager.default.fileExists(atPath: keyFile.path(percentEncoded: false))
@@ -236,7 +239,7 @@ public struct ServiceCatalog: Sendable {
                 id: id,
                 displayName: displayName,
                 executable: runtime.folder.appending(path: "bin/mongod"),
-                arguments: MongoDBConfig.serverArguments(config: paths.databaseConfig(kind, line: runtime.line), data: data, port: port, replicaSet: MongoDBServer.replicaSet, keyFile: hasKey ? keyFile : nil) + extra,
+                arguments: MongoDBConfig.serverArguments(config: paths.databaseConfig(kind, line: runtime.line), data: data, port: port, replicaSet: MongoDBServer.replicaSet, keyFile: hasKey ? keyFile : nil, socketFolder: mongoDBSocketFolder) + extra,
                 environment: environment,
                 workingDirectory: data,
                 ports: [port],

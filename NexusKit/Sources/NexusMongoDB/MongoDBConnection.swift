@@ -2,9 +2,9 @@ import Darwin
 import Foundation
 import NexusCore
 
-// One connection to a MongoDB server on 127.0.0.1. A command and its answer use blocking calls on an
-// own thread. So a server that gives no answer does not block a thread of the cooperative pool of
-// Swift. The timeout ends each wait.
+// One connection to a MongoDB server on 127.0.0.1 or on a socket. A command and its answer use
+// blocking calls on an own thread. So a server that gives no answer does not block a thread of the
+// cooperative pool of Swift. The timeout ends each wait.
 public actor MongoDBConnection {
     private let descriptor: Int32
     private var nextID: Int32 = 1
@@ -28,7 +28,23 @@ public actor MongoDBConnection {
     // and for each write. The users of Nexus are in the database admin. A user of another server can
     // be in another database.
     public static func connect(port: Int, account: DatabaseAccount? = nil, authenticationDatabase: String = "admin", timeout: TimeInterval = 10) async throws -> MongoDBConnection {
-        let descriptor = try await onOwnThread { try open(port: port, timeout: timeout) }
+        let descriptor = try await onOwnThread {
+            try open(timeout: timeout, problem: "No server listens on port \(port).") { try IPv4Socket.connectToLoopback(port: port) }
+        }
+
+        return try await connected(descriptor, account: account, authenticationDatabase: authenticationDatabase)
+    }
+
+    // The socket of a server of a workspace (mongod --unixSocketPrefix).
+    public static func connect(socket path: String, timeout: TimeInterval = 10) async throws -> MongoDBConnection {
+        let descriptor = try await onOwnThread {
+            try open(timeout: timeout, problem: "No server listens on \(path).") { try UnixSocket.connect(to: path) }
+        }
+
+        return try await connected(descriptor, account: nil, authenticationDatabase: "admin")
+    }
+
+    private static func connected(_ descriptor: Int32, account: DatabaseAccount?, authenticationDatabase: String) async throws -> MongoDBConnection {
         let connection = MongoDBConnection(descriptor: descriptor)
 
         if let account, !account.password.isEmpty {
@@ -150,13 +166,13 @@ public actor MongoDBConnection {
         }
     }
 
-    private static func open(port: Int, timeout: TimeInterval) throws -> Int32 {
+    private static func open(timeout: TimeInterval, problem: String, _ connecting: () throws -> Int32) throws -> Int32 {
         let descriptor: Int32
 
         do {
-            descriptor = try IPv4Socket.connectToLoopback(port: port)
+            descriptor = try connecting()
         } catch {
-            throw MongoDBError.connection("No server listens on port \(port).")
+            throw MongoDBError.connection(problem)
         }
 
         var interval = timeval(tv_sec: Int(timeout), tv_usec: Int32((timeout - timeout.rounded(.down)) * 1_000_000))

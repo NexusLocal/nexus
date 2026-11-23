@@ -42,4 +42,29 @@ package enum UnixSocket {
 
         return address
     }
+
+    // SO_NOSIGPIPE comes before the connect, as for IPv4Socket.connectToLoopback.
+    package static func connect(to path: String) throws -> Int32 {
+        var target = try address(of: path)
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+
+        guard descriptor >= 0 else {
+            throw SocketError.system("socket", errno)
+        }
+
+        var on: Int32 = 1
+        setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+
+        let connected = withUnsafePointer(to: &target) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+
+        guard connected == 0 else {
+            let code = errno
+            close(descriptor)
+            throw SocketError.system("connect", code)
+        }
+
+        return descriptor
+    }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import NexusCore
+import NexusMongoDB
 import NexusSupervisor
 
 // The gate of the ports of the stopped workspace servers (plan item 3e, owner 2026-11-15, way 1 of
@@ -324,14 +325,35 @@ public actor WorkspacePortGate: WorkspaceServerGate {
     }
 
     private static func isReady(_ server: GatedServer) async -> Bool {
-        guard server.kind.usesMySQLProtocol else {
-            return ServerReadiness.isReady(postgreSQLData: URL(filePath: server.folder, directoryHint: .isDirectory))
+        switch server.kind {
+        case .mysql, .mariadb:
+            await ServerReadiness.receivesGreeting(socket: server.socket.path(percentEncoded: false))
+        case .postgresql:
+            ServerReadiness.isReady(postgreSQLData: URL(filePath: server.folder, directoryHint: .isDirectory))
+        case .mongodb:
+            await isPrimary(socket: server.socket.path(percentEncoded: false))
+        }
+    }
+
+    // mongod listens on its socket after its TCP port (tested with 7.0, 8.0 and 9.0). During the
+    // hand-over a probe of the port would reach the gate itself. The set elects its one server about
+    // a second after the start. A driver of PHP asks one time and does not wait for an election. So
+    // the clients of the start wait until the server takes writes. hello needs no login.
+    private static func isPrimary(socket path: String) async -> Bool {
+        guard PortInspector.acceptsConnections(socket: path), let connection = try? await MongoDBConnection.connect(socket: path, timeout: 1) else {
+            return false
         }
 
-        return await ServerReadiness.receivesGreeting(socket: server.socket.path(percentEncoded: false))
+        let isPrimary = (try? await MongoDBServer(connection).isPrimary()) == true
+        await connection.disconnect()
+        return isPrimary
     }
 
     private static func wire(of kind: DatabaseKind) -> PortGate.Wire {
-        kind.usesMySQLProtocol ? .mysql : .postgresql
+        switch kind {
+        case .mysql, .mariadb: .mysql
+        case .postgresql: .postgresql
+        case .mongodb: .mongodb
+        }
     }
 }

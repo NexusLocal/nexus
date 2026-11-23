@@ -27,6 +27,14 @@ struct MongoDBConfigTests {
         #expect(!arguments.contains("--config"))
     }
 
+    @Test func aServerWithASocketFolderGetsItsSocketThere() {
+        let arguments = MongoDBConfig.serverArguments(config: nil, data: data, port: 40001, replicaSet: "nexus", keyFile: nil, socketFolder: URL(filePath: "/Nexus/run", directoryHint: .isDirectory))
+
+        #expect(arguments.contains("--unixSocketPrefix"))
+        #expect(arguments[arguments.firstIndex(of: "--unixSocketPrefix")! + 1] == "/Nexus/run/")
+        #expect(!arguments.contains("--nounixsocket"))
+    }
+
     @Test func aTemporaryStartHasNoReplicaSet() {
         #expect(!MongoDBConfig.serverArguments(config: nil, data: data, port: 40001, replicaSet: nil, keyFile: nil).contains("--replSet"))
     }

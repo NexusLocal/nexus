@@ -6,6 +6,15 @@ import NexusMongoDB
 import NexusRuntime
 import NexusSupervisor
 
+// The MongoDB server of a command: an instance, or the server of a workspace. name is the server in
+// a message.
+struct MongoDBAddress: Sendable {
+    let tools: DatabaseTools
+    let name: String
+    let port: Int
+    let account: DatabaseAccount
+}
+
 // MongoDB (group 6). Each instance is a replica set of one server with the name nexus, because
 // transactions need a replica set. Nexus talks to the server with its own client (NexusMongoDB).
 // Without a password the server runs without a login and has no user (D35).
@@ -152,8 +161,9 @@ extension NexusEngine {
         try await mover.stop(definition.id, cause: "the end of the move of the replica set")
     }
 
-    // A connection with the account of a running instance. The caller ends it.
-    func mongoDBServer(_ tools: DatabaseTools) async throws -> MongoDBServer {
+    // A connection with the account of a running instance. The caller ends it. The timeout is for
+    // each answer.
+    func mongoDBServer(_ tools: DatabaseTools, timeout: TimeInterval = 10) async throws -> MongoDBServer {
         guard await supervisor.state(of: tools.id)?.isActive == true else {
             throw RuntimeError.unsupported("Start \(tools.id) first.")
         }
@@ -161,7 +171,7 @@ extension NexusEngine {
         let port = try await connectionPort(of: tools)
 
         do {
-            return MongoDBServer(try await MongoDBConnection.connect(port: port, account: try await account(of: tools)))
+            return MongoDBServer(try await MongoDBConnection.connect(port: port, account: try await account(of: tools), timeout: timeout))
         } catch let error as MongoDBError {
             throw RuntimeError.unsupported("Nexus cannot connect to \(tools.id) on port \(port). \(error.description)")
         }
@@ -169,7 +179,17 @@ extension NexusEngine {
 
     // The connection ends after the work, also after an error.
     func withMongoDB<Value: Sendable>(_ tools: DatabaseTools, _ work: (MongoDBServer) async throws -> Value) async throws -> Value {
-        let server = try await mongoDBServer(tools)
+        try await withMongoDB(at: try await mongoDBAddress(of: tools), work)
+    }
+
+    func withMongoDB<Value: Sendable>(at address: MongoDBAddress, _ work: (MongoDBServer) async throws -> Value) async throws -> Value {
+        let server: MongoDBServer
+
+        do {
+            server = MongoDBServer(try await MongoDBConnection.connect(port: address.port, account: address.account))
+        } catch let error as MongoDBError {
+            throw RuntimeError.unsupported("Nexus cannot connect to \(address.name) on port \(address.port). \(error.description)")
+        }
 
         do {
             let value = try await work(server)
@@ -181,10 +201,34 @@ extension NexusEngine {
         }
     }
 
-    func mongoDBSizes(_ tools: DatabaseTools) async throws -> [DatabaseSize] {
-        let databases = try await withMongoDB(tools) { try await $0.databases() }
-        let port = try await connectionPort(of: tools)
-        let users = await databaseUsers(kind: .mongodb, port: port, socket: socketPath(of: tools, port: port))
+    // A running instance.
+    func mongoDBAddress(of tools: DatabaseTools) async throws -> MongoDBAddress {
+        guard await supervisor.state(of: tools.id)?.isActive == true else {
+            throw RuntimeError.unsupported("Start \(tools.id) first.")
+        }
+
+        return MongoDBAddress(tools: tools, name: tools.id, port: try await connectionPort(of: tools), account: try await account(of: tools))
+    }
+
+    // A command for a workspace reaches the server of the workspace and never the instance (D48).
+    func mongoDBAddress(_ target: DatabaseTarget) async throws -> MongoDBAddress {
+        switch target {
+        case .instance(let id):
+            guard let tools = await databaseRuntime(id) else {
+                throw RuntimeError.unsupported("Nexus has no database instance \(id). See: nexus db list")
+            }
+
+            return try await mongoDBAddress(of: tools)
+        case .workspace(let host, let name, let instance):
+            let (tools, server) = try await runningWorkspaceServer(host: host, name: name, instance: instance)
+            return MongoDBAddress(tools: tools, name: target.serverName, port: server.port, account: server.account)
+        }
+    }
+
+    // A server of a workspace is used by no site of the main checkout.
+    func mongoDBSizes(at address: MongoDBAddress) async throws -> [DatabaseSize] {
+        let databases = try await withMongoDB(at: address) { try await $0.databases() }
+        let users = await databaseUsers(kind: .mongodb, port: address.port, socket: socketPath(of: address.tools, port: address.port))
 
         return databases.map { DatabaseSize(name: $0.name, bytes: $0.bytes, usedBy: users[$0.name]) }
     }

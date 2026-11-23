@@ -2,13 +2,14 @@ import Foundation
 import NexusCore
 
 // A URL of a database or Redis server in an env value, as Node.js apps use it: DATABASE_URL for
-// Prisma and Drizzle, REDIS_URL for ioredis (D67). A URL without a port uses the standard port of
-// its kind.
+// Prisma and Drizzle, REDIS_URL for ioredis, MONGODB_URI for mongoose (D67). A URL without a port
+// uses the standard port of its kind. A MongoDB URL can name more than one server.
 public struct ConnectionURL: Sendable, Equatable {
     public enum Kind: Sendable, Equatable {
         case mysql
         case postgresql
         case redis
+        case mongodb
     }
 
     public let kind: Kind
@@ -19,6 +20,7 @@ public struct ConnectionURL: Sendable, Equatable {
     // A host or socket in the query goes past the host and the port.
     public let namesSocket: Bool
     public let usesVariables: Bool
+    public let namesServers: Bool
 
     private static let kinds: [String: Kind] = [
         "mysql": .mysql,
@@ -27,9 +29,11 @@ public struct ConnectionURL: Sendable, Equatable {
         "postgres": .postgresql,
         "postgresql": .postgresql,
         "redis": .redis,
+        "mongodb": .mongodb,
     ]
 
-    // Returns nil for a value that is no URL of one of these kinds.
+    // Returns nil for a value that is no URL of one of these kinds. mongodb+srv asks DNS for its
+    // servers, so it is no URL of one server.
     public init?(_ value: String) {
         guard let colon = value.firstIndex(of: ":"), let kind = Self.kinds[value[..<colon].lowercased()], value[colon...].hasPrefix("://") else {
             return nil
@@ -37,8 +41,9 @@ public struct ConnectionURL: Sendable, Equatable {
 
         self.kind = kind
         usesVariables = value.contains("$")
+        namesServers = kind == .mongodb && MongoDBURL.namesServers(value)
 
-        guard !usesVariables, let components = URLComponents(string: value), let host = components.host, !host.isEmpty else {
+        guard !usesVariables, !namesServers, let components = URLComponents(string: value), let host = components.host, !host.isEmpty else {
             host = ""
             port = 0
             path = ""
@@ -52,14 +57,13 @@ public struct ConnectionURL: Sendable, Equatable {
         namesSocket = components.queryItems?.contains { ["host", "socket", "socketpath"].contains($0.name.lowercased()) } ?? false
     }
 
-    // A workspace cannot copy a MongoDB yet. So such a URL is no ConnectionURL. A URL of MongoDB
-    // Atlas starts with mongodb+srv.
+    // A URL of MongoDB Atlas starts with mongodb+srv.
     public static func isMongoDB(_ value: String) -> Bool {
         ["mongodb://", "mongodb+srv://"].contains { value.lowercased().hasPrefix($0) }
     }
 
     public var isReadable: Bool {
-        !usesVariables && !host.isEmpty
+        !usesVariables && !namesServers && !host.isEmpty
     }
 
     public var isLocal: Bool {
@@ -102,6 +106,7 @@ extension ConnectionURL.Kind {
         case .mysql: 3306
         case .postgresql: 5432
         case .redis: 6379
+        case .mongodb: 27017
         }
     }
 }

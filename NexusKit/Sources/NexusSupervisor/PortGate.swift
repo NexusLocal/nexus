@@ -14,6 +14,7 @@ public final class PortGate: Sendable {
     public enum Wire: Sendable, Equatable {
         case mysql
         case postgresql
+        case mongodb
     }
 
     public enum Phase: Sendable, Equatable {
@@ -708,10 +709,27 @@ public final class PortGate: Sendable {
                 try? socket.write(PortRefusal.mysqlErrorPacket(reason))
             case .postgresql:
                 answerPostgreSQL(socket, reason: reason)
+            case .mongodb:
+                answerMongoDB(socket, reason: reason)
             }
 
             closeAfterReply(client)
         }
+    }
+
+    // The answer goes to the first message. Another message gets no answer.
+    private static func answerMongoDB(_ socket: LineSocket, reason: String) {
+        guard let head = try? socket.read(count: PortRefusal.mongoDBHeaderSize) else {
+            return
+        }
+
+        let start = PortRefusal.mongoDBStart(head)
+
+        guard let length = start.length, (try? socket.read(count: length - PortRefusal.mongoDBHeaderSize)) != nil, let reply = PortRefusal.mongoDBErrorReply(reason, to: start) else {
+            return
+        }
+
+        try? socket.write(reply)
     }
 
     // An SSLRequest or a GSSENCRequest gets N, and the next message follows. A startup message gets

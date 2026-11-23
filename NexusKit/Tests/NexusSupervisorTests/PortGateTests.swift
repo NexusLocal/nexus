@@ -377,6 +377,27 @@ struct PortGateTests {
         #expect(!gate.isHeld(port))
     }
 
+    @Test func aFailedHandOverAnswersTheHelloOfAMongoDBClient() async throws {
+        let gate = gate()
+        let port = try heldPort(gate, wire: .mongodb)
+        defer { await gate.release(port) }
+
+        let mongo = try client(port)
+        defer { close(mongo) }
+
+        let body = Array(repeating: UInt8(0), count: 5) + [5, 0, 0, 0, 0]
+        Self.send(mongo, PortRefusalTests.mongoDBHeader(length: Int32(16 + body.count), id: 9, operation: 2013) + body)
+        #expect(await eventually { woken == [port] })
+
+        await gate.beginHandOver(port)
+        try await gate.failHandOver(port, reason: "Stopped.", holdsAgain: false)
+
+        let reply = [UInt8](PortRefusal.mongoDBErrorReply("Stopped.", to: .message(id: 9, length: 16 + body.count)) ?? Data())
+
+        #expect(Self.read(mongo, count: reply.count + 1) == reply)
+        #expect(!gate.isHeld(port))
+    }
+
     @Test func aRefusalAnswersTheClientsAndTheNextConnectionWakesAgain() async throws {
         let gate = gate()
         let port = try heldPort(gate)

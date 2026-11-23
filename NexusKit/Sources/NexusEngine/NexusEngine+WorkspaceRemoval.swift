@@ -335,6 +335,18 @@ extension NexusEngine {
         await syncBackgroundProcesses().value
         try await waitForServer(tools, port: server.port)
 
+        guard tools.kind != .mongodb else {
+            let address = MongoDBAddress(tools: tools, name: "the server of the workspace \(removal.workspace) (\(server.instance))", port: server.port, account: server.account)
+            let existing = Set(try await withMongoDB(at: address) { try await $0.databases() }.map(\.name))
+
+            for database in missing where existing.contains(database) {
+                let file = try await writeMongoDBDump(of: database, as: Workspace.databaseName(database, workspace: removal.workspace), at: address, instance: server.instance, workspace: removal.workspace)
+                files.append(await recordDump(file, of: database, server: server))
+            }
+
+            return files
+        }
+
         let (client, work) = try serverClient(tools, server)
         defer { try? FileManager.default.removeItem(at: work) }
 
@@ -350,18 +362,23 @@ extension NexusEngine {
             }
 
             let file = try await writeDump(of: name, as: Workspace.databaseName(database, workspace: removal.workspace), with: copier, instance: server.instance, kind: tools.kind, workspace: removal.workspace)
-
-            // A save that fails costs only a second dump after a stop of nexusd.
-            try? await stateStore.update { state in
-                for index in state.databaseRemovals.indices where state.databaseRemovals[index].server.folder == server.folder {
-                    state.databaseRemovals[index].dumps[database] = file.path(percentEncoded: false)
-                }
-            }
-
-            files.append(file.path(percentEncoded: false))
+            files.append(await recordDump(file, of: database, server: server))
         }
 
         return files
+    }
+
+    // A save that fails costs only a second dump after a stop of nexusd.
+    private func recordDump(_ file: URL, of database: String, server: WorkspaceDatabaseServer) async -> String {
+        let path = file.path(percentEncoded: false)
+
+        try? await stateStore.update { state in
+            for index in state.databaseRemovals.indices where state.databaseRemovals[index].server.folder == server.folder {
+                state.databaseRemovals[index].dumps[database] = path
+            }
+        }
+
+        return path
     }
 
     // The trash can have removed an earlier dump before a retry.
@@ -565,6 +582,11 @@ extension NexusEngine {
 
         if await supervisor.state(of: instance)?.isActive != true {
             _ = try await serialWeb { try await self.start(instance) }
+        }
+
+        guard tools.kind != .mongodb else {
+            try await restoreMongoDBDump(dump, as: validName, at: try await mongoDBAddress(of: tools))
+            return "\(dump.lastPathComponent) is restored into \(instance) as \(validName)."
         }
 
         let (_, client, work) = try await runningClient(instance)

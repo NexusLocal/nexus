@@ -280,24 +280,78 @@ struct WorkspaceEnvPlanTests {
         #expect(plan(settings, connections: ["old", "main"]).problems.isEmpty)
     }
 
-    @Test func aDefaultMongoDBConnectionIsNotIsolated() {
+    @Test func aDefaultMongoDBConnectionWithoutANexusMongoDBIsNotIsolated() {
         let result = plan(connection("main", database: keyed(.text("shop"), "MONGODB_DATABASE"), driver: "mongodb"))
 
         #expect(result.keys.isEmpty)
-        #expect(result.problems == ["The connection main uses MongoDB. Nexus cannot copy a MongoDB database."])
+        #expect(result.problems == ["The connection main uses a MongoDB server that is no Nexus instance. So this workspace would share it with the main site."])
     }
 
-    @Test func anotherMongoDBConnectionIsNotIsolatedAlsoWithItsDatabaseInTheURL() {
+    @Test func anotherMongoDBConnectionWithoutANexusMongoDBIsNotIsolated() {
         let settings = connection("main", database: keyed(.text("shop"), "DB_DATABASE"))
-            .merging([
-                "database.connections.mongodb.driver": ConfigSetting(value: .text("mongodb")),
-                "database.connections.mongodb.dsn": keyed(.text("mongodb://localhost:27017/shop"), "MONGODB_URI"),
-            ]) { own, _ in own }
+            .merging(mongoDBURLConnection("mongodb://localhost:27017/shop")) { own, _ in own }
 
         let result = plan(settings, connections: ["main", "mongodb"])
 
         #expect(result.serverPortKeys == [13306: ["DB_PORT"]])
-        #expect(result.problems == ["The connection mongodb uses MongoDB. Nexus cannot copy a MongoDB database."])
+        #expect(result.problems == ["The connection mongodb uses a MongoDB server that is no Nexus instance. So this workspace would share it with the main site."])
+    }
+
+    private func mongoDBURLConnection(_ url: String, setting: ConfigSetting? = nil) -> [String: ConfigSetting] {
+        [
+            "database.connections.mongodb.driver": ConfigSetting(value: .text("mongodb")),
+            "database.connections.mongodb.dsn": setting ?? keyed(.text(url), "MONGODB_URI"),
+        ]
+    }
+
+    private func mongoDBPlan(_ settings: [String: ConfigSetting]) -> WorkspaceEnvPlan {
+        let all = settings.merging(["database.default": ConfigSetting(value: .text("mongodb"))]) { own, _ in own }
+
+        return WorkspaceEnvPlan(
+            configuration: LaravelConfiguration(version: "12.0.0", settings: all, databaseConnections: ["mongodb"], redisConnections: []),
+            request: WorkspaceEnvRequest(workspace: "ticket-1", mainFolder: "/work/shop", workspaceFolder: "/work/ticket-1", mysqlPorts: [13306], postgresqlPorts: [], mongodbPorts: [27017], redisPorts: [])
+        )
+    }
+
+    @Test func aMongoDBURLOnANexusMongoDBGetsTheServerOfTheWorkspace() {
+        let result = mongoDBPlan(mongoDBURLConnection("mongodb://localhost:27017/shop?replicaSet=nexus"))
+
+        #expect(result.serverURLKeys == ["MONGODB_URI"])
+        #expect(result.serverURLs == ["MONGODB_URI": "mongodb://localhost:27017/shop?replicaSet=nexus"])
+        #expect(result.serverPorts == [27017])
+        #expect(result.connections == ["mongodb": 27017])
+        #expect(result.databases == [WorkspaceDatabase(name: "shop", port: 27017, isDefault: true)])
+        #expect(result.database == "shop")
+        #expect(result.problems.isEmpty)
+    }
+
+    @Test func aMongoDBHostAndPortOnANexusMongoDBGetThePortOfTheWorkspace() {
+        let result = mongoDBPlan([
+            "database.connections.mongodb.driver": ConfigSetting(value: .text("mongodb")),
+            "database.connections.mongodb.host": keyed(.text("localhost"), "MONGODB_HOST"),
+            "database.connections.mongodb.port": keyed(.number(27017), "MONGODB_PORT"),
+            "database.connections.mongodb.database": keyed(.text("shop"), "MONGODB_DATABASE"),
+        ])
+
+        #expect(result.serverPortKeys == [27017: ["MONGODB_PORT"]])
+        #expect(result.keys == ["MONGODB_HOST": "127.0.0.1"])
+        #expect(result.connections == ["mongodb": 27017])
+        #expect(result.problems.isEmpty)
+    }
+
+    @Test(arguments: [
+        (["database.connections.mongodb.host": ConfigSetting(value: .text("127.0.0.1:27017"), keys: ["MONGODB_HOST"], exact: true)], "The connection mongodb has the port in its host. Put the server in MONGODB_URI, so Nexus can give this workspace its own port."),
+        (["database.connections.mongodb.host": ConfigSetting(value: .text("127.0.0.1"), keys: ["MONGODB_HOST"], exact: true)], "The connection mongodb has no port key that Nexus can change. Put the server in MONGODB_URI, so Nexus can give this workspace its own port."),
+        (["database.connections.mongodb.dsn": ConfigSetting(value: .text("mongodb://127.0.0.1:27017/shop"))], "The connection mongodb has a fixed MongoDB URL in config/database.php."),
+        (["database.connections.mongodb.dsn": ConfigSetting(value: .text("mongodb+srv://cluster.example.net/shop"), keys: ["MONGODB_URI"], exact: true)], "The connection mongodb names more than one MongoDB server, or its servers come from DNS (mongodb+srv). So Nexus cannot give this workspace its own server."),
+        (["database.connections.mongodb.dsn": ConfigSetting(value: .text("mongodb://127.0.0.1:27017,127.0.0.1:27018/shop"), keys: ["MONGODB_URI"], exact: true)], "The connection mongodb names more than one MongoDB server, or its servers come from DNS (mongodb+srv). So Nexus cannot give this workspace its own server."),
+    ])
+    func aMongoDBConnectionThatNexusCannotChangeIsNotIsolated(settings: [String: ConfigSetting], problem: String) {
+        let result = mongoDBPlan(settings.merging(["database.connections.mongodb.driver": ConfigSetting(value: .text("mongodb"))]) { own, _ in own })
+
+        #expect(result.serverURLKeys.isEmpty)
+        #expect(result.serverPortKeys.isEmpty)
+        #expect(result.problems == [problem])
     }
 
     @Test func aWorkspaceKeyOfTheSiteIsolatesItsMongoDBConnection() {

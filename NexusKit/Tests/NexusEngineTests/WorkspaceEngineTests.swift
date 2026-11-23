@@ -2,6 +2,7 @@ import Foundation
 import NexusCore
 import NexusIPC
 import NexusLaravel
+import NexusMongoDB
 import NexusRuntime
 import NexusSupervisor
 import NexusWorkspaces
@@ -5551,12 +5552,12 @@ extension NexusEngineTests {
         return shop
     }
 
-    private func nodeEngine(root: URL, shop: URL, ports: [String: Int] = [:], runtimes: [(name: String, line: String)] = [("node", "24")], keys: [WorkspaceEnvKey]? = nil) throws -> NexusEngine {
+    private func nodeEngine(root: URL, shop: URL, ports: [String: Int] = [:], runtimes: [(name: String, line: String)] = [("node", "24")], keys: [WorkspaceEnvKey]? = nil, serverGate: any WorkspaceServerGate = NoServerGate()) throws -> NexusEngine {
         var state = EngineState()
         state.sites = [Site(host: "shop.test", folder: shop, php: "", workspaceKeys: keys, runsAs: .node, command: "exec sleep 300")]
         state.appPorts[RealPath.of(shop)] = freePort()
         state.ports.merge(ports) { _, port in port }
-        return try makeSiteEngine(root: root, state: state, runtimes: runtimes)
+        return try makeSiteEngine(root: root, state: state, runtimes: runtimes, serverGate: serverGate)
     }
 
     @Test func aNodeWorkspaceGetsTheEnvFilesOfTheMainCheckoutWithItsOwnHosts() async throws {
@@ -5714,6 +5715,117 @@ extension NexusEngineTests {
             #expect(copy == main)
             #expect(try await digest(client, "shop") == main)
             #expect(try await digest(own, "shop") != main)
+        }
+    }
+
+    // The count command without a query reads a number that MongoDB keeps for each collection. That
+    // number can be wrong after a copy of the files. So the documents are counted one by one.
+    private func count(_ port: Int, _ collection: String, in database: String, account: DatabaseAccount) async throws -> Int64? {
+        let connection = try await MongoDBConnection.connect(port: port, account: account)
+        let answer = try await connection.run(["aggregate": .string(collection), "pipeline": .array([.document(["$count": .string("n")])]), "cursor": .document([:])], on: database)
+        await connection.disconnect()
+        return answer["cursor"]?.document?["firstBatch"]?.array?.first?.document?["n"]?.int64 ?? 0
+    }
+
+    private func insert(_ value: Int32, into port: Int, account: DatabaseAccount) async throws {
+        let connection = try await MongoDBConnection.connect(port: port, account: account)
+        try await connection.run(["insert": .string("orders"), "documents": .array([.document(["n": .int32(value)])])], on: "shop")
+        await connection.disconnect()
+    }
+
+    // NEXUS_REAL_MONGOD and NEXUS_REAL_MONGODB_TOOLS, as in RealMongoDBTests. An instance with a
+    // password runs with its key file and a login, and its clone too.
+    @Test(.enabled(if: realMongod != nil && realMongoDBTools != nil), .timeLimit(.minutes(5)), arguments: [DatabaseAccount.newInstance, DatabaseAccount(user: "nexus", password: "s3cret pw")])
+    func aRealNodeWorkspaceGetsAMongoDBCloneDuringWritesWakesOnAConnectionAndKeepsADump(account: DatabaseAccount) async throws {
+        let root = shortTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = "mongodb-8.0"
+        let port = freePort()
+        let shop = try await nodeApplication(in: root, files: [
+            ".env": "MONGODB_URI=mongodb://localhost:\(port)/shop?replicaSet=nexus\n",
+        ], package: #"{"scripts":{"dev":"sleep 300"},"dependencies":{"mongoose":"^8.0.0"}}"#)
+        let gate = WorkspacePortGate()
+        let engine = try nodeEngine(root: root, shop: shop, ports: [id: port], runtimes: [], serverGate: gate)
+        let worktree = root.appending(path: "fix", directoryHint: .isDirectory)
+        let paths = await engine.paths
+        try installLinked("mongodb", line: "8.0", bin: URL(filePath: try #require(Self.realMongod)).deletingLastPathComponent(), paths: paths)
+        try installLinked(MongoDBToolsPackage.name, line: MongoDBToolsPackage.line, bin: URL(filePath: try #require(Self.realMongoDBTools)).appending(path: "bin"), paths: paths)
+
+        try await whileRunning(engine) {
+            await engine.beginIdleStops()
+            _ = await engine.handle(.start(service: id))
+
+            if !account.password.isEmpty, case .failure(let message) = await engine.handle(.setAccount(instance: id, account: account)) {
+                Issue.record("the account did not change: \(message)")
+            }
+
+            let rows: [BSONValue] = (1...100).map { .document(["n": .int32(Int32($0))]) }
+            let main = try await MongoDBConnection.connect(port: port, account: account)
+            try await main.run(["insert": .string("orders"), "documents": .array(rows)], on: "shop")
+
+            let writer = Task {
+                var written: Int64 = 0
+
+                while !Task.isCancelled {
+                    try await self.insert(Int32(1000 + written), into: port, account: account)
+                    written += 1
+                }
+
+                return written
+            }
+
+            try await settle(engine)
+            try await git("worktree", "add", "-q", "-b", "fix", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            writer.cancel()
+            let written = try await writer.value
+
+            let workspace = try #require(await workspaces(engine).first)
+            let server = try #require(try await record(engine, of: shop).servers.first)
+            let own = try await MongoDBConnection.connect(port: server.port)
+            let hello = try await own.run(["hello": .int32(1)])
+            let listedWithoutLogin = (try? await MongoDBServer(own).databases()) != nil
+            let refusedWithoutLogin = account.password.isEmpty || !listedWithoutLogin
+            let cloned = try #require(try await count(server.port, "orders", in: "shop", account: account))
+            try await insert(-1, into: server.port, account: account)
+            await own.disconnect()
+
+            let isLocked = try await MongoDBServer(main).isLocked()
+            await main.disconnect()
+
+            let socket = paths.workspaceDatabaseSocket(.mongodb, line: "8.0", port: server.port).path(percentEncoded: false)
+            let hadSocket = FileManager.default.fileExists(atPath: socket)
+
+            #expect(workspace.state == .ready)
+            #expect(text(of: worktree.appending(path: ".env")) == "MONGODB_URI=mongodb://127.0.0.1:\(server.port)/shop?replicaSet=nexus\n")
+            #expect(hello["isWritablePrimary"]?.bool == true)
+            #expect(hello["hosts"]?.array?.compactMap(\.string) == ["127.0.0.1:\(server.port)"])
+            #expect((100...(100 + written)).contains(cloned))
+            #expect(try await count(port, "orders", in: "shop", account: account) == 100 + written)
+            #expect(try await count(server.port, "orders", in: "shop", account: account) == cloned + 1)
+            #expect(!isLocked)
+            #expect(hadSocket)
+            #expect(refusedWithoutLogin)
+
+            _ = await engine.handle(.stopWorkspace(host: "shop.test", name: "fix"))
+            try await settle(engine)
+            let stopped = !FileManager.default.fileExists(atPath: socket)
+            let woken = try await count(server.port, "orders", in: "shop", account: account)
+
+            #expect(stopped)
+            #expect(woken == cloned + 1)
+
+            try await git("worktree", "remove", "--force", worktree.path(percentEncoded: false), in: shop)
+            try await settle(engine)
+            await engine.startDatabaseRemovals().value
+
+            let dump = try #require(await engine.dumps().first)
+            let restored = await engine.handle(.restoreDump(file: dump.name, instance: id, name: "restored"))
+
+            #expect(dump.name.hasSuffix("-\(id)-shop_fix.archive.gz"))
+            #expect(!FileManager.default.fileExists(atPath: server.folder))
+            #expect(restored == .done(message: "\(dump.name) is restored into \(id) as restored."))
+            #expect(try await count(port, "orders", in: "restored", account: account) == cloned + 1)
         }
     }
 }

@@ -113,6 +113,8 @@ struct DatabaseSnapshot {
 
     // What belongs to the server of the source and not to a new server. A MySQL server takes its
     // identity from auto.cnf. PostgreSQL does not start with the process file of another server.
+    // mongod.lock holds the process of the source. The clone keeps nexus.key, because the login
+    // of its set needs it.
     static func removeFilesOfSource(from folder: String, kind: DatabaseKind) throws {
         let manager = FileManager.default
 
@@ -122,11 +124,14 @@ struct DatabaseSnapshot {
     }
 
     private static func belongsToSource(_ name: String, kind: DatabaseKind) -> Bool {
-        guard kind.usesMySQLProtocol else {
-            return name == "postmaster.pid" || name == "postmaster.opts"
+        switch kind {
+        case .mysql, .mariadb:
+            name == "auto.cnf" || name.hasPrefix("binlog.") || name.hasSuffix(".pid")
+        case .postgresql:
+            name == "postmaster.pid" || name == "postmaster.opts"
+        case .mongodb:
+            name == "mongod.lock"
         }
-
-        return name == "auto.cnf" || name.hasPrefix("binlog.") || name.hasSuffix(".pid")
     }
 
     // The read lock waits for running statements and stops new writes. A writer waits and goes on

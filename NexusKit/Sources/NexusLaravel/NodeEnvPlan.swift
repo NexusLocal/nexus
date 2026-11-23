@@ -36,29 +36,31 @@ extension WorkspaceEnvPlan {
         }
 
         let urlKeys = Set(files.flatMap { file in file.filter { ConnectionURL($0.value) != nil }.keys })
-
-        for key in urlKeys.sorted(by: Self.databaseURLFirst) {
-            for value in files.compactMap({ $0[key] }) {
-                if let url = ConnectionURL(value) {
-                    add(url, value: value, key: key, values: merged, request: request)
-                }
-            }
-        }
-
         let mongoDBKeys = Set(files.flatMap { file in file.filter { ConnectionURL.isMongoDB($0.value) }.keys })
+        let ownMongoDBKeys = mongoDBKeys.filter { request.isOwn($0, mainValue: merged[$0]) }
 
+        addURLs(urlKeys, of: files, values: merged, request: request) { $0.kind != .mongodb }
+
+        // A MongoDB server does not count as the database that the warning means.
         let usesOnlyMongoDB = canUseOnlyMongoDB && (usesMongoDB || !mongoDBKeys.isEmpty)
+        let hasOtherServer = serverPorts.contains { !request.mongodbPorts.contains($0) }
 
-        if usesDatabaseClient, !usesOnlyMongoDB, serverPorts.isEmpty, redisKeys.isEmpty, problems.isEmpty, warnings.isEmpty {
+        if usesDatabaseClient, !usesOnlyMongoDB, !hasOtherServer, redisKeys.isEmpty, problems.isEmpty, warnings.isEmpty {
             warnings.append("Nexus found no database key in the env files of the app. When the app reaches a Nexus database in another way, this workspace uses the database of the main site.")
         }
 
-        for key in mongoDBKeys.filter({ !request.isOwn($0, mainValue: merged[$0]) }).sorted() {
-            warnings.append("\(key) names a MongoDB server. Nexus cannot copy it. So this workspace shares that server with the main site.")
+        // A workspace key of the site for a MongoDB URL gives each workspace its own server or
+        // database (D45).
+        addURLs(urlKeys.subtracting(ownMongoDBKeys), of: files, values: merged, request: request) { $0.kind == .mongodb }
+
+        for key in mongoDBKeys.subtracting(urlKeys).subtracting(ownMongoDBKeys).sorted() {
+            warnings.append("\(key) gets its MongoDB servers from DNS (mongodb+srv), for example from MongoDB Atlas. So this workspace shares that server with the main site.")
         }
 
-        if usesMongoDB, mongoDBKeys.isEmpty, !request.ownKeys.keys.contains(where: { $0.uppercased().contains("MONGO") }) {
-            warnings.append("The app uses MongoDB. Nexus found no MongoDB URL in its env files, and it cannot copy a MongoDB database. So this workspace can share it with the main site.")
+        let hasMongoDBServer = serverPorts.contains { request.mongodbPorts.contains($0) }
+
+        if usesMongoDB, mongoDBKeys.isEmpty, !hasMongoDBServer, !request.ownKeys.keys.contains(where: { $0.uppercased().contains("MONGO") }) {
+            warnings.append("The app uses MongoDB. Nexus found no MongoDB URL in its env files. So this workspace can share the MongoDB database with the main site.")
         }
 
         redisKeys.sort()
@@ -67,6 +69,16 @@ extension WorkspaceEnvPlan {
             let mail = NodeMail.nexusKeys(merged, user: Self.hostPlaceholder, nexusPort: port)
             mailKeys = mail.keys
             warnings += mail.warnings
+        }
+    }
+
+    private mutating func addURLs(_ keys: Set<String>, of files: [[String: String]], values: [String: String], request: WorkspaceEnvRequest, where isWanted: (ConnectionURL) -> Bool) {
+        for key in keys.sorted(by: Self.databaseURLFirst) {
+            for value in files.compactMap({ $0[key] }) {
+                if let url = ConnectionURL(value), isWanted(url) {
+                    add(url, value: value, key: key, values: values, request: request)
+                }
+            }
         }
     }
 
@@ -79,7 +91,19 @@ extension WorkspaceEnvPlan {
     }
 
     private mutating func add(_ url: ConnectionURL, value: String, key: String, values: [String: String], request: WorkspaceEnvRequest) {
-        let expanded = url.usesVariables ? ConnectionURL(Self.expanding(value, with: values)) : url
+        let text = url.usesVariables ? Self.expanding(value, with: values) : value
+        let expanded = url.usesVariables ? ConnectionURL(text) : url
+
+        // A list of servers on other computers is a cluster, for example of MongoDB Atlas.
+        if let expanded, expanded.namesServers {
+            if MongoDBURL.hosts(in: text).contains(where: ConnectionURL.isLocal) {
+                Self.note(&problems, "\(key) names more than one MongoDB server, so Nexus cannot change that URL.")
+            } else {
+                Self.note(&warnings, "\(key) names a server on another computer, so this workspace shares that server with the main site.")
+            }
+
+            return
+        }
 
         guard let expanded, expanded.isReadable else {
             Self.note(&problems, "Nexus cannot read the URL in \(key), so it cannot change that URL.")
@@ -119,7 +143,7 @@ extension WorkspaceEnvPlan {
             if !redisKeys.contains(key) {
                 redisKeys.append(key)
             }
-        case .mysql, .postgresql:
+        case .mysql, .postgresql, .mongodb:
             serverURLKeys.insert(key)
             urlPorts.insert(expanded.port)
             addDatabase(expanded.path, port: expanded.port)
@@ -260,6 +284,10 @@ extension WorkspaceEnvPlan {
             return .postgresql
         }
 
+        if request.mongodbPorts.contains(port) {
+            return .mongodb
+        }
+
         return request.redisPorts.contains(port) ? .redis : nil
     }
 
@@ -268,6 +296,7 @@ extension WorkspaceEnvPlan {
         case .mysql: request.mysqlPorts
         case .postgresql: request.postgresqlPorts
         case .redis: request.redisPorts
+        case .mongodb: request.mongodbPorts
         }
     }
 
@@ -280,6 +309,10 @@ extension WorkspaceEnvPlan {
 
         if name.contains("MYSQL") || name.contains("MARIADB") {
             return .mysql
+        }
+
+        if name.contains("MONGO") {
+            return .mongodb
         }
 
         return name.contains("REDIS") ? .redis : nil

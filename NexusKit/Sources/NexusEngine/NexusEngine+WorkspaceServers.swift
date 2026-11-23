@@ -90,6 +90,18 @@ extension NexusEngine {
         await syncBackgroundProcesses().value
         try await waitForServer(tools, port: server.port)
 
+        // A MongoDB database exists from its first write. So a database of the application that is
+        // not there gives no error (owner, 2026-11-23). Only WordPress has a dump, and it has no
+        // MongoDB.
+        guard tools.kind != .mongodb else {
+            if emptying, await record(workspace, key: key)?.emptiedServers.contains(server.folder) != true {
+                try await emptyMongoDBDatabases(databases.map(\.name), port: server.port, account: server.account)
+                try await markEmptied(server, workspace: workspace, key: key)
+            }
+
+            return nil
+        }
+
         let (client, work) = try serverClient(tools, server)
         defer { try? FileManager.default.removeItem(at: work) }
 
@@ -181,6 +193,10 @@ extension NexusEngine {
         try await clone(tools, to: started.folder)
         try DatabaseSnapshot.removeFilesOfSource(from: started.folder, kind: tools.kind)
 
+        if tools.kind == .mongodb {
+            try await moveReplicaSet(ofClone: started.folder, tools: tools, to: port)
+        }
+
         var finished = started
 
         finished.isComplete = true
@@ -207,6 +223,11 @@ extension NexusEngine {
         }
 
         guard !isCloned else {
+            return
+        }
+
+        guard tools.kind != .mongodb else {
+            try await cloneDuringLock(tools, source: source, target: target)
             return
         }
 
@@ -243,9 +264,11 @@ extension NexusEngine {
 
         // A second probe right after the first one can fail while the server still handles the
         // first one. So the answer of the wait counts.
-        let takesQueries = tools.kind == .postgresql
-            ? try await takesQueries(tools, port: port, until: deadline)
-            : accepts
+        let takesQueries = switch tools.kind {
+        case .postgresql: try await takesQueries(tools, port: port, until: deadline)
+        case .mongodb: try await becomesPrimary(port: port, until: deadline)
+        case .mysql, .mariadb: accepts
+        }
 
         guard takesQueries else {
             throw RuntimeError.unsupported("The database server of this workspace does not start on port \(port). See \(paths.log(tools.id).path(percentEncoded: false)).")

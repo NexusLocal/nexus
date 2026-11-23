@@ -30,6 +30,7 @@ public struct WorkspaceEnvRequest: Sendable {
     public let workspaceFolder: String
     public let mysqlPorts: Set<Int>
     public let postgresqlPorts: Set<Int>
+    public let mongodbPorts: Set<Int>
     public let redisPorts: Set<Int>
     // The socket file of each database instance, by its port. A main checkout can reach an instance
     // through its socket.
@@ -43,12 +44,13 @@ public struct WorkspaceEnvRequest: Sendable {
     // server that Nexus does not manage.
     public let ownKeys: [String: String]
 
-    public init(workspace: String, mainFolder: String, workspaceFolder: String, mysqlPorts: Set<Int>, postgresqlPorts: Set<Int>, redisPorts: Set<Int>, instanceSockets: [Int: String] = [:], realMainFolder: String? = nil, smtpPort: Int? = nil, ownKeys: [String: String] = [:]) {
+    public init(workspace: String, mainFolder: String, workspaceFolder: String, mysqlPorts: Set<Int>, postgresqlPorts: Set<Int>, mongodbPorts: Set<Int> = [], redisPorts: Set<Int>, instanceSockets: [Int: String] = [:], realMainFolder: String? = nil, smtpPort: Int? = nil, ownKeys: [String: String] = [:]) {
         self.workspace = workspace
         self.mainFolder = mainFolder
         self.workspaceFolder = workspaceFolder
         self.mysqlPorts = mysqlPorts
         self.postgresqlPorts = postgresqlPorts
+        self.mongodbPorts = mongodbPorts
         self.redisPorts = redisPorts
         self.instanceSockets = instanceSockets
         self.realMainFolder = realMainFolder
@@ -94,6 +96,9 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
     // holds the ports of the instances in these URLs. A Redis key with a URL is in redisKeys too,
     // and it gets the URL with the index of the workspace.
     public var serverURLKeys: Set<String> = []
+    // The URL of a key in serverURLKeys as the configuration of a Laravel application has it. That
+    // URL can be the default in config/database.php, and the .env then does not have the key.
+    public var serverURLs: [String: String] = [:]
     public var urlPorts: Set<Int> = []
     public var redisURLKeys: Set<String> = []
     // What a workspace shares with the main site without a Not isolated state. A Node.js app gets
@@ -194,19 +199,8 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
             return
         }
 
-        // A MongoDB connection can have its database in its URL. config/database.php of a new Laravel
-        // application has no such connection. So a connection that is there is in use. A workspace key
-        // of the site for this connection gives each workspace its own server or database.
         if driver == "mongodb" {
-            let parts = ["dsn", "host", "port", "database"].compactMap { Self.setting($0, at: path, settings: settings) }
-            let isIsolatedByUser = parts.contains { part in
-                part.keys.contains { request.isOwn($0, mainValue: part.value.description) }
-            }
-
-            if !isIsolatedByUser {
-                problems.append("The connection \(name) uses MongoDB. Nexus cannot copy a MongoDB database.")
-            }
-
+            add(mongoDB: name, at: path, isDefault: isDefault, settings: settings, request: request)
             return
         }
 
@@ -271,6 +265,96 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
         if !databases.contains(where: { $0.name == database && $0.port == port }) {
             databases.append(WorkspaceDatabase(name: database, port: port, isDefault: isDefault))
         }
+    }
+
+    // config/database.php of a new Laravel application has no MongoDB connection. So a connection
+    // that is there is in use, and a server that Nexus cannot change gives Not isolated (decision 9
+    // of group 6). The URL in dsn gets the port of the workspace (D67). A workspace key of the site
+    // for this connection gives each workspace its own server or database.
+    private mutating func add(mongoDB name: String, at path: String, isDefault: Bool, settings: [String: ConfigSetting], request: WorkspaceEnvRequest) {
+        let parts = ["dsn", "host", "port", "database"].compactMap { Self.setting($0, at: path, settings: settings) }
+        let isIsolatedByUser = parts.contains { part in
+            part.keys.contains { request.isOwn($0, mainValue: part.value.description) }
+        }
+
+        guard !isIsolatedByUser, let connection = LaravelMongoDBConnection(path: path, settings: settings) else {
+            return
+        }
+
+        guard let port = connection.port else {
+            problems.append("The connection \(name) names more than one MongoDB server, or its servers come from DNS (mongodb+srv). So Nexus cannot give this workspace its own server.")
+            return
+        }
+
+        guard ConnectionURL.isLocal(connection.host), request.mongodbPorts.contains(port) else {
+            problems.append("The connection \(name) uses a MongoDB server that is no Nexus instance. So this workspace would share it with the main site.")
+            return
+        }
+
+        if let dsn = Self.setting("dsn", at: path, settings: settings), !dsn.value.isEmpty {
+            guard let key = dsn.keys.first, dsn.exact else {
+                problems.append("The connection \(name) has a fixed MongoDB URL in config/database.php.")
+                return
+            }
+
+            serverURLKeys.insert(key)
+            serverURLs[key] = dsn.value.description
+            urlPorts.insert(port)
+        } else {
+            guard addMongoDBPortKey(of: name, at: path, port: port, settings: settings) else {
+                return
+            }
+        }
+
+        connections[name] = port
+
+        guard !connection.database.isEmpty else {
+            return
+        }
+
+        if isDefault {
+            database = connection.database
+        }
+
+        if !databases.contains(where: { $0.name == connection.database && $0.port == port }) {
+            databases.append(WorkspaceDatabase(name: connection.database, port: port, isDefault: isDefault))
+        }
+    }
+
+    // A host with the port in one text, as in 127.0.0.1:27017, or a list of hosts gets no port of its
+    // own (owner, 2026-11-23).
+    private mutating func addMongoDBPortKey(of name: String, at path: String, port: Int, settings: [String: ConfigSetting]) -> Bool {
+        let host = LaravelMongoDBConnection.hostSetting(path: path, settings: settings)?.value.description ?? ""
+        let hasPortInHost = host.contains(":") && !Self.localHosts.contains(host)
+        let usePortKey = "Put the server in MONGODB_URI, so Nexus can give this workspace its own port."
+
+        guard settings["\(path).host.1"] == nil else {
+            problems.append("The connection \(name) names more than one MongoDB server. So Nexus cannot give this workspace its own server.")
+            return false
+        }
+
+        guard !hasPortInHost else {
+            problems.append("The connection \(name) has the port in its host. \(usePortKey)")
+            return false
+        }
+
+        guard let portSetting = Self.setting("port", at: path, settings: settings), let portKey = portSetting.keys.first, portSetting.exact else {
+            problems.append("The connection \(name) has no port key that Nexus can change. \(usePortKey)")
+            return false
+        }
+
+        // Connections can share one key. The default connection goes first, and it keeps that port.
+        guard !serverPortKeys.contains(where: { $0.key != port && $0.value.contains(portKey) }) else {
+            return false
+        }
+
+        addHost(of: name, at: path, settings: settings)
+
+        if serverPortKeys[port]?.contains(portKey) != true {
+            serverPortKeys[port, default: []].append(portKey)
+        }
+
+        return true
     }
 
     private mutating func addHost(of name: String, at path: String, settings: [String: ConfigSetting]) {

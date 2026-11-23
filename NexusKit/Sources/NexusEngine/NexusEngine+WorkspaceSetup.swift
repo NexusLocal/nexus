@@ -684,9 +684,11 @@ extension NexusEngine {
         let pairs = Workspace.hostPairs(of: sites, workspace: workspace.name, tld: state.tld)
         let hosts = (pairs + Workspace.pairsFromOtherTLDs(pairs, tld: state.tld)).map { HostRewrite(from: $0.from, to: $0.to) }
         let serverKeys = servers.flatMap { server in (plan.serverPortKeys[server.mainPort] ?? []).map { ($0, String(server.port)) } }
+        let urlKeys = Self.serverURLValues(of: plan, in: text, servers: servers)
         let mail = plan.mailKeys.mapValues { $0.replacing(WorkspaceEnvPlan.hostPlaceholder, with: host) }
         let isolating = plan.keys
             .merging(serverKeys) { _, port in port }
+            .merging(urlKeys) { _, url in url }
             .merging(workspace.redisIndexes.mapValues(String.init)) { _, redis in redis }
             .merging(mail) { database, _ in database }
         let reverb = workspace.ports["reverb"].map { port in Dictionary(uniqueKeysWithValues: plan.reverbPortKeys.map { ($0, String(port)) }) } ?? [:]
@@ -809,20 +811,37 @@ extension NexusEngine {
         ))
     }
 
+    // A URL keeps its user, its password, its database and its query. Only the host and the port
+    // change (D67). A URL that names a server of the workspace already stays, because a workspace
+    // keeps its ports. A key that the .env does not have gets the URL of the configuration.
+    static func serverURLValues(of plan: WorkspaceEnvPlan, in text: String, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)]) -> [String: String] {
+        let values = EnvFile.values(in: text)
+
+        return Dictionary(uniqueKeysWithValues: plan.serverURLKeys.compactMap { key in
+            guard let value = values[key] ?? plan.serverURLs[key], let url = ConnectionURL(value), url.isLocal, let server = servers.first(where: { $0.mainPort == url.port }) else {
+                return nil
+            }
+
+            return (key, ConnectionURL.pointing(value, toPort: server.port))
+        })
+    }
+
     // The ports of the Nexus instances of each kind, and of the servers of the workspace.
     func workspaceEnvRequest(workspace: String, mainFolder: String, workspaceFolder: String, realMainFolder: String? = nil, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)], ownKeys: [String: String] = [:]) async throws -> WorkspaceEnvRequest {
         let instances = try await databaseAddresses()
         let sockets = Dictionary(instances.map { ($0.port, $0.socket) }) { first, _ in first }
         let redisPorts = Set(try await redisInstances().map(\.port))
-        let mysqlServers = servers.filter(\.tools.kind.usesMySQLProtocol).map(\.port)
-        let postgresqlServers = servers.filter { $0.tools.kind == .postgresql }.map(\.port)
+        let ports = { (kinds: Set<DatabaseKind>) in
+            Set((instances.map { ($0.tools.kind, $0.port) } + servers.map { ($0.tools.kind, $0.port) }).filter { kinds.contains($0.0) }.map(\.1))
+        }
 
         return WorkspaceEnvRequest(
             workspace: workspace,
             mainFolder: mainFolder,
             workspaceFolder: workspaceFolder,
-            mysqlPorts: Set(instances.filter(\.tools.kind.usesMySQLProtocol).map(\.port)).union(mysqlServers),
-            postgresqlPorts: Set(instances.filter { $0.tools.kind == .postgresql }.map(\.port)).union(postgresqlServers),
+            mysqlPorts: ports([.mysql, .mariadb]),
+            postgresqlPorts: ports([.postgresql]),
+            mongodbPorts: ports([.mongodb]),
             redisPorts: redisPorts,
             instanceSockets: sockets,
             realMainFolder: realMainFolder,
@@ -951,6 +970,7 @@ extension NexusEngine {
             + plan.keys.sorted { $0.key < $1.key }.map { WorkspaceEnvKey(key: $0.key, value: $0.value) }
             + plan.mailKeys.sorted { $0.key < $1.key }.map { WorkspaceEnvKey(key: $0.key, value: $0.value) }
             + plan.serverPortKeys.values.joined().sorted().map { WorkspaceEnvKey(key: $0, value: "the port of the database server of the workspace") }
+            + plan.serverURLKeys.sorted().map { WorkspaceEnvKey(key: $0, value: "the URL with the database server of the workspace") }
             + plan.redisKeys.map { WorkspaceEnvKey(key: $0, value: "a free Redis index") }
             + reverbKeys.map { WorkspaceEnvKey(key: $0, value: "{port:reverb}") }
 

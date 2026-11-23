@@ -52,7 +52,8 @@ enum ProbeScript {
     // and of the main site are the same, so only the server shows a wrong port. This boots the whole
     // application, because a service provider can change a connection. A connection that fails gives
     // no port. A connection with read and write settings has a server for each, and only the write
-    // server takes the data of the application.
+    // server takes the data of the application. A MongoDB server of Nexus is a replica set, and hello
+    // gives its own address in me. The driver goes to the primary of the set.
     static let connectionSource = #"""
     ini_set('display_errors', 'stderr');
 
@@ -67,6 +68,14 @@ enum ProbeScript {
         foreach (array_slice($argv, 2) as $name) {
             try {
                 $connection = $app['db']->connection($name);
+
+                if ($connection->getDriverName() === 'mongodb') {
+                    $client = method_exists($connection, 'getClient') ? $connection->getClient() : $connection->getMongoClient();
+                    $hello = $client->getManager()->executeCommand('admin', new MongoDB\Driver\Command(['hello' => 1]))->toArray()[0];
+                    $ports[$name] = [(int) substr(strrchr((string) ($hello->me ?? ''), ':'), 1)];
+                    continue;
+                }
+
                 $question = $connection->getDriverName() === 'pgsql' ? "select current_setting('port') as port" : 'select @@port as port';
                 $ports[$name] = array_values(array_unique([
                     (int) $connection->selectOne($question, [], false)->port,

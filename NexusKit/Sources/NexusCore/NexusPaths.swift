@@ -192,12 +192,17 @@ public struct NexusPaths: Sendable, Equatable {
         return run.appending(path: name, directoryHint: .notDirectory)
     }
 
+    // A MongoDB server of a workspace has a socket, because the gate of its port sees with it that
+    // the server is ready. mongod names that socket after the port in the folder that it gets.
     public func workspaceDatabaseSocket(_ kind: DatabaseKind, line: String, port: Int) -> URL {
-        guard kind != .postgresql else {
-            return databaseSocket(kind, line: line, port: port)
+        switch kind {
+        case .postgresql:
+            databaseSocket(kind, line: line, port: port)
+        case .mongodb:
+            run.appending(path: "mongodb-\(port).sock", directoryHint: .notDirectory)
+        case .mysql, .mariadb:
+            run.appending(path: "\(kind.rawValue)-\(line)-\(port).sock", directoryHint: .notDirectory)
         }
-
-        return run.appending(path: "\(kind.rawValue)-\(line)-\(port).sock", directoryHint: .notDirectory)
     }
 
     // The clones of the data folders of the instances (D66).
