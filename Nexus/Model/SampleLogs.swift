@@ -31,7 +31,9 @@ enum SampleLogs {
         let now = Date.now.timeIntervalSince1970
 
         try? Data(day(root: root, start: now - 30 * 3600, count: 300, random: &generator).utf8).write(to: logs.appending(path: "laravel-2026-11-22.log"))
-        try? Data(day(root: root, start: now - 3 * 3600, count: 120, random: &generator).utf8).write(to: logs.appending(path: "laravel.log"))
+        // The newest entry is an exception, so the screen opens with a stack trace.
+        let newest = exception(root: root, time: now - 90)
+        try? Data((day(root: root, start: now - 3 * 3600, count: 120, random: &generator) + newest).utf8).write(to: logs.appending(path: "laravel.log"))
 
         let browser = (0..<3).map { index in
             line(now - Double(2400 - index * 60), "local", "ERROR", "[browser] Uncaught TypeError: Cannot read properties of undefined (reading 'total')", #"{"url":"https://shop.test/checkout"}"#)

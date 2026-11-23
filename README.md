@@ -38,6 +38,8 @@
   the errors, the dumps and the mail of your sites. You decide what an agent can do.
 - 🐞 **See what your code does.** Each `dump()`, query, log line and queue job of a request in one
   place. Xdebug runs only when you debug.
+- 📜 **The logs of your apps.** `laravel.log`, the `debug.log` of WordPress and the PHP errors of each
+  site, live, with a filter by level and a search over all files.
 - 🔗 **Share a site with one click.** Send a client or your phone a public link to a local site. With
   a password, hidden errors and the requests of each webhook.
 - 🧱 **WordPress, done right.** Bedrock, multisite on subdomains and WP-CLI. Change the URLs in one
@@ -134,6 +136,7 @@ turns it on for each agent that Nexus finds. An agent then works with your sites
   in it. No mail leaves your Mac.
 - **Workspaces.** In a git worktree the agent uses the URL and the database of that workspace.
 - **Dumps.** The agent reads the dumps, the queries and the log lines of a request.
+- **Logs.** The agent reads the log files of the app of a site, for example only the errors.
 - **You decide.** An agent can only look, look and set up, or also remove. No agent can delete a
   database or your files.
 - **Safe tests.** When the tests of a Laravel site use your development database, Nexus warns you
@@ -153,6 +156,21 @@ an N+1 query. A click on a file opens your code editor at that line.
   opens a web page with the same list.
 - **Xdebug only when you debug.** Only a request that starts a debug session uses Xdebug. So your
   normal pages stay fast. `nexus debug artisan my:command` runs one command with Xdebug.
+
+## 📜 The logs of your apps
+
+The Logs screen under Tools shows the log files of the app of each site and workspace: `storage/logs`
+of Laravel, the `debug.log` of WordPress, the PHP errors with their time, the output of a Node.js
+app and the requests. A new entry shows at once. "Show logs" in the menu of a site opens it.
+
+- **Easy to read.** Each level has its color, each day has its line, and each time is the time of
+  your Mac. An exception shows the line of your app first. The frames in `vendor/` fold into one row.
+- **Find it.** Filter by level, search all files at once, or find all entries with the same
+  `trace_id`. Equal entries show as one row with a count. The entries of your test runs stay hidden
+  until you want them.
+- **Large logs too.** A log of 281 MB opens in a moment.
+- **In the terminal, the browser and your agent.** `nexus logs --level error --follow` shows each
+  new error. The web page of the dumps has a Logs page. Agents read the logs through the MCP server.
 
 ## 🔗 Share a site
 
@@ -282,6 +300,7 @@ nexus composer install        # Composer with that PHP
 nexus wp plugin list          # WP-CLI with that PHP
 nexus errors                  # the newest errors of the site in this folder
 nexus dumps --follow          # each new dump of your sites
+nexus logs --level error      # the newest errors in the log files of the app in this folder
 nexus share                   # a public link to the site in this folder
 nexus debug artisan my:task   # one command with Xdebug
 ```

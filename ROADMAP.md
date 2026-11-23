@@ -9,7 +9,6 @@ In this order:
 
 1. **PHP 8.6**, when Xdebug, Redis, APCu, pcov, igbinary, YAML, Imagick and memcached have releases
    that support it.
-2. **A log viewer** for the logs of your apps.
 
 ## Later
 
@@ -17,6 +16,8 @@ In this order:
 
 ## Done recently
 
+- **0.9.0:** a log viewer for the logs of your apps, on a screen, on a web page, with `nexus logs`
+  and for coding agents, and the PHP errors of each site with their time.
 - **0.8.0:** MongoDB 7.0, 8.0 and 9.0 as a service with transactions, the import of a MongoDB
   database from Docker, Atlas or a dump file, and a MongoDB server of its own for each workspace.
 - **0.7.3:** PostGIS and pgRouting for PostgreSQL 15 to 19, the `mongodb` extension for PHP 8.2 to
