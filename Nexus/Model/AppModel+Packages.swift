@@ -178,7 +178,7 @@ extension AppModel {
         case "node": "Node"
         case "mailpit": "Mailpit"
         case "wp-cli": "WP-CLI"
-        case MongoDBToolsPackage.name: "MongoDB Database Tools"
+        case MongoDBToolsPackage.name: "MongoDB Tools"
         default: ServiceKind(package: name)?.title ?? name
         }
     }
