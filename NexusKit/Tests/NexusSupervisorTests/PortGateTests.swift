@@ -117,12 +117,14 @@ struct PortGateTests {
         wakes.all
     }
 
-    // A port above the ports of Nexus that no other test of this run got. A probe socket on the port
-    // can keep it for some milliseconds after its close, so the caller binds the port itself and
-    // tries another port when that fails.
+    // A port that no other test of this run got. It is above the ports of Nexus and Nexus Dev, and
+    // below the ports that macOS gives to outgoing connections (49152 and higher). So no other
+    // program gets the port after a close in a test. freePortAboveNexus of the engine tests uses
+    // 48001 to 49000. A probe socket on the port can keep it for some milliseconds after its close,
+    // so the caller binds the port itself and tries another port when that fails.
     static func freePort() -> Int {
         while true {
-            let port = Int.random(in: 50_001...60_000)
+            let port = Int.random(in: 47_001...48_000)
 
             if PortList.givenPorts.claim(port) {
                 return port

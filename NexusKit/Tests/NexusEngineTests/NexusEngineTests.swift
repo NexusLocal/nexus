@@ -204,9 +204,12 @@ struct NexusEngineTests {
         return Int(UInt16(bigEndian: bound.sin_port))
     }
 
+    // Above the ports of Nexus and Nexus Dev, and below the ports that macOS gives to outgoing
+    // connections (49152 and higher). So no other program gets the port after a close in a test.
+    // PortGateTests.freePort uses 47001 to 48000.
     func freePortAboveNexus() -> Int {
         while true {
-            let port = Int.random(in: 50_001...65_000)
+            let port = Int.random(in: 48_001...49_000)
             let listener = socket(AF_INET, SOCK_STREAM, 0)
             var address = sockaddr_in()
             address.sin_family = sa_family_t(AF_INET)
