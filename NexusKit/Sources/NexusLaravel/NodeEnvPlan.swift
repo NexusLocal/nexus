@@ -53,7 +53,10 @@ extension WorkspaceEnvPlan {
         // database (D45).
         addURLs(urlKeys.subtracting(ownMongoDBKeys), of: files, values: merged, request: request) { $0.kind == .mongodb }
 
-        for key in mongoDBKeys.subtracting(urlKeys).subtracting(ownMongoDBKeys).sorted() {
+        // A key can have a mongodb+srv URL in one file and another URL in another file.
+        let dnsKeys = Set(files.flatMap { file in file.filter { ConnectionURL.isMongoDB($0.value) && ConnectionURL($0.value) == nil }.keys })
+
+        for key in dnsKeys.subtracting(ownMongoDBKeys).sorted() {
             warnings.append("\(key) gets its MongoDB servers from DNS (mongodb+srv), for example from MongoDB Atlas. So this workspace shares that server with the main site.")
         }
 

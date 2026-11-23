@@ -688,7 +688,7 @@ extension NexusEngine {
         let mail = plan.mailKeys.mapValues { $0.replacing(WorkspaceEnvPlan.hostPlaceholder, with: host) }
         let isolating = plan.keys
             .merging(serverKeys) { _, port in port }
-            .merging(urlKeys) { _, url in url }
+            .merging(urlKeys.values) { _, url in url }
             .merging(workspace.redisIndexes.mapValues(String.init)) { _, redis in redis }
             .merging(mail) { database, _ in database }
         let reverb = workspace.ports["reverb"].map { port in Dictionary(uniqueKeysWithValues: plan.reverbPortKeys.map { ($0, String(port)) }) } ?? [:]
@@ -701,6 +701,7 @@ extension NexusEngine {
 
         let replaced = isolating.keys.filter { keys[$0] != isolating[$0] }.sorted()
         let problems = plan.problems
+            + urlKeys.problems
             + replaced.map { "The key \($0) of the site replaces the value that isolates this workspace." }
             + Self.cachedConfigurationProblem(in: folder)
 
@@ -813,17 +814,30 @@ extension NexusEngine {
 
     // A URL keeps its user, its password, its database and its query. Only the host and the port
     // change (D67). A URL that names a server of the workspace already stays, because a workspace
-    // keeps its ports. A key that the .env does not have gets the URL of the configuration.
-    static func serverURLValues(of plan: WorkspaceEnvPlan, in text: String, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)]) -> [String: String] {
+    // keeps its ports. A key that the .env does not have gets the URL of the configuration. A URL
+    // that Nexus cannot change gives Not isolated, for example a URL with ${DB_HOST} in the .env.
+    static func serverURLValues(of plan: WorkspaceEnvPlan, in text: String, servers: [(tools: DatabaseTools, mainPort: Int, port: Int)]) -> (values: [String: String], problems: [String]) {
         let values = EnvFile.values(in: text)
+        let ownPorts = Set(servers.map(\.port))
+        var changed: [String: String] = [:]
+        var problems: [String] = []
 
-        return Dictionary(uniqueKeysWithValues: plan.serverURLKeys.compactMap { key in
-            guard let value = values[key] ?? plan.serverURLs[key], let url = ConnectionURL(value), url.isLocal, let server = servers.first(where: { $0.mainPort == url.port }) else {
-                return nil
+        for key in plan.serverURLKeys.sorted() {
+            let value = values[key] ?? plan.serverURLs[key] ?? ""
+            let url = ConnectionURL(value).flatMap { $0.isReadable && $0.isLocal ? $0 : nil }
+
+            if let url, let server = servers.first(where: { $0.mainPort == url.port }) {
+                changed[key] = ConnectionURL.pointing(value, toPort: server.port)
+            } else if let url, ownPorts.contains(url.port) {
+                continue
+            } else if value.contains("$") {
+                problems.append("\(key) builds its URL from other keys, so Nexus cannot change it.")
+            } else {
+                problems.append("Nexus cannot change the URL in \(key), so this workspace would use the server of the main site.")
             }
+        }
 
-            return (key, ConnectionURL.pointing(value, toPort: server.port))
-        })
+        return (changed, problems)
     }
 
     // The ports of the Nexus instances of each kind, and of the servers of the workspace.

@@ -121,6 +121,13 @@ struct NodeEnvPlanTests {
         #expect(ConnectionURL.pointing("mongodb://shop:secret@localhost:27017/shop?replicaSet=nexus", toPort: 20001) == "mongodb://shop:secret@127.0.0.1:20001/shop?replicaSet=nexus")
     }
 
+    @Test func aKeyWithAnAtlasURLInAnotherFileGivesItsWarning() {
+        let plan = plan([".env": "MONGODB_URI=mongodb://localhost:27017/shop\n", ".env.local": "MONGODB_URI=mongodb+srv://cluster.example.net/shop\n"], usesMongoDB: true, canUseOnlyMongoDB: true, mongodbPorts: [27017])
+
+        #expect(plan.serverURLKeys == ["MONGODB_URI"])
+        #expect(plan.warnings == ["MONGODB_URI gets its MongoDB servers from DNS (mongodb+srv), for example from MongoDB Atlas. So this workspace shares that server with the main site."])
+    }
+
     @Test func aMongoDBURLWithLocalServersIsNotIsolated() {
         let plan = plan([".env": "MONGODB_URI=mongodb://127.0.0.1:27017,127.0.0.1:27018/shop?replicaSet=rs0\n"], usesMongoDB: true, canUseOnlyMongoDB: true, mongodbPorts: [27017])
 

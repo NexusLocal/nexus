@@ -72,7 +72,12 @@ enum ProbeScript {
                 if ($connection->getDriverName() === 'mongodb') {
                     $client = method_exists($connection, 'getClient') ? $connection->getClient() : $connection->getMongoClient();
                     $hello = $client->getManager()->executeCommand('admin', new MongoDB\Driver\Command(['hello' => 1]))->toArray()[0];
-                    $ports[$name] = [(int) substr(strrchr((string) ($hello->me ?? ''), ':'), 1)];
+                    $me = (string) ($hello->me ?? '');
+
+                    if ($me !== '') {
+                        $ports[$name] = [(int) substr(strrchr($me, ':'), 1)];
+                    }
+
                     continue;
                 }
 

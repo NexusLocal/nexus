@@ -345,6 +345,7 @@ struct WorkspaceEnvPlanTests {
         (["database.connections.mongodb.dsn": ConfigSetting(value: .text("mongodb://127.0.0.1:27017/shop"))], "The connection mongodb has a fixed MongoDB URL in config/database.php."),
         (["database.connections.mongodb.dsn": ConfigSetting(value: .text("mongodb+srv://cluster.example.net/shop"), keys: ["MONGODB_URI"], exact: true)], "The connection mongodb names more than one MongoDB server, or its servers come from DNS (mongodb+srv). So Nexus cannot give this workspace its own server."),
         (["database.connections.mongodb.dsn": ConfigSetting(value: .text("mongodb://127.0.0.1:27017,127.0.0.1:27018/shop"), keys: ["MONGODB_URI"], exact: true)], "The connection mongodb names more than one MongoDB server, or its servers come from DNS (mongodb+srv). So Nexus cannot give this workspace its own server."),
+        (["database.connections.mongodb.dsn": ConfigSetting(value: .text("mongodb://[::1/shop"), keys: ["MONGODB_URI"], exact: true)], "Nexus cannot read the MongoDB URL of the connection mongodb. So Nexus cannot give this workspace its own server."),
     ])
     func aMongoDBConnectionThatNexusCannotChangeIsNotIsolated(settings: [String: ConfigSetting], problem: String) {
         let result = mongoDBPlan(settings.merging(["database.connections.mongodb.driver": ConfigSetting(value: .text("mongodb"))]) { own, _ in own })

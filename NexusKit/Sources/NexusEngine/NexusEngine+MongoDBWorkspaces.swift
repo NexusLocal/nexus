@@ -8,17 +8,41 @@ import Synchronization
 // port of the workspace before it counts as complete.
 extension NexusEngine {
     static let mongoDBLockLimit: Duration = .seconds(10)
-    // A lock that comes after the limit must still get its unlock.
+    // A lock that comes after the limit must still get its unlock. Only the request of the lock
+    // waits this long.
     static let lateLockTimeout: TimeInterval = 86_400
 
     // The fsync lock makes the files safe to copy. Writes wait during the lock, and reads go on. The
     // lock does not end with its connection. A stop of mongod ends it, and nexusd stops each server of
     // an earlier run at its start. The server takes a lock also after its client stopped to wait,
     // and also after killOp (tested with 7.0, 8.0 and 9.0). So the request stays, and the unlock
-    // follows a late lock at once.
+    // follows a late lock at once. The lock is a counter that all clients share. So one clone of an
+    // instance runs at a time, and the repair of a failed unlock cannot end the lock of another clone.
     func cloneDuringLock(_ tools: DatabaseTools, source: String, target: String) async throws {
-        let server = try await mongoDBServer(tools, timeout: Self.lateLockTimeout)
-        let lock = Task { try await server.lock() }
+        let blocked = "A long write on \(tools.id) blocks the lock, so Nexus made no clone. Retry when that write ended."
+        let deadline = ContinuousClock.now + Self.mongoDBLockLimit
+
+        while lockingMongoDBInstances.contains(tools.id) {
+            guard ContinuousClock.now < deadline else {
+                throw RuntimeError.unsupported(blocked)
+            }
+
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
+        lockingMongoDBInstances.insert(tools.id)
+        var waitsForLateLock = false
+        defer {
+            if !waitsForLateLock {
+                lockingMongoDBInstances.remove(tools.id)
+            }
+        }
+
+        let server = try await mongoDBServer(tools)
+        let lock = Task {
+            await server.connection.setTimeout(Self.lateLockTimeout)
+            try await server.lock()
+        }
         let isLocked: Bool
 
         do {
@@ -29,16 +53,21 @@ extension NexusEngine {
         }
 
         guard isLocked else {
+            waitsForLateLock = true
+
             Task {
                 if (try? await lock.value) != nil {
                     try? await server.unlock()
                 }
 
                 await server.connection.disconnect()
+                lockingMongoDBInstances.remove(tools.id)
             }
 
-            throw RuntimeError.unsupported("A long write on \(tools.id) blocks the lock, so Nexus made no clone. Retry when that write ended.")
+            throw RuntimeError.unsupported(blocked)
         }
+
+        await server.connection.setTimeout(MongoDBConnection.standardTimeout)
 
         var failure: (any Error)?
 
@@ -65,8 +94,9 @@ extension NexusEngine {
         }
     }
 
-    // The connection of the lock failed after the lock. A server that does not run has no lock. A
-    // server that still has a lock after a new unlock gets a restart, because each write waits.
+    // The connection of the lock failed after the lock. A server that does not run has no lock. One
+    // clone of an instance runs at a time, so a lock here is the lock of this clone. A server that
+    // still has a lock after a new unlock gets a restart, because each write waits.
     private func endLock(of tools: DatabaseTools) async {
         guard let server = try? await mongoDBServer(tools) else {
             return

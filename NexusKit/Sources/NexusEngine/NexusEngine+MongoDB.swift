@@ -161,9 +161,8 @@ extension NexusEngine {
         try await mover.stop(definition.id, cause: "the end of the move of the replica set")
     }
 
-    // A connection with the account of a running instance. The caller ends it. The timeout is for
-    // each answer.
-    func mongoDBServer(_ tools: DatabaseTools, timeout: TimeInterval = 10) async throws -> MongoDBServer {
+    // A connection with the account of a running instance. The caller ends it.
+    func mongoDBServer(_ tools: DatabaseTools) async throws -> MongoDBServer {
         guard await supervisor.state(of: tools.id)?.isActive == true else {
             throw RuntimeError.unsupported("Start \(tools.id) first.")
         }
@@ -171,7 +170,7 @@ extension NexusEngine {
         let port = try await connectionPort(of: tools)
 
         do {
-            return MongoDBServer(try await MongoDBConnection.connect(port: port, account: try await account(of: tools), timeout: timeout))
+            return MongoDBServer(try await MongoDBConnection.connect(port: port, account: try await account(of: tools)))
         } catch let error as MongoDBError {
             throw RuntimeError.unsupported("Nexus cannot connect to \(tools.id) on port \(port). \(error.description)")
         }

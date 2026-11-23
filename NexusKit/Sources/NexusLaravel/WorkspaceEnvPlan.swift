@@ -282,7 +282,12 @@ public struct WorkspaceEnvPlan: Sendable, Equatable {
         }
 
         guard let port = connection.port else {
-            problems.append("The connection \(name) names more than one MongoDB server, or its servers come from DNS (mongodb+srv). So Nexus cannot give this workspace its own server.")
+            let dsn = Self.value("dsn", at: path, settings: settings)?.description ?? ""
+            let namesCluster = MongoDBURL.namesServers(dsn) || dsn.lowercased().hasPrefix("mongodb+srv://")
+
+            problems.append(namesCluster
+                ? "The connection \(name) names more than one MongoDB server, or its servers come from DNS (mongodb+srv). So Nexus cannot give this workspace its own server."
+                : "Nexus cannot read the MongoDB URL of the connection \(name). So Nexus cannot give this workspace its own server.")
             return
         }
 

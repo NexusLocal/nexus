@@ -27,7 +27,9 @@ public actor MongoDBConnection {
     // A server without a password has no users, and it needs no login. The timeout is for each read
     // and for each write. The users of Nexus are in the database admin. A user of another server can
     // be in another database.
-    public static func connect(port: Int, account: DatabaseAccount? = nil, authenticationDatabase: String = "admin", timeout: TimeInterval = 10) async throws -> MongoDBConnection {
+    public static let standardTimeout: TimeInterval = 10
+
+    public static func connect(port: Int, account: DatabaseAccount? = nil, authenticationDatabase: String = "admin", timeout: TimeInterval = standardTimeout) async throws -> MongoDBConnection {
         let descriptor = try await onOwnThread {
             try open(timeout: timeout, problem: "No server listens on port \(port).") { try IPv4Socket.connectToLoopback(port: port) }
         }
@@ -36,7 +38,7 @@ public actor MongoDBConnection {
     }
 
     // The socket of a server of a workspace (mongod --unixSocketPrefix).
-    public static func connect(socket path: String, timeout: TimeInterval = 10) async throws -> MongoDBConnection {
+    public static func connect(socket path: String, timeout: TimeInterval = standardTimeout) async throws -> MongoDBConnection {
         let descriptor = try await onOwnThread {
             try open(timeout: timeout, problem: "No server listens on \(path).") { try UnixSocket.connect(to: path) }
         }
@@ -91,6 +93,15 @@ public actor MongoDBConnection {
         }
 
         return answer
+    }
+
+    // The timeout of each wait for the next commands. A command that waits now keeps its timeout.
+    public func setTimeout(_ timeout: TimeInterval) {
+        guard !isClosed else {
+            return
+        }
+
+        Self.setTimeout(timeout, of: descriptor)
     }
 
     public func disconnect() {
@@ -175,11 +186,15 @@ public actor MongoDBConnection {
             throw MongoDBError.connection(problem)
         }
 
+        setTimeout(timeout, of: descriptor)
+
+        return descriptor
+    }
+
+    private static func setTimeout(_ timeout: TimeInterval, of descriptor: Int32) {
         var interval = timeval(tv_sec: Int(timeout), tv_usec: Int32((timeout - timeout.rounded(.down)) * 1_000_000))
         setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &interval, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &interval, socklen_t(MemoryLayout<timeval>.size))
-
-        return descriptor
     }
 
     private static func exchange(_ bytes: Data, id: Int32, descriptor: Int32) throws -> BSONDocument {

@@ -264,6 +264,8 @@ public actor NexusEngine {
     var databaseRemovalProblems: [String: DatabaseRemovalProblem] = [:]
     // The folders of the clones that a setup makes now, and of the servers that a removal stops.
     var cloningServers: Set<String> = []
+    // The MongoDB instances with a lock for a clone, also a lock that comes late.
+    var lockingMongoDBInstances: Set<String> = []
     var removingServers: Set<String> = []
     var knownHosts: Set<String>?
     var configurationWatcher: FolderWatcher?

@@ -267,13 +267,8 @@ extension NexusEngine {
         try await ensureMongoDBTools()
 
         let address = try await mongoDBAddress(request.target)
-        let ownName: String
-
-        if case .workspace(_, let workspace, _) = request.target {
-            ownName = Workspace.databaseName(name, workspace: workspace)
-        } else {
-            ownName = name
-        }
+        let workspace: String? = if case .workspace(_, let workspaceName, _) = request.target { workspaceName } else { nil }
+        let ownName = workspace.map { Workspace.databaseName(name, workspace: $0) } ?? name
 
         let reserved = try reserveCopyTarget(ownName, on: instance, for: "import")
         defer { copyTargets.remove(reserved) }
@@ -284,7 +279,7 @@ extension NexusEngine {
             throw DatabaseTargetExists(description: "\(name) exists on \(server) already. Add --replace-tables or --replace-database, or load the dump into another database with --into.")
         }
 
-        let trashCopy = exists ? try await writeMongoDBDump(of: name, as: ownName, at: address, instance: instance) : nil
+        let trashCopy = exists ? try await writeMongoDBDump(of: name, as: ownName, at: address, instance: instance, workspace: workspace) : nil
         let keptCopy = trashCopy.map { " Nexus put a copy of the old \(name) in the trash: \($0.lastPathComponent)." } ?? ""
 
         if exists, request.existing == .replaceDatabase {

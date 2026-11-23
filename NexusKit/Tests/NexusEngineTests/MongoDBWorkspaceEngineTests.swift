@@ -49,12 +49,20 @@ extension NexusEngineTests {
 
         let fromEnv = NexusEngine.serverURLValues(of: plan, in: "MONGODB_URI=\"mongodb://nexus:pw@localhost:27017/shop?replicaSet=nexus\"\n", servers: servers)
         let again = NexusEngine.serverURLValues(of: plan, in: "MONGODB_URI=mongodb://127.0.0.1:20011/shop\nDB_URI=mongodb://127.0.0.1:20011/default\n", servers: servers)
+        let withKeys = NexusEngine.serverURLValues(of: plan, in: "MONGODB_URI=\"mongodb://${DB_HOST}:27017/shop\"\nDB_URI=mongodb://127.0.0.1:27018/default\n", servers: servers)
 
-        #expect(fromEnv == [
+        #expect(fromEnv.values == [
             "MONGODB_URI": "mongodb://nexus:pw@127.0.0.1:20011/shop?replicaSet=nexus",
             "DB_URI": "mongodb://127.0.0.1:20011/default",
         ])
-        #expect(again.isEmpty)
+        #expect(fromEnv.problems.isEmpty)
+        #expect(again.values.isEmpty)
+        #expect(again.problems.isEmpty)
+        #expect(withKeys.values.isEmpty)
+        #expect(withKeys.problems == [
+            "Nexus cannot change the URL in DB_URI, so this workspace would use the server of the main site.",
+            "MONGODB_URI builds its URL from other keys, so Nexus cannot change it.",
+        ])
     }
 
     @Test func aTaskThatEndsLateStillRunsAfterTheLimit() async throws {
