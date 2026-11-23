@@ -458,8 +458,9 @@ extension NexusEngine {
         // No await from here on. So no other write of this PHP version comes between the stub and
         // the pool that names it.
         let dumps = writeDumpFiles(line: line, state: state, keepingStub: poolUsesStub)
-        let fpm = try PHPConfig.fpmConfig(socket: paths.phpSocket(line: line), pidFile: paths.run.appending(path: "php-\(line).pid"), prepend: dumps.stub, shareSocket: paths.phpShareSocket(line: line), phpIniLoadsXdebug: userLoadsXdebug)
-        let xdebugFPM = hasXdebug ? try PHPConfig.fpmConfig(socket: paths.xdebugSocket(line: line), pidFile: paths.run.appending(path: "xdebug-\(line).pid"), prepend: dumps.stub, xdebug: true) : nil
+        let errorLog = paths.phpErrorLog(line: line)
+        let fpm = try PHPConfig.fpmConfig(socket: paths.phpSocket(line: line), pidFile: paths.run.appending(path: "php-\(line).pid"), prepend: dumps.stub, shareSocket: paths.phpShareSocket(line: line), phpIniLoadsXdebug: userLoadsXdebug, errorLog: errorLog)
+        let xdebugFPM = hasXdebug ? try PHPConfig.fpmConfig(socket: paths.xdebugSocket(line: line), pidFile: paths.run.appending(path: "xdebug-\(line).pid"), prepend: dumps.stub, xdebug: true, errorLog: errorLog) : nil
 
         try Self.writeScanFolder(named: PHPConfig.coverageFolderName, iniName: PHPConfig.coverageIniName, ini: PHPConfig.coverageIni, in: folder)
         let xdebugIniChanged = try Self.writeScanFolder(named: PHPConfig.xdebugFolderName, iniName: PHPConfig.xdebugIniName, ini: hasXdebug ? PHPConfig.xdebugIni(loadsExtension: !userLoadsXdebug) : nil, in: folder)

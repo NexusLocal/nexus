@@ -553,6 +553,19 @@ struct WebConfigTests {
         #expect(plain.contains("proxy_set_header X-Nexus-Share-Hide \"\";"))
     }
 
+    @Test func eachPoolWritesThePHPErrorsWithTheirTimeToTheFileOfItsVersion() throws {
+        let errors = URL(filePath: "/Nexus Dev/logs/php-8.5-errors.log")
+        let line = "php_value[error_log] = \"/Nexus Dev/logs/php-8.5-errors.log\"\n"
+        let config = try PHPConfig.fpmConfig(socket: URL(filePath: "/Nexus/run/php-8.5.sock"), pidFile: URL(filePath: "/Nexus/run/php-8.5.pid"), shareSocket: URL(filePath: "/Nexus/run/php-share-8.5.sock"), errorLog: errors)
+        let debugPool = try PHPConfig.fpmConfig(socket: URL(filePath: "/Nexus/run/xdebug-8.5.sock"), pidFile: URL(filePath: "/Nexus/run/xdebug-8.5.pid"), xdebug: true, errorLog: errors)
+        let without = try PHPConfig.fpmConfig(socket: URL(filePath: "/Nexus/run/php-8.5.sock"), pidFile: URL(filePath: "/Nexus/run/php-8.5.pid"))
+
+        #expect(config.components(separatedBy: line).count == 3)
+        #expect(debugPool.components(separatedBy: line).count == 2)
+        #expect(!config.contains("php_admin_value[error_log]"))
+        #expect(!without.contains("error_log] ="))
+    }
+
     @Test func thePoolOfTheLinksHidesErrorsStartsAProcessOnlyForARequestAndKeepsTheStub() throws {
         let stub = URL(filePath: "/Nexus/config/php/8.5/nexus-prepend.php")
         let prepend = "php_value[auto_prepend_file] = \"/Nexus/config/php/8.5/nexus-prepend.php\"\n"

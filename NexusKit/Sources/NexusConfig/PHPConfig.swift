@@ -82,15 +82,19 @@ public enum PHPConfig {
 
     // php_value and not php_admin_value: the .user.ini of a site with its own prepend file still
     // wins, for example the firewall of Wordfence (owner answer 3).
-    public static func fpmConfig(socket: URL, pidFile: URL, prepend: URL? = nil, xdebug: Bool = false, shareSocket: URL? = nil, phpIniLoadsXdebug: Bool = false) throws -> String {
+    // errorLog is php_value too: WordPress sets its own debug.log with ini_set when WP_DEBUG_LOG is
+    // on, and that must still work.
+    public static func fpmConfig(socket: URL, pidFile: URL, prepend: URL? = nil, xdebug: Bool = false, shareSocket: URL? = nil, phpIniLoadsXdebug: Bool = false, errorLog: URL? = nil) throws -> String {
         let prependLine = try prepend.map { "php_value[auto_prepend_file] = \(try ConfigText.quoted($0))\n" } ?? ""
-        let config = try poolConfig(socket: socket, pidFile: pidFile, xdebug: xdebug) + prependLine
+        let errorLogLine = try errorLog.map { "php_value[error_log] = \(try ConfigText.quoted($0))\n" } ?? ""
+        let poolLines = prependLine + errorLogLine
+        let config = try poolConfig(socket: socket, pidFile: pidFile, xdebug: xdebug) + poolLines
 
         guard let shareSocket, !xdebug else {
             return config
         }
 
-        return config + (try sharePool(socket: shareSocket, phpIniLoadsXdebug: phpIniLoadsXdebug)) + prependLine
+        return config + (try sharePool(socket: shareSocket, phpIniLoadsXdebug: phpIniLoadsXdebug)) + poolLines
     }
 
     // Requests of a link with the option "Hide error details and debug tools" (group 4, 4d).

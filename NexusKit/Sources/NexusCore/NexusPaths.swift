@@ -54,6 +54,12 @@ public struct NexusPaths: Sendable, Equatable {
         logs.appending(path: "\(name).log", directoryHint: .notDirectory)
     }
 
+    // PHP-FPM writes the errors of a worker without a time. So the pools of a PHP version write
+    // the PHP errors into this file, and PHP adds the time (owner, 2026-11-23).
+    public func phpErrorLog(line: String) -> URL {
+        log("php-\(line)-errors")
+    }
+
     public var activityLog: URL {
         log("activity")
     }

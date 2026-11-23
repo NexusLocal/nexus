@@ -148,8 +148,10 @@ public enum LogReader {
         case "nginx": "The errors of nginx"
         case "apache": "The errors of Apache"
         default:
-            if let line = ServiceID.phpLine(of: base) {
-                "PHP-FPM \(line): the PHP errors of all sites with this version"
+            if base.hasSuffix("-errors"), let line = ServiceID.phpLine(of: String(base.dropLast(7))) {
+                "PHP \(line): the PHP errors of all sites with this version, with their time"
+            } else if let line = ServiceID.phpLine(of: base) {
+                "PHP-FPM \(line): the start and the stop of PHP-FPM, and the PHP errors from before the file php-\(line)-errors"
             } else if base.hasPrefix("new-site-") {
                 "The steps of the new site \(base.dropFirst(9))"
             } else {

@@ -276,6 +276,24 @@ struct AppLogsTests {
         #expect(found == [])
     }
 
+    @Test func phpErrorsComeFromTheFileWithTimesOnceItExists() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "nexus-logs-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let paths = NexusPaths(root: root)
+        try FileManager.default.createDirectory(at: paths.logs, withIntermediateDirectories: true)
+        try Data("NOTICE: ready\n".utf8).write(to: paths.log(ServiceID.php(line: "8.4")))
+
+        #expect(AppLogFiles.phpErrorLog(line: "8.4", paths: paths) == paths.log(ServiceID.php(line: "8.4")))
+
+        try Data("[23-Nov-2026 14:00:00 UTC] PHP Warning:  Boom in /w/shop/index.php on line 3\n".utf8).write(to: paths.phpErrorLog(line: "8.4"))
+
+        #expect(AppLogFiles.phpErrorLog(line: "8.4", paths: paths) == paths.phpErrorLog(line: "8.4"))
+
+        let index = LogIndex(file: logFile(paths.phpErrorLog(line: "8.4"), kind: .phpErrors, folders: ["/w/shop/"]), zone: .gmt)
+        index.update()
+        #expect(index.snapshot.entries.map(\.date) == [1_795_442_400])
+        #expect(index.snapshot.entries.map(\.level) == ["warning"])
+    }
+
     @Test func wpDebugLogCanNameAPath() {
         let folder = URL(filePath: "/w/blog", directoryHint: .isDirectory)
 

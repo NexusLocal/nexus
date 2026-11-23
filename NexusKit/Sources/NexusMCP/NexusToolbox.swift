@@ -285,7 +285,7 @@ public struct NexusToolbox: MCPHandler {
         let sources = ErrorReader.Sources(
             laravelLogs: site.kind == .php && site.projectType == .laravel ? project.appending(path: "storage/logs", directoryHint: .isDirectory) : nil,
             wordPressLog: site.isWordPress ? wordPressLogs.first { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) } : nil,
-            phpLog: site.kind == .php ? paths.log(ServiceID.php(line: site.php)) : nil,
+            phpLog: site.kind == .php ? AppLogFiles.phpErrorLog(line: site.php, paths: paths) : nil,
             siteFolder: target.projectFolder,
             otherFolders: target.workspace == nil ? (site.workspaces ?? []).map(\.worktree) : [],
             accessLogs: accessLogs,

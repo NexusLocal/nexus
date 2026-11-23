@@ -164,7 +164,7 @@ public enum AppLogFiles {
         }
 
         if let php = place.php, place.kind != .node, place.kind != .proxy {
-            let log = paths.log(ServiceID.php(line: php))
+            let log = phpErrorLog(line: php, paths: paths)
 
             if let info = info(of: log) {
                 let own = LogFolders.prefixes(of: place.projectFolder)
@@ -187,6 +187,13 @@ public enum AppLogFiles {
         }
 
         return files
+    }
+
+    // The PHP errors with their time, since the pools write them to their own file. A PHP version
+    // that did not start again since then still has them only in the log of PHP-FPM.
+    public static func phpErrorLog(line: String, paths: NexusPaths) -> URL {
+        let errors = paths.phpErrorLog(line: line)
+        return FileManager.default.fileExists(atPath: errors.path(percentEncoded: false)) ? errors : paths.log(ServiceID.php(line: line))
     }
 
     // laravel.log first, then the other files by their last change. A subfolder such as cronjobs/
