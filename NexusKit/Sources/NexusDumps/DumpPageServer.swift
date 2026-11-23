@@ -3,9 +3,9 @@ import NexusCore
 import Synchronization
 
 // The web page of the dumps: nexusd serves it on 127.0.0.1, as Mailpit serves its inbox. The
-// server answers / with the page itself and handle answers each request of /api.
-// /api/events stays open and gets each event of send, as server-sent events. Each other
-// connection gets one answer and closes.
+// server answers / with the page itself, /logs with the page of the logs (group 7) and handle
+// answers each request of /api. /api/events stays open and gets each event of send, as
+// server-sent events. Each other connection gets one answer and closes.
 //
 // The dumps can hold secrets of a site. So the Host of each request must name this server: a
 // website that points its own host name at 127.0.0.1 then reads nothing. A request that changes
@@ -168,6 +168,11 @@ public final class DumpPageServer: Sendable {
 
         if request.method == "GET", request.path == "/" {
             answer(DumpPage.response(token: token), on: socket)
+            return
+        }
+
+        if request.method == "GET", request.path == "/logs" {
+            answer(LogPage.response(token: token), on: socket)
             return
         }
 
@@ -349,8 +354,11 @@ struct PageGuard {
     }
 
     func refusal(of request: PageRequest) -> PageResponse? {
+        let isLogs = request.path == "/logs" || request.path.hasPrefix("/api/logs/")
+        let page = isLogs ? "logs" : "dumps"
+
         guard hosts.contains(request.headers["host"]?.lowercased() ?? "") else {
-            return .message("Open the dumps on http://127.0.0.1:\(port)/.", status: 403)
+            return .message("Open the \(page) on http://127.0.0.1:\(port)/\(isLogs ? "logs" : "").", status: 403)
         }
 
         switch request.method {
@@ -359,15 +367,15 @@ struct PageGuard {
         case "POST":
             break
         default:
-            return .message("The page of the dumps takes only GET and POST.", status: 405)
+            return .message("The page of the \(page) takes only GET and POST.", status: 405)
         }
 
         guard let origin = request.headers["origin"]?.lowercased(), hosts.contains(where: { origin == "http://\($0)" }) else {
-            return .message("Only the page of the dumps can change the dumps.", status: 403)
+            return .message(isLogs ? "Only the page of the logs can open a file of the logs." : "Only the page of the dumps can change the dumps.", status: 403)
         }
 
         guard request.headers["x-nexus-token"] == token else {
-            return .message("Load the page of the dumps again. Its token is from an earlier start of Nexus.", status: 403)
+            return .message("Load the page of the \(page) again. Its token is from an earlier start of Nexus.", status: 403)
         }
 
         guard request.headers["content-type"]?.lowercased().hasPrefix("application/json") == true else {

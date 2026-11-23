@@ -124,6 +124,46 @@ struct DumpPageServerTests {
         #expect(!html.contains("innerHTML"))
     }
 
+    @Test func theServerAnswersThePageOfTheLogsWithItsTokenAndANonce() throws {
+        let server = try server { _ in .message("The handler does not answer the page.", status: 500) }
+        defer { server.stop() }
+
+        let page = try PageClient.get("/logs", port: server.port)
+        let otherHost = try PageClient.get("/logs", port: server.port, host: "rebound.example")
+        let policy = page.headers["content-security-policy"] ?? ""
+        let nonce = policy.firstMatch(of: /script-src 'nonce-([0-9a-f]+)'/).map { String($0.1) } ?? "none"
+
+        #expect(page.status == 200)
+        #expect(page.body.contains(#"<meta name="nexus-token" content="secret">"#))
+        #expect(page.body.contains(#"<script nonce="\#(nonce)">"#))
+        #expect(page.body.contains("Logs</title>"))
+        #expect(otherHost.status == 403)
+        #expect(otherHost.body.contains("/logs."))
+    }
+
+    @Test func anOpenOfTheLogsNeedsTheTokenAndNamesThePageOfTheLogs() throws {
+        let server = try server()
+        defer { server.stop() }
+
+        let refused = try PageClient.post("/api/logs/open", json: #"{"place":"shop.test","file":"a1","offset":0}"#, port: server.port, token: "guess")
+        let accepted = try PageClient.post("/api/logs/open", json: #"{"place":"shop.test","file":"a1","offset":0}"#, port: server.port, token: "secret")
+
+        #expect(refused.status == 403)
+        #expect(refused.body.contains("Load the page of the logs again."))
+        #expect(accepted.status == 200)
+        #expect(accepted.body == #"{"message":"POST /api/logs/open "}"#)
+    }
+
+    @Test func bothPagesHaveTheSwitchBetweenThePages() {
+        let dumps = DumpPage.html(token: "t", nonce: "n", title: "Nexus Dumps")
+        let logs = LogPage.html(token: "t", nonce: "n", title: "Nexus Logs")
+
+        #expect(dumps.contains(#"<a class="segment" href="/" aria-current="page">Dumps</a>"#))
+        #expect(dumps.contains(#"<a class="segment" href="/logs" id="logs-link">Logs</a>"#))
+        #expect(logs.contains(#"<a class="segment" href="/">Dumps</a>"#))
+        #expect(logs.contains(#"<a class="segment" href="/logs" aria-current="page">Logs</a>"#))
+    }
+
     @Test func theServerAnswersThePageItselfWithItsTokenAndANonce() throws {
         let server = try server { _ in .message("The handler does not answer the page.", status: 500) }
         defer { server.stop() }

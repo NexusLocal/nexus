@@ -375,6 +375,8 @@ public actor NexusEngine {
     let servesDumpPage: Bool
     var dumpPageServer: DumpPageServer?
     var dumpPageProblem: String?
+    // The indices of the log files that the web page of the logs reads (group 7).
+    let logPageStore = LogPageStore()
     // The setup of a workspace waits until vendor and node_modules have no change for this time.
     let workspaceFolderQuiet: Duration
 

@@ -99,6 +99,10 @@ extension NexusEngine {
     // The answer leaves the actor before its JSON is made. The activity log names each action of
     // the page, as it names each action of the app.
     nonisolated func answerDumpPage(_ page: PageRequest) async -> PageResponse {
+        if page.path.hasPrefix("/api/logs/") {
+            return await answerLogPage(page)
+        }
+
         switch Self.route(of: page) {
         case .refused(let refusal):
             return refusal
