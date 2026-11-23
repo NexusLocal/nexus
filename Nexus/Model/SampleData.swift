@@ -863,6 +863,28 @@ extension AppModel {
                 ]
             ),
             ServiceVersion(
+                id: "mongodb-8.0",
+                kind: .mongodb,
+                name: "MongoDB 8.0",
+                version: "8.0.38",
+                health: .running,
+                since: "09:02",
+                ports: [ServicePort(name: "Port", number: 27017)],
+                dataFolder: "~/Library/Application Support/Nexus/data/mongodb-8.0",
+                account: DatabaseAccount(user: "root", password: ""),
+                databases: [
+                    DatabaseItem(name: "shop", usedBy: "shop.test", size: "12.4 MB"),
+                    DatabaseItem(name: "logs", usedBy: nil, size: "3.1 MB"),
+                ],
+                log: [
+                    #"{"t":{"$date":"2026-10-27T09:02:11.204+01:00"},"s":"I","c":"CONTROL","msg":"MongoDB starting","attr":{"port":27017}}"#,
+                    #"{"t":{"$date":"2026-10-27T09:02:11.205+01:00"},"s":"I","c":"CONTROL","msg":"Build Info","attr":{"version":"8.0.38"}}"#,
+                    #"{"t":{"$date":"2026-10-27T09:02:11.409+01:00"},"s":"I","c":"STORAGE","msg":"WiredTiger opened","attr":{"durationMillis":118}}"#,
+                    #"{"t":{"$date":"2026-10-27T09:02:11.612+01:00"},"s":"I","c":"NETWORK","msg":"Waiting for connections","attr":{"ssl":"off"}}"#,
+                    #"{"t":{"$date":"2026-10-27T09:02:11.934+01:00"},"s":"I","c":"ELECTION","msg":"Transition to primary complete"}"#,
+                ]
+            ),
+            ServiceVersion(
                 id: "redis-8.2",
                 kind: .redis,
                 name: "Redis 8.2",
@@ -909,7 +931,7 @@ extension AppModel {
             ToggleItem(name: "yaml", enabled: false, help: "Reads and writes YAML."),
             ToggleItem(name: "gmp", enabled: true, help: "Calculates with whole numbers of any size. Some packages for encryption use it."),
             ToggleItem(name: "memcached", enabled: false, help: "Connects to a memcached server. Laravel can use it for the cache and sessions. Nexus has no memcached server. It needs igbinary."),
-            ToggleItem(name: "mongodb", enabled: false, help: "Connects to a MongoDB server. mongodb/laravel-mongodb needs it. Nexus has no MongoDB server."),
+            ToggleItem(name: "mongodb", enabled: false, help: "Connects to a MongoDB server, for example a MongoDB of Nexus. mongodb/laravel-mongodb needs it."),
             ToggleItem(name: "xdebug", enabled: false, help: "Step debugger. Only a request that starts a debug session uses Xdebug, for example with the browser extension Xdebug helper. Other requests stay fast. nexus debug runs one command with Xdebug."),
             ToggleItem(name: "pcov", enabled: false, help: "Measures code coverage for tests. It is faster than Xdebug for coverage."),
         ]
@@ -943,6 +965,9 @@ extension AppModel {
             package("PostgreSQL", "PostgreSQL 16", "16.11"),
             package("PostgreSQL", "PostgreSQL 17", "17.7", .installed),
             package("PostgreSQL", "PostgreSQL 18", "18.1", .downloading(0.48)),
+            package("MongoDB", "MongoDB 7.0", "7.0.48"),
+            package("MongoDB", "MongoDB 8.0", "8.0.38", .installed),
+            package("MongoDB", "MongoDB 9.0", "9.0.8"),
             package("Redis", "Redis 7.2", "7.2.11"),
             package("Redis", "Redis 8.2", "8.2.3", .installed),
             package("Redis", "Redis 8.10", "8.10.0"),
@@ -963,12 +988,14 @@ extension AppModel {
         settings.editors = [AppChoice(name: "PhpStorm"), AppChoice(name: "Visual Studio Code"), AppChoice(name: "Zed")]
         settings.editor = "PhpStorm"
         settings.databaseApps = [
-            AppChoice(name: "TablePlus", opens: "MySQL, MariaDB, PostgreSQL"),
+            AppChoice(name: "TablePlus", opens: "MySQL, MariaDB, PostgreSQL, MongoDB"),
             AppChoice(name: "Sequel Ace", opens: "MySQL, MariaDB"),
             AppChoice(name: "DBeaver", opens: "MySQL, MariaDB, PostgreSQL"),
+            AppChoice(name: "MongoDB Compass", opens: "MongoDB"),
         ]
         settings.mysqlApp = "TablePlus"
         settings.postgresqlApp = "TablePlus"
+        settings.mongodbApp = "MongoDB Compass"
         return settings
     }
 

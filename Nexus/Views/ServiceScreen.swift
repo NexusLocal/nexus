@@ -275,7 +275,7 @@ private struct ServiceForm: View {
                     WebserverSections(service: service)
                 case .php:
                     PHPSections(service: service)
-                case .mysql, .mariadb, .postgresql:
+                case .mysql, .mariadb, .postgresql, .mongodb:
                     DatabaseSections(service: $service, reader: reader)
                 case .redis, .mail, .dns:
                     EmptyView()
@@ -358,10 +358,19 @@ struct StateSection: View {
                 .labeledContentStyle(.rowValue)
             }
 
-            if [.mysql, .mariadb, .postgresql, .redis, .dns].contains(service.kind), let port = service.ports.first {
+            if [.mysql, .mariadb, .postgresql, .mongodb, .redis, .dns].contains(service.kind), let port = service.ports.first {
                 PortRow(title: "Port", port: port.number) {
                     model.changePort(port, of: service, to: $0)
                 }
+            }
+
+            if service.kind == .mongodb {
+                LabeledContent("Replica set") {
+                    Text("nexus · for transactions")
+                        .foregroundStyle(.secondary)
+                        .rowValue()
+                }
+                .labeledContentStyle(.rowValue)
             }
 
             if service.kind == .mail {
@@ -541,7 +550,11 @@ private struct DatabaseSections: View {
             } header: {
                 Text("Account")
             } footer: {
-                Text("Nexus uses this account when it imports or opens a database on \(service.name). A change needs \(service.name) to run.")
+                if service.kind == .mongodb, account.password.isEmpty {
+                    Text("Without a password, \(service.name) needs no login. A change needs \(service.name) to run.")
+                } else {
+                    Text("Nexus uses this account when it imports or opens a database on \(service.name). A change needs \(service.name) to run.")
+                }
             }
             // The fields keep a refused account, so the user can correct it.
             .onChange(of: account) {
@@ -586,7 +599,7 @@ private struct DatabaseSections: View {
                 }
             }
         } footer: {
-            Text("\"Import database\" copies a database from another server into \(service.name), for example from MAMP PRO. The other server does not change.")
+            Text("\"Import database\" copies a database from another server into \(service.name), for example from \(service.kind == .mongodb ? "Docker or Atlas" : "MAMP PRO"). The other server does not change.")
         }
         .task(id: "\(service.id) \(service.isActive)") {
             model.loadDatabases(of: service)

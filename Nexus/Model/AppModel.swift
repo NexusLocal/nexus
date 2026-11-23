@@ -121,6 +121,7 @@ enum AppPreference {
     static let hiddenWebServerNotice = "hiddenWebServerNotice"
     static let mysqlApp = "mysqlApp"
     static let postgresqlApp = "postgresqlApp"
+    static let mongodbApp = "mongodbApp"
     static let firstRunDone = "firstRunDone"
     static let keptTestDatabases = "keptTestDatabases"
     static let mailAppearance = "mailAppearance"
@@ -190,6 +191,7 @@ struct AppSettings {
     var databaseApps: [AppChoice] = []
     var mysqlApp = ""
     var postgresqlApp = ""
+    var mongodbApp = ""
     var tld = NexusVariant.current.tld
     var lanAccess = false
     var devServerStop = DevServerStop.standard

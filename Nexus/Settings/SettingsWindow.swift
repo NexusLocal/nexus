@@ -631,7 +631,7 @@ private struct DatabasesSettings: View {
             } header: {
                 Text("New instances")
             } footer: {
-                Text("A new MySQL, MariaDB or PostgreSQL instance gets this account. Change the account of an instance on its own screen.")
+                Text("A new MySQL, MariaDB, PostgreSQL or MongoDB instance gets this account. Change the account of an instance on its own screen.")
             }
 
             Section {
@@ -668,6 +668,7 @@ private struct DatabasesSettings: View {
             Section {
                 DatabaseAppPicker(title: "MySQL and MariaDB", kind: .mysql, selection: model.settings.mysqlApp)
                 DatabaseAppPicker(title: "PostgreSQL", kind: .postgresql, selection: model.settings.postgresqlApp)
+                DatabaseAppPicker(title: "MongoDB", kind: .mongodb, selection: model.settings.mongodbApp)
             } header: {
                 Text("Open with")
             } footer: {

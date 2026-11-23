@@ -15,6 +15,7 @@ enum ServiceKind: String, CaseIterable, Identifiable {
     case mysql
     case mariadb
     case postgresql
+    case mongodb
     case redis
     case mail
     case dns
@@ -28,6 +29,7 @@ enum ServiceKind: String, CaseIterable, Identifiable {
         case .mysql: "MySQL"
         case .mariadb: "MariaDB"
         case .postgresql: "PostgreSQL"
+        case .mongodb: "MongoDB"
         case .redis: "Redis"
         case .mail: "Mail"
         case .dns: "DNS"
@@ -38,7 +40,7 @@ enum ServiceKind: String, CaseIterable, Identifiable {
         switch self {
         case .webservers: "server.rack"
         case .php: "chevron.left.forwardslash.chevron.right"
-        case .mysql, .mariadb, .postgresql: "cylinder.split.1x2"
+        case .mysql, .mariadb, .postgresql, .mongodb: "cylinder.split.1x2"
         case .redis: "square.3.layers.3d"
         case .mail: "envelope"
         case .dns: "network"
@@ -46,7 +48,7 @@ enum ServiceKind: String, CaseIterable, Identifiable {
     }
 
     var isDatabase: Bool {
-        [.mysql, .mariadb, .postgresql].contains(self)
+        databaseKind != nil
     }
 }
 
@@ -474,6 +476,9 @@ struct AppChoice: Identifiable, Hashable {
 
     // MariaDB uses the mysql:// link. So an app that opens MySQL also opens MariaDB.
     func canOpen(_ kind: ServiceKind) -> Bool {
-        opens.contains(kind == .postgresql ? "PostgreSQL" : "MySQL")
+        switch kind {
+        case .postgresql, .mongodb: opens.contains(kind.title)
+        default: opens.contains("MySQL")
+        }
     }
 }

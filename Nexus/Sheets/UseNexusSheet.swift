@@ -176,9 +176,11 @@ struct UseNexusSheet: View {
     }
 
     // A copy needs a database on the old server that the instance does not have. Without a copy,
-    // Nexus makes the database empty on the instance.
+    // Nexus makes the database empty on the instance. MongoDB makes a database at its first write.
     @ViewBuilder
     private func databaseFooter(_ database: String?) -> some View {
+        let isMongoDB = choice.flatMap { model.service($0.instance) }?.kind == .mongodb
+
         if let choice, let database, choice.canCopy {
             Toggle(isOn: $copies) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -190,7 +192,7 @@ struct UseNexusSheet: View {
                 }
             }
             .toggleStyle(.checkbox)
-        } else if let text = choice?.emptyDatabaseText(database: database) {
+        } else if !isMongoDB, let text = choice?.emptyDatabaseText(database: database) {
             Text(text)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

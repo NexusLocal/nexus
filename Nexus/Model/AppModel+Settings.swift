@@ -24,21 +24,27 @@ enum AppRole {
 // The database apps that macOS knows for the link of each kind. Nexus cannot ask an added app
 // which links it opens. So an added app gets the links of every kind.
 enum DatabaseApps {
-    static let allKinds = "MySQL, MariaDB, PostgreSQL"
+    static let allKinds = "MySQL, MariaDB, PostgreSQL, MongoDB"
 
     static func found() -> [AppChoice] {
-        let mysql = apps(opening: "mysql://127.0.0.1")
-        let postgresql = apps(opening: "postgresql://127.0.0.1")
+        let mysql = apps(opening: link(for: .mysql))
+        let postgresql = apps(opening: link(for: .postgresql))
+        let mongodb = apps(opening: link(for: .mongodb))
         var seen: Set<URL> = []
 
-        return (mysql + postgresql).filter { seen.insert($0).inserted }.map { app in
-            let kinds = (mysql.contains(app) ? ["MySQL", "MariaDB"] : []) + (postgresql.contains(app) ? ["PostgreSQL"] : [])
+        return (mysql + postgresql + mongodb).filter { seen.insert($0).inserted }.map { app in
+            let kinds = (mysql.contains(app) ? ["MySQL", "MariaDB"] : []) + (postgresql.contains(app) ? ["PostgreSQL"] : []) + (mongodb.contains(app) ? ["MongoDB"] : [])
             return AppChoice(name: KnownApps.name(of: app), opens: kinds.joined(separator: ", "), location: app)
         }
     }
 
     static func defaultApp(for kind: ServiceKind) -> URL? {
-        URL(string: kind == .postgresql ? "postgresql://127.0.0.1" : "mysql://127.0.0.1").flatMap { NSWorkspace.shared.urlForApplication(toOpen: $0) }
+        URL(string: link(for: kind)).flatMap { NSWorkspace.shared.urlForApplication(toOpen: $0) }
+    }
+
+    // MariaDB uses the mysql:// link.
+    private static func link(for kind: ServiceKind) -> String {
+        "\(kind.databaseKind?.urlScheme ?? "mysql")://127.0.0.1"
     }
 
     private static func apps(opening link: String) -> [URL] {
@@ -253,6 +259,7 @@ extension AppModel {
         update(\.editor, to: Self.chosenName(AppPreference.editorApp, in: settings.editors))
         update(\.mysqlApp, to: chosenDatabaseApp(AppPreference.mysqlApp, for: .mysql))
         update(\.postgresqlApp, to: chosenDatabaseApp(AppPreference.postgresqlApp, for: .postgresql))
+        update(\.mongodbApp, to: chosenDatabaseApp(AppPreference.mongodbApp, for: .mongodb))
     }
 
     private func update<Value: Equatable>(_ path: WritableKeyPath<AppSettings, Value>, to value: Value) {
@@ -308,12 +315,25 @@ extension AppModel {
     }
 
     func chooseDatabaseApp(_ name: String, for kind: ServiceKind) {
-        if kind == .postgresql {
+        switch kind {
+        case .postgresql:
             settings.postgresqlApp = name
             remember(name, in: databaseApps(for: kind), as: AppPreference.postgresqlApp)
-        } else {
+        case .mongodb:
+            settings.mongodbApp = name
+            remember(name, in: databaseApps(for: kind), as: AppPreference.mongodbApp)
+        default:
             settings.mysqlApp = name
             remember(name, in: databaseApps(for: kind), as: AppPreference.mysqlApp)
+        }
+    }
+
+    // The app of "Open with" for this kind of database.
+    func chosenDatabaseApp(for kind: ServiceKind) -> String {
+        switch kind {
+        case .postgresql: settings.postgresqlApp
+        case .mongodb: settings.mongodbApp
+        default: settings.mysqlApp
         }
     }
 
@@ -376,7 +396,7 @@ extension AppModel {
             UserDefaults.standard.set(hidden + [path], forKey: AppPreference.hiddenDatabaseApps)
         }
 
-        for key in [AppPreference.mysqlApp, AppPreference.postgresqlApp] {
+        for key in [AppPreference.mysqlApp, AppPreference.postgresqlApp, AppPreference.mongodbApp] {
             if let chosen = UserDefaults.standard.string(forKey: key), !chosen.isEmpty, Self.appPath(URL(filePath: chosen)) == path {
                 UserDefaults.standard.removeObject(forKey: key)
             }

@@ -116,7 +116,7 @@ struct PackagesScreen: View {
     }
 
     private func sectionOrder(_ title: String) -> Int {
-        let order = ["Webservers", "PHP", "MySQL", "MariaDB", "PostgreSQL", "Redis", "Mail", "Tools"]
+        let order = ["Webservers", "PHP", "MySQL", "MariaDB", "PostgreSQL", "MongoDB", "Redis", "Mail", "Tools"]
         return order.firstIndex(of: title) ?? order.count
     }
 

@@ -724,7 +724,7 @@ struct OpenDatabaseButton: View {
     let url: URL?
 
     private var chosenApp: String {
-        kind == .postgresql ? model.settings.postgresqlApp : model.settings.mysqlApp
+        model.chosenDatabaseApp(for: kind)
     }
 
     var body: some View {

@@ -11,6 +11,7 @@ extension ServiceKind {
         case "mysql": self = .mysql
         case "mariadb": self = .mariadb
         case "postgresql": self = .postgresql
+        case "mongodb": self = .mongodb
         case "redis": self = .redis
         case "mailpit": self = .mail
         case "dns": self = .dns
@@ -23,6 +24,7 @@ extension ServiceKind {
         case .mysql: .mysql
         case .mariadb: .mariadb
         case .postgresql: .postgresql
+        case .mongodb: .mongodb
         case .webservers, .php, .redis, .mail, .dns: nil
         }
     }

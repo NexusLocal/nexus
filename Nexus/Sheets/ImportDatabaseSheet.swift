@@ -19,6 +19,8 @@ struct ImportDatabaseSheet: View {
     @State private var sourceInstance: String?
     @State private var host = "127.0.0.1"
     @State private var port = ""
+    // Only MongoDB reads a URL, for example mongodb+srv:// of MongoDB Atlas.
+    @State private var url = ""
     @State private var user = ""
     @State private var password = ""
     @State private var database = ""
@@ -81,7 +83,7 @@ struct ImportDatabaseSheet: View {
     }
 
     private var sourceKey: String {
-        [instance, sourceInstance ?? "", host, port, user, password].joined(separator: "\n")
+        [instance, sourceInstance ?? "", host, port, user, password, url].joined(separator: "\n")
     }
 
     private var trimmedName: String {
@@ -92,15 +94,29 @@ struct ImportDatabaseSheet: View {
         [String(usesDumpFile), dumpFile?.path(percentEncoded: false) ?? "", dumpChoice ?? "", instance, trimmedName].joined(separator: "\n")
     }
 
-    // MySQL and MariaDB speak the same protocol. PostgreSQL only reads PostgreSQL.
+    // MySQL and MariaDB speak the same protocol and have the same link. PostgreSQL and MongoDB only
+    // read their own kind.
     private var nexusSources: [ServiceVersion] {
         model.databaseInstances.filter { source in
-            source.id != instance && source.isActive && source.account != nil && source.kind.databaseKind?.usesMySQLProtocol == kind.usesMySQLProtocol
+            source.id != instance && source.isActive && source.account != nil && source.kind.databaseKind?.urlScheme == kind.urlScheme
         }
+    }
+
+    private var isMongoDB: Bool {
+        kind == .mongodb
+    }
+
+    // A table of SQL is a collection of MongoDB.
+    private var item: String {
+        isMongoDB || dumpInfo?.format == .mongodb ? "collection" : "table"
     }
 
     private var sourceServer: DatabaseServer? {
         guard let sourceInstance else {
+            if isMongoDB {
+                return url.isEmpty ? nil : DatabaseServer(account: DatabaseAccount(user: "", password: password), url: url)
+            }
+
             guard !host.isEmpty, let number = Int(port) else {
                 return nil
             }
@@ -172,7 +188,7 @@ struct ImportDatabaseSheet: View {
 
         switch existing {
         case .replaceTables:
-            return dumpInfo?.tables.map { "Replace \(Count.text($0.count, "table"))" } ?? "Replace tables"
+            return dumpInfo?.tables.map { "Replace \(Count.text($0.count, item))" } ?? "Replace \(item)s"
         case .replaceDatabase:
             return "Replace database"
         case nil:
@@ -185,7 +201,7 @@ struct ImportDatabaseSheet: View {
             Text("Import a database")
                 .font(.headline)
 
-            Text("Copy a database from another server, or load a dump file into a database. Nexus only reads the other server and the file.")
+            Text(isMongoDB ? "Copy a database from another server, for example from Docker or MongoDB Atlas, or load a dump file. Nexus only reads the other server and the file." : "Copy a database from another server, or load a dump file into a database. Nexus only reads the other server and the file.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -231,7 +247,7 @@ struct ImportDatabaseSheet: View {
                     } else if databaseExists {
                         Picker("\(trimmedName) already exists", selection: $existing) {
                             Text("Choose…").tag(DumpExisting?.none)
-                            Text("Replace only the tables in the dump").tag(Optional(DumpExisting.replaceTables))
+                            Text("Replace only the \(item)s in the dump").tag(Optional(DumpExisting.replaceTables))
                             Text("Replace the whole database").tag(Optional(DumpExisting.replaceDatabase))
                         }
                     }
@@ -239,7 +255,7 @@ struct ImportDatabaseSheet: View {
                     Text("Into")
                 } footer: {
                     if usesDumpFile, dumpReady {
-                        DumpSummary(name: trimmedName, info: dumpInfo, existing: existing, trashDays: trashDays)
+                        DumpSummary(name: trimmedName, info: dumpInfo, existing: existing, trashDays: trashDays, item: item)
                     }
                 }
             }
@@ -386,7 +402,17 @@ struct ImportDatabaseSheet: View {
 
     @ViewBuilder
     private var serverRows: some View {
-        if sourceInstance == nil {
+        if sourceInstance == nil, isMongoDB {
+            field("URL", text: $url)
+
+            LabeledContent("Password") {
+                SecureField("Password", text: $password, prompt: Text("No password"))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.leading)
+                    .frame(width: 200)
+            }
+        } else if sourceInstance == nil {
             field("Host", text: $host)
             field("Port", text: $port)
                 .digitsOnly($port)
@@ -401,6 +427,15 @@ struct ImportDatabaseSheet: View {
             }
         }
 
+        // Only a MongoDB on this Mac lists its databases. For another one the user types the name.
+        if isMongoDB, sources.isEmpty, !loadingSources {
+            field("Database", text: $database)
+        } else {
+            databasePicker
+        }
+    }
+
+    private var databasePicker: some View {
         Picker("Database", selection: $database) {
             if sources.isEmpty {
                 Text(loadingSources ? "Loading…" : "No database").tag("")
@@ -429,7 +464,7 @@ struct ImportDatabaseSheet: View {
         }
 
         if let dumpInfo, dumpInfo.dumps.count > 1 {
-            Picker("Dump", selection: $dumpChoice) {
+            Picker(dumpInfo.format == .mongodb ? "From database" : "Dump", selection: $dumpChoice) {
                 if dumpInfo.dump == nil {
                     Text("Choose…").tag(String?.none)
                 }
@@ -439,7 +474,7 @@ struct ImportDatabaseSheet: View {
                 }
             }
         } else if let dump = dumpInfo?.dump {
-            LabeledContent("Dump") {
+            LabeledContent(dumpInfo?.format == .mongodb ? "From database" : "Dump") {
                 Text(dump)
                     .foregroundStyle(.secondary)
                     .rowValue(.middle)
@@ -455,9 +490,11 @@ struct ImportDatabaseSheet: View {
             } else if inspecting {
                 Text("Nexus reads the dump file…")
             } else if let dumpInfo, dumpInfo.dumps.count > 1, dumpInfo.dump == nil {
-                Text("\(dumpFile?.lastPathComponent ?? "The archive") has \(dumpInfo.dumps.count) dumps. Choose the dump for this database.")
+                Text(dumpInfo.format == .mongodb
+                    ? "\(dumpFile?.lastPathComponent ?? "The archive") has \(dumpInfo.dumps.count) databases. Choose the database to import."
+                    : "\(dumpFile?.lastPathComponent ?? "The archive") has \(dumpInfo.dumps.count) dumps. Choose the dump for this database.")
             } else {
-                Text("Nexus reads a .sql or .sql.gz file. It also reads a .zip, .tar or .tar.gz file with such a dump in it. For PostgreSQL it also reads a file that pg_dump -Fc makes.")
+                Text("Nexus reads a .sql or .sql.gz file. It also reads a .zip, .tar or .tar.gz file with such a dump in it. For PostgreSQL it also reads a file that pg_dump -Fc makes. For MongoDB it reads an archive that mongodump --archive makes.")
             }
         } else if let sourcesProblem {
             MessageText(sourcesProblem) { errorReport = $0 }
@@ -545,8 +582,13 @@ struct ImportDatabaseSheet: View {
         }
     }
 
+    // A MongoDB without a password has no user.
     private static func standardUser(of kind: DatabaseKind) -> String {
-        kind == .postgresql ? "postgres" : "root"
+        switch kind {
+        case .mysql, .mariadb: "root"
+        case .postgresql: "postgres"
+        case .mongodb: ""
+        }
     }
 
     // A short wait comes first. So each typed letter does not ask nexusd for the list.
@@ -601,7 +643,11 @@ struct ImportDatabaseSheet: View {
         case .failure(let problem):
             sources = []
             sourcesProblem = problem.message
-            select("")
+
+            // The name that the user typed for a MongoDB stays.
+            if !isMongoDB {
+                select("")
+            }
         }
     }
 
@@ -668,7 +714,7 @@ struct ImportDatabaseSheet: View {
     static func databaseName(from file: URL) -> String {
         var base = file.lastPathComponent.lowercased()
 
-        for suffix in [".gz", ".tgz", ".zip", ".tar", ".sql", ".dump", ".backup"] where base.hasSuffix(suffix) {
+        for suffix in [".gz", ".tgz", ".zip", ".tar", ".sql", ".dump", ".backup", ".archive"] where base.hasSuffix(suffix) {
             base = String(base.dropLast(suffix.count))
         }
 
@@ -711,6 +757,8 @@ private struct DumpSummary: View {
     let info: DumpInfo?
     let existing: DumpExisting?
     let trashDays: Int
+    // table, or collection for MongoDB.
+    let item: String
 
     private var tables: [String] {
         info?.tables ?? []
@@ -734,12 +782,12 @@ private struct DumpSummary: View {
                     Text("Choose what happens to \(name), or type another name for a new database.")
                         .foregroundStyle(Color.orangeText)
                 case .replaceTables:
-                    line("tablecells", info?.tables == nil ? "Each table of the dump replaces the table with the same name." : "\(Count.text(tables.count, "table")) get the data of the dump: \(examples).")
+                    line("tablecells", info?.tables == nil ? "Each \(item) of the dump replaces the \(item) with the same name." : "\(Count.text(tables.count, item)) get the data of the dump: \(examples).")
                     line("checkmark", stayText)
                     copyLine
                 case .replaceDatabase:
                     line("exclamationmark.triangle", deleteText, color: .orangeText)
-                    line("tablecells", info?.tables == nil ? "Then \(name) gets the tables of the dump." : "Then \(name) gets the \(Count.text(tables.count, "table")) of the dump.")
+                    line("tablecells", info?.tables == nil ? "Then \(name) gets the \(item)s of the dump." : "Then \(name) gets the \(Count.text(tables.count, item)) of the dump.")
                     copyLine
                 }
             }
@@ -754,13 +802,13 @@ private struct DumpSummary: View {
 
     private var stayText: String {
         guard knowsTables else {
-            return "The other tables of \(name) stay as they are."
+            return "The other \(item)s of \(name) stay as they are."
         }
 
         switch otherTables.count {
-        case 0: return "\(name) has no other tables."
-        case 1: return "The other table of \(name) stays as it is."
-        default: return "The other \(otherTables.count) tables of \(name) stay as they are."
+        case 0: return "\(name) has no other \(item)s."
+        case 1: return "The other \(item) of \(name) stays as it is."
+        default: return "The other \(otherTables.count) \(item)s of \(name) stay as they are."
         }
     }
 
@@ -768,13 +816,13 @@ private struct DumpSummary: View {
         let all = existingTables?.count ?? 0
 
         guard knowsTables else {
-            return "All tables of \(name) are deleted."
+            return "All \(item)s of \(name) are deleted."
         }
 
         switch otherTables.count {
-        case 0: return "All tables of \(name) are deleted."
-        case 1: return "All \(all) tables of \(name) are deleted, also the 1 table that is not in the dump."
-        default: return "All \(all) tables of \(name) are deleted, also the \(otherTables.count) tables that are not in the dump."
+        case 0: return "All \(item)s of \(name) are deleted."
+        case 1: return "All \(all) \(item)s of \(name) are deleted, also the 1 \(item) that is not in the dump."
+        default: return "All \(all) \(item)s of \(name) are deleted, also the \(otherTables.count) \(item)s that are not in the dump."
         }
     }
 

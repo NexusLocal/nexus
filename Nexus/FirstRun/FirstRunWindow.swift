@@ -363,11 +363,11 @@ struct FirstRunPackages {
         FirstRunCategory(title: "Web servers", packages: ["nginx", "httpd"]),
         FirstRunCategory(title: "Languages", packages: ["php", "node"]),
         FirstRunCategory(title: "Tools", packages: ["composer", "wp-cli"]),
-        FirstRunCategory(title: "Databases", packages: ["mysql", "mariadb", "postgresql"]),
+        FirstRunCategory(title: "Databases", packages: ["mysql", "mariadb", "postgresql", "mongodb"]),
         FirstRunCategory(title: "Services", packages: ["redis", "mailpit"]),
     ]
     // Nexus installs cloudflared at the first link (group 4, 4a). So the first run does not show it.
-    static let installedByNexus = ["cloudflared"]
+    static let installedByNexus = ["cloudflared", MongoDBToolsPackage.name]
 
     let packages: [PackageItem]
     private let rowsByName: [String: [PackageItem]]

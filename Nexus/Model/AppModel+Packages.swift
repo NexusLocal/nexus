@@ -162,6 +162,7 @@ extension AppModel {
         case "mysql": "MySQL"
         case "mariadb": "MariaDB"
         case "postgresql": "PostgreSQL"
+        case "mongodb", MongoDBToolsPackage.name: "MongoDB"
         case "redis": "Redis"
         case "mailpit": "Mail"
         case "node", "composer", "wp-cli", "cloudflared": "Tools"
@@ -177,17 +178,19 @@ extension AppModel {
         case "node": "Node"
         case "mailpit": "Mailpit"
         case "wp-cli": "WP-CLI"
+        case MongoDBToolsPackage.name: "MongoDB Database Tools"
         default: ServiceKind(package: name)?.title ?? name
         }
     }
 
     // Redis 8 is the newest Redis 8. So its row shows the version line of its build, for
-    // example Redis 8.10. Composer, WP-CLI, Mailpit and cloudflared have one version line. So their
-    // row shows only the name, and the column next to it shows the version, for example 1.33.1.
+    // example Redis 8.10. Composer, WP-CLI, Mailpit, cloudflared and the MongoDB Database Tools
+    // have one version line. So their row shows only the name, and the column next to it shows the
+    // version, for example 1.33.1.
     static func packageName(_ name: String, line: String, version: String = "") -> String {
         switch name {
         case "redis" where line == "8" && !version.isEmpty: "Redis \(version.split(separator: ".").prefix(2).joined(separator: "."))"
-        case "composer", "wp-cli", "mailpit", "cloudflared": packageTitle(name)
+        case "composer", "wp-cli", "mailpit", "cloudflared", MongoDBToolsPackage.name: packageTitle(name)
         default: "\(packageTitle(name)) \(line)"
         }
     }
@@ -223,7 +226,7 @@ extension AppModel {
             isYours = false
         case .php:
             file = paths.phpConfigFolder(line: service.line).appending(path: "php.ini", directoryHint: .notDirectory)
-        case .mysql, .mariadb, .postgresql:
+        case .mysql, .mariadb, .postgresql, .mongodb:
             guard let kind = service.kind.databaseKind else {
                 return nil
             }
@@ -254,7 +257,7 @@ extension AppModel {
 
         switch service.kind {
         case .webservers: path = service.id
-        case .php, .mysql, .mariadb: path = "\(service.kind.rawValue)/\(service.line)"
+        case .php, .mysql, .mariadb, .mongodb: path = "\(service.kind.rawValue)/\(service.line)"
         case .postgresql, .redis, .mail, .dns: return nil
         }
 
