@@ -9,10 +9,8 @@ In this order:
 
 1. **PHP 8.6**, when Xdebug, Redis, APCu, pcov, igbinary, YAML, Imagick and memcached have releases
    that support it.
-2. **MongoDB.** A database service with versions, as MySQL, MariaDB and PostgreSQL have. Each
-   workspace gets its own copy, and transactions work.
-3. **Valkey.** The fork of Redis with the BSD license, as a service next to Redis.
-4. **A log viewer** for the logs of your apps.
+2. **Valkey.** The fork of Redis with the BSD license, as a service next to Redis.
+3. **A log viewer** for the logs of your apps.
 
 ## Later
 
@@ -20,6 +18,8 @@ In this order:
 
 ## Done recently
 
+- **0.8.0:** MongoDB 7.0, 8.0 and 9.0 as a service with transactions, the import of a MongoDB
+  database from Docker, Atlas or a dump file, and a MongoDB server of its own for each workspace.
 - **0.7.3:** PostGIS and pgRouting for PostgreSQL 15 to 19, the `mongodb` extension for PHP 8.2 to
   8.5, and a message for each workspace that shares MongoDB with the main site.
 - **0.7.2:** pgvector for PostgreSQL 15 to 19, `gmp` and `memcached` for PHP 8.2 to 8.5, and
