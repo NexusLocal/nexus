@@ -78,6 +78,8 @@ final class HelperService: NSObject, NSXPCListenerDelegate, NexusXPCService, @un
         switch request {
         case .setResolver(let tld, let port):
             try files.setResolver(tld: tld, port: port)
+        case .takeOverResolver(let tld, let port):
+            try files.takeOverResolver(tld: tld, port: port)
         case .removeResolver(let tld):
             try files.removeResolver(tld: tld)
         case .setHosts(let hosts):

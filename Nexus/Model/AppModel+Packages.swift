@@ -314,6 +314,7 @@ extension AppModel {
         let rowsChange = installTasks != tasks.filter(\.isInstall)
         let ended = Self.downloads(in: tasks).subtracting(Self.downloads(in: list.tasks))
         tasks = list.tasks
+        keepHerdMoveTask(from: list)
         activities = list.tasks.map { task in
             ActivityItem(id: task.id, title: title(of: task), shortTitle: shortTitle(of: task), progress: task.fraction, taskID: task.id)
         }
@@ -355,6 +356,8 @@ extension AppModel {
             return "Creating \(name) with \(template.displayName)"
         case .importSite(let name):
             return "Importing \(name) from a backup"
+        case .moveFromHerd:
+            return "Moving your sites from Herd"
         }
     }
 
@@ -372,6 +375,8 @@ extension AppModel {
             "Creating \(name)"
         case .importSite(let name):
             "Importing \(name)"
+        case .moveFromHerd:
+            "Moving from Herd"
         }
     }
 
@@ -559,12 +564,17 @@ extension TaskInfo {
         return false
     }
 
-    // A database copy has an estimate as its total. So it stays below 100 percent until it ends.
+    // A database copy has an estimate as its total. So it stays below 100 percent until it ends. A
+    // task with steps and no total, such as a new site or the move from Herd, counts its ended steps.
     var fraction: Double {
-        guard let total, total > 0 else {
+        if let total, total > 0 {
+            return min(Double(completed) / Double(total), 0.99)
+        }
+
+        guard let steps, !steps.isEmpty else {
             return 0
         }
 
-        return min(Double(completed) / Double(total), 0.99)
+        return min(Double(steps.filter { $0.state == .done }.count) / Double(steps.count), 0.99)
     }
 }

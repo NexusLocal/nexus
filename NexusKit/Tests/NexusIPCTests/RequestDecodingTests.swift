@@ -11,6 +11,8 @@ struct RequestDecodingTests {
         .setCustomSettings(php: "8.5", lines: ["memory_limit = 1G", "max_execution_time = 60"]),
         .requestEntries(request: "abc", afterNumber: 3, kinds: [.dump, .query, .log, .job]),
         .fromAgent(agent: "claude", request: .startWorkspace(host: "shop.test", name: "feature", keepAwake: true)),
+        .herdMovePlan,
+        .moveFromHerd(HerdMoveRequest(skipped: ["site:legacy.test"], php: ["site:api.test": "8.4"], databaseLines: ["database:mysql:3306:shop": "9.7"])),
     ])
     func eachRequestOfThisBuildIsRead(request: NexusRequest) throws {
         let data = try NexusMessageCoding.encode(request)
@@ -29,7 +31,7 @@ struct RequestDecodingTests {
     }
 
     @Test func eachRequestOfTheHelperIsRead() throws {
-        for request in [HelperRequest.setResolver(tld: "test", port: 53), .removeResolver(tld: "test"), .setHosts(["127.0.0.1 shop.local"])] {
+        for request in [HelperRequest.setResolver(tld: "test", port: 53), .takeOverResolver(tld: "test", port: 53), .removeResolver(tld: "test"), .setHosts(["127.0.0.1 shop.local"])] {
             #expect(try NexusMessageCoding.decodeWithoutLoss(HelperRequest.self, from: NexusMessageCoding.encode(request)) == request)
         }
     }

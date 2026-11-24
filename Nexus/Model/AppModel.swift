@@ -32,6 +32,8 @@ enum SheetKind: Identifiable {
     // The confirm sheet of a public link (group 4, decision 3). host is the first host of a site or
     // of a workspace.
     case share(host: String)
+    // The move from Herd (group 9). The sheet shows the plan, the steps or the end of the move.
+    case moveFromHerd
 
     var id: String {
         switch self {
@@ -43,6 +45,7 @@ enum SheetKind: Identifiable {
         case .portInUse(let service, _): "port-\(service)"
         case .oldWorkspaces(let host): "old-workspaces-\(host)"
         case .share(let host): "share-\(host)"
+        case .moveFromHerd: "move-from-herd"
         }
     }
 }
@@ -120,6 +123,8 @@ enum AppPreference {
     static let addedDatabaseApps = "addedDatabaseApps"
     static let hiddenDatabaseApps = "hiddenDatabaseApps"
     static let hiddenWebServerNotice = "hiddenWebServerNotice"
+    static let hiddenHerdMoveNotice = "hiddenHerdMoveNotice"
+    static let herdMovedText = "herdMovedText"
     static let mysqlApp = "mysqlApp"
     static let postgresqlApp = "postgresqlApp"
     static let mongodbApp = "mongodbApp"
@@ -265,6 +270,19 @@ final class AppModel {
     var stoppedByStopAll: [String] = []
     var otherWebServers: [String] = []
     var hiddenWebServerNotice = Set(UserDefaults.standard.stringArray(forKey: AppPreference.hiddenWebServerNotice) ?? [])
+    // The move from Herd (group 9). herdFound comes from a check of one file of Herd, so it costs
+    // almost nothing. The plan comes from nexusd. A run stays after its end until the sheet closes.
+    // The task list drops a task at its end. So herdMoveTask keeps the last state of its steps.
+    // herdMovedText is the text of the notice after a move that ended well. It stays until OK.
+    var herdFound = false
+    var herdMovePlan: HerdMovePlan?
+    var herdMovePlanProblem: String?
+    var loadingHerdMovePlan = false
+    var herdMoveRun: HerdMoveRun?
+    var herdMoveTask: TaskInfo?
+    var hiddenHerdMoveNotice = UserDefaults.standard.bool(forKey: AppPreference.hiddenHerdMoveNotice)
+    var herdMovedText = UserDefaults.standard.string(forKey: AppPreference.herdMovedText)
+    @ObservationIgnored var herdMovePlanLoaded: Date?
     var nexusdProblem: NexusdProblem? {
         didSet {
             if let nexusdProblem, nexusdProblem != oldValue {
@@ -453,12 +471,14 @@ final class AppModel {
         model.agents = AgentsModel(setup: .standard)
         model.findApps()
         model.findOtherWebServers()
+        model.findHerd()
 
         // An app that the user installs or removes while Nexus runs then shows in the lists.
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak model] _ in
             MainActor.assumeIsolated {
                 model?.findApps()
                 model?.findOtherWebServers()
+                model?.findHerd()
             }
         }
 

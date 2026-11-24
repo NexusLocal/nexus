@@ -5,6 +5,8 @@ import NexusCore
 // because it runs as root.
 public enum HelperRequest: Codable, Sendable, Equatable {
     case setResolver(tld: String, port: Int)
+    // Also replaces the file of Herd or Valet (group 9).
+    case takeOverResolver(tld: String, port: Int)
     case removeResolver(tld: String)
     case setHosts([String])
 }

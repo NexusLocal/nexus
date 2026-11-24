@@ -1140,6 +1140,98 @@ struct SiteTag: View {
     }
 }
 
+// The steps of a task with steps, for example a new site or the move from Herd. A running step
+// whose title is waitsForUser waits for an action of the user. So it shows a hand and no spinner.
+struct TaskStepList: View {
+    let steps: [TaskStep]
+    var waitsForUser: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                HStack(spacing: 10) {
+                    icon(of: step)
+                        .frame(width: 16)
+
+                    Text(step.title)
+                        .foregroundStyle(step.state == .waiting ? .secondary : .primary)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 12)
+
+                    if let value = value(of: step) {
+                        Text(value)
+                            .font(.callout)
+                            .foregroundStyle(step.state == .failed ? Color.redText : .secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                .frame(height: 36)
+                .padding(.horizontal, 12)
+
+                if index < steps.count - 1 {
+                    Divider()
+                        .padding(.leading, 12)
+                }
+            }
+        }
+        .background(.fill.quaternary, in: .rect(cornerRadius: 10))
+    }
+
+    private func waits(_ step: TaskStep) -> Bool {
+        step.state == .running && step.title == waitsForUser
+    }
+
+    @ViewBuilder
+    private func icon(of step: TaskStep) -> some View {
+        if waits(step) {
+            Image(systemName: "hand.raised")
+                .foregroundStyle(Color.accentText)
+        } else {
+            TaskStepIcon(state: step.state)
+        }
+    }
+
+    private func value(of step: TaskStep) -> String? {
+        switch step.state {
+        case .running:
+            waits(step) ? nil : step.detail
+        case .done:
+            step.seconds.map { "\($0) s" }
+        case .failed:
+            step.seconds.map { "Stopped after \($0) s" }
+        case .waiting:
+            nil
+        }
+    }
+}
+
+// The end of the log of a task with steps. It follows the newest line.
+struct TaskLogBox: View {
+    let lines: [String]
+    var height: CGFloat = 160
+
+    var body: some View {
+        ScrollView {
+            Text(lines.joined(separator: "\n"))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+        }
+        .defaultScrollAnchor(.bottom)
+        .frame(height: height)
+        .background(.fill.quaternary, in: .rect(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(.separator)
+        }
+    }
+}
+
 // The icon of one step of a task with steps: a new site and the start of a public link.
 struct TaskStepIcon: View {
     let state: TaskStepState

@@ -1176,6 +1176,7 @@ public enum TaskWork: Codable, Sendable, Equatable {
     case importDump(file: String, instance: String, name: String)
     case createSite(name: String, template: SiteTemplate)
     case importSite(name: String)
+    case moveFromHerd
 }
 
 public enum TaskStepState: String, Codable, Sendable {
@@ -1468,6 +1469,9 @@ public enum NexusRequest: Codable, Sendable, Equatable {
     // Nexus, and the change that the user confirmed. nexusd changes the .env only after the copy.
     case useNexusInfo(host: String)
     case useNexus(UseNexusRequest)
+    // The move from Herd (group 9). The plan only reads files.
+    case herdMovePlan
+    case moveFromHerd(HerdMoveRequest)
     // The services with their versions and problems for the MCP server (0.3.0). Also the tasks
     // that run. The app gets the same lists as events.
     case serviceList
@@ -2021,6 +2025,8 @@ public enum NexusResponse: Codable, Sendable, Equatable {
     case mailStatus(MailStatus)
     case siteMail(SiteMail)
     case useNexusInfo(UseNexusInfo?)
+    // nil when Herd has no configuration on this Mac.
+    case herdMovePlan(HerdMovePlan?)
     case siteCreated(CreatedSite)
     case siteNotCreated(SiteCreationFailure)
     case backup(BackupInfo)

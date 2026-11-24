@@ -50,11 +50,39 @@ struct SystemDNSFilesTests {
         try FileManager.default.createDirectory(at: files.resolverFolder, withIntermediateDirectories: true)
         try Data("nameserver 127.0.0.1\n".utf8).write(to: files.resolverFolder.appending(path: "test"))
 
-        #expect(throws: SystemDNSFilesError.self) {
+        try Data("nameserver 127.0.0.1\nport 5353\n".utf8).write(to: files.resolverFolder.appending(path: "localhost"))
+
+        #expect(throws: SystemDNSFilesError.herdResolver(files.resolverFolder.appending(path: "test").path(percentEncoded: false))) {
             try files.setResolver(tld: "test", port: 10053)
+        }
+        #expect(throws: SystemDNSFilesError.foreignResolver(files.resolverFolder.appending(path: "localhost").path(percentEncoded: false))) {
+            try files.setResolver(tld: "localhost", port: 10053)
         }
         #expect(try files.removeResolver(tld: "test") == false)
         #expect(try resolver("test") == "nameserver 127.0.0.1\n")
+        #expect(ResolverFile.owner(of: files.resolverFolder.appending(path: "test")) == .herdOrValet)
+        #expect(ResolverFile.owner(of: files.resolverFolder.appending(path: "localhost")) == .otherApp)
+    }
+
+    @Test func takeOverResolverReplacesOnlyTheFileOfHerdAndValet() throws {
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: files.resolverFolder, withIntermediateDirectories: true)
+        try Data("nameserver 127.0.0.1\n".utf8).write(to: files.resolverFolder.appending(path: "test"))
+        try Data("nameserver 127.0.0.1\nport 5353\n".utf8).write(to: files.resolverFolder.appending(path: "localhost"))
+
+        #expect(try files.takeOverResolver(tld: "test", port: 10053))
+        #expect(throws: SystemDNSFilesError.self) {
+            try files.takeOverResolver(tld: "localhost", port: 10053)
+        }
+        #expect(try resolver("test") == SystemDNSFiles.resolverContents(port: 10053))
+        #expect(try resolver("localhost") == "nameserver 127.0.0.1\nport 5353\n")
+    }
+
+    @Test func takeOverResolverWithoutAFileWritesTheFileOfNexus() throws {
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        #expect(try files.takeOverResolver(tld: "test", port: 10053))
+        #expect(try resolver("test") == SystemDNSFiles.resolverContents(port: 10053))
     }
 
     @Test func setResolverRefusesARealTLDAndAPath() {

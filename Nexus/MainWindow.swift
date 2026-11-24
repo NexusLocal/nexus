@@ -78,6 +78,8 @@ struct MainWindow: View {
                 OldWorkspacesSheet(host: host)
             case .share(let host):
                 ShareSheet(host: host)
+            case .moveFromHerd:
+                HerdMoveSheet()
             }
         }
         .alert(model.windowFailure?.title ?? "", isPresented: showsFailure, presenting: model.windowFailure) { failure in

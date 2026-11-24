@@ -1,10 +1,12 @@
 import Foundation
 
 // Another app can own /etc/resolver/<tld>, for example Laravel Herd. Only the first line of the
-// file tells the two apart.
+// file tells the two apart. The file of Herd and Valet has a case of its own, because the move from
+// Herd takes it over.
 public enum ResolverFileOwner: Sendable, Equatable {
     case missing
     case nexus
+    case herdOrValet
     case otherApp
 }
 
@@ -14,6 +16,8 @@ public enum ResolverFileOwner: Sendable, Equatable {
 public enum ResolverFile {
     public static let marker = marker(for: .current)
     public static let folder = URL(filePath: "/etc/resolver", directoryHint: .isDirectory)
+    // The file of Herd and of Valet: one nameserver line for their dnsmasq on port 53.
+    public static let herdAndValetText = "nameserver 127.0.0.1"
 
     public static func marker(for variant: NexusVariant) -> String {
         "# Written by \(variant.name). \(variant.name) removes this file when you remove \(variant.name)."
@@ -26,6 +30,14 @@ public enum ResolverFile {
 
         let contents = try? String(contentsOf: file, encoding: .utf8)
 
-        return contents?.hasPrefix(marker) == true ? .nexus : .otherApp
+        if contents?.hasPrefix(marker) == true {
+            return .nexus
+        }
+
+        return isOfHerdOrValet(contents) ? .herdOrValet : .otherApp
+    }
+
+    public static func isOfHerdOrValet(_ contents: String?) -> Bool {
+        contents?.trimmingCharacters(in: .whitespacesAndNewlines) == herdAndValetText
     }
 }

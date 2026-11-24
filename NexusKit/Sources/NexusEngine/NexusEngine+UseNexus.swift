@@ -11,7 +11,7 @@ import NexusSupervisor
 // first. The .env changes only after the copy, so a failed copy leaves the site as it was.
 extension NexusEngine {
     // The plan for the .env of now. It needs no query to a database server.
-    private struct UseNexusSetup {
+    struct UseNexusSetup {
         let site: Site
         let url: String
         let file: String
@@ -136,7 +136,7 @@ extension NexusEngine {
     }
 
     // An empty plan gives nil.
-    private func useNexusSetup(host: String) async throws -> UseNexusSetup? {
+    func useNexusSetup(host: String) async throws -> UseNexusSetup? {
         let state = await stateStore.current()
         let (site, folder) = try laravelSite(host, in: state, else: Self.changedNothing)
 
@@ -245,7 +245,7 @@ extension NexusEngine {
     }
 
     // A stopped instance gives nil. nexusd starts it and checks again before the change.
-    private func runningDatabaseExists(_ name: String?, on id: String) async -> Bool? {
+    func runningDatabaseExists(_ name: String?, on id: String) async -> Bool? {
         guard let name, await supervisor.state(of: id)?.isActive == true else {
             return nil
         }

@@ -25,6 +25,10 @@ public struct NexusPaths: Sendable, Equatable {
     public var bin: URL { folder("bin") }
     public var mail: URL { folder("mail") }
     public var php: URL { folder("php") }
+    // The report of each move from another app, with a copy of each file that the move changed.
+    public var moves: URL { folder("moves") }
+    // An empty folder for each proxy site that came from another app, because a site needs a folder.
+    public var proxies: URL { folder("proxies") }
 
     public var allFolders: [URL] {
         [runtimes, config, data, run, logs, certs, trash, bin, mail, php]

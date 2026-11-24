@@ -57,7 +57,7 @@ public actor NexusEngine {
     let catalog: ServiceCatalog
     let stateStore: EngineStateStore
     private let manifestSource: any ManifestSource
-    private let helper: any PrivilegedHelper
+    let helper: any PrivilegedHelper
     let certificateAuthority: CertificateAuthority
     private let systemFiles: SystemDNSFiles
     private let unregister: @Sendable () -> Void
@@ -653,6 +653,10 @@ public actor NexusEngine {
             case .useNexus(let request):
                 // A copy can take minutes, so it does not wait in the queue of the changes.
                 return .done(message: try await useNexus(request))
+            case .herdMovePlan:
+                return .herdMovePlan(await herdMovePlan())
+            case .moveFromHerd(let request):
+                return .done(message: try await moveFromHerd(request))
             case .serviceList:
                 return .serviceList(try await serviceList())
             case .tasks:
@@ -1266,7 +1270,7 @@ public actor NexusEngine {
         return "Nexus started \(Count.text(waiting.count, "service"))."
     }
 
-    private func setPort(_ id: String, _ port: Int) async throws -> String {
+    func setPort(_ id: String, _ port: Int) async throws -> String {
         try checkPort(port, for: [id], in: await stateStore.current())
 
         let names = await portNames()
@@ -1360,7 +1364,7 @@ public actor NexusEngine {
         return Set(keys).union([Self.dnsServiceID])
     }
 
-    private func install(name: String, line: String) async throws -> String {
+    func install(name: String, line: String) async throws -> String {
         guard let package = try await manifest().package(named: name, line: line) else {
             throw RuntimeError.unsupported("The manifest has no \(name) \(line).")
         }
@@ -1876,7 +1880,7 @@ extension NexusEngine {
 private extension NexusRequest {
     var mayChangeSites: Bool {
         switch self {
-        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .siteLines, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .oldWorkspaces, .oldWorkspaceNotices, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .useNexusInfo, .useNexus, .siteDatabases, .databaseConnections, .serverDatabases, .createDatabase, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines, .serviceList, .tasks, .dumpList, .clearCaughtDumps, .removeCaughtDump, .removeDumpedRequest, .openCaughtDumpFile, .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps, .requestEntries, .shares, .sharePreview, .shareRequest, .checkOwnDomain: false
+        case .status, .available, .installed, .rootCertificate, .hosts, .sites, .siteDefaults, .extensions, .modules, .customSettings, .siteLines, .tld(nil), .databases, .databaseSizes, .sourceDatabases, .stopTask, .tool, .probe, .workspaceEnv, .backgroundPreset, .workspaceSettings, .setWorkspaceSettings, .oldWorkspaces, .oldWorkspaceNotices, .dumps, .emptyTrash, .mailStatus, .clearOutbox, .setMailSettings, .acknowledgeRemovedMails, .siteMail, .sendMailToNexus, .restoreMailSettings, .useNexusInfo, .useNexus, .herdMovePlan, .siteDatabases, .databaseConnections, .serverDatabases, .createDatabase, .wordPressSite, .setUpWordPress, .createWordPressDatabase, .setWordPressDBHost, .changeWordPressURLs, .undoWordPressURLChange, .wordPressCopySource, .turnOffMailPlugins, .addWordPressWorkspaceLines, .serviceList, .tasks, .dumpList, .clearCaughtDumps, .removeCaughtDump, .removeDumpedRequest, .openCaughtDumpFile, .newDumps, .lastDumps, .dumpPlace, .dumpState, .requestDumps, .requestEntries, .shares, .sharePreview, .shareRequest, .checkOwnDomain: false
         // The app counts the requests of a link in the dump list (group 4, 4f).
         case .clearLinkRequests: false
         case .fromAgent(_, let inner): inner.mayChangeSites
@@ -1970,7 +1974,7 @@ extension NexusEngine {
     }
 
     // The port that /etc/resolver/<tld> names. A dev TLD in /etc/hosts gets no resolver file.
-    private func resolverPort(for tld: String) -> Int? {
+    func resolverPort(for tld: String) -> Int? {
         HostName.usesHostsFile(tld) ? nil : dnsServer?.port
     }
 
@@ -1999,7 +2003,7 @@ extension NexusEngine {
     // stop them. The helper does not answer before the user approves it. nexusd then asks it
     // again every few seconds. A resolver file of an old dev TLD goes, because its names do not
     // work anymore.
-    private func writeSystemFiles() async {
+    func writeSystemFiles() async {
         guard !uninstalling else {
             return
         }

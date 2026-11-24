@@ -4,6 +4,7 @@ import NexusCore
 public enum SystemDNSFilesError: Error, Equatable, CustomStringConvertible {
     case invalidPort(Int)
     case foreignResolver(String)
+    case herdResolver(String)
     case unreadableHosts(String)
     case brokenHostsBlock(String)
     case tooManyHosts(Int)
@@ -15,6 +16,8 @@ public enum SystemDNSFilesError: Error, Equatable, CustomStringConvertible {
             "\(port) is not a valid port for the DNS server. Use a port from 1024 to 65535."
         case .foreignResolver(let path):
             "\(path) belongs to another app, so Nexus does not change it. Remove that file, or choose another dev TLD."
+        case .herdResolver(let path):
+            "\(path) belongs to Herd or Valet, so Nexus does not change it yet. Click \"Move from Herd…\" on the Overview, or run nexus import herd. The move takes over this file. Without Herd, remove the file or choose another dev TLD."
         case .unreadableHosts(let path):
             "Nexus cannot read \(path) as text, so it does not change it."
         case .brokenHostsBlock(let path):
@@ -86,11 +89,33 @@ public struct SystemDNSFiles: Sendable {
         }
 
         if exists, current?.hasPrefix(Self.resolverMarker) != true {
-            throw SystemDNSFilesError.foreignResolver(file.path(percentEncoded: false))
+            let path = file.path(percentEncoded: false)
+            throw ResolverFile.isOfHerdOrValet(current) ? SystemDNSFilesError.herdResolver(path) : .foreignResolver(path)
         }
 
         try FileManager.default.createDirectory(at: resolverFolder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
         try write(contents, to: file)
+        return true
+    }
+
+    // When the user moves to Nexus and quits Herd or Valet, the line of their file points to no
+    // server. So the move replaces only this file. Another file of another app stays as it is.
+    public static let herdAndValetResolver = ResolverFile.herdAndValetText
+
+    @discardableResult
+    public func takeOverResolver(tld: String, port: Int) throws -> Bool {
+        let file = resolverFile(for: try HostName.validatedTLD(tld))
+        let current = try? String(contentsOf: file, encoding: .utf8)
+
+        guard ResolverFile.isOfHerdOrValet(current) else {
+            return try setResolver(tld: tld, port: port)
+        }
+
+        guard (1024...65535).contains(port) else {
+            throw SystemDNSFilesError.invalidPort(port)
+        }
+
+        try write(Self.resolverContents(port: port), to: file)
         return true
     }
 

@@ -568,7 +568,7 @@ private struct NewSiteProgressView: View {
             Text(run.importing == nil ? "\(NewSiteDescription.text(site)) in \(place)" : "\(run.format?.displayName ?? "Backup") in \(place)")
 
             if let steps = task?.steps {
-                StepList(steps: steps)
+                TaskStepList(steps: steps)
             } else {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -578,7 +578,7 @@ private struct NewSiteProgressView: View {
                 }
             }
 
-            LogBox(lines: task?.log ?? [])
+            TaskLogBox(lines: task?.log ?? [])
 
             Text("You can close this sheet. Nexus goes on, and the Overview shows the task under Activity.")
                 .font(.caption)
@@ -627,8 +627,8 @@ private struct NewSiteFailedView: View {
             Text(parts.text)
                 .fixedSize(horizontal: false, vertical: true)
 
-            StepList(steps: failure.steps)
-            LogBox(lines: failure.log)
+            TaskStepList(steps: failure.steps)
+            TaskLogBox(lines: failure.log)
 
             Text(keptText)
                 .font(.caption)
@@ -738,79 +738,6 @@ private struct NewSiteDoneView: View {
                 }
                 .keyboardShortcut(.defaultAction)
             }
-        }
-    }
-}
-
-private struct StepList: View {
-    let steps: [TaskStep]
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                HStack(spacing: 10) {
-                    TaskStepIcon(state: step.state)
-                        .frame(width: 16)
-
-                    Text(step.title)
-                        .foregroundStyle(step.state == .waiting ? .secondary : .primary)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 12)
-
-                    if let value = value(of: step) {
-                        Text(value)
-                            .font(.callout)
-                            .foregroundStyle(step.state == .failed ? Color.redText : .secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-                .frame(height: 36)
-                .padding(.horizontal, 12)
-
-                if index < steps.count - 1 {
-                    Divider()
-                        .padding(.leading, 12)
-                }
-            }
-        }
-        .background(.fill.quaternary, in: .rect(cornerRadius: 10))
-    }
-
-    private func value(of step: TaskStep) -> String? {
-        switch step.state {
-        case .running:
-            step.detail
-        case .done:
-            step.seconds.map { "\($0) s" }
-        case .failed:
-            step.seconds.map { "Stopped after \($0) s" }
-        case .waiting:
-            nil
-        }
-    }
-}
-
-private struct LogBox: View {
-    let lines: [String]
-
-    var body: some View {
-        ScrollView {
-            Text(lines.joined(separator: "\n"))
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-        }
-        .defaultScrollAnchor(.bottom)
-        .frame(height: 160)
-        .background(.fill.quaternary, in: .rect(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(.separator)
         }
     }
 }

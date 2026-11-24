@@ -8,7 +8,11 @@ extension AppModel {
             return []
         }
 
-        return OtherWebServers.noticeNames(installed: otherWebServers, hidden: hiddenWebServerNotice, nginxPorts: nginx.ports.map(\.number))
+        // The notice of the move from Herd offers more than other ports. After a move, Herd gave
+        // its ports to Nexus. So Herd is not in this notice then.
+        let movesFromHerd = showsHerdMoveNotice || herdMovedText != nil || herdSitesMoved
+        let hidden = movesFromHerd ? hiddenWebServerNotice.union(["Herd"]) : hiddenWebServerNotice
+        return OtherWebServers.noticeNames(installed: otherWebServers, hidden: hidden, nginxPorts: nginx.ports.map(\.number))
     }
 
     func findOtherWebServers() {
@@ -24,7 +28,11 @@ extension AppModel {
     }
 
     func hideWebServerNotice() {
-        hiddenWebServerNotice.formUnion(otherWebServers)
+        hideWebServerNotice(of: otherWebServers)
+    }
+
+    func hideWebServerNotice(of names: [String]) {
+        hiddenWebServerNotice.formUnion(names)
         UserDefaults.standard.set(hiddenWebServerNotice.sorted(), forKey: AppPreference.hiddenWebServerNotice)
     }
 

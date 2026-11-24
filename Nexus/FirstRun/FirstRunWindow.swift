@@ -69,12 +69,14 @@ struct FirstRunWindow: View {
         model.rootCertificate?.trusted == true && backgroundAllowed
     }
 
+    // The resolver file of Herd stays until the move from Herd takes it over. So it does not stop
+    // the first run.
     private var helperReady: Bool {
         guard model.isLive else {
             return true
         }
 
-        return background.helper.isEnabled && resolverOwner == .nexus
+        return background.helper.isEnabled && (resolverOwner == .nexus || resolverOwner == .herdOrValet)
     }
 
     // The step waits for the helper, or for an action of the user.
@@ -291,13 +293,14 @@ struct FirstRunWindow: View {
 
     // The user picked the services to use them, so they start now. A download that still runs
     // starts its service when it ends. The changes of the agents end after the window closes. So
-    // the main window shows their failures.
+    // the main window shows their failures. A user of Herd gets the move in the main window.
     private func finish(services: Set<String>) {
         model.agents.finishFirstRun(connecting: agentsToConnect, level: agentLevel)
         UserDefaults.standard.set(true, forKey: AppPreference.firstRunDone)
         model.startAfterFirstRun(services)
         openWindow(id: MainWindow.id)
         dismissWindow(id: Self.id)
+        model.openHerdMoveAfterFirstRun()
     }
 }
 
@@ -1151,14 +1154,17 @@ private struct DomainRow: View {
             while model.isLive, !Task.isCancelled {
                 background.helper.refresh()
 
-                // A domain in /etc/hosts needs no resolver file. So it is ready as soon as the helper is.
-                let owner = HostName.usesHostsFile(tld) ? .nexus : ResolverFile.owner(of: ResolverFile.folder.appending(path: tld, directoryHint: .notDirectory))
+                // A domain in /etc/hosts needs no resolver file. So it is ready as soon as the helper
+                // is. The file of Herd and Valet without Herd on this Mac stays a file of another
+                // app, because no move takes it over.
+                let found = HostName.usesHostsFile(tld) ? .nexus : ResolverFile.owner(of: ResolverFile.folder.appending(path: tld, directoryHint: .notDirectory))
+                let owner = found == .herdOrValet && !model.herdFound ? .otherApp : found
 
                 if owner != resolverOwner {
                     resolverOwner = owner
                 }
 
-                if background.helper.isEnabled, resolverOwner == .nexus {
+                if background.helper.isEnabled, resolverOwner == .nexus || resolverOwner == .herdOrValet {
                     return
                 }
 
@@ -1240,6 +1246,12 @@ private struct SettingsStep: View {
                     Text("/etc/resolver/\(model.settings.tld) belongs to another app. So Nexus does not change it. Remove that file, or choose another domain.")
                         .font(.callout)
                         .foregroundStyle(Color.orangeText)
+                }
+
+                if resolverOwner == .herdOrValet {
+                    Text("Herd uses the domain .\(model.settings.tld) now. Nexus takes it over when you move your sites from Herd.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
 
                 ForEach([background.login.lastError, model.pathSettingProblem].compactMap { $0 }, id: \.self) { error in

@@ -21,6 +21,8 @@ import NexusIPC
 // --own-domain connected|connecting|failed gives the own domain of 4h. --settings sharing
 // --own-domain-sheet domain|not-on-cloudflare|connect|connected opens its setup at that step. Each
 // of them needs --sample.
+// --sheet move-from-herd --herd-move review|states|progress|quit-herd|done|failed opens a state of
+// the move from Herd. --herd-notice move|moved shows its notice on the Overview. Both need --sample.
 enum DebugLaunch {
     // A check of the look does not get the first run on top of the screen that it checks.
     static var checksTheLook: Bool {
@@ -79,6 +81,10 @@ enum DebugLaunch {
             showPublicLinks(in: model)
         }
 
+        if CommandLine.arguments.contains("--sample"), let state = value(of: "--herd-notice") {
+            model.showSampleHerdNotice(state)
+        }
+
         if let json = value(of: "--notification"), let userInfo = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any], let target = NotificationTarget(userInfo: userInfo) {
             model.show(target)
         }
@@ -119,6 +125,11 @@ enum DebugLaunch {
         case "share":
             ShareSheet.debugPreview = value(of: "--share-preview")
             model.sheet = .share(host: value(of: "--site") ?? "shop.test")
+        case "move-from-herd":
+            if CommandLine.arguments.contains("--sample") {
+                model.showSampleHerdMove(value(of: "--herd-move") ?? "review")
+            }
+            model.sheet = .moveFromHerd
         default: break
         }
     }

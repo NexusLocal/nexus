@@ -1136,6 +1136,7 @@ struct TaskRow: Encodable {
         case .importDump(let file, let instance, let name): "Loads \(file) into \(name) on \(instance)"
         case .createSite(let name, let template): "Makes the site \(name) from the template \(template.rawValue)"
         case .importSite(let name): "Imports the site \(name)"
+        case .moveFromHerd: "Moves the sites, databases and settings of Herd to Nexus"
         }
     }
 }

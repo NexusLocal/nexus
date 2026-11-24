@@ -51,6 +51,13 @@ struct OverviewScreen: View {
                     }
                 }
 
+                // The move from Herd frees the ports of the problems below. So it comes first.
+                if let movedText = model.herdMovedText {
+                    HerdMovedNotice(text: movedText)
+                } else if model.showsHerdMoveNotice {
+                    HerdMoveNotice()
+                }
+
                 ForEach(model.blockedServices, id: \.service.id) { blocked in
                     ProblemBanner(service: blocked.service, holder: blocked.holder)
                 }
@@ -108,6 +115,15 @@ struct OverviewScreen: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 MoreMenu {
+                    // The notice can be hidden. So the move stays here while Herd has its files.
+                    if model.herdFound {
+                        Button("Move from Herd…", systemImage: "tray.and.arrow.down") {
+                            model.sheet = .moveFromHerd
+                        }
+
+                        Divider()
+                    }
+
                     Button("Stop all services", systemImage: "stop") {
                         model.stopAllServices()
                     }
@@ -150,6 +166,47 @@ private struct AgentsNotice: View {
 
             HideNoticeButton {
                 model.agents.hideNotice()
+            }
+        }
+    }
+}
+
+// The design is "Overview Notice Move From Herd" in nexus.pen. The notice shows while Herd has sites
+// that did not move. The close button hides it for good. After a move, the second notice shows
+// until OK.
+private struct HerdMoveNotice: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        NoticeBanner(systemImage: "tray.and.arrow.down", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: "Move your sites from Herd") {
+            Text(model.herdMoveNoticeText)
+        } actions: {
+            Button("Move from Herd…") {
+                model.sheet = .moveFromHerd
+            }
+            .buttonStyle(.borderedProminent)
+
+            HideNoticeButton {
+                model.hideHerdMoveNotice()
+            }
+        }
+    }
+}
+
+private struct HerdMovedNotice: View {
+    @Environment(AppModel.self) private var model
+    let text: String
+
+    var body: some View {
+        NoticeBanner(systemImage: "checkmark.circle", color: .statusGreen, background: AnyShapeStyle(.fill.quaternary), title: "Your sites moved from Herd") {
+            Text(text)
+        } actions: {
+            Button("Show Report") {
+                model.showHerdReport()
+            }
+
+            Button("OK") {
+                model.hideHerdMoved()
             }
         }
     }
