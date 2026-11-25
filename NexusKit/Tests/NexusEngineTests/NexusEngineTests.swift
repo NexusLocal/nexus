@@ -1116,14 +1116,21 @@ extension NexusEngineTests {
 }
 
 extension NexusEngineTests {
+    // nexusd reads the app every 20 ms in the tests. A second call only changes the build in
+    // Info.plist, in one atomic write. So nexusd never sees a new build with another time of the
+    // nexusd file.
     private func makeApp(build: String) throws -> URL {
         let app = workspace.appending(path: "Nexus.app", directoryHint: .isDirectory)
         let daemon = app.appending(path: "Contents/MacOS/nexusd")
-        try FileManager.default.createDirectory(at: daemon.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        if !FileManager.default.fileExists(atPath: daemon.path(percentEncoded: false)) {
+            try FileManager.default.createDirectory(at: daemon.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data().write(to: daemon)
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_800_000_000)], ofItemAtPath: daemon.path(percentEncoded: false))
+        }
+
         try PropertyListSerialization.data(fromPropertyList: ["CFBundleVersion": build], format: .xml, options: 0)
-            .write(to: app.appending(path: "Contents/Info.plist"))
-        try Data().write(to: daemon)
-        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_800_000_000)], ofItemAtPath: daemon.path(percentEncoded: false))
+            .write(to: app.appending(path: "Contents/Info.plist"), options: .atomic)
         return app
     }
 
