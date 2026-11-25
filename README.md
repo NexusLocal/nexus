@@ -103,6 +103,8 @@ error details. Webhooks still reach the site. [How sharing works](#-share-a-site
 - 🔒 **HTTPS for every site.** Each site gets a `.test` domain with a trusted certificate.
 - 📦 **Every service in one click.** PHP, Node, nginx, Apache, MySQL, MariaDB, PostgreSQL, MongoDB,
   Redis, DNS and mail. Choose the versions that you need.
+- 🛡️ **Security fixes by themselves.** Nexus checks daily for updates of PHP, Node, the databases and
+  the other packages. A fix in the same version line installs by itself.
 - 📬 **A mail inbox for every site.** No test mail ever reaches a real customer.
 - ✨ **A new site in one click.** Laravel, WordPress, Next.js, Nuxt, Vite or Astro.
 - 🚚 **Move to Nexus in one click.** From Laravel Herd or Laravel Valet. The old app stays as it is.
@@ -286,9 +288,9 @@ sent it. Read your mails in Nexus, or open the web inbox of Mailpit.
 
 ![The Packages screen with the automatic updates and the versions of nginx, Apache, PHP, MySQL and MariaDB](.github/packages.png)
 
-Install a version of PHP, Node or a database with one click. Updates in the same version line install
-by themselves, for example a security fix of PHP. Nexus also tells you when a version gets no more
-security fixes.
+Install a version of PHP, Node or a database with one click. Nexus checks daily for updates. An update
+in the same version line installs by itself, for example a security fix of PHP. Nexus also tells you
+when a version gets no more security fixes.
 
 ## 🚚 Move to Nexus in one click
 
