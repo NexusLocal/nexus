@@ -76,7 +76,7 @@ let package = Package(
         .testTarget(name: "NexusSupervisorTests", dependencies: ["NexusSupervisor", "NexusCore", "NexusTestSupport"]),
         .testTarget(name: "NexusEngineTests", dependencies: ["NexusEngine", "NexusDNS", "NexusTLS", "NexusMail", "NexusMongoDB", "NexusTestSupport", "CBzip2"]),
         .testTarget(name: "NexusDNSTests", dependencies: ["NexusDNS", "NexusTestSupport"]),
-        .testTarget(name: "NexusMailTests", dependencies: ["NexusMail"]),
+        .testTarget(name: "NexusMailTests", dependencies: ["NexusMail", "NexusTestSupport"]),
         .testTarget(name: "NexusDumpsTests", dependencies: ["NexusDumps", "NexusCore", "NexusTestSupport"]),
         .testTarget(name: "NexusMongoDBTests", dependencies: ["NexusMongoDB", "NexusCore"]),
         .testTarget(name: "NexusConfigTests", dependencies: ["NexusConfig", "NexusTestSupport"]),
@@ -89,6 +89,7 @@ let package = Package(
             "NexusCore",
             "NexusMail",
             "NexusMCP",
+            "NexusTestSupport",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]),
         .testTarget(name: "NexusTLSTests", dependencies: [

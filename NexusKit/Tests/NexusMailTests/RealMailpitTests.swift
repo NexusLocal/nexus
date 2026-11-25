@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import NexusTestSupport
 import Testing
 @testable import NexusMail
 
@@ -7,17 +8,8 @@ import Testing
 // ports with a temporary database, so it does not touch a Mailpit that runs already.
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["NEXUS_MAILPIT"] != nil), .timeLimit(.minutes(1)))
 struct RealMailpitTests {
-    // Both receivers hold their port at the same time, so the two ports differ.
     private func freePorts() -> (Int, Int) {
-        let first = SMTPReceiver(port: 0) { _ in .accepted }
-        let second = SMTPReceiver(port: 0) { _ in .accepted }
-        try? first.start()
-        try? second.start()
-        defer {
-            first.stop()
-            second.stop()
-        }
-        return (first.port, second.port)
+        (TestPorts.free(), TestPorts.free())
     }
 
     private func messages(on port: Int) async throws -> [[String: Any]] {

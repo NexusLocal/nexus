@@ -6,6 +6,7 @@ import NexusLaravel
 import NexusMail
 import NexusRuntime
 import NexusSupervisor
+import NexusTestSupport
 import Synchronization
 import Testing
 @testable import NexusEngine
@@ -19,12 +20,8 @@ extension NexusEngineTests {
         let mailpit: Int
     }
 
-    // The three ports are held at the same time while they are chosen, so they differ.
     private func mailPorts() -> MailPorts {
-        let holders = (0..<3).map { _ in SMTPReceiver(port: 0) { _ in .accepted } }
-        holders.forEach { try? $0.start() }
-        defer { holders.forEach { $0.stop() } }
-        return MailPorts(smtp: holders[0].port, inbox: holders[1].port, mailpit: holders[2].port)
+        MailPorts(smtp: TestPorts.free(), inbox: TestPorts.free(), mailpit: TestPorts.free())
     }
 
     // A real Mailpit replaces the fake one when the test gives its path.

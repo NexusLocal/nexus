@@ -1,5 +1,6 @@
 import Foundation
 import NexusMail
+import NexusTestSupport
 import Synchronization
 import Testing
 @testable import NexusCommands
@@ -17,13 +18,6 @@ struct SendmailTests {
         try pipe.fileHandleForWriting.write(contentsOf: Data(text.utf8))
         try pipe.fileHandleForWriting.close()
         return pipe.fileHandleForReading
-    }
-
-    private func freePort() throws -> Int {
-        let holder = SMTPReceiver(port: 0) { _ in .accepted }
-        try holder.start()
-        defer { holder.stop() }
-        return holder.port
     }
 
     @Test func aMailGoesToTheReceiverWithTheFolderAsTheLogin() throws {
@@ -45,7 +39,7 @@ struct SendmailTests {
 
     @Test func aMailWaitsInTheOutboxWhenNexusdDoesNotAnswer() throws {
         defer { try? FileManager.default.removeItem(at: root) }
-        let port = try freePort()
+        let port = TestPorts.free()
 
         let code = SendmailRun.run(["-S", "127.0.0.1:\(port)"], input: try input("To: a@example.com\n\nBody\n"), folder: "/Sites/shop", outbox: outbox) { _ in }
         let waiting = try outbox.waiting().map { try outbox.read($0) }
@@ -56,7 +50,7 @@ struct SendmailTests {
 
     @Test func aFullOutboxThatRefusesNewMailMakesMailFail() throws {
         defer { try? FileManager.default.removeItem(at: root) }
-        let port = try freePort()
+        let port = TestPorts.free()
         try outbox.saveLimits(MailOutbox.Limits(count: 1, bytes: 1_000_000, age: 86_400, whenFull: .refuseNew))
         var reports: [String] = []
 
