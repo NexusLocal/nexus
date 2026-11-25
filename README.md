@@ -16,11 +16,13 @@
   ·
   <a href="#install">Install</a>
   ·
+  <a href="#-move-from-herd-or-valet">Move from Herd or Valet</a>
+  ·
   <a href="#feedback">Feedback</a>
 </p>
 
 <p align="center">
-  <sub>Public beta · Mac with Apple silicon · macOS 27 or later · MIT license</sub>
+  <sub>Mac with Apple silicon · macOS 27 or later · MIT license</sub>
 </p>
 
 ![The Overview screen of Nexus in dark mode with the sites, the public links and the services](.github/overview.png)
@@ -44,6 +46,8 @@
   a password, hidden errors and the requests of each webhook.
 - 🧱 **WordPress, done right.** Bedrock, multisite on subdomains and WP-CLI. Change the URLs in one
   click. Changed your mind? Undo it.
+- 🚚 **Move from Herd or Valet.** Your sites, databases, Redis keys and PHP settings move in one
+  step. Herd or Valet stays as it is.
 - 📥 **Import a WordPress backup.** From Local, Studio, Jetpack or All-in-One WP Migration.
 - ✨ **A new site in one click.** Laravel, WordPress, Next.js, Nuxt, Vite or Astro.
 - 📬 **A mail inbox for every site.** Built on Mailpit. No test mail ever reaches a real customer.
@@ -230,6 +234,24 @@ Install a version of PHP, Node or a database with one click. Updates in the same
 by themselves, for example a security fix of PHP. Nexus also tells you when a version gets no more
 security fixes.
 
+## 🚚 Move from Herd or Valet
+
+Nexus finds Laravel Herd or Laravel Valet on your Mac. The first run of Nexus ends with the move, and
+the Overview offers it later too. You see each item first and choose what moves.
+
+- **Sites:** the parked folders, the linked sites with their aliases, the proxies, the PHP version of
+  each site and your own nginx lines. A site on PHP 8.1 or older gets PHP 8.2.
+- **Databases:** Nexus copies each database from the server that the `.env` or `wp-config.php` of the
+  site names, for example DBngin, Homebrew or Herd Pro. The copy runs while Herd or Valet still runs.
+- **Redis keys, PHP settings and files:** the Redis keys, your `php.ini` lines, the `.env` of each
+  Laravel site, the lines of Herd in `~/.zshrc` and project files such as `.mcp.json` with the PHP of
+  Herd. Nexus keeps a copy of each file that it changes.
+- **One step for you:** quit Herd with the button in the sheet, or run `valet stop`. Then Nexus takes
+  over ports 80 and 443 and the `.test` domain, and it opens each site once.
+
+Herd or Valet and its files stay as they are. The report of the move tells you what moved and how to
+go back. On the command line, `nexus import herd` or `nexus import valet` does the same move.
+
 ## Install
 
 You need:
@@ -248,6 +270,7 @@ Then:
    - Trust the Nexus certificate. macOS asks for your password one time.
    - Tell Nexus what you build. Nexus then chooses the versions of PHP, Node and the databases.
    - Click Done. Nexus starts the services that you chose.
+   - Do you use Herd or Valet? Nexus then offers to [move your sites](#-move-from-herd-or-valet).
 
 Nexus updates itself. See Settings > Updates.
 
@@ -305,11 +328,12 @@ nexus dumps --follow          # each new dump of your sites
 nexus logs --level error      # the newest errors in the log files of the app in this folder
 nexus share                   # a public link to the site in this folder
 nexus debug artisan my:task   # one command with Xdebug
+nexus import herd             # move your sites from Herd, or: nexus import valet
 ```
 
 ## Feedback
 
-Nexus is in public beta. Your honest feedback makes it better, also when it is negative.
+Your honest feedback makes Nexus better, also when it is negative.
 
 - 🐛 Did you find a bug? [Open an issue](https://github.com/NexusLocal/nexus/issues/new?template=bug_report.yml).
 - 💡 Do you need a feature? [Ask for it](https://github.com/NexusLocal/nexus/issues/new?template=feature_request.yml).

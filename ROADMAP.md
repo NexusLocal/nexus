@@ -1,7 +1,7 @@
 # Roadmap
 
-Nexus gets updates about every week until version 1.0. The order below can change. Each item
-needs research and a plan before the work starts.
+Nexus gets updates often. The order below can change. Each item needs research and a plan before
+the work starts.
 
 ## Planned
 
@@ -9,12 +9,17 @@ In this order:
 
 1. **PHP 8.6**, when Xdebug, Redis, APCu, pcov, igbinary, YAML, Imagick and memcached have releases
    that support it.
+2. **Move from Local**, as the move from Herd and Valet.
+3. **Move from MAMP and MAMP PRO.**
 
 ## Later
 
 - Global keyboard shortcuts.
 
 ## Done recently
+
+- **1.0.0:** move your sites, databases, Redis keys and PHP settings from Herd or Valet in one step,
+  and packages that the maintainer signs outside GitHub.
 
 - **0.9.0:** a log viewer for the logs of your apps, on a screen, on a web page, with `nexus logs`
   and for coding agents, and the PHP errors of each site with their time.
