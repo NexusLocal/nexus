@@ -5,7 +5,9 @@
 <h1 align="center">Nexus</h1>
 
 <p align="center">
-  <b>Your local websites on the Mac. PHP, Node, WordPress and databases in one app.</b><br>
+  <b>Local development on the Mac for Laravel, WordPress, Node.js and coding agents.</b><br>
+  Each branch gets its own site, database and queue worker.<br>
+  So you and Claude Code can work on many tickets at the same time.<br>
   Free and open source. No paywall, ever.
 </p>
 
@@ -29,28 +31,82 @@
 
 ## Why Nexus
 
+Nexus does more than serve your sites. It knows your branches, your `.env`, your queues, your logs
+and your mail. So it does the setup work for you and for your coding agent.
+
+### 🌳 A workspace for every git branch
+
+Each git branch gets its own copy of the site. It has a database server on a copy of your data and a
+`.test` domain with HTTPS. It also has its own Redis indexes, queue worker, scheduler and Vite. A new
+workspace is ready in seconds, also with a large database. So several Claude Code sessions work at
+the same time. No session changes the data of another session. A workspace that nobody uses stops by
+itself. [How workspaces work](#-a-workspace-for-each-branch)
+
+### 🤖 Built for coding agents
+
+Nexus gives your coding agent what it needs to check its own work. A switch on the Agents screen
+connects Claude, Claude Code, Codex, Cursor, Gemini CLI, Junie, OpenCode, VS Code, Windsurf or Zed
+to the MCP server of Nexus.
+
+- The agent knows the URL, the database and the ports of each site and workspace.
+- When a page fails, the agent reads the errors, the logs and the dumps of that request.
+- The agent tests a sign-up from start to end. It fills in the form, waits for the mail and opens
+  the link.
+- You decide what an agent can do. No agent can delete a database or your files.
+- A workspace can start with an empty database or a scrubbed dump. Then an agent never sees
+  customer data.
+
+### 🔗 Share a site in one click
+
+Click Share on the Site screen, or run `nexus share`. Each local site can get a public link. Send it
+to a client, a colleague or your phone. A password keeps other people out. Visitors do not see your
+error details. Webhooks still reach the site. [How sharing works](#-share-a-site)
+
+### 🔺 Built for Laravel
+
+- Each workspace runs its own queue worker, scheduler, Reverb server and Vite server. Its migrations
+  run by themselves.
+- See each `dump()`, query, log line and queue job of a request in one place. Nexus marks slow,
+  duplicate and N+1 queries.
+- Read `laravel.log` live. An exception shows the line of your app first and folds the frames of
+  `vendor/`.
+- Nexus warns when your tests would reset your development database. It makes a separate test
+  database for you.
+- PCOV turns on only for `pest --coverage`, `--tia` and `--mutate`. Xdebug runs only when you debug.
+- Share a site with a public link. Laravel uses that address for its links, redirects and signed
+  URLs. Visitors do not see Telescope, Horizon or Ignition.
+
+### 🧱 Built for WordPress
+
+- Bedrock, multisite on subdomains and WP-CLI with the PHP version of the site.
+- Import a backup of Local, Studio, Jetpack or All-in-One WP Migration. Nexus makes the site, the
+  database and a git repository.
+- Give each workspace a dump of your live site. Nexus changes the URLs while the dump loads, also in
+  serialized data.
+- Change the URLs of a site in one click. Undo it with one click too.
+- Nexus warns when a plugin sends real mail. It can turn that plugin off for you.
+- WP-Cron events, Action Scheduler actions and `debug.log` show in the dump viewer and the log
+  viewer.
+
+### 🟩 Built for Node.js
+
+- Next.js, Nuxt, Astro, SvelteKit, Express and Vite apps with React, Vue or Svelte. Nexus finds the
+  framework of the app by itself.
+- The dev server starts with the first page. It stops when no page needs it.
+- Each workspace gets its own database and its own dev server.
+- Hot reload also works through a public link.
+- The output of the app shows live in the log viewer.
+- Each MongoDB runs as a replica set. So transactions and the nested writes of Prisma work.
+
+### ⚡ And much more
+
 - 🔒 **HTTPS for every site.** Each site gets a `.test` domain with a trusted certificate.
-- ⚡ **Every service in one click.** PHP, Node, nginx, Apache, MySQL, MariaDB, PostgreSQL, MongoDB,
+- 📦 **Every service in one click.** PHP, Node, nginx, Apache, MySQL, MariaDB, PostgreSQL, MongoDB,
   Redis, DNS and mail. Choose the versions that you need.
-- 🌳 **A workspace for each branch.** Each branch gets its own database server, domain, Redis indexes
-  and workers. It starts with a copy of your data, an empty database or your own dump file. So
-  several Claude Code sessions can work at the same time. A workspace that nobody uses stops by
-  itself.
-- 🤖 **Made for coding agents.** Claude Code and Codex use Nexus through its MCP server. They read
-  the errors, the dumps and the mail of your sites. You decide what an agent can do.
-- 🐞 **See what your code does.** Each `dump()`, query, log line and queue job of a request in one
-  place. Xdebug runs only when you debug.
-- 📜 **The logs of your apps.** `laravel.log`, the `debug.log` of WordPress and the PHP errors of each
-  site, live, with a filter by level and a search over all files.
-- 🔗 **Share a site with one click.** Send a client or your phone a public link to a local site. With
-  a password, hidden errors and the requests of each webhook.
-- 🧱 **WordPress, done right.** Bedrock, multisite on subdomains and WP-CLI. Change the URLs in one
-  click. Changed your mind? Undo it.
-- 🚚 **Move to Nexus in one click.** From Laravel Herd or Laravel Valet. Your sites, databases,
-  Redis keys and PHP settings move, and the old app stays as it is.
-- 📥 **Import a WordPress backup.** From Local, Studio, Jetpack or All-in-One WP Migration.
+- 📬 **A mail inbox for every site.** No test mail ever reaches a real customer.
 - ✨ **A new site in one click.** Laravel, WordPress, Next.js, Nuxt, Vite or Astro.
-- 📬 **A mail inbox for every site.** Built on Mailpit. No test mail ever reaches a real customer.
+- 🚚 **Move to Nexus in one click.** From Laravel Herd or Laravel Valet. The old app stays as it is.
+- 🔏 **Signed packages.** Nexus installs only packages from a list that the maintainer signed.
 - 💜 **Free and open source.** MIT license. No subscription and no paywall, ever.
 
 ## 🌳 A workspace for each branch
