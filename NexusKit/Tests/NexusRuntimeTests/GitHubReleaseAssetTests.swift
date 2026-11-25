@@ -6,7 +6,7 @@ struct GitHubReleaseAssetTests {
     @Test func theLatestManifestGoesToTheLatestReleaseOfTheAPI() throws {
         let location = try #require(GitHubReleaseAsset.location(of: Manifest.defaultURL))
 
-        #expect(location == .init(repository: "NexusLocal/binaries", tag: nil, name: "manifest.json"))
+        #expect(location == .init(repository: "NexusLocal/binaries", tag: nil, name: "manifest.signed.json"))
         #expect(GitHubReleaseAsset.releaseURL(of: location).absoluteString == "https://api.github.com/repos/NexusLocal/binaries/releases/latest")
     }
 

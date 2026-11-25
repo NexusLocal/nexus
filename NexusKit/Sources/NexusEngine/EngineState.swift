@@ -24,6 +24,9 @@ public struct EngineState: Codable, Sendable, Equatable {
     // (D63). Until then, nexusd does not start them. A start or a stop of one service removes it.
     public var stoppedByStopAll: Set<String> = []
     public var manifestURL = Manifest.defaultURL
+    // The time of the newest manifest that nexusd accepted. An older manifest installs nothing, so
+    // nobody can bring back an old PHP with a known security problem (group 8, decision 5).
+    public var newestManifest: Date?
     public var tld = NexusVariant.current.tld
     public var hosts: Set<String> = []
     public var sites: [Site] = []
@@ -87,9 +90,11 @@ public struct EngineState: Codable, Sendable, Equatable {
         ports = try container.decodeIfPresent([String: Int].self, forKey: .ports) ?? defaults.ports
         enabledServices = try container.decodeIfPresent(Set<String>.self, forKey: .enabledServices) ?? defaults.enabledServices
         stoppedByStopAll = try container.decodeIfPresent(Set<String>.self, forKey: .stoppedByStopAll) ?? defaults.stoppedByStopAll
-        // A test build saved the address of the old manifest, which no longer changes.
+        // A test build saved the address of the old manifest, which no longer changes. An older
+        // nexusd saved the address of the manifest without a signature.
         let storedManifestURL = try container.decodeIfPresent(URL.self, forKey: .manifestURL) ?? defaults.manifestURL
-        manifestURL = storedManifestURL == Manifest.fixedReleaseURL ? defaults.manifestURL : storedManifestURL
+        manifestURL = [Manifest.fixedReleaseURL, Manifest.unsignedURL].contains(storedManifestURL) ? defaults.manifestURL : storedManifestURL
+        newestManifest = try container.decodeIfPresent(Date.self, forKey: .newestManifest)
         tld = try container.decodeIfPresent(String.self, forKey: .tld) ?? defaults.tld
         hosts = try container.decodeIfPresent(Set<String>.self, forKey: .hosts) ?? defaults.hosts
         sites = try container.decodeIfPresent([Site].self, forKey: .sites) ?? defaults.sites

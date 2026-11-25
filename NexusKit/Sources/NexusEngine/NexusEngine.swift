@@ -15,14 +15,19 @@ public protocol ManifestSource: Sendable {
 }
 
 public struct HTTPManifestSource: ManifestSource {
-    public init() {}
+    private let keys: [String]
 
-    // A failure on the side of GitHub gets one more try through its API (GitHubReleaseAsset).
+    public init(keys: [String] = SignedManifest.ownerKeys) {
+        self.keys = keys
+    }
+
+    // A failure on the side of GitHub gets one more try through its API (GitHubReleaseAsset). Only
+    // a manifest with a valid signature of the owner counts (group 8).
     public func manifest(from url: URL) async throws -> Manifest {
         let (data, status) = try await Self.data(for: URLRequest(url: url))
 
         if (200..<300).contains(status) {
-            return try Manifest.decode(from: data)
+            return try Manifest.decode(from: SignedManifest.verifiedBytes(of: data, keys: keys))
         }
 
         guard GitHubReleaseAsset.isTemporaryFailure(status), let request = try? await GitHubReleaseAsset.apiRequest(for: url) else {
@@ -35,7 +40,7 @@ public struct HTTPManifestSource: ManifestSource {
             throw RuntimeError.httpStatus(status, url)
         }
 
-        return try Manifest.decode(from: apiData)
+        return try Manifest.decode(from: SignedManifest.verifiedBytes(of: apiData, keys: keys))
     }
 
     private static func data(for request: URLRequest) async throws -> (Data, Int) {
@@ -1581,8 +1586,21 @@ public actor NexusEngine {
         return "\(name) \(line) is removed. Its data folder stays: \(dataPath)"
     }
 
+    // A manifest without a valid signature, or older than the newest one that nexusd accepted,
+    // installs nothing (group 8). The installed packages keep working. The crash reports send only
+    // crashes, so the Packages screen shows the problem (owner, 2026-11-25).
     func manifest() async throws -> Manifest {
         let manifest = try await manifestSource.manifest(from: stateStore.current().manifestURL)
+        let newest = await stateStore.current().newestManifest
+
+        if let newest, manifest.generated < newest {
+            throw SignedManifest.Problem.older(than: newest)
+        }
+
+        if newest != manifest.generated {
+            try await stateStore.update { $0.newestManifest = manifest.generated }
+        }
+
         lastManifest = (.now, manifest)
         return manifest
     }

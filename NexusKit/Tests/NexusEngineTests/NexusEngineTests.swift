@@ -706,12 +706,16 @@ struct NexusEngineTests {
         #expect(state.hosts.isEmpty)
     }
 
-    @Test func aStateFileWithTheOldManifestAddressGetsTheManifestOfTheLatestRelease() throws {
-        let old = #"{"manifestURL":"https://github.com/NexusLocal/binaries/releases/download/manifest/manifest.json"}"#
+    @Test(arguments: [
+        "https://github.com/NexusLocal/binaries/releases/download/manifest/manifest.json",
+        "https://github.com/NexusLocal/binaries/releases/latest/download/manifest.json",
+    ])
+    func aStateFileWithAnOldManifestAddressGetsTheSignedManifestOfTheLatestRelease(old: String) throws {
+        let file = #"{"manifestURL":"\#(old)"}"#
 
-        let state = try JSONDecoder().decode(EngineState.self, from: Data(old.utf8))
+        let state = try JSONDecoder().decode(EngineState.self, from: Data(file.utf8))
 
-        #expect(state.manifestURL == URL(string: "https://github.com/NexusLocal/binaries/releases/latest/download/manifest.json"))
+        #expect(state.manifestURL == URL(string: "https://github.com/NexusLocal/binaries/releases/latest/download/manifest.signed.json"))
     }
 
     @Test func aStateFileWithoutTheDumpSettingsGetsTheirDefaults() throws {
@@ -1277,6 +1281,44 @@ private extension NexusEngine {
 
     func setRunsWorkspaceCommands(_ runs: Bool) {
         runsWorkspaceCommands = runs
+    }
+}
+
+private final class DatedManifest: ManifestSource {
+    private let package: ManifestPackage
+    private let generated: Mutex<Date>
+
+    init(_ package: ManifestPackage, generated: Date) {
+        self.package = package
+        self.generated = Mutex(generated)
+    }
+
+    func change(to date: Date) {
+        generated.withLock { $0 = date }
+    }
+
+    func manifest(from url: URL) async throws -> Manifest {
+        Manifest(schema: 1, generated: generated.withLock { $0 }, repository: "test", packages: [package])
+    }
+}
+
+extension NexusEngineTests {
+    @Test func aManifestOlderThanTheNewestOneThatNexusdReadInstallsNothing() async throws {
+        let package = try makeFakeRedis()
+        let newest = Date(timeIntervalSince1970: 2_000_000_000)
+        let manifest = DatedManifest(package, generated: newest)
+        let engine = try makeEngine(package: package, port: freePort(), manifestSource: manifest)
+        let listed: (NexusResponse) -> Bool = { if case .available = $0 { true } else { false } }
+
+        let first = await engine.handle(.available)
+        manifest.change(to: newest.addingTimeInterval(-86_400))
+        let older = await engine.handle(.available)
+        manifest.change(to: newest.addingTimeInterval(86_400))
+        let newer = await engine.handle(.available)
+
+        #expect(listed(first))
+        #expect(older == .failure(message: SignedManifest.Problem.older(than: newest).description))
+        #expect(listed(newer))
     }
 }
 

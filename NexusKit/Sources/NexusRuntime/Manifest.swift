@@ -2,8 +2,10 @@ import Foundation
 
 public struct Manifest: Codable, Sendable, Equatable {
     // A release of the binaries repository cannot change after it is published. So each manifest
-    // is a new release, and the latest release holds the newest manifest.
-    public static let defaultURL = URL(string: "https://github.com/NexusLocal/binaries/releases/latest/download/manifest.json")!
+    // is a new release, and the latest release holds the newest manifest. Nexus reads only the
+    // signed manifest (group 8). Versions before it read manifest.json of the same release.
+    public static let defaultURL = URL(string: "https://github.com/NexusLocal/binaries/releases/latest/download/manifest.signed.json")!
+    public static let unsignedURL = URL(string: "https://github.com/NexusLocal/binaries/releases/latest/download/manifest.json")!
     // The test builds before 0.1.0 read the manifest from one release that changed each time.
     public static let fixedReleaseURL = URL(string: "https://github.com/NexusLocal/binaries/releases/download/manifest/manifest.json")!
 
