@@ -325,6 +325,16 @@ Nexus is in public beta. Your honest feedback makes it better, also when it is n
   not hold typed text, passwords or `.env` values. The file stays on your Mac. Nexus keeps at most
   about 10 MB. To open it, use the "..." menu on the Overview screen.
 
+## Security
+
+- **Signed packages:** Nexus downloads nginx, PHP, the databases and the other packages from
+  [NexusLocal/binaries](https://github.com/NexusLocal/binaries). The maintainer signs each list of
+  packages outside GitHub. Nexus installs only from a list with a valid signature, and it refuses a
+  list that is older than the last one it read. Nexus checks the SHA-256 of each download against
+  that list.
+- **Sources:** The build of each package checks its sources against the checksum or the PGP
+  signature of the publisher.
+
 ## Uninstall
 
 Open Settings > Advanced and click Uninstall. Nexus then moves itself to the Trash. You can also run
