@@ -119,9 +119,11 @@ final class BackgroundServiceRegistration {
     #if DEBUG
     // The launch record of the Nexus Dev nexusd can hold the code hash of the build that macOS
     // registered. After the next build macOS then refuses each start of nexusd ("needs LWCR
-    // update", exit 78), and a toggle in Login Items does not help. A new registration writes the
-    // record of this build. nexusd needs no approval of the user. A release has the stable
-    // signature of the team, so it never needs this.
+    // update", exit 78), and a toggle in Login Items does not help. Another copy of Nexus Dev, for
+    // example a build in another folder, can also register nexusd. When that copy is gone, each
+    // start fails with exit 78 too. A new registration writes the record of this build. nexusd
+    // needs no approval of the user. A release has the stable signature of the team and one
+    // place, so it never needs this.
     private func renewLaunchRecordAfterABuild() {
         guard let label, status == .enabled else {
             return
@@ -141,7 +143,7 @@ final class BackgroundServiceRegistration {
         let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         process.waitUntilExit()
 
-        guard text.contains("spawn failed"), text.contains("needs LWCR update") else {
+        guard text.contains("spawn failed"), text.contains("needs LWCR update") || text.contains("last exit code = 78") else {
             return
         }
 
