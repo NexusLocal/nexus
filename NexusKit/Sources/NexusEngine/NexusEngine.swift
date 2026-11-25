@@ -43,7 +43,16 @@ public struct HTTPManifestSource: ManifestSource {
         return try Manifest.decode(from: SignedManifest.verifiedBytes(of: apiData, keys: keys))
     }
 
+    // A connection that stopped gets one more try (DownloadRetry).
     private static func data(for request: URLRequest) async throws -> (Data, Int) {
+        do {
+            return try await dataOnce(for: request)
+        } catch let error where DownloadRetry.isBrokenConnection(error) {
+            return try await dataOnce(for: request)
+        }
+    }
+
+    private static func dataOnce(for request: URLRequest) async throws -> (Data, Int) {
         let (data, response) = try await URLSession.shared.data(for: request)
         return (data, (response as? HTTPURLResponse)?.statusCode ?? 200)
     }

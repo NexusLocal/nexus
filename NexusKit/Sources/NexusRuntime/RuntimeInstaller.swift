@@ -24,8 +24,17 @@ public protocol PackageDownloader: Sendable {
 public struct URLSessionDownloader: PackageDownloader {
     public init() {}
 
-    // A failure on the side of GitHub gets one more try through its API (GitHubReleaseAsset).
+    // A connection that stopped gets one more try (DownloadRetry).
     public func download(_ url: URL, progress: @escaping @Sendable (DownloadProgress) -> Void) async throws -> URL {
+        do {
+            return try await downloadOnce(url, progress: progress)
+        } catch let error where DownloadRetry.isBrokenConnection(error) {
+            return try await downloadOnce(url, progress: progress)
+        }
+    }
+
+    // A failure on the side of GitHub gets one more try through its API (GitHubReleaseAsset).
+    private func downloadOnce(_ url: URL, progress: @escaping @Sendable (DownloadProgress) -> Void) async throws -> URL {
         do {
             return try await transfer(URLRequest(url: url), of: url, progress: progress)
         } catch RuntimeError.httpStatus(let status, _) where GitHubReleaseAsset.isTemporaryFailure(status) {
