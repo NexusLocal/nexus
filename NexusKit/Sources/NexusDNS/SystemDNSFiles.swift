@@ -17,7 +17,7 @@ public enum SystemDNSFilesError: Error, Equatable, CustomStringConvertible {
         case .foreignResolver(let path):
             "\(path) belongs to another app, so Nexus does not change it. Remove that file, or choose another dev TLD."
         case .herdResolver(let path):
-            "\(path) belongs to Herd or Valet, so Nexus does not change it yet. Click \"Move from Herd…\" on the Overview, or run nexus import herd. The move takes over this file. Without Herd, remove the file or choose another dev TLD."
+            "\(path) belongs to Herd or Valet, so Nexus does not change it yet. Click the move on the Overview, or run nexus import herd or nexus import valet. The move takes over this file. Without Herd or Valet, remove the file or choose another dev TLD."
         case .unreadableHosts(let path):
             "Nexus cannot read \(path) as text, so it does not change it."
         case .brokenHostsBlock(let path):

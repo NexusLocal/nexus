@@ -135,21 +135,47 @@ struct HerdMoveChoices: Equatable {
     }
 }
 
-// The move from Herd (group 9, docs/group9-herd.md). The Overview shows a notice while Herd has
-// sites that did not move. The first run opens the sheet when it ends. nexusd reads the files of
-// Herd and runs the move as a task with steps. The request answers only at the end of the move.
+// The move from Herd or Valet (group 9, docs/group9-herd.md). The Overview shows a notice while the
+// app has sites that did not move. The first run opens the sheet when it ends. nexusd reads the
+// files of the app and runs the move as a task with steps. The request answers only at the end of
+// the move.
 extension AppModel {
     static let herdFolder = HerdReader.folder(home: FileManager.default.homeDirectoryForCurrentUser)
-    static let herdCertificate = herdFolder.appending(path: "config/valet/CA/LaravelValetCASelfSigned.pem")
     private static let loginItemsSettings = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")
 
-    // Herd without config.json has no sites, and nexusd then has no plan. An activation reads the
+    static func configFile(of source: MoveSource) -> URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+
+        switch source {
+        case .herd: return herdFolder.appending(path: "config/valet/config.json")
+        case .valet: return ValetReader.folder(home: home).appending(path: "config.json")
+        }
+    }
+
+    static func certificate(of source: MoveSource) -> URL {
+        switch source {
+        case .herd: herdFolder.appending(path: "config/valet/CA/LaravelValetCASelfSigned.pem")
+        case .valet: ValetReader.certificate(home: FileManager.default.homeDirectoryForCurrentUser)
+        }
+    }
+
+    // The plan of nexusd knows which app has the sites. Before the plan, Herd comes first.
+    var moveSource: MoveSource {
+        herdMovePlan?.source ?? foundMoveSource ?? .herd
+    }
+
+    // An app without config.json has no sites, and nexusd then has no plan. An activation reads the
     // plan only for the notice, and at most once a minute.
     func findHerd() {
-        let found = FileManager.default.fileExists(atPath: Self.herdFolder.appending(path: "config/valet/config.json").path(percentEncoded: false))
+        let source = MoveSource.allCases.first { FileManager.default.fileExists(atPath: Self.configFile(of: $0).path(percentEncoded: false)) }
+        let found = source != nil
 
         if found != herdFound {
             herdFound = found
+        }
+
+        if source != foundMoveSource {
+            foundMoveSource = source
         }
 
         guard found, wantsHerdMoveNotice else {
@@ -204,7 +230,7 @@ extension AppModel {
         return !plan.isEmpty
     }
 
-    // Each site of Herd is in Nexus, for example after nexus import herd in Terminal.
+    // Each site of the app is in Nexus, for example after nexus import herd in Terminal.
     var herdSitesMoved: Bool {
         herdMovePlan.map { $0.isEmpty && !$0.inNexus.isEmpty } == true
     }
@@ -224,7 +250,7 @@ extension AppModel {
             parts.append("your PHP settings")
         }
 
-        return "Nexus found \(EnglishList.joined(parts)) in Herd. Nexus copies them to Nexus. Herd and its files stay as they are."
+        return "Nexus found \(EnglishList.joined(parts)) in \(plan.source.name). Nexus copies them to Nexus. \(plan.source.name) and its files stay as they are."
     }
 
     func hideHerdMoveNotice() {
@@ -237,7 +263,7 @@ extension AppModel {
         UserDefaults.standard.removeObject(forKey: AppPreference.herdMovedText)
     }
 
-    // The first run ends with the sheet when Herd has sites (owner, 2026-11-24).
+    // The first run ends with the sheet when Herd or Valet has sites (owner, 2026-11-24).
     func openHerdMoveAfterFirstRun() {
         guard herdFound else {
             return
@@ -309,7 +335,7 @@ extension AppModel {
             herdMovedText = text
             UserDefaults.standard.set(text, forKey: AppPreference.herdMovedText)
             hideHerdMoveNotice()
-            hideWebServerNotice(of: ["Herd"])
+            hideWebServerNotice(of: [moveSource.name])
         }
 
         if sheet == nil {
@@ -357,13 +383,16 @@ extension AppModel {
         }
     }
 
-    // The folder of each move has the date and the time in its name. So the last name is the newest.
+    // The folder of each move has the app, the date and the time in its name, for example
+    // valet-2026-11-25-101500. So the last date is the newest.
     var newestHerdReport: URL? {
         let folders = (try? FileManager.default.contentsOfDirectory(at: NexusPaths.standard.moves, includingPropertiesForKeys: nil)) ?? []
-        let report = folders
-            .filter { $0.lastPathComponent.hasPrefix("herd-") }
-            .max { $0.lastPathComponent < $1.lastPathComponent }?
-            .appending(path: "report.md")
+        let dated = folders.compactMap { folder -> (date: String, folder: URL)? in
+            let name = folder.lastPathComponent
+            let source = MoveSource.allCases.first { name.hasPrefix("\($0.rawValue)-") }
+            return source.map { (String(name.dropFirst($0.rawValue.count + 1)), folder) }
+        }
+        let report = dated.max { $0.date < $1.date }?.folder.appending(path: "report.md")
 
         return report.flatMap { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) ? $0 : nil }
     }
@@ -377,19 +406,22 @@ extension AppModel {
         NSWorkspace.shared.open(report)
     }
 
-    // The sample data shows the banner of the design also on a Mac without Herd.
+    // The sample data shows the banner of the design also on a Mac without Herd or Valet.
     var hasHerdCertificate: Bool {
-        !isLive || FileManager.default.fileExists(atPath: Self.herdCertificate.path(percentEncoded: false))
+        !isLive || FileManager.default.fileExists(atPath: Self.certificate(of: moveSource).path(percentEncoded: false))
     }
 
-    // Herd 2 trusts its certificate for this user only. So the trust settings of the user change,
-    // and macOS asks for the password. The answer is the reason of a failure, in plain words.
+    // Herd 2 trusts its certificate for this user only. Valet trusts its certificate for each user
+    // of this Mac, in the System keychain (-d). macOS asks for the password in both cases. The answer
+    // is the reason of a failure, in plain words.
     func removeHerdCertificateTrust() async -> String? {
         guard isLive else {
             return nil
         }
 
-        let command = Command(executable: URL(filePath: "/usr/bin/security"), arguments: ["remove-trusted-cert", Self.herdCertificate.path(percentEncoded: false)])
+        let source = moveSource
+        let domain = source == .valet ? ["-d"] : []
+        let command = Command(executable: URL(filePath: "/usr/bin/security"), arguments: ["remove-trusted-cert"] + domain + [Self.certificate(of: source).path(percentEncoded: false)])
 
         do {
             try await CommandRunner.run(command)
@@ -398,26 +430,27 @@ extension AppModel {
             let reason = ErrorText.plain(error)
 
             if reason.localizedCaseInsensitiveContains("cancel") {
-                return "You canceled the password question. So macOS still trusts the Herd certificate."
+                return "You canceled the password question. So macOS still trusts the \(source.name) certificate."
             }
 
-            return "macOS did not remove the trust of the Herd certificate. \(reason)"
+            return "macOS did not remove the trust of the \(source.name) certificate. \(reason)"
         }
     }
 }
 
 // The plan of the design for --sample: the test Mac of docs/group9-herd.md. --herd-move states adds
-// the cases of "Sheet Move From Herd · States".
+// the cases of "Sheet Move From Herd · States". Valet parks ~/Sites and writes no shell lines.
 extension AppModel {
-    static func sampleHerdMovePlan(states: Bool = false) -> HerdMovePlan {
+    static func sampleHerdMovePlan(states: Bool = false, source: MoveSource = .herd) -> HerdMovePlan {
         let home = NSHomeDirectory()
+        let parked = "\(home)/\(source == .herd ? "Herd" : "Sites")"
         let account = DatabaseAccount(user: "root", password: "")
         let mb: (Double) -> Int64 = { Int64($0 * 1_000_000) }
         let phpLines = ["8.2", "8.3", "8.4", "8.5"]
         var sites = [
-            HerdMovePlan.SiteItem(hosts: ["shop.test"], folder: "\(home)/Herd/shop", kind: .php, herdPHP: "8.5", php: "8.5", phpChoices: phpLines, parkedIn: "\(home)/Herd", projectType: .laravel),
-            HerdMovePlan.SiteItem(hosts: ["blog.test"], folder: "\(home)/Herd/blog", kind: .php, herdPHP: "8.5", php: "8.5", phpChoices: phpLines, parkedIn: "\(home)/Herd", projectType: .laravel),
-            HerdMovePlan.SiteItem(hosts: ["news.test"], folder: "\(home)/Herd/news", kind: .php, herdPHP: "8.5", php: "8.5", phpChoices: phpLines, parkedIn: "\(home)/Herd", projectType: .wordpress),
+            HerdMovePlan.SiteItem(hosts: ["shop.test"], folder: "\(parked)/shop", kind: .php, herdPHP: "8.5", php: "8.5", phpChoices: phpLines, parkedIn: parked, projectType: .laravel),
+            HerdMovePlan.SiteItem(hosts: ["blog.test"], folder: "\(parked)/blog", kind: .php, herdPHP: "8.5", php: "8.5", phpChoices: phpLines, parkedIn: parked, projectType: .laravel),
+            HerdMovePlan.SiteItem(hosts: ["news.test"], folder: "\(parked)/news", kind: .php, herdPHP: "8.5", php: "8.5", phpChoices: phpLines, parkedIn: parked, projectType: .wordpress),
             HerdMovePlan.SiteItem(hosts: ["api.test", "api-v2.test"], folder: "\(home)/Code/api-server", kind: .php, herdPHP: "8.3", php: "8.3", phpChoices: phpLines, ownLines: ["add_header Access-Control-Allow-Origin *;"]),
             HerdMovePlan.SiteItem(hosts: ["legacy.test"], folder: "\(home)/Code/legacy-app", kind: .php, herdPHP: "8.1", php: "8.2", phpChoices: phpLines),
             HerdMovePlan.SiteItem(hosts: ["admin.test"], folder: "", kind: .proxy, herdPHP: nil, php: nil, phpChoices: [], address: "127.0.0.1:3000"),
@@ -431,13 +464,20 @@ extension AppModel {
         var notes = ["legacy.test uses PHP 8.1. Nexus has PHP 8.2 and newer, so the site gets PHP 8.2."]
 
         if states {
-            sites.append(HerdMovePlan.SiteItem(hosts: ["next.test"], folder: "\(home)/Herd/next", kind: .php, herdPHP: "8.6", php: "8.5", phpChoices: phpLines, parkedIn: "\(home)/Herd", projectType: .laravel))
+            sites.append(HerdMovePlan.SiteItem(hosts: ["next.test"], folder: "\(parked)/next", kind: .php, herdPHP: "8.6", php: "8.5", phpChoices: phpLines, parkedIn: parked, projectType: .laravel))
             databases.append(HerdMovePlan.DatabaseItem(name: "crm", kind: "mysql", version: "9.4.0", port: 3307, account: account, line: "9.7", lineChoices: ["9.7"], bytes: mb(2.1), sites: ["next.test"]))
             redis.append(HerdMovePlan.RedisItem(port: 6380, password: nil, valkey: true, version: "8.1.1", keys: 12, line: "8.2", sites: ["next.test"]))
             notes.append("next.test uses PHP 8.6. Nexus has no PHP 8.6 yet, so the site gets PHP 8.5 until then.")
         }
 
+        let iniLines = source == .herd ? ["memory_limit=512M", "upload_max_filesize=64M", "max_execution_time=123"] : ["max_execution_time=123", "memory_limit=512M", "upload_max_filesize=512M", "post_max_size=512M"]
+        let files = [
+            HerdMovePlan.FileItem(path: "\(home)/.zshrc", kind: .shell, lines: ["# Herd injected PHP binary.", "export PATH=\"\(home)/Library/Application Support/Herd/bin/\":$PATH", "# Herd injected NVM configuration", "export NVM_DIR=\"\(home)/Library/Application Support/Herd/config/nvm\""]),
+            HerdMovePlan.FileItem(path: "\(home)/Herd/shop/.mcp.json", kind: .project, lines: ["\"command\": \"\(home)/Library/Application Support/Herd/bin/php85\","]),
+        ]
+
         return HerdMovePlan(
+            source: source,
             herdRuns: true,
             tld: "test",
             packages: [
@@ -446,27 +486,26 @@ extension AppModel {
                 HerdMovePlan.Package(name: "postgresql", line: "17", reason: "for blog", bytes: mb(42)),
                 HerdMovePlan.Package(name: "redis", line: "8.2", reason: "for the Redis keys", bytes: mb(9)),
             ],
-            parked: [HerdMovePlan.ParkedFolder(folder: "\(home)/Herd", php: "8.5")],
+            parked: [HerdMovePlan.ParkedFolder(folder: parked, php: "8.5")],
             sites: sites,
             databases: databases,
             redis: redis,
-            ini: [HerdMovePlan.IniItem(herdPHP: "8.5", line: "8.5", lines: ["memory_limit=512M", "upload_max_filesize=64M", "max_execution_time=123"])],
+            ini: [HerdMovePlan.IniItem(herdPHP: "8.5", line: "8.5", lines: iniLines)],
             envFiles: [
-                HerdMovePlan.EnvItem(host: "shop.test", file: "\(home)/Herd/shop/.env"),
-                HerdMovePlan.EnvItem(host: "blog.test", file: "\(home)/Herd/blog/.env"),
+                HerdMovePlan.EnvItem(host: "shop.test", file: "\(parked)/shop/.env"),
+                HerdMovePlan.EnvItem(host: "blog.test", file: "\(parked)/blog/.env"),
             ],
-            files: [
-                HerdMovePlan.FileItem(path: "\(home)/.zshrc", kind: .shell, lines: ["# Herd injected PHP binary.", "export PATH=\"\(home)/Library/Application Support/Herd/bin/\":$PATH", "# Herd injected NVM configuration", "export NVM_DIR=\"\(home)/Library/Application Support/Herd/config/nvm\""]),
-                HerdMovePlan.FileItem(path: "\(home)/Herd/shop/.mcp.json", kind: .project, lines: ["\"command\": \"\(home)/Library/Application Support/Herd/bin/php85\","]),
-            ],
+            files: source == .herd ? files : [],
             notes: notes
         )
     }
 
-    // --herd-move review|states|progress|quit-herd|done|failed opens a state of the sheet.
-    func showSampleHerdMove(_ state: String) {
+    // --herd-move review|states|progress|quit-herd|done|failed opens a state of the sheet. The steps
+    // have the order of NexusEngine.herdMoveSteps.
+    func showSampleHerdMove(_ state: String, source: MoveSource = .herd) {
         herdFound = true
-        herdMovePlan = Self.sampleHerdMovePlan(states: state == "states")
+        foundMoveSource = source
+        herdMovePlan = Self.sampleHerdMovePlan(states: state == "states", source: source)
 
         guard !["review", "states"].contains(state) else {
             herdMoveRun = nil
@@ -477,9 +516,11 @@ extension AppModel {
             herdMoveRun = HerdMoveRun(request: HerdMoveRequest(), summary: "6 sites, 3 databases and your settings", movedText: "", tld: plan.tld)
         }
 
-        let running = ["progress": 3, "quit-herd": 5, "failed": 0][state]
-        let titles = ["Install PHP 8.3, PHP 8.2, PostgreSQL 17 and Redis 8.2", "Sites: 6", "php.ini and nginx lines", "Databases: shop, news and blog", "Redis keys", HerdMoveText.quitHerdStep, "Ports 80 and 443 and the domain .test", ".env of shop.test and blog.test", "~/.zshrc and ~/Herd/shop/.mcp.json", "Open each site once"]
-        let seconds = [38, 2, 1, 9, 1, 14, 2, 1, 1, 3]
+        let running = ["progress": 2, "quit-herd": 4, "failed": 0][state]
+        let shell = source == .herd ? [("~/.zshrc and ~/Herd/shop/.mcp.json", 1)] : []
+        let plannedSteps = [("Install PHP 8.3, PHP 8.2, PostgreSQL 17 and Redis 8.2", 38), ("php.ini lines", 1), ("Databases: shop, news and blog", 9), ("Redis keys", 1), (source.stopStep, 14), ("Ports 80 and 443 and the domain .test", 2), ("Sites: 6", 2), ("nginx lines", 1), (".env of shop.test and blog.test", 1)] + shell + [("Open each site once", 3)]
+        let titles = plannedSteps.map(\.0)
+        let seconds = plannedSteps.map(\.1)
         let steps = titles.indices.map { index in
             guard let running else {
                 return TaskStep(title: titles[index], state: .done, seconds: seconds[index])
@@ -492,14 +533,14 @@ extension AppModel {
             return TaskStep(title: titles[index], state: index == running ? .running : .waiting)
         }
         let log = ["== Databases: shop, news and blog", "$ nexus db copy shop --to mysql-8.4 --from-port 3306", "Copied 14 tables of shop.", "$ nexus db copy news --to mysql-8.4 --from-port 3306"]
-        let task = TaskInfo(id: "move-from-herd", work: .moveFromHerd, started: .now, steps: steps, log: log, logFile: "\(NexusPaths.standard.moves.path(percentEncoded: false))/herd-sample/move.log")
+        let task = TaskInfo(id: "move-from-herd", work: .moveFromHerd, started: .now, steps: steps, log: log, logFile: "\(NexusPaths.standard.moves.path(percentEncoded: false))/\(source.rawValue)-sample/move.log")
 
         herdMoveTask = task
         show(TaskList(tasks: running == nil || state == "failed" ? [] : [task]))
 
         switch state {
         case "done":
-            herdMoveRun?.result = .done("Nexus moved 6 sites and 3 databases from Herd. The report is in ~/Library/Application Support/Nexus/moves/herd-sample/report.md.")
+            herdMoveRun?.result = .done("Nexus moved 6 sites and 3 databases from \(source.name). The report is in ~/Library/Application Support/Nexus/moves/\(source.rawValue)-sample/report.md.")
         case "failed":
             herdMoveRun?.result = .failed("Nexus could not download PostgreSQL 17. The connection to the download server ended.")
         default:
@@ -508,9 +549,10 @@ extension AppModel {
     }
 
     // --herd-notice move|moved shows a notice of the Overview.
-    func showSampleHerdNotice(_ state: String) {
+    func showSampleHerdNotice(_ state: String, source: MoveSource = .herd) {
         herdFound = true
-        herdMovePlan = Self.sampleHerdMovePlan()
+        foundMoveSource = source
+        herdMovePlan = Self.sampleHerdMovePlan(source: source)
         hiddenHerdMoveNotice = false
         herdMovedText = state == "moved" ? "6 sites, 3 databases and your PHP settings are in Nexus now. Nexus kept a copy of each file that it changed." : nil
     }

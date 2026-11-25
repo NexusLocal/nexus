@@ -270,11 +270,12 @@ final class AppModel {
     var stoppedByStopAll: [String] = []
     var otherWebServers: [String] = []
     var hiddenWebServerNotice = Set(UserDefaults.standard.stringArray(forKey: AppPreference.hiddenWebServerNotice) ?? [])
-    // The move from Herd (group 9). herdFound comes from a check of one file of Herd, so it costs
-    // almost nothing. The plan comes from nexusd. A run stays after its end until the sheet closes.
-    // The task list drops a task at its end. So herdMoveTask keeps the last state of its steps.
-    // herdMovedText is the text of the notice after a move that ended well. It stays until OK.
+    // The move from Herd or Valet (group 9). herdFound comes from a check of one file of each app, so
+    // it costs almost nothing. The plan comes from nexusd. A run stays after its end until the sheet
+    // closes. The task list drops a task at its end. So herdMoveTask keeps the last state of its
+    // steps. herdMovedText is the text of the notice after a move that ended well. It stays until OK.
     var herdFound = false
+    var foundMoveSource: MoveSource?
     var herdMovePlan: HerdMovePlan?
     var herdMovePlanProblem: String?
     var loadingHerdMovePlan = false

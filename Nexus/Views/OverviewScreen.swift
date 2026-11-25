@@ -115,9 +115,10 @@ struct OverviewScreen: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 MoreMenu {
-                    // The notice can be hidden. So the move stays here while Herd has its files.
+                    // The notice can be hidden. So the move stays here while Herd or Valet has its
+                    // files.
                     if model.herdFound {
-                        Button("Move from Herd…", systemImage: "tray.and.arrow.down") {
+                        Button("Move from \(model.moveSource.name)…", systemImage: "tray.and.arrow.down") {
                             model.sheet = .moveFromHerd
                         }
 
@@ -171,17 +172,17 @@ private struct AgentsNotice: View {
     }
 }
 
-// The design is "Overview Notice Move From Herd" in nexus.pen. The notice shows while Herd has sites
-// that did not move. The close button hides it for good. After a move, the second notice shows
-// until OK.
+// The design is "Overview Notice Move From Herd" and "· Valet" in nexus.pen. The notice shows while
+// the app has sites that did not move. The close button hides it for good. After a move, the second
+// notice shows until OK.
 private struct HerdMoveNotice: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        NoticeBanner(systemImage: "tray.and.arrow.down", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: "Move your sites from Herd") {
+        NoticeBanner(systemImage: "tray.and.arrow.down", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: "Move your sites from \(model.moveSource.name)") {
             Text(model.herdMoveNoticeText)
         } actions: {
-            Button("Move from Herd…") {
+            Button("Move from \(model.moveSource.name)…") {
                 model.sheet = .moveFromHerd
             }
             .buttonStyle(.borderedProminent)
@@ -198,7 +199,7 @@ private struct HerdMovedNotice: View {
     let text: String
 
     var body: some View {
-        NoticeBanner(systemImage: "checkmark.circle", color: .statusGreen, background: AnyShapeStyle(.fill.quaternary), title: "Your sites moved from Herd") {
+        NoticeBanner(systemImage: "checkmark.circle", color: .statusGreen, background: AnyShapeStyle(.fill.quaternary), title: "Your sites moved from \(model.moveSource.name)") {
             Text(text)
         } actions: {
             Button("Show Report") {

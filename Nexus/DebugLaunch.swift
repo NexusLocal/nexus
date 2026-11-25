@@ -23,6 +23,7 @@ import NexusIPC
 // of them needs --sample.
 // --sheet move-from-herd --herd-move review|states|progress|quit-herd|done|failed opens a state of
 // the move from Herd. --herd-notice move|moved shows its notice on the Overview. Both need --sample.
+// --move-source valet shows the same for the move from Valet.
 enum DebugLaunch {
     // A check of the look does not get the first run on top of the screen that it checks.
     static var checksTheLook: Bool {
@@ -82,7 +83,7 @@ enum DebugLaunch {
         }
 
         if CommandLine.arguments.contains("--sample"), let state = value(of: "--herd-notice") {
-            model.showSampleHerdNotice(state)
+            model.showSampleHerdNotice(state, source: sampleMoveSource)
         }
 
         if let json = value(of: "--notification"), let userInfo = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any], let target = NotificationTarget(userInfo: userInfo) {
@@ -127,7 +128,7 @@ enum DebugLaunch {
             model.sheet = .share(host: value(of: "--site") ?? "shop.test")
         case "move-from-herd":
             if CommandLine.arguments.contains("--sample") {
-                model.showSampleHerdMove(value(of: "--herd-move") ?? "review")
+                model.showSampleHerdMove(value(of: "--herd-move") ?? "review", source: sampleMoveSource)
             }
             model.sheet = .moveFromHerd
         default: break
@@ -217,6 +218,10 @@ enum DebugLaunch {
         case ("packages", _): return .packages
         default: return .overview
         }
+    }
+
+    private static var sampleMoveSource: MoveSource {
+        value(of: "--move-source").flatMap(MoveSource.init(rawValue:)) ?? .herd
     }
 
     private static func value(of name: String) -> String? {

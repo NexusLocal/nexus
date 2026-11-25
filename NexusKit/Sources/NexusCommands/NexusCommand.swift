@@ -1443,23 +1443,23 @@ struct New: AsyncParsableCommand {
 // A WordPress site from a backup (Phase 4, 3f). nexusd reads the backup first and the command shows
 // what it found.
 struct Import: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Makes a WordPress site from a backup, or moves your sites from Herd, for example: nexus import ~/Downloads/foo.wpress, or: nexus import herd")
+    static let configuration = CommandConfiguration(abstract: "Makes a WordPress site from a backup, or moves your sites from Herd or Valet, for example: nexus import ~/Downloads/foo.wpress, or: nexus import herd")
 
-    @Argument(help: "A zip of Local, Jetpack or Studio, a .wpress file, or a folder with wp-content and a .sql or .sql.gz dump. Or herd for the move from Herd.") var backup: String
+    @Argument(help: "A zip of Local, Jetpack or Studio, a .wpress file, or a folder with wp-content and a .sql or .sql.gz dump. Or herd or valet for the move from that app.") var backup: String
     @Option(help: "The name of the site. The default comes from the name of the backup.") var name: String?
     @Option(help: "The folder that gets the new site. The default is the current folder.") var folder: String = "."
     @Option(help: "The database instance, for example mysql-8.4. The default is MySQL 8.4 or the newest MySQL that runs.") var database: String?
     @Flag(inversion: .prefixedNo, help: "Makes a git repository with a first commit. It ignores wp-config.php and the uploads.") var git = true
     @Flag(help: "Reads the password of a .wpress backup from the input. Without it, the command asks for the password.") var passwordStdin = false
-    @Flag(help: "The move from Herd starts without a question.") var yes = false
+    @Flag(help: "The move from Herd or Valet starts without a question.") var yes = false
 
     func run() async throws {
         let path = absolutePath(backup)
 
-        // The word herd is always the move. macOS ignores case, so ~/Herd matches herd in the home
-        // folder. A backup folder with that name can go as ./herd.
-        if backup.lowercased() == "herd" {
-            try await moveFromHerd()
+        // The words herd and valet are always the move. macOS ignores case, so ~/Herd matches herd
+        // in the home folder. A backup folder with that name can go as ./herd.
+        if let source = MoveSource(rawValue: backup.lowercased()) {
+            try await moveFromHerd(source)
             return
         }
 
@@ -1505,15 +1505,20 @@ struct Import: AsyncParsableCommand {
     }
 }
 
-// The move from Herd (group 9). The command shows the plan, asks for a yes and waits until the
-// move ends. The move waits for the user to quit Herd.
+// The move from Herd or Valet (group 9). The command shows the plan, asks for a yes and waits until
+// the move ends. The move waits for the user to stop the app.
 extension Import {
-    func moveFromHerd() async throws {
+    func moveFromHerd(_ source: MoveSource) async throws {
         let response = try await send(.herdMovePlan)
 
         guard case .herdMovePlan(let found) = response else {
             try finish(response)
             return
+        }
+
+        if let found, found.source != source {
+            FileHandle.standardError.write(Data("Nexus moves the sites of \(found.source.name) on this Mac. Run: nexus import \(found.source.rawValue)\n".utf8))
+            throw ExitCode.failure
         }
 
         guard let plan = found, !plan.isEmpty else {
@@ -1533,7 +1538,7 @@ extension Import {
         }
 
         if plan.herdRuns {
-            print("Nexus copies while Herd runs. Then quit Herd: click the Herd icon in the menu bar and choose Quit. Also turn off Herd in System Settings > General > Login Items. The move goes on when Herd stops.")
+            print(HerdMoveText.stopInstruction(plan.source))
         }
 
         try finish(try await send(.moveFromHerd(HerdMoveRequest())))

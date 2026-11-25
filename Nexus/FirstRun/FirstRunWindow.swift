@@ -1155,8 +1155,8 @@ private struct DomainRow: View {
                 background.helper.refresh()
 
                 // A domain in /etc/hosts needs no resolver file. So it is ready as soon as the helper
-                // is. The file of Herd and Valet without Herd on this Mac stays a file of another
-                // app, because no move takes it over.
+                // is. The file of Herd and Valet without Herd or Valet on this Mac stays a file of
+                // another app, because no move takes it over.
                 let found = HostName.usesHostsFile(tld) ? .nexus : ResolverFile.owner(of: ResolverFile.folder.appending(path: tld, directoryHint: .notDirectory))
                 let owner = found == .herdOrValet && !model.herdFound ? .otherApp : found
 
@@ -1249,7 +1249,7 @@ private struct SettingsStep: View {
                 }
 
                 if resolverOwner == .herdOrValet {
-                    Text("Herd uses the domain .\(model.settings.tld) now. Nexus takes it over when you move your sites from Herd.")
+                    Text("\(model.moveSource.name) uses the domain .\(model.settings.tld) now. Nexus takes it over when you move your sites from \(model.moveSource.name).")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }

@@ -49,9 +49,10 @@ private struct HerdMoveReview: View {
 
     var body: some View {
         let plan = model.herdMovePlan.flatMap { $0.isEmpty ? nil : $0 }
+        let name = model.moveSource.name
 
         VStack(alignment: .leading, spacing: 12) {
-            Text("Move from Herd")
+            Text("Move from \(name)")
                 .font(.headline)
 
             if let plan {
@@ -72,7 +73,7 @@ private struct HerdMoveReview: View {
                 HStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Nexus reads the files of Herd…")
+                    Text("Nexus reads the files of \(name)…")
                         .foregroundStyle(.secondary)
                 }
             } else {
@@ -116,8 +117,9 @@ private struct HerdMoveReview: View {
     }
 
     private func intro(_ plan: HerdMovePlan) -> String {
-        let runs = plan.herdRuns ? " Herd still runs while Nexus copies the databases." : ""
-        return "Nexus copies each item that is on. Nexus changes nothing in Herd.\(runs)"
+        let name = plan.source.name
+        let runs = plan.herdRuns ? " \(name) still runs while Nexus copies the databases." : ""
+        return "Nexus copies each item that is on. Nexus changes nothing in \(name).\(runs)"
     }
 }
 
@@ -506,11 +508,12 @@ private struct HerdMoveProgressView: View {
 
     var body: some View {
         let task = model.liveHerdMoveTask ?? model.herdMoveTask
-        let waitsForHerd = task?.steps?.contains { $0.state == .running && $0.title == HerdMoveText.quitHerdStep } == true
+        let source = model.moveSource
+        let waitsForApp = task?.steps?.contains { $0.state == .running && $0.title == source.stopStep } == true
 
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Moving from Herd")
+                Text("Moving from \(source.name)")
                     .font(.headline)
 
                 if let summary {
@@ -520,17 +523,19 @@ private struct HerdMoveProgressView: View {
             }
 
             if let steps = task?.steps {
-                TaskStepList(steps: steps, waitsForUser: HerdMoveText.quitHerdStep)
+                TaskStepList(steps: steps, waitsForUser: source.stopStep)
             } else {
                 HStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Nexus reads the files of Herd and plans the steps…")
+                    Text("Nexus reads the files of \(source.name) and plans the steps…")
                         .foregroundStyle(.secondary)
                 }
             }
 
-            if waitsForHerd {
+            if waitsForApp, source == .valet {
+                ValetStopBanner(tld: tld)
+            } else if waitsForApp {
                 NoticeBanner(systemImage: "hand.raised", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: "Quit Herd to go on") {
                     Text("Herd has ports 80 and 443 and the domain .\(tld). Nexus takes them over when Herd stops. Also turn off Herd in Login Items. Else Herd starts again at the next login.")
                 } actions: {
@@ -546,7 +551,7 @@ private struct HerdMoveProgressView: View {
                 TaskLogBox(lines: task?.log ?? [], height: 120)
             }
 
-            Text(waitsForHerd ? "You can close this sheet. The move waits for Herd, and the Overview shows it under Activity." : "You can close this sheet. Nexus goes on, and the Overview shows the move under Activity.")
+            Text(waitsForApp ? "You can close this sheet. The move waits for \(source.name), and the Overview shows it under Activity." : "You can close this sheet. Nexus goes on, and the Overview shows the move under Activity.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -588,15 +593,50 @@ private struct HerdMoveProgressView: View {
     }
 }
 
+// The design is "Sheet Move From Valet · Progress" in nexus.pen. Valet runs as root, so only
+// valet stop with the password of the user stops it (owner, 2026-11-25).
+private struct ValetStopBanner: View {
+    static let command = "valet stop"
+    let tld: String
+
+    var body: some View {
+        NoticeBanner(systemImage: "hand.raised", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: "Stop Valet to go on") {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Valet has ports 80 and 443 and the domain .\(tld). Valet runs as root, so Nexus cannot stop it. Run this command in Terminal. Valet asks for your password, and Nexus goes on when Valet stops.")
+
+                HStack(spacing: 8) {
+                    Text(Self.command)
+                        .font(.system(.callout, design: .monospaced))
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(nsColor: .textBackgroundColor), in: .rect(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
+
+                    Button("Copy") {
+                        copyToPasteboard(Self.command)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        } actions: {
+            EmptyView()
+        }
+    }
+}
+
 private struct HerdMoveDoneView: View {
     @Environment(AppModel.self) private var model
     let message: String
 
     var body: some View {
         let steps = model.endedHerdMoveSteps(.done(message))
+        let name = model.moveSource.name
 
         VStack(alignment: .leading, spacing: 12) {
-            Text("Your sites moved from Herd")
+            Text("Your sites moved from \(name)")
                 .font(.headline)
 
             Text(Self.result(of: message))
@@ -610,7 +650,7 @@ private struct HerdMoveDoneView: View {
                 HerdCertificateBanner()
             }
 
-            Text("Herd and its files stay as they are. The report tells you how to go back to Herd.")
+            Text("\(name) and its files stay as they are. The report tells you how to go back to \(name).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -640,7 +680,8 @@ private struct HerdMoveDoneView: View {
     }
 }
 
-// Herd made a root certificate, and its key is a plain file. Nexus does not need it (decision 8).
+// Herd and Valet made a root certificate, and its key is a plain file. Nexus does not need it
+// (decision 8). Valet trusts it for each user of this Mac (owner, 2026-11-25).
 private struct HerdCertificateBanner: View {
     @Environment(AppModel.self) private var model
     @State private var removing = false
@@ -648,16 +689,20 @@ private struct HerdCertificateBanner: View {
     @State private var problem: String?
 
     var body: some View {
+        let name = model.moveSource.name
+
         VStack(alignment: .leading, spacing: 6) {
             if removed {
-                NoticeBanner(systemImage: "checkmark.shield", color: .statusGreen, background: AnyShapeStyle(.fill.quaternary), title: "macOS does not trust the Herd certificate now") {
-                    Text("The certificate file stays in the folder of Herd.")
+                NoticeBanner(systemImage: "checkmark.shield", color: .statusGreen, background: AnyShapeStyle(.fill.quaternary), title: "macOS does not trust the \(name) certificate now") {
+                    Text("The certificate file stays in the folder of \(name).")
                 } actions: {
                     EmptyView()
                 }
             } else {
-                NoticeBanner(systemImage: "exclamationmark.shield", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: "Remove the trust of the Herd certificate") {
-                    Text("Herd made a root certificate that can sign any domain. Its key is a plain file on this Mac. Nexus does not need it.")
+                NoticeBanner(systemImage: "exclamationmark.shield", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: "Remove the trust of the \(name) certificate") {
+                    Text(model.moveSource == .valet
+                        ? "Valet made a root certificate that can sign any domain. Each user of this Mac trusts it, and its key is a plain file. Nexus does not need it. macOS asks for your password."
+                        : "Herd made a root certificate that can sign any domain. Its key is a plain file on this Mac. Nexus does not need it.")
                 } actions: {
                     Button(removing ? "Removing…" : "Remove Trust…", action: remove)
                         .disabled(removing)
@@ -694,9 +739,10 @@ private struct HerdMoveEndedView: View {
     var body: some View {
         let steps = model.endedHerdMoveSteps(result)
         let failedInstall = steps.first.map { $0.state == .failed && $0.title.hasPrefix("Install ") } == true
+        let name = model.moveSource.name
 
         VStack(alignment: .leading, spacing: 12) {
-            Text("The move from Herd stopped")
+            Text("The move from \(name) stopped")
                 .font(.headline)
 
             switch result {
@@ -711,7 +757,7 @@ private struct HerdMoveEndedView: View {
                 TaskStepList(steps: steps)
             }
 
-            Text(failedInstall ? "The move stops before it copies anything. Herd still runs, and your sites keep working." : "Herd and its files stay as they are. The report tells you what moved and how to go back to Herd.")
+            Text(failedInstall ? "The move stops before it copies anything. \(name) still runs, and your sites keep working." : "\(name) and its files stay as they are. The report tells you what moved and how to go back to \(name).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

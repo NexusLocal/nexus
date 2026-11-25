@@ -5,9 +5,9 @@ import NexusIPC
 import NexusLaravel
 import NexusSupervisor
 
-// The move from Herd (group 9, docs/group9-herd.md). nexusd reads the files of Herd and of the
-// projects, and it changes nothing in Herd. The move copies while Herd still runs. Then it waits
-// until the user quits Herd, and it takes over the ports, the domain and the .env files.
+// The move from Herd or Valet (group 9, docs/group9-herd.md). nexusd reads the files of the app and
+// of the projects, and it changes nothing in the app. The move copies while the app still runs. Then
+// it waits until the user stops the app, and it takes over the ports, the domain and the .env files.
 extension NexusEngine {
     static let herdMoveTaskID = "move-from-herd"
     static let herdDatabaseKinds: Set<String> = ["mysql", "mariadb", "postgresql", "mongodb"]
@@ -15,14 +15,22 @@ extension NexusEngine {
     func herdMovePlan() async -> HerdMovePlan? {
         let home = FileManager.default.homeDirectoryForCurrentUser
 
-        guard let setup = HerdReader.read(herd: HerdReader.folder(home: home)) else {
+        guard let found = Self.moveSetup(home: home) else {
             return nil
         }
 
-        return HerdMovePlanner.plan(setup: setup, facts: await herdMoveFacts(setup: setup, home: home))
+        return HerdMovePlanner.plan(setup: found.setup, facts: await herdMoveFacts(setup: found.setup, source: found.source, home: home))
     }
 
-    func herdMoveFacts(setup: HerdSetup, home: URL) async -> HerdMoveFacts {
+    // Herd comes first when both apps have sites. Herd copies the sites of Valet at its first start.
+    static func moveSetup(home: URL) -> (source: MoveSource, setup: HerdSetup)? {
+        let found = [(MoveSource.herd, HerdReader.read(herd: HerdReader.folder(home: home))), (.valet, ValetReader.read(home: home))]
+            .compactMap { source, setup in setup.map { (source: source, setup: $0) } }
+
+        return found.first { $0.setup.hasSites } ?? found.first
+    }
+
+    func herdMoveFacts(setup: HerdSetup, source: MoveSource, home: URL) async -> HerdMoveFacts {
         let manifest = try? await manifest()
         let names = Self.herdDatabaseKinds.union(["php", "redis"])
         var offered: [String: [String]] = [:]
@@ -70,8 +78,9 @@ extension NexusEngine {
         let state = await stateStore.current()
 
         return HerdMoveFacts(
+            source: source,
             home: home,
-            herdRuns: Self.herdIsRunning(),
+            herdRuns: Self.isRunning(source),
             offered: offered,
             installed: Set(installed.map { "\($0.name)-\($0.line)" }),
             packageBytes: bytes,
@@ -218,8 +227,14 @@ extension NexusEngine {
         return String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     }
 
-    static func herdIsRunning() -> Bool {
-        runningExecutables().contains { $0.hasSuffix("/Herd.app/Contents/MacOS/Herd") }
+    // Valet runs the nginx of Homebrew as root.
+    static func isRunning(_ source: MoveSource) -> Bool {
+        switch source {
+        case .herd:
+            runningExecutables().contains { $0.hasSuffix("/Herd.app/Contents/MacOS/Herd") }
+        case .valet:
+            runningExecutables().contains { $0.contains("/Cellar/nginx/") && $0.hasSuffix("/bin/nginx") }
+        }
     }
 
     static func runningExecutables() -> [String] {

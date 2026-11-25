@@ -66,6 +66,10 @@ public struct HerdSetup: Sendable, Equatable {
     public func siteFile(of host: String) -> SiteFile? {
         siteFiles.first { $0.host == host }
     }
+
+    public var hasSites: Bool {
+        !parkedFolders.isEmpty || !links.isEmpty || !siteFiles.isEmpty
+    }
 }
 
 public enum HerdReader {
@@ -260,6 +264,7 @@ struct StubTemplates {
         escaped = escaped.replacingOccurrences(of: #"(VALET|HERD)_[A-Z_]+"#, with: ".*", options: .regularExpression)
         escaped = escaped.replacingOccurrences(of: #"\d+"#, with: #"\\d+"#, options: .regularExpression)
         escaped = escaped.replacingOccurrences(of: #"\$herd_sock"#, with: #"\$herd_sock\w*"#)
+        escaped = escaped.replacingOccurrences(of: #"valet\.sock"#, with: #"valet\d*\.sock"#)
         return try? Regex("^" + escaped + "$")
     }
 

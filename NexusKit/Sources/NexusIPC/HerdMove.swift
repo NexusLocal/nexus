@@ -1,9 +1,31 @@
 import Foundation
 import NexusCore
 
-// The move from Herd (group 9, docs/group9-herd.md). nexusd reads the files of Herd and the projects
-// of its sites, and the sheet "Move from Herd" shows the plan. Each item has an id. The request
-// names the items that the user turned off and the version lines that the user chose.
+// The app that the sites move from. Laravel Valet keeps the same files as Herd in another folder,
+// so the types of the move from Herd also serve the move from Valet.
+public enum MoveSource: String, Codable, Sendable, CaseIterable {
+    case herd
+    case valet
+
+    public var name: String {
+        switch self {
+        case .herd: "Herd"
+        case .valet: "Valet"
+        }
+    }
+
+    // The step that waits until the app gives back ports 80 and 443.
+    public var stopStep: String {
+        switch self {
+        case .herd: "Quit Herd"
+        case .valet: "Stop Valet"
+        }
+    }
+}
+
+// The move from Herd or Valet (group 9, docs/group9-herd.md). nexusd reads the files of the app and
+// the projects of its sites, and the sheet "Move from Herd" shows the plan. Each item has an id.
+// The request names the items that the user turned off and the version lines that the user chose.
 public struct HerdMovePlan: Codable, Sendable, Equatable {
     // A package that the move needs and that is not installed. Nexus installs it first.
     public struct Package: Codable, Sendable, Equatable, Identifiable {
@@ -171,6 +193,8 @@ public struct HerdMovePlan: Codable, Sendable, Equatable {
     // keeps the lines of each site out of the move.
     public static let ownLinesID = "nginx-lines"
 
+    public var source: MoveSource
+    // Herd runs, or the nginx of Valet runs.
     public var herdRuns: Bool
     public var tld: String
     public var packages: [Package]
@@ -186,7 +210,8 @@ public struct HerdMovePlan: Codable, Sendable, Equatable {
     // The first host of each site of Herd that Nexus has already. The plan leaves these sites out.
     public var inNexus: [String]
 
-    public init(herdRuns: Bool, tld: String, packages: [Package] = [], parked: [ParkedFolder] = [], sites: [SiteItem] = [], databases: [DatabaseItem] = [], redis: [RedisItem] = [], ini: [IniItem] = [], envFiles: [EnvItem] = [], files: [FileItem] = [], notes: [String] = [], inNexus: [String] = []) {
+    public init(source: MoveSource = .herd, herdRuns: Bool, tld: String, packages: [Package] = [], parked: [ParkedFolder] = [], sites: [SiteItem] = [], databases: [DatabaseItem] = [], redis: [RedisItem] = [], ini: [IniItem] = [], envFiles: [EnvItem] = [], files: [FileItem] = [], notes: [String] = [], inNexus: [String] = []) {
+        self.source = source
         self.herdRuns = herdRuns
         self.tld = tld
         self.packages = packages
@@ -221,15 +246,29 @@ public struct HerdMoveRequest: Codable, Sendable, Equatable {
 }
 
 public enum HerdMoveText {
-    public static let quitHerdStep = "Quit Herd"
+    public static let stopSteps = Set(MoveSource.allCases.map(\.stopStep))
 
     // The reason of a plan without sites, for the sheet and for nexus import herd.
     public static func nothingToMove(_ plan: HerdMovePlan?) -> String {
-        guard let plan, !plan.inNexus.isEmpty else {
-            return "Nexus found no sites of Herd on this Mac."
+        guard let plan else {
+            return "Nexus found no sites of Herd or Valet on this Mac."
         }
 
-        return "Each site of Herd is in Nexus already."
+        guard !plan.inNexus.isEmpty else {
+            return "Nexus found no sites of \(plan.source.name) on this Mac."
+        }
+
+        return "Each site of \(plan.source.name) is in Nexus already."
+    }
+
+    // What nexus import herd says before it waits. The app shows the same in its banner.
+    public static func stopInstruction(_ source: MoveSource) -> String {
+        switch source {
+        case .herd:
+            "Nexus copies while Herd runs. Then quit Herd: click the Herd icon in the menu bar and choose Quit. Also turn off Herd in System Settings > General > Login Items. The move goes on when Herd stops."
+        case .valet:
+            "Nexus copies while Valet runs. Then run valet stop in another Terminal window. Valet asks for your password. The move goes on when Valet stops."
+        }
     }
 
     public static func packageTitle(_ name: String, _ line: String) -> String {
@@ -277,7 +316,7 @@ public enum HerdMoveText {
         section(".env files that change:", plan.envFiles.map { shortPath($0.file, home: home) })
 
         for file in plan.files {
-            section("\(shortPath(file.path, home: home)) \(file.kind == .shell ? "loses these lines of Herd" : "gets the PHP of Nexus"):", file.lines)
+            section("\(shortPath(file.path, home: home)) \(file.kind == .shell ? "loses these lines of \(plan.source.name)" : "gets the PHP of Nexus"):", file.lines)
         }
 
         section("Notes:", plan.notes)

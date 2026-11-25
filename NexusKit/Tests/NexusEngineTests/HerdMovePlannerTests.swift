@@ -78,6 +78,25 @@ struct HerdMovePlannerTests {
         #expect(plan.sites.first { $0.hosts.contains("admin.test") }?.address == "http://127.0.0.1:3000")
     }
 
+    @Test func theSameOwnLineInEachServerBlockAndAliasMovesOnce() throws {
+        let folders = try Folders()
+        defer { folders.remove() }
+        let api = try folders.folder("Code/api-server")
+        let cors = #"add_header Access-Control-Allow-Origin "*" always;"#
+        let setup = HerdSetup(
+            links: [HerdSetup.Link(names: ["api", "api-v2"], folder: api)],
+            siteFiles: [
+                HerdSetup.SiteFile(host: "api.test", php: "8.3", secured: true, ownLines: [cors, cors, "add_header X-Test 1;", cors]),
+                HerdSetup.SiteFile(host: "api-v2.test", ownLines: [cors]),
+            ],
+            defaultPHP: "8.5"
+        )
+
+        let plan = HerdMovePlanner.plan(setup: setup, facts: facts(home: folders.root))
+
+        #expect(plan.sites.first?.ownLines == [cors, "add_header X-Test 1;"])
+    }
+
     @Test func anOldPHPGetsTheOldestLineAndANewPHPGetsTheNewestLine() {
         #expect(HerdMovePlanner.phpLine(for: "8.1", offered: ["8.2", "8.3", "8.4", "8.5"]) == "8.2")
         #expect(HerdMovePlanner.phpLine(for: "7.4", offered: ["8.2", "8.3", "8.4", "8.5"]) == "8.2")
@@ -165,7 +184,7 @@ struct HerdMovePlannerTests {
 
         #expect(plan.isEmpty)
         #expect(HerdMoveText.nothingToMove(plan) == "Each site of Herd is in Nexus already.")
-        #expect(HerdMoveText.nothingToMove(nil) == "Nexus found no sites of Herd on this Mac.")
+        #expect(HerdMoveText.nothingToMove(nil) == "Nexus found no sites of Herd or Valet on this Mac.")
     }
 
     @Test func aDatabaseOnAServerThatDoesNotRunGetsANoteAndNoCopy() throws {

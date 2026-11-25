@@ -5,6 +5,7 @@ import NexusIPC
 // What nexusd knows about this Mac when it plans the move from Herd. The planner itself reads no
 // file and starts no program, so the tests give it these facts.
 struct HerdMoveFacts: Sendable {
+    var source: MoveSource = .herd
     // A server that listens on a port of this Mac. kind is mysql, mariadb, postgresql, mongodb,
     // redis or valkey.
     struct Server: Sendable, Equatable {
@@ -113,10 +114,11 @@ enum HerdMovePlanner {
         }
 
         if setup.tld != "test" {
-            notes.append("Herd uses the domain .\(setup.tld). Nexus uses .test, so each site gets a .test address.")
+            notes.append("\(facts.source.name) uses the domain .\(setup.tld). Nexus uses .test, so each site gets a .test address.")
         }
 
         return HerdMovePlan(
+            source: facts.source,
             herdRuns: facts.herdRuns,
             tld: setup.tld,
             packages: packages(sites: sites, databases: databases, redis: redis, facts: facts),
@@ -185,9 +187,16 @@ enum HerdMovePlanner {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
+    // A site file of Valet has a server block for ports 80, 443 and 60, and an alias has a file of
+    // its own. The same own line in each of them goes to Nexus once. nginx sends a header once for
+    // each line, and a browser refuses a CORS header with more than one value.
     static func siteItem(hosts: [String], folder: URL, parkedIn: URL?, setup: HerdSetup, facts: HerdMoveFacts, php: (herd: String?, line: String?)) -> HerdMovePlan.SiteItem {
         let path = folderPath(folder)
-        let ownLines = hosts.flatMap { setup.siteFile(of: $0)?.ownLines ?? [] }
+        let ownLines = hosts.flatMap { setup.siteFile(of: $0)?.ownLines ?? [] }.reduce(into: [String]()) { lines, line in
+            if !lines.contains(line) {
+                lines.append(line)
+            }
+        }
 
         return HerdMovePlan.SiteItem(
             hosts: hosts,

@@ -48,16 +48,17 @@ extension NexusEngine {
     func moveFromHerd(_ request: HerdMoveRequest) async throws -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser
 
-        guard let setup = HerdReader.read(herd: HerdReader.folder(home: home)) else {
-            throw RuntimeError.unsupported("Nexus found no Herd on this Mac. Nexus changed nothing.")
+        guard let found = Self.moveSetup(home: home) else {
+            throw RuntimeError.unsupported("Nexus found no Herd or Valet on this Mac. Nexus changed nothing.")
         }
 
-        let facts = await herdMoveFacts(setup: setup, home: home)
-        let plan = HerdMovePlanner.applying(request, to: HerdMovePlanner.plan(setup: setup, facts: facts), facts: facts)
+        let facts = await herdMoveFacts(setup: found.setup, source: found.source, home: home)
+        let plan = HerdMovePlanner.applying(request, to: HerdMovePlanner.plan(setup: found.setup, facts: facts), facts: facts)
+        let name = plan.source.name
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd-HHmmss"
-        let report = paths.moves.appending(path: "herd-\(formatter.string(from: .now))", directoryHint: .isDirectory)
+        let report = paths.moves.appending(path: "\(plan.source.rawValue)-\(formatter.string(from: .now))", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: report.appending(path: "copies"), withIntermediateDirectories: true)
 
         let log = report.appending(path: "move.log")
@@ -73,7 +74,7 @@ extension NexusEngine {
 
         do {
             try await runTask(.moveFromHerd, id: Self.herdMoveTaskID, progress: progress, stopped: {
-                "The move from Herd stopped. Herd still has your sites. The report is in \(report.path(percentEncoded: false))."
+                "The move from \(name) stopped. \(name) still has your sites. The report is in \(report.path(percentEncoded: false))."
             }) { progress in
                 for (index, step) in steps.enumerated() {
                     try Task.checkCancellation()
@@ -94,7 +95,7 @@ extension NexusEngine {
 
         let sites = Count.text(plan.sites.count, "site")
         let databases = plan.databases.isEmpty ? "" : " and \(Count.text(plan.databases.count, "database"))"
-        return "Nexus moved \(sites)\(databases) from Herd. The report is in \(report.appending(path: "report.md").path(percentEncoded: false))."
+        return "Nexus moved \(sites)\(databases) from \(name). The report is in \(report.appending(path: "report.md").path(percentEncoded: false))."
     }
 
     func herdMoveSteps(_ plan: HerdMovePlan, home: URL, report: URL, log: URL, record: HerdMoveRecord) -> [HerdMoveStep] {
@@ -126,20 +127,20 @@ extension NexusEngine {
             })
         }
 
-        steps.append(HerdMoveStep(title: HerdMoveText.quitHerdStep) {
-            while Self.herdIsRunning() {
+        steps.append(HerdMoveStep(title: plan.source.stopStep) {
+            while Self.isRunning(plan.source) {
                 try await Task.sleep(for: .seconds(1))
             }
 
-            record.done("Herd stopped.")
+            record.done("\(plan.source.name) stopped.")
         })
 
         steps.append(HerdMoveStep(title: "Ports 80 and 443 and the domain .\(plan.tld)") {
             try await self.herdMoveTakeOver(plan, log: log, record: record)
         })
 
-        // A new site changes the configuration of nginx, and nginx can start only after Herd
-        // gave back ports 80 and 443. So the sites come after the quit of Herd.
+        // A new site changes the configuration of nginx, and nginx can start only after the app
+        // gave back ports 80 and 443. So the sites come after the app stopped.
         if !plan.sites.isEmpty {
             steps.append(HerdMoveStep(title: "Sites: \(plan.sites.count)") {
                 try await self.herdMoveSites(plan, log: log, record: record)
@@ -390,7 +391,7 @@ extension NexusEngine {
     }
 
     // Herd stops its nginx some seconds after its app quits.
-    func herdMoveWaitForWebPorts(log: URL) async {
+    func herdMoveWaitForWebPorts(_ source: MoveSource, log: URL) async {
         guard await supervisor.state(of: ServiceCatalog.nginxID)?.isActive != true else {
             return
         }
@@ -402,7 +403,7 @@ extension NexusEngine {
             let isFree = await PortInspector.becomesFree(port, within: .seconds(30))
 
             if !isFree {
-                Self.appendLine("Port \(port) is still in use 30 seconds after the quit of Herd.", to: log)
+                Self.appendLine("Port \(port) is still in use 30 seconds after \(source.name) stopped.", to: log)
             }
         }
     }
@@ -418,11 +419,11 @@ extension NexusEngine {
             Self.appendLine(try await setPort(id, standard), to: log)
         }
 
-        await herdMoveWaitForWebPorts(log: log)
+        await herdMoveWaitForWebPorts(plan.source, log: log)
         Self.appendLine("$ nexus restart nginx", to: log)
 
         do {
-            Self.appendLine(try await restart(ServiceCatalog.nginxID, cause: "The move from Herd"), to: log)
+            Self.appendLine(try await restart(ServiceCatalog.nginxID, cause: "The move from \(plan.source.name)"), to: log)
         } catch {
             Self.appendLine("nginx did not restart: \(ErrorText.plain(error))", to: log)
         }
@@ -477,7 +478,7 @@ extension NexusEngine {
 
             try Data(changed.utf8).write(to: file)
             Self.appendLine("Changed \(item.path)", to: log)
-            record.done(item.kind == .shell ? "\(Self.shortPath(item.path, home: home)): the lines of Herd are gone" : "\(Self.shortPath(item.path, home: home)): the PHP of Nexus")
+            record.done(item.kind == .shell ? "\(Self.shortPath(item.path, home: home)): the lines of \(plan.source.name) are gone" : "\(Self.shortPath(item.path, home: home)): the PHP of Nexus")
         }
 
         let pathLine = ShellPathLine.standard
@@ -564,7 +565,8 @@ extension NexusEngine {
 
     static func writeHerdReport(plan: HerdMovePlan, record: HerdMoveRecord, failure: String?, home: URL, to folder: URL) {
         let values = record.current
-        var text = "# The move from Herd\n\n"
+        let name = plan.source.name
+        var text = "# The move from \(name)\n\n"
 
         if let failure {
             text += "The move stopped: \(failure)\n\n"
@@ -586,13 +588,13 @@ extension NexusEngine {
 
         text += """
 
-        ## How to go back to Herd
+        ## How to go back to \(name)
 
         1. Quit Nexus, or stop all its services in the menu bar.
-        2. Put back each file from its copy above, for example the .env of each site and ~/.zshrc.
-        3. Open Herd. Herd writes its files for the domain .\(plan.tld) again.
+        2. Put back each file from its copy above, for example the .env of each site\(plan.files.isEmpty ? "" : " and ~/.zshrc").
+        3. \(plan.source == .herd ? "Open Herd." : "Run valet install in Terminal.") \(name) writes its files for the domain .\(plan.tld) again.
 
-        Nexus changed nothing in Herd. The databases of Herd still have their data.
+        Nexus changed nothing in \(name). The databases that Nexus copied still have their data.
 
         """
 

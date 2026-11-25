@@ -8,10 +8,10 @@ extension AppModel {
             return []
         }
 
-        // The notice of the move from Herd offers more than other ports. After a move, Herd gave
-        // its ports to Nexus. So Herd is not in this notice then.
-        let movesFromHerd = showsHerdMoveNotice || herdMovedText != nil || herdSitesMoved
-        let hidden = movesFromHerd ? hiddenWebServerNotice.union(["Herd"]) : hiddenWebServerNotice
+        // The notice of the move from Herd or Valet offers more than other ports. After a move, the
+        // app gave its ports to Nexus. So the app is not in this notice then.
+        let movesFromApp = showsHerdMoveNotice || herdMovedText != nil || herdSitesMoved
+        let hidden = movesFromApp ? hiddenWebServerNotice.union([moveSource.name]) : hiddenWebServerNotice
         return OtherWebServers.noticeNames(installed: otherWebServers, hidden: hidden, nginxPorts: nginx.ports.map(\.number))
     }
 
