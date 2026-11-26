@@ -7,16 +7,17 @@ the work starts.
 
 In this order:
 
-1. **PHP 8.6**, when Xdebug, Redis, APCu, pcov, igbinary, YAML, Imagick and memcached have releases
-   that support it.
-2. **Move from Local**, as the move from Herd and Valet.
-3. **Move from MAMP and MAMP PRO.**
+1. **Move from Local**, as the move from Herd and Valet.
+2. **Move from MAMP and MAMP PRO.**
 
 ## Later
 
 - Global keyboard shortcuts.
 
 ## Done recently
+
+- **1.1.0:** PHP 8.6 with all extensions, a locked switch for an extension that a PHP version does
+  not have yet, and the newest igbinary for all PHP versions.
 
 - **1.0.0:** move your sites, databases, Redis keys and PHP settings from Herd or Valet in one step,
   and packages that the maintainer signs outside GitHub.
