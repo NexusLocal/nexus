@@ -299,6 +299,7 @@ final class AppModel {
     }
     @ObservationIgnored private var deadlineRestart: (time: Date, timer: Task<Void, Never>)?
     @ObservationIgnored private var pendingStarts: Set<String> = []
+    @ObservationIgnored var updatesWaitForNewNexusd = false
     // Read once at the launch. A later read could see the nexusd file of a newer build.
     private static let appIdentity = NexusVersion.identity()
     private var versionCheck = NexusdVersionCheck(appBuild: appIdentity, lastRestartBuild: UserDefaults.standard.string(forKey: AppPreference.nexusdRestartBuild))
@@ -1124,6 +1125,7 @@ final class AppModel {
             nexusdProblem = versionProblem
             restartOldNexusd()
             planRestartAtTheDeadline()
+            installUpdatesThatWaited()
             let previous = services
             let versions = Set(services.map { "\($0.id) \($0.version)" })
             // The launch loads the installed packages already. So the first list only gets noted.

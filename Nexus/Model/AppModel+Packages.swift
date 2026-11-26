@@ -64,9 +64,29 @@ extension AppModel {
     }
 
     // An update of a running service starts it again (part 6f).
+    // Right after an update of the app, the nexusd of the old version still runs for some seconds.
+    // It takes no install. So the automatic updates wait for the new nexusd and then run, instead
+    // of an alert for each package.
     func installUpdates() {
+        guard !waitsForNewNexusd else {
+            updatesWaitForNewNexusd = true
+            ActivityTracker.log.write("request", "the automatic package updates wait for the new nexusd")
+            return
+        }
+
         for package in packages where package.hasUpdate {
             install(package)
+        }
+    }
+
+    func installUpdatesThatWaited() {
+        guard updatesWaitForNewNexusd, !waitsForNewNexusd else {
+            return
+        }
+
+        updatesWaitForNewNexusd = false
+        Task {
+            await checkPackages()
         }
     }
 
