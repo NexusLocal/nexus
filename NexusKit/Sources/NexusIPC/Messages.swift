@@ -649,18 +649,31 @@ public struct SiteList: Codable, Sendable, Equatable {
     }
 }
 
-// An extension or a module with a switch. The help says what it does.
+// An extension or a module with a switch. The help says what it does. A switch that is not
+// available is locked, because the package does not have that extension yet.
 public struct Toggle: Codable, Sendable, Equatable {
     public let name: String
     public let enabled: Bool
     public let required: Bool
     public let help: String?
+    public let available: Bool
 
-    public init(name: String, enabled: Bool, required: Bool, help: String? = nil) {
+    public init(name: String, enabled: Bool, required: Bool, help: String? = nil, available: Bool = true) {
         self.name = name
         self.enabled = enabled
         self.required = required
         self.help = help
+        self.available = available
+    }
+
+    // A nexusd from before 1.1.0 sends no available field.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        required = try container.decode(Bool.self, forKey: .required)
+        help = try container.decodeIfPresent(String.self, forKey: .help)
+        available = try container.decodeIfPresent(Bool.self, forKey: .available) ?? true
     }
 }
 

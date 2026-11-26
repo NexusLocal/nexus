@@ -73,6 +73,7 @@ struct ToggleItem: Identifiable {
     let name: String
     var enabled: Bool
     var required = false
+    var available = true
     let help: String
 
     var id: String { name }

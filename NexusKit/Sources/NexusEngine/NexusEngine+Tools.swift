@@ -160,7 +160,7 @@ extension NexusEngine {
             return php
         }
 
-        return try Self.phpLine(nil, installed: installed, defaults: state.siteDefaults)
+        return try Self.phpLine(nil, installed: installed, defaults: state.siteDefaults, newestOffered: newestPHPLine)
     }
 
     // WP-CLI with a PHP version of its own, for a worktree that is no site of Nexus.

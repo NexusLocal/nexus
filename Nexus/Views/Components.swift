@@ -519,7 +519,7 @@ struct ToggleCell: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            HelpName(name: toggle.name, help: toggle.help)
+            HelpName(name: toggle.name, help: toggle.help, isDimmed: !toggle.available)
             Spacer()
             // macOS draws a disabled switch that is on almost as an enabled one. The design
             // shows a switch that cannot change at 45 percent.
@@ -527,23 +527,38 @@ struct ToggleCell: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)
-                .disabled(toggle.required)
-                .opacity(toggle.required ? 0.45 : 1)
-                .help(toggle.required ? "Always on" : "")
+                .disabled(isLocked)
+                .opacity(isLocked ? 0.45 : 1)
+                .help(lockReason)
         }
+    }
+
+    private var isLocked: Bool {
+        toggle.required || !toggle.available
+    }
+
+    private var lockReason: String {
+        if !toggle.available {
+            return toggle.help
+        }
+
+        return toggle.required ? "Always on" : ""
     }
 }
 
-// A name with an ⓘ. A tooltip shows its help on hover. A click shows the help at once.
+// A name with an ⓘ. A tooltip shows its help on hover. A click shows the help at once. A dimmed
+// name belongs to a locked switch.
 struct HelpName: View {
     let name: String
     let help: String
+    var isDimmed = false
 
     @State private var showsHelp = false
 
     var body: some View {
         HStack(spacing: 6) {
             MonoText(name)
+                .foregroundStyle(isDimmed ? .tertiary : .primary)
             Image(systemName: "info.circle")
                 .foregroundStyle(.secondary)
                 .imageScale(.small)

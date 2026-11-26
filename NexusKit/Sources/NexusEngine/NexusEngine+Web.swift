@@ -1377,10 +1377,10 @@ extension NexusEngine {
     // not installed anymore gives the newest version, so a new project in a parked folder still
     // becomes a site.
     func phpLine(_ requested: String?) async throws -> String {
-        try Self.phpLine(requested, installed: await installer.installedRuntimes(), defaults: await stateStore.current().siteDefaults)
+        try Self.phpLine(requested, installed: await installer.installedRuntimes(), defaults: await stateStore.current().siteDefaults, newestOffered: newestPHPLine)
     }
 
-    static func phpLine(_ requested: String?, installed runtimes: [InstalledRuntime], defaults: SiteDefaults) throws -> String {
+    static func phpLine(_ requested: String?, installed runtimes: [InstalledRuntime], defaults: SiteDefaults, newestOffered: String) throws -> String {
         let installed = runtimes.filter { $0.name == "php" }.map(\.line)
 
         if let requested {
@@ -1395,7 +1395,7 @@ extension NexusEngine {
         }
 
         guard let newest = VersionLine.newest(installed) else {
-            throw RuntimeError.unsupported("No PHP version is installed. Run: nexus install php 8.5")
+            throw RuntimeError.unsupported("No PHP version is installed. Run: nexus install php \(newestOffered)")
         }
 
         return newest
@@ -1494,12 +1494,24 @@ extension NexusEngine {
 
     // A switch shows what loads. An extension that another one needs loads also when the state
     // does not name it, for example igbinary in a state from before the dependencies.
+    // An extension of the packages of Nexus that this PHP version does not have shows as a locked
+    // switch.
     static func extensionToggles(line: String, available: Set<String>, state: EngineState) -> [Toggle] {
         let loaded = Set(PHPConfig.extensionsToLoad(enabled: state.phpExtensions[line] ?? PHPConfig.defaultExtensions, available: available))
 
-        return available.sorted().map {
-            Toggle(name: $0, enabled: loaded.contains($0), required: false, help: ToggleHelp.phpExtension($0))
+        return available.union(PHPConfig.packageExtensions).sorted().map { name in
+            guard available.contains(name) else {
+                return Toggle(name: name, enabled: false, required: false, help: ToggleHelp.phpExtensionNotAvailable(name, line: line), available: false)
+            }
+
+            return Toggle(name: name, enabled: loaded.contains(name), required: false, help: ToggleHelp.phpExtension(name))
         }
+    }
+
+    // The newest PHP version line of the manifest that nexusd read last, for a message such as
+    // "Run: nexus install php 8.6".
+    var newestPHPLine: String {
+        VersionLine.newest(lastManifest?.manifest.packages.filter { $0.name == "php" }.map(\.line) ?? []) ?? "8.5"
     }
 
     // A change of a version file changes its modification date. So nexusd reads the files of a
@@ -1565,6 +1577,10 @@ extension NexusEngine {
         let available = toggleNames(of: runtime)
 
         guard available.contains(name) else {
+            if PHPConfig.packageExtensions.contains(name) {
+                throw RuntimeError.unsupported(ToggleHelp.phpExtensionNotAvailable(name, line: line))
+            }
+
             throw RuntimeError.unsupported("PHP \(line) has no shared extension \(name). See: nexus ext \(line)")
         }
 

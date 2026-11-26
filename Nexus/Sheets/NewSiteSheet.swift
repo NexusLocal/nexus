@@ -298,7 +298,7 @@ private struct NewSiteForm: View {
                     HStack {
                         Text("Laravel 13 needs PHP 8.3 or newer")
                             .foregroundStyle(Color.orangeText)
-                        installButton("php", line: "8.5", title: "Install PHP 8.5")
+                        installButton("php", line: newestOfferedPHP, title: "Install PHP \(newestOfferedPHP)")
                     }
                 }
             } else {
@@ -456,6 +456,11 @@ private struct NewSiteForm: View {
         model.installedPHPVersions
             .filter { !VersionLine.isOlder($0, than: "8.3") }
             .sorted { VersionLine.isOlder($1, than: $0) }
+    }
+
+    // The newest PHP of the package list. 8.5 until Nexus has read the list.
+    private var newestOfferedPHP: String {
+        VersionLine.newest(model.packages.filter { $0.package == "php" }.map(\.line)) ?? "8.5"
     }
 
     private var nodeVersions: [String] {

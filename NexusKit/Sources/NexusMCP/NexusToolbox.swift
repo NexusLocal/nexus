@@ -222,7 +222,7 @@ public struct NexusToolbox: MCPHandler {
         let states = required.keys.sorted().map { name in
             let toggle = toggles.first { ComposerExtensions.normalized($0.name) == name }
             let on = loaded.contains(name)
-            return ExtensionState(name: name, requiredBy: required[name] ?? [], on: on, canTurnOn: !on && toggle != nil)
+            return ExtensionState(name: name, requiredBy: required[name] ?? [], on: on, canTurnOn: !on && toggle?.available == true)
         }
 
         let missing = states.filter { !$0.on }

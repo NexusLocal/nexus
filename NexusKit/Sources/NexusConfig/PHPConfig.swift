@@ -12,6 +12,11 @@ public enum PHPConfig {
 
     public static let defaultExtensions: Set<String> = ["opcache", "apcu", "gmp", "igbinary", "redis", "imagick", "pgsql", "pdo_pgsql", "yaml", "mailparse", "pcov"]
 
+    // The shared extensions of the PHP packages of Nexus. A PHP version without one of them shows
+    // its switch as locked, for example a new PHP version before a release of Xdebug supports it.
+    // opcache is not in the list, because PHP 8.5 and newer have it built in.
+    public static let packageExtensions: Set<String> = ["apcu", "gmp", "igbinary", "imagick", "mailparse", "memcached", "mongodb", "pcov", "pdo_pgsql", "pgsql", "redis", "xdebug", "yaml"]
+
     public static let nexusIniName = "00-nexus.ini"
     public static let customIniName = "99-custom.ini"
 

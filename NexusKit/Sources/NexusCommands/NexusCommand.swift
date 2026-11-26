@@ -1848,7 +1848,13 @@ private func printToggles(_ response: NexusResponse) throws {
     }
 
     for toggle in toggles {
-        let state = toggle.required ? "on (needed)" : (toggle.enabled ? "on" : "off")
+        let state = if !toggle.available {
+            "not yet available"
+        } else if toggle.required {
+            "on (needed)"
+        } else {
+            toggle.enabled ? "on" : "off"
+        }
         print([toggle.name.padding(to: 32), state].joined(separator: " "))
     }
 }

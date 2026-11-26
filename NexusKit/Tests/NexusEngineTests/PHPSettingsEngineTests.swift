@@ -1,4 +1,5 @@
 import Foundation
+import NexusConfig
 import NexusCore
 import NexusDNS
 import NexusIPC
@@ -112,8 +113,8 @@ extension NexusEngineTests {
         let php = try #require(list.services.first { $0.id == "php-8.5" })
         let dns = try #require(list.services.first { $0.id == NexusEngine.dnsServiceID })
 
-        #expect(php.toggles?.map(\.name) == ["xdebug"])
-        #expect(php.toggles?.first?.help?.contains("debugger") == true)
+        #expect(php.toggles?.filter { $0.available }.map(\.name) == ["xdebug"])
+        #expect(php.toggles?.first { $0.name == "xdebug" }?.help?.contains("debugger") == true)
         #expect(php.customSettings == ["memory_limit = 512M"])
         #expect(php.usedBy == [])
         #expect(dns.note?.contains("/etc/resolver/test") == true)
@@ -159,6 +160,37 @@ extension NexusEngineTests {
         #expect(apache.filter(\.enabled).map(\.name) == ["cache", "cache_disk"])
     }
 
+    @Test func aPackageExtensionThatAPHPVersionDoesNotHaveIsALockedSwitchThatIsOff() {
+        var state = EngineState()
+        state.phpExtensions["8.6"] = ["redis", "xdebug"]
+        let available = PHPConfig.packageExtensions.subtracting(["xdebug", "imagick"])
+
+        let toggles = NexusEngine.extensionToggles(line: "8.6", available: available, state: state)
+        let xdebug = toggles.first { $0.name == "xdebug" }
+
+        #expect(toggles.filter { !$0.available }.map(\.name) == ["imagick", "xdebug"])
+        #expect(xdebug?.enabled == false)
+        #expect(xdebug?.help == "Not yet available for PHP 8.6. A package update adds it when Xdebug supports PHP 8.6.")
+        #expect(toggles.first { $0.name == "redis" }?.enabled == true)
+        #expect(toggles.map(\.name) == toggles.map(\.name).sorted())
+    }
+
+    @Test func aPHPWithAllPackageExtensionsHasNoLockedSwitch() {
+        let toggles = NexusEngine.extensionToggles(line: "8.4", available: PHPConfig.packageExtensions.union(["opcache"]), state: EngineState())
+
+        #expect(toggles.allSatisfy { $0.available })
+        #expect(toggles.count == PHPConfig.packageExtensions.count + 1)
+    }
+
+    @Test func aSwitchFromANexusdBefore110IsAvailable() throws {
+        let json = Data(#"{"name":"redis","enabled":true,"required":false,"help":"Connects to Redis."}"#.utf8)
+
+        let toggle = try JSONDecoder().decode(NexusIPC.Toggle.self, from: json)
+
+        #expect(toggle.available)
+        #expect(toggle.enabled)
+    }
+
     @Test func theCacheKeepsTheNamesUntilTheFolderChanges() async throws {
         let root = shortTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -196,8 +228,8 @@ extension NexusEngineTests {
         _ = await engine.handle(.extensions(php: "8.5"))
         let update = await services.next()
 
-        #expect(first?.services.first { $0.id == "php-8.5" }?.toggles?.map(\.name) == ["xdebug"])
-        #expect(update?.services.first { $0.id == "php-8.5" }?.toggles?.map(\.name) == ["pcov", "xdebug"])
+        #expect(first?.services.first { $0.id == "php-8.5" }?.toggles?.filter { $0.available }.map(\.name) == ["xdebug"])
+        #expect(update?.services.first { $0.id == "php-8.5" }?.toggles?.filter { $0.available }.map(\.name) == ["pcov", "xdebug"])
     }
 
     @Test func anExtensionThatLoadsForAnotherOneStaysOnWhenTheOtherOneTurnsOff() async throws {

@@ -582,7 +582,7 @@ extension NexusEngine {
             let line = site.php ?? VersionLine.newest(fitting)
 
             guard let line, fitting.contains(line) else {
-                throw RuntimeError.unsupported("Laravel 13 needs PHP \(Self.laravelMinimumPHP) or newer. Run: nexus install php 8.5")
+                throw RuntimeError.unsupported("Laravel 13 needs PHP \(Self.laravelMinimumPHP) or newer. Run: nexus install php \(newestPHPLine)")
             }
 
             return try installedPHP(line, in: installed)

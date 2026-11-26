@@ -7,6 +7,21 @@ public enum ToggleHelp {
         phpExtensions[name] ?? "A PHP extension. See the documentation of \(name) for what it does."
     }
 
+    // For a locked switch: the package of this PHP version does not have the extension yet.
+    public static func phpExtensionNotAvailable(_ name: String, line: String) -> String {
+        "Not yet available for PHP \(line). A package update adds it when \(projectNames[name] ?? name) supports PHP \(line)."
+    }
+
+    private static let projectNames = [
+        "apcu": "APCu",
+        "imagick": "Imagick",
+        "mongodb": "the MongoDB driver",
+        "pcov": "PCOV",
+        "redis": "PhpRedis",
+        "xdebug": "Xdebug",
+        "yaml": "the YAML extension",
+    ]
+
     public static func nginxModule(_ name: String) -> String {
         nginxModules[name] ?? "An nginx module. See the documentation of \(name) for what it does."
     }
