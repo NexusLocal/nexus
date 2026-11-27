@@ -5,13 +5,7 @@ the work starts.
 
 ## Planned
 
-In this order:
-
-1. **Move from MAMP and MAMP PRO.**
-
-## Later
-
-- Global keyboard shortcuts.
+Nothing for now. See [Ideas](#ideas) to send a wish.
 
 ## Done recently
 
