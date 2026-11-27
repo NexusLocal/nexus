@@ -118,6 +118,11 @@ private struct HerdMoveReview: View {
 
     private func intro(_ plan: HerdMovePlan) -> String {
         let name = plan.source.name
+
+        if plan.source == .local {
+            return "Local by WP Engine, earlier Local by Flywheel. Nexus copies each item that is on. Nexus changes nothing in Local. Local can stay open while Nexus copies the databases."
+        }
+
         let runs = plan.herdRuns ? " \(name) still runs while Nexus copies the databases." : ""
         return "Nexus copies each item that is on. Nexus changes nothing in \(name).\(runs)"
     }
@@ -142,6 +147,17 @@ private struct HerdMovePlanSections: View {
                 }
             }
 
+            if plan.source == .local {
+                LocalMoveSections(plan: plan, choices: $choices)
+            } else {
+                herdSections
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var herdSections: some View {
+        VStack(alignment: .leading, spacing: 16) {
             if !plan.sites.isEmpty {
                 HerdMoveSection(title: "Sites", footer: sitesFooter) {
                     ForEach(plan.sites) { site in
@@ -381,6 +397,192 @@ private struct HerdMovePlanSections: View {
     }
 }
 
+// The sections of the move from Local (group 11). The design is "Sheet Move From Local" in
+// nexus.pen. Each Local site has its own database server, so a site and its database share one
+// row and one switch. A popup shows when Nexus suggests another PHP or database version.
+private struct LocalMoveSections: View {
+    let plan: HerdMovePlan
+    @Binding var choices: HerdMoveChoices
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if !plan.sites.isEmpty {
+                HerdMoveSection(title: "Sites and their databases", footer: sitesFooter) {
+                    ForEach(plan.sites) { site in
+                        siteRow(site)
+                    }
+                }
+            }
+
+            HerdMoveSection(title: "Settings", footer: plan.httpsSites.isEmpty ? "" : "Nexus serves each site over HTTPS. So it changes the URLs in each database from http:// to https://.") {
+                if !plan.ini.isEmpty {
+                    let first = plan.ini[0]
+                    HerdMoveRow(title: "php.ini lines", detail: "PHP \(EnglishList.joined(plan.ini.map(\.line))) · \(Count.text(plan.ini.reduce(0) { $0 + $1.lines.count }, "line"))", isOn: isOn(plan.ini.map(\.id)))
+                        .help(first.lines.joined(separator: "\n"))
+                }
+
+                let ownLines = plan.sites.filter { !$0.ownLines.isEmpty }
+
+                if !ownLines.isEmpty {
+                    HerdMoveRow(title: "Own nginx lines", detail: Count.text(ownLines.count, "site"), isOn: isOn([HerdMovePlan.ownLinesID]))
+                }
+
+                if !plan.httpsSites.isEmpty {
+                    HerdMoveRow(title: "URLs to HTTPS", detail: Count.text(plan.httpsSites.count, "site"), isOn: isOn([HerdMovePlan.httpsID]))
+                }
+
+                if let devTLD = plan.devTLD {
+                    HerdMoveRow(title: "New sites get .\(devTLD.tld)", detail: devTLD.nexusSites == 0 ? "Nexus has no sites yet" : "Renames \(Count.text(devTLD.nexusSites, "site")) of Nexus", isOn: devTLDBinding(devTLD))
+                }
+            }
+
+            if let devTLD = plan.devTLD, devTLD.nexusSites > 0, choices.usesDevTLD(plan) {
+                Text("The switch also gives the \(Count.text(devTLD.nexusSites, "site")) of Nexus a new name, for example shop.test becomes shop.\(devTLD.tld). A name with *. does not work with .\(devTLD.tld). The sites of Local keep their .local names in each case.")
+                    .font(.caption)
+                    .foregroundStyle(Color.orangeText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            let envrc = plan.files.filter { $0.kind == .envrc }
+
+            if !envrc.isEmpty {
+                HerdMoveSection(title: "Shell", footer: "Nexus keeps a copy of each file that it changes. Local writes each .envrc again when it starts the site.") {
+                    HerdMoveRow(title: ".envrc files", detail: "\(Count.text(envrc.count, "site")), for direnv", isOn: isOn(envrc.map(\.id)))
+                }
+            }
+        }
+    }
+
+    private func isOn(_ ids: [String]) -> Binding<Bool> {
+        Binding(
+            get: { choices.isOn(ids) },
+            set: { choices.set(ids, on: $0) }
+        )
+    }
+
+    private func devTLDBinding(_ item: HerdMovePlan.DevTLDItem) -> Binding<Bool> {
+        Binding(
+            get: { choices.devTLD ?? item.isOnByDefault },
+            set: { choices.devTLD = $0 }
+        )
+    }
+
+    private func siteRow(_ site: HerdMovePlan.SiteItem) -> some View {
+        let database = choices.localDatabase(of: site, in: plan)
+        let ids = [site.id] + [database?.id].compactMap { $0 }
+        let changedPHP = changedPHP(of: site)
+        let changedDatabase = database.flatMap(changedSource)
+
+        return HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(site.hosts[0])
+                    .lineLimit(1)
+
+                Text(detail(of: site, database: database, changedDatabase: changedDatabase))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .layoutPriority(1)
+
+            Spacer(minLength: 8)
+
+            if let changedPHP {
+                Text("PHP \(changedPHP) →")
+                    .font(.callout)
+                    .foregroundStyle(Color.orangeText)
+
+                Picker("PHP", selection: phpLine(of: site)) {
+                    ForEach(site.phpChoices, id: \.self) { Text("PHP \($0)").tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .controlSize(.small)
+                .disabled(!choices.isOn(ids))
+            } else if let line = site.php {
+                Text("PHP \(line)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let database, changedDatabase != nil {
+                Picker("Version", selection: line(of: database)) {
+                    ForEach(database.lineChoices, id: \.self) { Text(HerdMoveText.packageTitle(database.kind, $0)).tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .controlSize(.small)
+                .disabled(!choices.isOn(ids))
+            }
+
+            Toggle(site.hosts[0], isOn: isOn(ids))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+        }
+        .padding(.vertical, 2)
+    }
+
+    // "~/Local Sites/shop · nginx · MySQL 8.4 · 1.4 MB · runs". A row with two popups leaves out
+    // the folder, so the row fits.
+    private func detail(of site: HerdMovePlan.SiteItem, database: HerdMovePlan.DatabaseItem?, changedDatabase: String?) -> String {
+        let folder = HerdMoveText.shortPath(URL(filePath: site.folder).deletingLastPathComponent().deletingLastPathComponent().path(percentEncoded: false)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let place = site.network.map { "Network on \($0.rawValue)" } ?? folder
+        let server = site.server == .apache ? "Apache" : "nginx"
+        var parts = changedDatabase != nil && changedPHP(of: site) != nil ? [server] : [place, server]
+
+        if let database {
+            parts.append(HerdMoveText.packageTitle(database.kind, changedDatabase ?? database.line ?? VersionText.majorMinor(database.version ?? "")))
+            parts += [database.bytes.map { $0.formatted(.byteCount(style: .file)) }].compactMap { $0 }
+
+            if database.runs == true {
+                parts.append("runs")
+            } else if database.dataFolder == nil, database.dump != nil {
+                parts.append("only local.sql")
+            }
+        }
+
+        return parts.joined(separator: " · ")
+    }
+
+    private func changedPHP(of site: HerdMovePlan.SiteItem) -> String? {
+        guard let local = site.herdPHP, let line = site.php, !site.phpChoices.isEmpty else {
+            return nil
+        }
+
+        let localLine = VersionText.majorMinor(local)
+        return localLine == line ? nil : localLine
+    }
+
+    private func changedSource(of database: HerdMovePlan.DatabaseItem) -> String? {
+        guard let version = database.version, let line = database.line, !database.lineChoices.isEmpty else {
+            return nil
+        }
+
+        let source = VersionText.majorMinor(version)
+        return source == line ? nil : source
+    }
+
+    private func phpLine(of site: HerdMovePlan.SiteItem) -> Binding<String> {
+        Binding(
+            get: { choices.phpLine(of: site) ?? "" },
+            set: { choices.php[site.id] = $0 }
+        )
+    }
+
+    private func line(of database: HerdMovePlan.DatabaseItem) -> Binding<String> {
+        Binding(
+            get: { choices.line(of: database) ?? "" },
+            set: { choices.databaseLines[database.id] = $0 }
+        )
+    }
+
+    private var sitesFooter: String {
+        (["Each site keeps its folder and its name. Nexus writes the names to /etc/hosts, because macOS finds .local names only there. A site that runs in Local gives the data of this moment. For a stopped site, Nexus opens a copy of its data folder."] + plan.notes).joined(separator: " ")
+    }
+}
+
 // The first one or two numbers of a version, for example 8.4 and 8 of 8.4.7.
 enum VersionText {
     static func majorMinor(_ version: String) -> String {
@@ -535,23 +737,45 @@ private struct HerdMoveProgressView: View {
 
             if waitsForApp, source == .valet {
                 ValetStopBanner(tld: tld)
+            } else if waitsForApp, source == .local {
+                // "Sheet Move From Local · States": after the click, the banner says that Local
+                // needs some seconds (owner, 2026-11-27).
+                NoticeBanner(systemImage: "hand.raised", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: quitting ? "Local quits" : "Quit Local to go on") {
+                    Text(quitting
+                        ? "Local stops its sites first. Nexus goes on when Local and its helper have stopped. This takes about 15 seconds."
+                        : "Local has ports 80 and 443. Nexus serves your sites after Local quits. When sites run, Local asks if you are sure. Click Yes there.")
+                } actions: {
+                    if quitting {
+                        QuittingLabel()
+                    } else {
+                        Button("Quit Local", action: quitHerd)
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
             } else if waitsForApp {
-                NoticeBanner(systemImage: "hand.raised", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: "Quit Herd to go on") {
-                    Text("Herd has ports 80 and 443 and the domain .\(tld). Nexus takes them over when Herd stops. Also turn off Herd in Login Items. Else Herd starts again at the next login.")
+                // "Sheet Move From Herd · States": after the click, the banner says that Herd needs
+                // some seconds (owner, 2026-11-27).
+                NoticeBanner(systemImage: "hand.raised", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: quitting ? "Herd quits" : "Quit Herd to go on") {
+                    Text(quitting
+                        ? "Herd stops its services first. Nexus goes on when Herd has stopped. This takes some seconds. Also turn off Herd in Login Items."
+                        : "Herd has ports 80 and 443 and the domain .\(tld). Nexus takes them over when Herd stops. Also turn off Herd in Login Items. Else Herd starts again at the next login.")
                 } actions: {
                     Button("Open Login Items") {
                         model.openLoginItems()
                     }
 
-                    Button("Quit Herd", action: quitHerd)
-                        .buttonStyle(.borderedProminent)
-                        .disabled(quitting)
+                    if quitting {
+                        QuittingLabel()
+                    } else {
+                        Button("Quit Herd", action: quitHerd)
+                            .buttonStyle(.borderedProminent)
+                    }
                 }
             } else {
                 TaskLogBox(lines: task?.log ?? [], height: 120)
             }
 
-            Text(waitsForApp ? "You can close this sheet. The move waits for \(source.name), and the Overview shows it under Activity." : "You can close this sheet. Nexus goes on, and the Overview shows the move under Activity.")
+            Text(waitsForApp ? "You can close this sheet. The move waits for \(source.name). The Overview shows it under Activity." : "You can close this sheet. Nexus goes on. The Overview shows the move under Activity.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -581,14 +805,27 @@ private struct HerdMoveProgressView: View {
         }
     }
 
-    // Herd can ask a question before it quits. So the button works again after a while.
+    // Herd and Local can ask a question before they quit. So the button works again after a while.
+    // Local and its helper need about 15 seconds after the answer.
     private func quitHerd() {
         quitting = true
         model.quitHerd()
 
         Task {
-            try? await Task.sleep(for: .seconds(10))
+            try? await Task.sleep(for: .seconds(model.moveSource == .local ? 45 : 10))
             quitting = false
+        }
+    }
+}
+
+// The place of the quit button while the app quits.
+private struct QuittingLabel: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Quitting…")
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -650,7 +887,7 @@ private struct HerdMoveDoneView: View {
                 HerdCertificateBanner()
             }
 
-            Text("\(name) and its files stay as they are. The report tells you how to go back to \(name).")
+            Text("\(name) and its files stay as they are. The report tells you how to go back to \(name).\(model.moveSource == .local ? " These things did not move: the mails of Local, Live Links, the Blueprints and the connections to WP Engine." : "")")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -693,16 +930,14 @@ private struct HerdCertificateBanner: View {
 
         VStack(alignment: .leading, spacing: 6) {
             if removed {
-                NoticeBanner(systemImage: "checkmark.shield", color: .statusGreen, background: AnyShapeStyle(.fill.quaternary), title: "macOS does not trust the \(name) certificate now") {
-                    Text("The certificate file stays in the folder of \(name).")
+                NoticeBanner(systemImage: "checkmark.shield", color: .statusGreen, background: AnyShapeStyle(.fill.quaternary), title: "macOS does not trust the \(name) \(model.moveSource == .local ? "certificates" : "certificate") now") {
+                    Text("The certificate \(model.moveSource == .local ? "files stay" : "file stays") in the folder of \(name).")
                 } actions: {
                     EmptyView()
                 }
             } else {
-                NoticeBanner(systemImage: "exclamationmark.shield", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: "Remove the trust of the \(name) certificate") {
-                    Text(model.moveSource == .valet
-                        ? "Valet made a root certificate that can sign any domain. Each user of this Mac trusts it, and its key is a plain file. Nexus does not need it. macOS asks for your password."
-                        : "Herd made a root certificate that can sign any domain. Its key is a plain file on this Mac. Nexus does not need it.")
+                NoticeBanner(systemImage: "exclamationmark.shield", color: .accentText, background: AnyShapeStyle(Color.accentSoft), title: "Remove the trust of the \(name) \(localCount > 1 ? "certificates" : "certificate")") {
+                    Text(certificateText)
                 } actions: {
                     Button(removing ? "Removing…" : "Remove Trust…", action: remove)
                         .disabled(removing)
@@ -715,6 +950,22 @@ private struct HerdCertificateBanner: View {
                     .foregroundStyle(Color.redText)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    private var localCount: Int {
+        model.moveSource == .local ? model.certificates(of: .local).count : 1
+    }
+
+    // Local makes a certificate for each site. "Trust" in Local makes it a trusted root.
+    private var certificateText: String {
+        switch model.moveSource {
+        case .valet:
+            "Valet made a root certificate that can sign any domain. Each user of this Mac trusts it. Its key is a plain file. Nexus does not need it. macOS asks for your password."
+        case .local:
+            "Local made a certificate for \(EnglishList.joined(model.certificates(of: .local).map { $0.deletingPathExtension().lastPathComponent })) that can sign any domain. This Mac trusts it. Its key is a plain file. Nexus does not need it. macOS asks for your password."
+        case .herd:
+            "Herd made a root certificate that can sign any domain. Its key is a plain file on this Mac. Nexus does not need it."
         }
     }
 

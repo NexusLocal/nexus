@@ -100,6 +100,14 @@ public enum DatabaseName {
 
         return name
     }
+
+    // The first label of a host, for example shop of shop.local. Other characters become _.
+    public static func suggestion(from host: String) -> String {
+        let label = host.split(separator: ".").first.map(String.init) ?? host
+        let name = String(label.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "_" }.prefix(60))
+
+        return name.isEmpty || name.hasPrefix("-") ? "site" : name
+    }
 }
 
 public enum DatabaseNameError: Error, Equatable, CustomStringConvertible {

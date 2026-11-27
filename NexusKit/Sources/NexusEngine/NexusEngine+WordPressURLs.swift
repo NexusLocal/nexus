@@ -125,6 +125,15 @@ extension NexusEngine {
                 for move in Self.subsiteMoves(of: domains, from: changedDomain, to: newDomain) {
                     replacements += try await replaceURLs(from: move.from, to: move.to, network: true, with: wpCLI)
                 }
+            } else if let networkDomain, Self.changesToHTTPS(plan), let prefix = config.safeTablePrefix {
+                // The domain stays, but http:// becomes https://. Each site of a subdomain network
+                // keeps its own http:// URL, which the URL of the main site does not contain (seen
+                // in the VM of group 11, 2026-11-26).
+                let domains = try await Self.networkDomains(in: name, prefix: prefix, with: client)
+
+                for move in Self.subsiteMoves(of: domains, from: networkDomain, to: networkDomain) {
+                    replacements += try await replaceURLs(from: move.from, to: move.to, network: true, with: wpCLI)
+                }
             }
 
             // WordPress finds a network by DOMAIN_CURRENT_SITE and wp_site. So the domain changes
@@ -239,6 +248,10 @@ extension NexusEngine {
         domains.filter { $0.hasSuffix(".\(old)") }.sorted().map { domain in
             WorkspaceLinks.Move(from: "https://\(domain)", to: "https://\(domain.dropLast(old.count))\(new)")
         }
+    }
+
+    static func changesToHTTPS(_ plan: WordPressURLPlan) -> Bool {
+        plan.to.lowercased().hasPrefix("https://") && plan.oldURLs.contains { $0.lowercased().hasPrefix("http://") }
     }
 
     static func networkDomains(in database: String, prefix: String, with client: DatabaseClient) async throws -> [String] {

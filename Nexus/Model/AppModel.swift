@@ -124,6 +124,7 @@ enum AppPreference {
     static let hiddenDatabaseApps = "hiddenDatabaseApps"
     static let hiddenWebServerNotice = "hiddenWebServerNotice"
     static let hiddenHerdMoveNotice = "hiddenHerdMoveNotice"
+    static let hiddenMoveNotices = "hiddenMoveNotices"
     static let herdMovedText = "herdMovedText"
     static let mysqlApp = "mysqlApp"
     static let postgresqlApp = "postgresqlApp"
@@ -281,7 +282,9 @@ final class AppModel {
     var loadingHerdMovePlan = false
     var herdMoveRun: HerdMoveRun?
     var herdMoveTask: TaskInfo?
-    var hiddenHerdMoveNotice = UserDefaults.standard.bool(forKey: AppPreference.hiddenHerdMoveNotice)
+    // The apps whose notice the user closed, by MoveSource. The notice of Local can follow a move
+    // from Herd.
+    var hiddenMoveNotices = AppModel.loadHiddenMoveNotices()
     var herdMovedText = UserDefaults.standard.string(forKey: AppPreference.herdMovedText)
     @ObservationIgnored var herdMovePlanLoaded: Date?
     var nexusdProblem: NexusdProblem? {

@@ -271,6 +271,18 @@ extension NexusEngineTests {
         ])
     }
 
+    @Test func aChangeFromHTTPToHTTPSAlsoChangesEachSiteOfASubdomainNetwork() {
+        let moves = NexusEngine.subsiteMoves(of: ["subnet.local", "one.subnet.local", "two.subnet.local"], from: "subnet.local", to: "subnet.local")
+
+        #expect(NexusEngine.changesToHTTPS(WordPressURLPlan(to: "https://subnet.local", databaseFrom: "http://subnet.local")))
+        #expect(!NexusEngine.changesToHTTPS(WordPressURLPlan(to: "https://subnet.test", databaseFrom: "https://subnet.local")))
+        #expect(moves == [
+            WorkspaceLinks.Move(from: "https://one.subnet.local", to: "https://one.subnet.local"),
+            WorkspaceLinks.Move(from: "https://two.subnet.local", to: "https://two.subnet.local"),
+        ])
+        #expect(WordPressURL.replacements(from: moves[0].from, to: moves[0].to, token: "T").contains { $0.search == "http://one.subnet.local" })
+    }
+
     @Test func onlyAWordPressRecordWithoutADigestGetsANewSetup() {
         let old = Workspace(name: "old", worktree: "/w/old", folder: "/w/old", state: .ready)
         let checked = Workspace(name: "checked", worktree: "/w/checked", folder: "/w/checked", state: .ready, configurationDigest: "digest")

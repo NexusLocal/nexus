@@ -12,14 +12,21 @@ extension NexusEngine {
     static let herdMoveTaskID = "move-from-herd"
     static let herdDatabaseKinds: Set<String> = ["mysql", "mariadb", "postgresql", "mongodb"]
 
+    // One app at a time: Herd, then Valet, then Local. An app whose sites are all in Nexus gives
+    // its turn to the next app, so the Overview shows the notice of Local after a move from Herd.
     func herdMovePlan() async -> HerdMovePlan? {
         let home = FileManager.default.homeDirectoryForCurrentUser
+        var plans: [HerdMovePlan] = []
 
-        guard let found = Self.moveSetup(home: home) else {
-            return nil
+        if let found = Self.moveSetup(home: home) {
+            plans.append(HerdMovePlanner.plan(setup: found.setup, facts: await herdMoveFacts(setup: found.setup, source: found.source, home: home)))
         }
 
-        return HerdMovePlanner.plan(setup: found.setup, facts: await herdMoveFacts(setup: found.setup, source: found.source, home: home))
+        if let local = await localMovePlan(home: home) {
+            plans.append(local)
+        }
+
+        return plans.first { !$0.isEmpty } ?? plans.first
     }
 
     // Herd comes first when both apps have sites. Herd copies the sites of Valet at its first start.
@@ -234,6 +241,8 @@ extension NexusEngine {
             runningExecutables().contains { $0.hasSuffix("/Herd.app/Contents/MacOS/Herd") }
         case .valet:
             runningExecutables().contains { $0.contains("/Cellar/nginx/") && $0.hasSuffix("/bin/nginx") }
+        case .local:
+            localRuns()
         }
     }
 

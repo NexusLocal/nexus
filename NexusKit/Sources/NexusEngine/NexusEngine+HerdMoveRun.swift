@@ -15,8 +15,9 @@ final class HerdMoveRecord: Sendable {
         var copies: [(original: String, copy: String)] = []
         // The instances that got a free port, with their standard port.
         var movedPorts: [String: Int] = [:]
-        // The instance of each copied database, by the id of the plan item.
+        // The instance of each copied database, by the id of the plan item, and its name there.
         var copied: [String: String] = [:]
+        var names: [String: String] = [:]
         var checks: [(host: String, result: String)] = []
     }
 
@@ -47,6 +48,10 @@ extension NexusEngine {
 
     func moveFromHerd(_ request: HerdMoveRequest) async throws -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser
+
+        if await herdMovePlan()?.source == .local {
+            return try await moveFromLocal(request, home: home)
+        }
 
         guard let found = Self.moveSetup(home: home) else {
             throw RuntimeError.unsupported("Nexus found no Herd or Valet on this Mac. Nexus changed nothing.")
@@ -536,29 +541,40 @@ extension NexusEngine {
     }
 
     func herdMoveChecks(_ plan: HerdMovePlan, log: URL, record: HerdMoveRecord) async {
+        let port = await stateStore.current().ports[ServiceCatalog.httpsPortKey] ?? 443
+
         for site in plan.sites {
             let host = site.hosts[0]
-            let result = await Self.check(host: host)
+            let result = await onOwnThread { Self.check(host: host, port: port) }
             Self.appendLine("https://\(host): \(result)", to: log)
             record.update { $0.checks.append((host, result)) }
         }
     }
 
-    static func check(host: String) async -> String {
-        guard let url = URL(string: "https://\(host)/") else {
-            return "not a valid address"
-        }
-
-        var request = URLRequest(url: url, timeoutInterval: 15)
-        request.httpMethod = "GET"
+    // curl goes to 127.0.0.1 without a name lookup. The URL session of nexusd waited 15 seconds for
+    // each .local name in the VM of group 11, while curl and PHP found the same names at once.
+    static func check(host: String, port: Int) -> String {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(filePath: "/usr/bin/curl")
+        process.arguments = ["-sk", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "15", "--resolve", "\(host):\(port):127.0.0.1", "https://\(host):\(port)/"]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
 
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            return status < 500 ? "opens (status \(status))" : "gives an error (status \(status))"
+            try process.run()
         } catch {
-            return "does not open: \(error.localizedDescription)"
+            return "was not checked: \(ErrorText.plain(error))"
         }
+
+        process.waitUntilExit()
+        let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let status = Int(output), status > 0 else {
+            return "does not open (curl ended with \(process.terminationStatus))"
+        }
+
+        return status < 500 ? "opens (status \(status))" : "gives an error (status \(status))"
     }
 
     // MARK: The report
@@ -586,17 +602,31 @@ extension NexusEngine {
             text += "\n## Copies of the files that Nexus changed\n\n" + values.copies.map { "- \(shortPath($0.original, home: home)): \($0.copy)\n" }.joined()
         }
 
-        text += """
+        if plan.source == .local {
+            text += """
 
-        ## How to go back to \(name)
+            ## How to go back to Local
 
-        1. Quit Nexus, or stop all its services in the menu bar.
-        2. Put back each file from its copy above, for example the .env of each site\(plan.files.isEmpty ? "" : " and ~/.zshrc").
-        3. \(plan.source == .herd ? "Open Herd." : "Run valet install in Terminal.") \(name) writes its files for the domain .\(plan.tld) again.
+            1. Quit Nexus, or stop all its services in the menu bar.
+            2. Put back the wp-config.php of each site from its copy above. Local writes each .envrc again when it starts the site.
+            3. Open Local and start your sites. Local writes its lines in /etc/hosts again.
 
-        Nexus changed nothing in \(name). The databases that Nexus copied still have their data.
+            Nexus changed nothing in Local. The database of each site in Local still has its data.
 
-        """
+            """
+        } else {
+            text += """
+
+            ## How to go back to \(name)
+
+            1. Quit Nexus, or stop all its services in the menu bar.
+            2. Put back each file from its copy above, for example the .env of each site\(plan.files.isEmpty ? "" : " and ~/.zshrc").
+            3. \(plan.source == .herd ? "Open Herd." : "Run valet install in Terminal.") \(name) writes its files for the domain .\(plan.tld) again.
+
+            Nexus changed nothing in \(name). The databases that Nexus copied still have their data.
+
+            """
+        }
 
         try? Data(text.utf8).write(to: folder.appending(path: "report.md"))
     }

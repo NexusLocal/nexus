@@ -23,7 +23,7 @@ import NexusIPC
 // of them needs --sample.
 // --sheet move-from-herd --herd-move review|states|progress|quit-herd|done|failed opens a state of
 // the move from Herd. --herd-notice move|moved shows its notice on the Overview. Both need --sample.
-// --move-source valet shows the same for the move from Valet.
+// --move-source valet or local shows the same for the move from Valet or Local.
 enum DebugLaunch {
     // A check of the look does not get the first run on top of the screen that it checks.
     static var checksTheLook: Bool {

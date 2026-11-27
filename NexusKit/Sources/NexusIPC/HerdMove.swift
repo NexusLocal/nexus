@@ -2,15 +2,18 @@ import Foundation
 import NexusCore
 
 // The app that the sites move from. Laravel Valet keeps the same files as Herd in another folder,
-// so the types of the move from Herd also serve the move from Valet.
+// so the types of the move from Herd also serve the move from Valet. Local by WP Engine (group 11,
+// docs/group11-local.md) has only WordPress sites, each with its own database server.
 public enum MoveSource: String, Codable, Sendable, CaseIterable {
     case herd
     case valet
+    case local
 
     public var name: String {
         switch self {
         case .herd: "Herd"
         case .valet: "Valet"
+        case .local: "Local"
         }
     }
 
@@ -19,6 +22,7 @@ public enum MoveSource: String, Codable, Sendable, CaseIterable {
         switch self {
         case .herd: "Quit Herd"
         case .valet: "Stop Valet"
+        case .local: "Quit Local"
         }
     }
 }
@@ -70,10 +74,13 @@ public struct HerdMovePlan: Codable, Sendable, Equatable {
         public let parkedIn: String?
         public let projectType: PHPProjectType
         public let ownLines: [String]
+        // Local: the web server of the site, and the kind of a WordPress network.
+        public var server: WebServer?
+        public var network: WordPressNetworkKind?
 
         public var id: String { "site:\(hosts.first ?? folder)" }
 
-        public init(hosts: [String], folder: String, kind: SiteKind, herdPHP: String?, php: String?, phpChoices: [String], address: String? = nil, parkedIn: String? = nil, projectType: PHPProjectType = .other, ownLines: [String] = []) {
+        public init(hosts: [String], folder: String, kind: SiteKind, herdPHP: String?, php: String?, phpChoices: [String], address: String? = nil, parkedIn: String? = nil, projectType: PHPProjectType = .other, ownLines: [String] = [], server: WebServer? = nil, network: WordPressNetworkKind? = nil) {
             self.hosts = hosts
             self.folder = folder
             self.kind = kind
@@ -84,6 +91,8 @@ public struct HerdMovePlan: Codable, Sendable, Equatable {
             self.parkedIn = parkedIn
             self.projectType = projectType
             self.ownLines = ownLines
+            self.server = server
+            self.network = network
         }
     }
 
@@ -100,10 +109,24 @@ public struct HerdMovePlan: Codable, Sendable, Equatable {
         public let lineChoices: [String]
         public let bytes: Int64?
         public let sites: [String]
+        // Local: each site has a database local on its own server. target is its name in Nexus.
+        // A stopped server has no socket. Then Nexus reads a copy of dataFolder with its own
+        // server of readerLine. dump is local.sql of the last stop, the last fallback.
+        public var target: String?
+        public var runs: Bool?
+        public var dataFolder: String?
+        public var readerLine: String?
+        public var dump: String?
+        public var dumpDate: Date?
 
         public var id: String { "database:\(kind):\(port.map(String.init) ?? socket ?? ""):\(name)" }
 
-        public init(name: String, kind: String, version: String?, port: Int?, socket: String? = nil, account: DatabaseAccount, line: String?, lineChoices: [String], bytes: Int64? = nil, sites: [String]) {
+        public var targetName: String {
+            target ?? name
+        }
+
+        public init(name: String, kind: String, version: String?, port: Int?, socket: String? = nil, account: DatabaseAccount, line: String?, lineChoices: [String], bytes: Int64? = nil, sites: [String], target: String? = nil, runs: Bool? = nil, dataFolder: String? = nil, readerLine: String? = nil, dump: String? = nil, dumpDate: Date? = nil) {
+            self.runs = runs
             self.name = name
             self.kind = kind
             self.version = version
@@ -114,6 +137,28 @@ public struct HerdMovePlan: Codable, Sendable, Equatable {
             self.lineChoices = lineChoices
             self.bytes = bytes
             self.sites = sites
+            self.target = target
+            self.dataFolder = dataFolder
+            self.readerLine = readerLine
+            self.dump = dump
+            self.dumpDate = dumpDate
+        }
+
+        public func choosing(_ line: String) -> DatabaseItem {
+            DatabaseItem(name: name, kind: kind, version: version, port: port, socket: socket, account: account, line: line, lineChoices: lineChoices, bytes: bytes, sites: sites, target: target, runs: runs, dataFolder: dataFolder, readerLine: readerLine, dump: dump, dumpDate: dumpDate)
+        }
+
+        // Local: how Nexus reads the database.
+        public var way: String? {
+            guard target != nil else {
+                return nil
+            }
+
+            if runs == true {
+                return "runs in Local"
+            }
+
+            return dataFolder != nil ? "from a copy of the data folder" : dump != nil ? "from local.sql" : "no data found"
         }
     }
 
@@ -171,6 +216,24 @@ public struct HerdMovePlan: Codable, Sendable, Equatable {
     public enum FileKind: String, Codable, Sendable {
         case shell
         case project
+        // The .envrc of a Local site for direnv. It moves into the report folder.
+        case envrc
+    }
+
+    // The dev TLD of Nexus decides the name of each new site. The Local sites keep their .local
+    // names in each case. nexusSites is the number of sites that a change would rename.
+    public struct DevTLDItem: Codable, Sendable, Equatable {
+        public let tld: String
+        public let nexusSites: Int
+
+        public var isOnByDefault: Bool {
+            nexusSites == 0
+        }
+
+        public init(tld: String, nexusSites: Int) {
+            self.tld = tld
+            self.nexusSites = nexusSites
+        }
     }
 
     // A file that names Herd: the shell file with the lines of Herd, or a file of a project with
@@ -192,6 +255,8 @@ public struct HerdMovePlan: Codable, Sendable, Equatable {
     // The own nginx lines of the sites have one switch in the sheet. Its id in the skipped items
     // keeps the lines of each site out of the move.
     public static let ownLinesID = "nginx-lines"
+    // Local: one switch for the change of the URLs to https:// in each database.
+    public static let httpsID = "https-urls"
 
     public var source: MoveSource
     // Herd runs, or the nginx of Valet runs.
@@ -209,8 +274,18 @@ public struct HerdMovePlan: Codable, Sendable, Equatable {
     public var notes: [String]
     // The first host of each site of Herd that Nexus has already. The plan leaves these sites out.
     public var inNexus: [String]
+    // Local: the wp-config.php of each site, the sites whose URLs change to https://, the switch
+    // for the dev TLD .local, and the Local certificates that macOS trusts.
+    public var wpConfigs: [EnvItem] = []
+    public var httpsSites: [String] = []
+    public var devTLD: DevTLDItem?
+    public var certificates: [String] = []
 
-    public init(source: MoveSource = .herd, herdRuns: Bool, tld: String, packages: [Package] = [], parked: [ParkedFolder] = [], sites: [SiteItem] = [], databases: [DatabaseItem] = [], redis: [RedisItem] = [], ini: [IniItem] = [], envFiles: [EnvItem] = [], files: [FileItem] = [], notes: [String] = [], inNexus: [String] = []) {
+    public init(source: MoveSource = .herd, herdRuns: Bool, tld: String, packages: [Package] = [], parked: [ParkedFolder] = [], sites: [SiteItem] = [], databases: [DatabaseItem] = [], redis: [RedisItem] = [], ini: [IniItem] = [], envFiles: [EnvItem] = [], files: [FileItem] = [], notes: [String] = [], inNexus: [String] = [], wpConfigs: [EnvItem] = [], httpsSites: [String] = [], devTLD: DevTLDItem? = nil, certificates: [String] = []) {
+        self.wpConfigs = wpConfigs
+        self.httpsSites = httpsSites
+        self.devTLD = devTLD
+        self.certificates = certificates
         self.source = source
         self.herdRuns = herdRuns
         self.tld = tld
@@ -237,11 +312,14 @@ public struct HerdMoveRequest: Codable, Sendable, Equatable {
     public var skipped: [String]
     public var php: [String: String]
     public var databaseLines: [String: String]
+    // Local: the switch "New sites get .local". Nil keeps the default of the plan.
+    public var useDevTLD: Bool?
 
-    public init(skipped: [String] = [], php: [String: String] = [:], databaseLines: [String: String] = [:]) {
+    public init(skipped: [String] = [], php: [String: String] = [:], databaseLines: [String: String] = [:], useDevTLD: Bool? = nil) {
         self.skipped = skipped
         self.php = php
         self.databaseLines = databaseLines
+        self.useDevTLD = useDevTLD
     }
 }
 
@@ -251,7 +329,7 @@ public enum HerdMoveText {
     // The reason of a plan without sites, for the sheet and for nexus import herd.
     public static func nothingToMove(_ plan: HerdMovePlan?) -> String {
         guard let plan else {
-            return "Nexus found no sites of Herd or Valet on this Mac."
+            return "Nexus found no sites of Herd, Valet or Local on this Mac."
         }
 
         guard !plan.inNexus.isEmpty else {
@@ -268,11 +346,13 @@ public enum HerdMoveText {
             "Nexus copies while Herd runs. Then quit Herd: click the Herd icon in the menu bar and choose Quit. Also turn off Herd in System Settings > General > Login Items. The move goes on when Herd stops."
         case .valet:
             "Nexus copies while Valet runs. Then run valet stop in another Terminal window. Valet asks for your password. The move goes on when Valet stops."
+        case .local:
+            "Nexus copies while Local runs. Then quit Local: choose Local > Quit Local. When sites run, Local asks if you are sure. Click Yes. The move goes on when Local quits."
         }
     }
 
     public static func packageTitle(_ name: String, _ line: String) -> String {
-        let names = ["php": "PHP", "mysql": "MySQL", "mariadb": "MariaDB", "postgresql": "PostgreSQL", "mongodb": "MongoDB", "redis": "Redis"]
+        let names = ["php": "PHP", "mysql": "MySQL", "mariadb": "MariaDB", "postgresql": "PostgreSQL", "mongodb": "MongoDB", "redis": "Redis", "httpd": "Apache", "wp-cli": "WP-CLI"]
         return "\(names[name] ?? name) \(line)"
     }
 
@@ -297,11 +377,14 @@ public enum HerdMoveText {
         section("Sites:", plan.sites.map { site in
             let php = site.php.map { line in site.herdPHP.map { $0 == line ? "PHP \(line)" : "PHP \($0) → \(line)" } ?? "PHP \(line)" }
             let place = site.kind == .proxy ? "proxy to \(site.address ?? "")" : shortPath(site.folder, home: home)
-            return ([site.hosts.joined(separator: ", "), place] + (site.kind == .proxy ? [] : [php].compactMap { $0 })).joined(separator: " · ")
+            let extra = [site.server == .apache ? "Apache" : nil, site.network.map { "network on \($0.rawValue)" }].compactMap { $0 }
+            return ([site.hosts.joined(separator: ", "), place] + (site.kind == .proxy ? [] : [php].compactMap { $0 }) + extra).joined(separator: " · ")
         })
         section("Databases:", plan.databases.map { database in
             let source = [packageTitle(database.kind, database.version ?? "").trimmingCharacters(in: .whitespaces), database.port.map { "port \($0)" }].compactMap { $0 }.joined(separator: ", ")
-            return "\(database.name) · \(source) → \(database.line.map { packageTitle(database.kind, $0) } ?? "no server of Nexus")"
+            let target = database.line.map { packageTitle(database.kind, $0) } ?? "no server of Nexus"
+            let label = database.target.map { "\(database.sites.first ?? database.name): \(database.name) as \($0)" } ?? database.name
+            return "\(label) · \(source) → \(target)\(database.way.map { " · \($0)" } ?? "")"
         })
         section("Redis:", plan.redis.map { "\($0.keys.map { "\($0) keys" } ?? "The keys") of \($0.valkey ? "Valkey" : "Redis") on port \($0.port) → Redis \($0.line)" })
 
@@ -314,11 +397,19 @@ public enum HerdMoveText {
         }
 
         section(".env files that change:", plan.envFiles.map { shortPath($0.file, home: home) })
+        section("wp-config.php files that get the database of Nexus:", plan.wpConfigs.map { shortPath($0.file, home: home) })
+        section("Sites whose URLs change to https://:", plan.httpsSites)
 
-        for file in plan.files {
+        if let devTLD = plan.devTLD {
+            section("The dev TLD of Nexus:", ["New sites get .\(devTLD.tld)" + (devTLD.nexusSites == 0 ? "" : ". This also renames the \(devTLD.nexusSites) sites of Nexus.")])
+        }
+
+        for file in plan.files where file.kind != .envrc {
             section("\(shortPath(file.path, home: home)) \(file.kind == .shell ? "loses these lines of \(plan.source.name)" : "gets the PHP of Nexus"):", file.lines)
         }
 
+        section(".envrc files that move into the report folder:", plan.files.filter { $0.kind == .envrc }.map { shortPath($0.path, home: home) })
+        section("Local certificates that macOS trusts:", plan.certificates.map { shortPath($0, home: home) })
         section("Notes:", plan.notes)
         return lines
     }

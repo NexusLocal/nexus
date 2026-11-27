@@ -184,7 +184,7 @@ struct HerdMovePlannerTests {
 
         #expect(plan.isEmpty)
         #expect(HerdMoveText.nothingToMove(plan) == "Each site of Herd is in Nexus already.")
-        #expect(HerdMoveText.nothingToMove(nil) == "Nexus found no sites of Herd or Valet on this Mac.")
+        #expect(HerdMoveText.nothingToMove(nil) == "Nexus found no sites of Herd, Valet or Local on this Mac.")
     }
 
     @Test func aDatabaseOnAServerThatDoesNotRunGetsANoteAndNoCopy() throws {

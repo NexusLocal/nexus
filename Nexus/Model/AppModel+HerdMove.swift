@@ -25,6 +25,16 @@ struct HerdMoveChoices: Equatable {
     var skipped: Set<String> = []
     var php: [String: String] = [:]
     var databaseLines: [String: String] = [:]
+    // Local: the switch "New sites get .local". Nil keeps the default of the plan.
+    var devTLD: Bool?
+
+    func usesDevTLD(_ plan: HerdMovePlan) -> Bool {
+        guard let item = plan.devTLD else {
+            return false
+        }
+
+        return devTLD ?? item.isOnByDefault
+    }
 
     // One switch can stand for more items, for example the php.ini lines of each PHP version.
     func isOn(_ ids: [String]) -> Bool {
@@ -74,8 +84,14 @@ struct HerdMoveChoices: Equatable {
         HerdMoveRequest(
             skipped: skipped.sorted(),
             php: php.filter { id, line in plan.sites.first { $0.id == id }?.php != line },
-            databaseLines: databaseLines.filter { id, line in plan.databases.first { $0.id == id }?.line != line }
+            databaseLines: databaseLines.filter { id, line in plan.databases.first { $0.id == id }?.line != line },
+            useDevTLD: plan.devTLD == nil ? nil : devTLD
         )
+    }
+
+    // Local: a site and its database have one switch.
+    func localDatabase(of site: HerdMovePlan.SiteItem, in plan: HerdMovePlan) -> HerdMovePlan.DatabaseItem? {
+        plan.databases.first { $0.sites.contains(site.hosts[0]) }
     }
 
     // "6 sites, 3 databases and your settings". Only the items that are on count.
@@ -89,7 +105,7 @@ struct HerdMoveChoices: Equatable {
         }
 
         if databases > 0 {
-            parts.append(Count.text(databases, "database"))
+            parts.append(plan.source == .local && databases == sites ? "their databases" : Count.text(databases, "database"))
         }
 
         if movesSettings(of: plan) {
@@ -122,15 +138,31 @@ struct HerdMoveChoices: Equatable {
         }
 
         for database in databases(of: plan) {
-            need(database.kind, line(of: database), for: database.name)
+            let name = database.sites.first.map { plan.source == .local ? $0 : database.name } ?? database.name
+            need(database.kind, line(of: database), for: name)
+
+            if let reader = database.readerLine, reader != line(of: database) {
+                need(database.kind, reader, for: "the data of \(name)")
+            }
         }
 
         for server in redis(of: plan) {
             need("redis", server.line, for: "the Redis keys")
         }
 
+        let apache = sites(of: plan).filter { $0.server == .apache }.map { $0.hosts[0] }
+
+        if !apache.isEmpty, let package = plan.packages.first(where: { $0.name == "httpd" }) {
+            need("httpd", package.line, for: EnglishList.joined(apache))
+        }
+
+        if !sites(of: plan).isEmpty, isOn([HerdMovePlan.httpsID]), let package = plan.packages.first(where: { $0.name == "wp-cli" }) {
+            need("wp-cli", package.line, for: "the URLs")
+        }
+
         return needed.map { package in
-            HerdMovePlan.Package(name: package.name, line: package.line, reason: "for \(package.reasons.joined(separator: ", "))", bytes: bytes(package.name, package.line))
+            let reason = plan.source == .local && package.reasons.count > 3 ? "\(package.reasons.count) sites" : package.reasons.joined(separator: ", ")
+            return HerdMovePlan.Package(name: package.name, line: package.line, reason: "for \(reason)", bytes: bytes(package.name, package.line))
         }
     }
 }
@@ -149,14 +181,40 @@ extension AppModel {
         switch source {
         case .herd: return herdFolder.appending(path: "config/valet/config.json")
         case .valet: return ValetReader.folder(home: home).appending(path: "config.json")
+        case .local: return LocalReader.sitesFile(home: home)
         }
     }
 
-    static func certificate(of source: MoveSource) -> URL {
+    static func bundleIdentifier(of source: MoveSource) -> String? {
         switch source {
-        case .herd: herdFolder.appending(path: "config/valet/CA/LaravelValetCASelfSigned.pem")
-        case .valet: ValetReader.certificate(home: FileManager.default.homeDirectoryForCurrentUser)
+        case .herd: HerdReader.bundleIdentifier
+        case .valet: nil
+        case .local: LocalReader.bundleIdentifier
         }
+    }
+
+    // Herd and Valet have one root certificate. Local has one certificate for each site, and the
+    // plan names the ones that macOS trusts.
+    func certificates(of source: MoveSource) -> [URL] {
+        switch source {
+        case .herd: [Self.herdFolder.appending(path: "config/valet/CA/LaravelValetCASelfSigned.pem")]
+        case .valet: [ValetReader.certificate(home: FileManager.default.homeDirectoryForCurrentUser)]
+        case .local: (herdMovePlan?.certificates ?? []).map { URL(filePath: $0) }
+        }
+    }
+
+    static func loadHiddenMoveNotices() -> Set<String> {
+        var hidden = Set(UserDefaults.standard.stringArray(forKey: AppPreference.hiddenMoveNotices) ?? [])
+
+        if UserDefaults.standard.bool(forKey: AppPreference.hiddenHerdMoveNotice) {
+            hidden.formUnion([MoveSource.herd.rawValue, MoveSource.valet.rawValue])
+        }
+
+        return hidden
+    }
+
+    var hiddenHerdMoveNotice: Bool {
+        hiddenMoveNotices.contains(moveSource.rawValue)
     }
 
     // The plan of nexusd knows which app has the sites. Before the plan, Herd comes first.
@@ -240,6 +298,10 @@ extension AppModel {
             return ""
         }
 
+        if plan.source == .local {
+            return "Nexus found \(Count.text(plan.sites.count, "WordPress site")) in Local. Nexus copies their databases and serves each site from its folder. Local and its files stay as they are."
+        }
+
         var parts = [Count.text(plan.sites.count, "site")]
 
         if !plan.databases.isEmpty {
@@ -254,8 +316,8 @@ extension AppModel {
     }
 
     func hideHerdMoveNotice() {
-        hiddenHerdMoveNotice = true
-        UserDefaults.standard.set(true, forKey: AppPreference.hiddenHerdMoveNotice)
+        hiddenMoveNotices.insert(moveSource.rawValue)
+        UserDefaults.standard.set(hiddenMoveNotices.sorted(), forKey: AppPreference.hiddenMoveNotices)
     }
 
     func hideHerdMoved() {
@@ -371,8 +433,13 @@ extension AppModel {
         }
     }
 
+    // Local asks a question before it quits when sites run. The user answers it in Local.
     func quitHerd() {
-        for app in NSRunningApplication.runningApplications(withBundleIdentifier: HerdReader.bundleIdentifier) {
+        guard let identifier = Self.bundleIdentifier(of: moveSource) else {
+            return
+        }
+
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: identifier) {
             app.terminate()
         }
     }
@@ -408,7 +475,8 @@ extension AppModel {
 
     // The sample data shows the banner of the design also on a Mac without Herd or Valet.
     var hasHerdCertificate: Bool {
-        !isLive || FileManager.default.fileExists(atPath: Self.certificate(of: moveSource).path(percentEncoded: false))
+        let certificates = certificates(of: moveSource)
+        return (!isLive && !certificates.isEmpty) || certificates.contains { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
     }
 
     // Herd 2 trusts its certificate for this user only. Valet trusts its certificate for each user
@@ -420,8 +488,13 @@ extension AppModel {
         }
 
         let source = moveSource
+
+        if source == .local {
+            return await removeLocalCertificates()
+        }
+
         let domain = source == .valet ? ["-d"] : []
-        let command = Command(executable: URL(filePath: "/usr/bin/security"), arguments: ["remove-trusted-cert"] + domain + [Self.certificate(of: source).path(percentEncoded: false)])
+        let command = Command(executable: URL(filePath: "/usr/bin/security"), arguments: ["remove-trusted-cert"] + domain + (certificates(of: source).first.map { [$0.path(percentEncoded: false)] } ?? []))
 
         do {
             try await CommandRunner.run(command)
@@ -435,6 +508,29 @@ extension AppModel {
 
             return "macOS did not remove the trust of the \(source.name) certificate. \(reason)"
         }
+    }
+
+    // Local trusts each certificate for each user of this Mac with security add-trusted-cert -d, as
+    // Valet does. macOS asks for the password of each change of the trust settings, also for root
+    // (seen in the VM, 2026-11-26). So the command runs as the user, once for each certificate.
+    private func removeLocalCertificates() async -> String? {
+        for file in certificates(of: .local) {
+            let command = Command(executable: URL(filePath: "/usr/bin/security"), arguments: ["remove-trusted-cert", "-d", file.path(percentEncoded: false)])
+
+            do {
+                try await CommandRunner.run(command)
+            } catch {
+                let reason = ErrorText.plain(error)
+
+                if reason.localizedCaseInsensitiveContains("cancel") {
+                    return "You canceled the password question. So macOS still trusts the Local certificate of \(file.deletingPathExtension().lastPathComponent)."
+                }
+
+                return "macOS did not remove the trust of the Local certificate of \(file.deletingPathExtension().lastPathComponent). \(reason)"
+            }
+        }
+
+        return nil
     }
 }
 
@@ -500,12 +596,65 @@ extension AppModel {
         )
     }
 
+    // The plan of "Sheet Move From Local" in nexus.pen: the VM local-golden of docs/group11-local.md.
+    // states adds the cases of "· States": Nexus with sites, and blog.local with only local.sql.
+    static func sampleLocalMovePlan(states: Bool = false) -> HerdMovePlan {
+        let home = NSHomeDirectory()
+        let account = DatabaseAccount(user: "root", password: "root")
+        let mb: (Double) -> Int64 = { Int64($0 * 1_000_000) }
+        let phpLines = ["8.2", "8.3", "8.4", "8.5", "8.6"]
+        let folder: (String) -> String = { "\(home)/Local Sites/\($0)/app/public" }
+        let sites = [
+            HerdMovePlan.SiteItem(hosts: ["shop.local"], folder: folder("shop"), kind: .php, herdPHP: "8.2.29", php: "8.2", phpChoices: phpLines, projectType: .wordpress, ownLines: ["add_header X-Shop-Test \"moved\" always;"], server: .nginx),
+            HerdMovePlan.SiteItem(hosts: ["blog.local"], folder: folder("blog"), kind: .php, herdPHP: "7.4.30", php: "8.2", phpChoices: phpLines, projectType: .wordpress, server: .apache),
+            HerdMovePlan.SiteItem(hosts: ["legacy.local"], folder: folder("legacy"), kind: .php, herdPHP: "8.0.30", php: "8.2", phpChoices: phpLines, projectType: .wordpress, server: .nginx),
+            HerdMovePlan.SiteItem(hosts: ["network.local"], folder: folder("network"), kind: .php, herdPHP: "8.2.29", php: "8.2", phpChoices: phpLines, projectType: .wordpress, server: .nginx, network: .subfolders),
+            HerdMovePlan.SiteItem(hosts: ["subnet.local"], folder: folder("subnet"), kind: .php, herdPHP: "8.3.30", php: "8.3", phpChoices: phpLines, projectType: .wordpress, server: .nginx, network: .subdomains),
+            HerdMovePlan.SiteItem(hosts: ["secure.local"], folder: folder("secure"), kind: .php, herdPHP: "8.4.28", php: "8.4", phpChoices: phpLines, projectType: .wordpress, server: .nginx),
+        ]
+        let run = "\(home)/Library/Application Support/Local/run"
+        let database: (String, String, Int, Double, Bool, String, [String]) -> HerdMovePlan.DatabaseItem = { host, version, port, size, runs, line, choices in
+            let name = String(host.split(separator: ".")[0])
+            let stoppedWithDump = states && host == "blog.local"
+            return HerdMovePlan.DatabaseItem(name: "local", kind: "mysql", version: version, port: port, socket: "\(run)/\(name)/mysql/mysqld.sock", account: account, line: line, lineChoices: choices, bytes: mb(size), sites: [host], target: name, runs: runs, dataFolder: runs || stoppedWithDump ? nil : "\(run)/\(name)/mysql/data", readerLine: runs || stoppedWithDump ? nil : line, dump: "\(home)/Local Sites/\(name)/app/sql/local.sql", dumpDate: Date(timeIntervalSince1970: 1_795_724_760))
+        }
+
+        return HerdMovePlan(
+            source: .local,
+            herdRuns: true,
+            tld: "local",
+            packages: [
+                HerdMovePlan.Package(name: "php", line: "8.2", reason: "for 4 sites", bytes: mb(30)),
+                HerdMovePlan.Package(name: "php", line: "8.3", reason: "for subnet.local", bytes: mb(31)),
+                HerdMovePlan.Package(name: "php", line: "8.4", reason: "for secure.local", bytes: mb(31)),
+                HerdMovePlan.Package(name: "mysql", line: "8.0", reason: "for blog.local, legacy.local and subnet.local", bytes: mb(58)),
+                HerdMovePlan.Package(name: "httpd", line: "2.4", reason: "for blog.local", bytes: mb(6)),
+            ],
+            sites: sites,
+            databases: [
+                database("shop.local", "8.4.0", 10003, 1.4, true, "8.4", ["8.4", "9.7"]),
+                database("blog.local", "8.0.35", 10008, 0.9, false, "8.0", ["8.0", "8.4", "9.7"]),
+                database("legacy.local", "5.7.28", 10013, 0.5, false, "8.0", ["8.0", "8.4", "9.7"]),
+                database("network.local", "8.4.0", 10018, 0.8, false, "8.4", ["8.4", "9.7"]),
+                database("subnet.local", "8.0.35", 10023, 0.8, false, "8.0", ["8.0", "8.4", "9.7"]),
+                database("secure.local", "8.4.0", 10028, 0.6, false, "8.4", ["8.4", "9.7"]),
+            ],
+            ini: [HerdMovePlan.IniItem(herdPHP: "8.2", line: "8.2", lines: ["memory_limit = 512M", "max_input_vars = 5000"])],
+            files: ["shop", "blog", "legacy", "network", "subnet", "secure"].map { HerdMovePlan.FileItem(path: "\(home)/Local Sites/\($0)/app/.envrc", kind: .envrc, lines: []) },
+            notes: ["blog.local uses PHP 7.4. Nexus has PHP 8.2 and newer, so the site gets PHP 8.2."],
+            wpConfigs: sites.map { HerdMovePlan.EnvItem(host: $0.hosts[0], file: "\($0.folder)/wp-config.php") },
+            httpsSites: sites.map { $0.hosts[0] },
+            devTLD: HerdMovePlan.DevTLDItem(tld: "local", nexusSites: states ? 12 : 0),
+            certificates: ["\(home)/Library/Application Support/Local/run/router/nginx/certs/secure.local.crt"]
+        )
+    }
+
     // --herd-move review|states|progress|quit-herd|done|failed opens a state of the sheet. The steps
     // have the order of NexusEngine.herdMoveSteps.
     func showSampleHerdMove(_ state: String, source: MoveSource = .herd) {
         herdFound = true
         foundMoveSource = source
-        herdMovePlan = Self.sampleHerdMovePlan(states: state == "states", source: source)
+        herdMovePlan = source == .local ? Self.sampleLocalMovePlan(states: state == "states") : Self.sampleHerdMovePlan(states: state == "states", source: source)
 
         guard !["review", "states"].contains(state) else {
             herdMoveRun = nil
@@ -513,12 +662,14 @@ extension AppModel {
         }
 
         if herdMoveRun == nil, let plan = herdMovePlan {
-            herdMoveRun = HerdMoveRun(request: HerdMoveRequest(), summary: "6 sites, 3 databases and your settings", movedText: "", tld: plan.tld)
+            herdMoveRun = HerdMoveRun(request: HerdMoveRequest(), summary: source == .local ? "6 sites, their databases and your settings" : "6 sites, 3 databases and your settings", movedText: "", tld: plan.tld)
         }
 
         let running = ["progress": 2, "quit-herd": 4, "failed": 0][state]
         let shell = source == .herd ? [("~/.zshrc and ~/Herd/shop/.mcp.json", 1)] : []
-        let plannedSteps = [("Install PHP 8.3, PHP 8.2, PostgreSQL 17 and Redis 8.2", 38), ("php.ini lines", 1), ("Databases: shop, news and blog", 9), ("Redis keys", 1), (source.stopStep, 14), ("Ports 80 and 443 and the domain .test", 2), ("Sites: 6", 2), ("nginx lines", 1), (".env of shop.test and blog.test", 1)] + shell + [("Open each site once", 3)]
+        let herdSteps = [("Install PHP 8.3, PHP 8.2, PostgreSQL 17 and Redis 8.2", 38), ("php.ini lines", 1), ("Databases: shop, news and blog", 9), ("Redis keys", 1), (source.stopStep, 14), ("Ports 80 and 443 and the domain .test", 2), ("Sites: 6", 2), ("nginx lines", 1), (".env of shop.test and blog.test", 1)] + shell + [("Open each site once", 3)]
+        let localSteps = [("Install PHP 8.2, PHP 8.3, PHP 8.4, MySQL 8.0 and Apache", 41), ("php.ini lines", 1), ("Databases of 6 sites", 14), (source.stopStep, 12), ("Ports 80 and 443", 2), ("Sites: 6, with their names in /etc/hosts", 3), ("wp-config.php of 6 sites", 1), ("URLs to HTTPS", 6), ("nginx lines", 1), (".envrc files", 1), ("Open each site once", 3)]
+        let plannedSteps = source == .local ? localSteps : herdSteps
         let titles = plannedSteps.map(\.0)
         let seconds = plannedSteps.map(\.1)
         let steps = titles.indices.map { index in
@@ -552,8 +703,8 @@ extension AppModel {
     func showSampleHerdNotice(_ state: String, source: MoveSource = .herd) {
         herdFound = true
         foundMoveSource = source
-        herdMovePlan = Self.sampleHerdMovePlan(source: source)
-        hiddenHerdMoveNotice = false
-        herdMovedText = state == "moved" ? "6 sites, 3 databases and your PHP settings are in Nexus now. Nexus kept a copy of each file that it changed." : nil
+        herdMovePlan = source == .local ? Self.sampleLocalMovePlan() : Self.sampleHerdMovePlan(source: source)
+        hiddenMoveNotices.remove(source.rawValue)
+        herdMovedText = state == "moved" ? (source == .local ? "6 sites and their databases are in Nexus now. Nexus kept a copy of each file that it changed." : "6 sites, 3 databases and your PHP settings are in Nexus now. Nexus kept a copy of each file that it changed.") : nil
     }
 }
