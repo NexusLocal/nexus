@@ -107,7 +107,7 @@ error details. Webhooks still reach the site. [How sharing works](#-share-a-site
   the other packages. A fix in the same version line installs by itself.
 - 📬 **A mail inbox for every site.** No test mail ever reaches a real customer.
 - ✨ **A new site in one click.** Laravel, WordPress, Next.js, Nuxt, Vite or Astro.
-- 🚚 **Move to Nexus in one click.** From Laravel Herd or Laravel Valet. The old app stays as it is.
+- 🚚 **Move to Nexus in one click.** From Laravel Herd, Laravel Valet or Local. The old app stays as it is.
 - 🔏 **Signed packages.** Nexus installs only packages from a list that the maintainer signed.
 - 💜 **Free and open source.** MIT license. No subscription and no paywall, ever.
 
@@ -302,8 +302,9 @@ Nexus moves your sites from these apps:
 | --- | --- |
 | Laravel Herd (Free and Pro) | "Move from Herd…" on the Overview, or `nexus import herd` |
 | Laravel Valet | "Move from Valet…" on the Overview, or `nexus import valet` |
+| Local by WP Engine (earlier Local by Flywheel) | "Move from Local…" on the Overview, or `nexus import local` |
 
-Local and MAMP come next. See the [roadmap](ROADMAP.md).
+MAMP comes next. See the [roadmap](ROADMAP.md).
 
 Nexus finds the app on your Mac. The first run of Nexus ends with the move, and the Overview offers
 it later too. You see each item first and choose what moves.
@@ -318,7 +319,10 @@ it later too. You see each item first and choose what moves.
 - **One step for you:** quit Herd with the button in the sheet, or run `valet stop`. Then Nexus takes
   over ports 80 and 443 and the `.test` domain, and it opens each site once.
 
-Herd or Valet and its files stay as they are. The report of the move tells you what moved and how to
+From Local, each WordPress site keeps its folder and its `.local` name. Nexus copies the database of
+each site, also when the site does not run in Local, and changes its URLs to `https://`.
+
+The old app and its files stay as they are. The report of the move tells you what moved and how to
 go back.
 
 ## Install
@@ -339,7 +343,7 @@ Then:
    - Trust the Nexus certificate. macOS asks for your password one time.
    - Tell Nexus what you build. Nexus then chooses the versions of PHP, Node and the databases.
    - Click Done. Nexus starts the services that you chose.
-   - Do you use Herd or Valet? Nexus then offers to [move your sites](#-move-to-nexus-in-one-click).
+   - Do you use Herd, Valet or Local? Nexus then offers to [move your sites](#-move-to-nexus-in-one-click).
 
 Nexus updates itself. See Settings > Updates.
 

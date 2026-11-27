@@ -7,14 +7,16 @@ the work starts.
 
 In this order:
 
-1. **Move from Local**, as the move from Herd and Valet.
-2. **Move from MAMP and MAMP PRO.**
+1. **Move from MAMP and MAMP PRO.**
 
 ## Later
 
 - Global keyboard shortcuts.
 
 ## Done recently
+
+- **1.2.0:** move your WordPress sites and their databases from Local by WP Engine in one step,
+  with their `.local` names and HTTPS.
 
 - **1.1.0:** PHP 8.6 with all extensions, a locked switch for an extension that a PHP version does
   not have yet, and the newest igbinary for all PHP versions.
