@@ -68,6 +68,16 @@ struct SiteTests {
         #expect(throws: WorkspaceFileError.automatic("vendor/bin")) { try Site.workspaceFile("vendor/bin") }
     }
 
+    // nexus site edit prints this message and saves nothing, also not the other flags of the call.
+    // So the message must say that the path is refused and that no part of the change was saved.
+    @Test func aRefusedWorkspaceFileSaysThatNothingWasSaved() {
+        let message = WorkspaceFileError.automatic("vendor").description
+
+        #expect(message.contains("it cannot be in the list"))
+        #expect(message.contains("Leave vendor out and try again"))
+        #expect(message.contains("Nexus saved no part of this change"))
+    }
+
     @Test func aWorkspaceServesTheSameDocumentRoot() {
         let main = Site(host: "shop.test", folder: URL(filePath: "/w/shop", directoryHint: .isDirectory), php: "8.5", documentRootFolder: "htdocs")
         let workspace = Workspace(name: "fix", worktree: "/w/fix", folder: "/w/fix")

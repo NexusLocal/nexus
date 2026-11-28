@@ -423,7 +423,7 @@ public enum WorkspaceFileError: Error, Equatable, CustomStringConvertible {
         case .invalid(let path):
             "\(path) is not a path in the project folder. Give a path such as .env.testing or storage/certs."
         case .automatic(let path):
-            "Each workspace gets \(path) already. Nexus writes .env itself, and it clones vendor and node_modules."
+            "Each workspace gets \(path) already, so it cannot be in the list. Nexus writes .env itself, and it clones vendor and node_modules. Leave \(path) out and try again: Nexus saved no part of this change."
         }
     }
 }
